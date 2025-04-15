@@ -1,0 +1,15 @@
+{
+  "collectionName": "components_shared_website_data",
+  "info": {
+    "displayName": "Website Data"
+  },
+  "options": {},
+  "attributes": {
+    "URL": {
+      "type": "string"
+    },
+    "Price": {
+      "type": "integer"
+    }
+  }
+}

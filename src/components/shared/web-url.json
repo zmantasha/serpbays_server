@@ -1,0 +1,12 @@
+{
+  "collectionName": "components_shared_web_urls",
+  "info": {
+    "displayName": "web_URL"
+  },
+  "options": {},
+  "attributes": {
+    "Websites": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "kind": "collectionType",
+  "collectionName": "marketplaces",
+  "info": {
+    "singularName": "marketplace",
+    "pluralName": "marketplaces",
+    "displayName": "Marketplace",
+    "description": ""
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "url": {
+      "type": "string"
+    },
+    "price": {
+      "type": "integer"
+    },
+    "link_insertion_price": {
+      "type": "integer"
+    },
+    "TAT": {
+      "type": "integer"
+    },
+    "min_word_count": {
+      "type": "integer"
+    },
+    "forbidden_gp_price": {
+      "type": "integer"
+    },
+    "forbidden_li_price": {
+      "type": "integer"
+    },
+    "sample_post": {
+      "type": "text"
+    },
+    "backlink_type": {
+      "type": "enumeration",
+      "enum": [
+        "Do follow",
+        "No follow"
+      ]
+    },
+    "dofollow_link": {
+      "type": "integer"
+    },
+    "category": {
+      "type": "json"
+    },
+    "other_category": {
+      "type": "json"
+    },
+    "guidelines": {
+      "type": "text",
+      "default": "N/A"
+    },
+    "backlink_validity": {
+      "type": "string"
+    },
+    "ahrefs_dr": {
+      "type": "integer"
+    },
+    "ahrefs_traffic": {
+      "type": "integer"
+    },
+    "ahrefs_rank": {
+      "type": "integer"
+    },
+    "moz_da": {
+      "type": "integer"
+    },
+    "fast_placement_status": {
+      "type": "boolean",
+      "default": false
+    },
+    "publisher_name": {
+      "type": "string"
+    },
+    "publisher_email": {
+      "type": "email"
+    },
+    "publisher_price": {
+      "type": "integer"
+    },
+    "publisher_forbidden_gp_price": {
+      "type": "integer"
+    },
+    "publisher_forbidden_li_price": {
+      "type": "integer"
+    },
+    "publisher_link_insertion_price": {
+      "type": "integer"
+    }
+  }
+}

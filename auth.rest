@@ -1,0 +1,39 @@
+POST http://localhost:1337/api/auth/local
+Content-Type: application/json
+
+{
+  "identifier": "test3@gmail.com",
+  "password": "test12345"
+}
+
+###
+POST http://localhost:1337/api/auth/local/register
+Content-Type: application/json
+
+{
+  "username": "test3",
+  "email": "test3@gmail.com",
+  "password": "test12345"
+}
+###
+PUT http://localhost:1337/api/users/11
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NDY0NTE1NiwiZXhwIjoxNzQ3MjM3MTU2fQ.yJAR_dfKPjhHemobU6ZedyCqfqqjIAsO8gudxEFsBxI
+Content-Type: application/json
+
+{
+  "role": 2
+}
+
+###
+POST http://localhost:1337/api/user-profiles
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NDY0NDk1OCwiZXhwIjoxNzQ3MjM2OTU4fQ.fOlKlJE9La-5eSUerTFFObqfYpOAEyuy9VfX1LtJOm4
+Content-Type: application/json
+
+{
+  "data": {
+    "name": "New User",
+    "email": "test2@gmail.com",
+    "role": "Advertiser",
+    "user": 10
+  }
+}
