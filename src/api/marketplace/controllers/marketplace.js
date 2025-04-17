@@ -81,7 +81,7 @@ const validateType = (value, type) => {
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
   async uploadCSV(ctx) {
     try {
-      const { fileId } = ctx.request.body;
+      const { fileId, confirmDuplicates } = ctx.request.body;
       
       if (!fileId) {
         return ctx.badRequest('File ID is required');
@@ -122,7 +122,10 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Create entries from CSV data
       const createdEntries = [];
       const errors = [];
+      const duplicates = [];
+      const confirmedDuplicates = confirmDuplicates || [];
 
+      // Process all records
       for (const [index, record] of records.entries()) {
         try {
           const convertedData = {};
@@ -160,6 +163,34 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             throw new Error(rowErrors.join(', '));
           }
 
+          // Check for duplicate URLs
+          if (convertedData.url) {
+            const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { url: convertedData.url }
+            });
+
+            if (existingEntry) {
+              // If we have confirmed duplicates and this URL is in the list, update it
+              if (confirmedDuplicates.includes(convertedData.url)) {
+                const updatedEntry = await strapi.entityService.update('api::marketplace.marketplace', existingEntry.id, {
+                  data: {
+                    ...convertedData,
+                  }
+                });
+                createdEntries.push(updatedEntry);
+              } else {
+                // Otherwise, add to duplicates list for confirmation
+                duplicates.push({
+                  url: convertedData.url,
+                  existingData: existingEntry,
+                  newData: convertedData
+                });
+              }
+              continue;
+            }
+          }
+
+          // Create new entry if no duplicates
           const entry = await strapi.entityService.create('api::marketplace.marketplace', {
             data: {
               ...convertedData,
@@ -172,11 +203,23 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         }
       }
 
+      // If we have duplicates and no confirmation was provided, return them for user decision
+      if (duplicates.length > 0 && !confirmDuplicates) {
+        return {
+          needsConfirmation: true,
+          duplicates,
+          createdCount: createdEntries.length,
+          errorCount: errors.length,
+          errors: errors.length ? errors : undefined
+        };
+      }
+
       // Return response with results and any errors
       return {
         message: `Successfully imported ${createdEntries.length} records${errors.length ? ` with ${errors.length} errors` : ''}`,
         entries: createdEntries,
-        errors: errors.length ? errors : undefined
+        errors: errors.length ? errors : undefined,
+        duplicatesUpdated: confirmDuplicates ? confirmedDuplicates.length : 0
       };
     } catch (error) {
       console.error('CSV Upload Error:', error);

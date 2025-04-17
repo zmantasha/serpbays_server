@@ -65,6 +65,9 @@ export default {
       const [file, setFile] = useState(null);
       const [isUploading, setIsUploading] = useState(false);
       const [error, setError] = useState(null);
+      const [duplicates, setDuplicates] = useState(null);
+      const [createdCount, setCreatedCount] = useState(0);
+      const [selectedDuplicates, setSelectedDuplicates] = useState([]);
 
       const validateCSVHeaders = async (file) => {
         return new Promise((resolve, reject) => {
@@ -112,6 +115,60 @@ export default {
         }
       };
 
+      const handleDuplicateToggle = (url) => {
+        setSelectedDuplicates(prev => {
+          if (prev.includes(url)) {
+            return prev.filter(item => item !== url);
+          } else {
+            return [...prev, url];
+          }
+        });
+      };
+
+      const handleConfirmDuplicates = async () => {
+        if (selectedDuplicates.length === 0) {
+          setError('No duplicates selected for update');
+          return;
+        }
+
+        setIsUploading(true);
+        setError(null);
+
+        try {
+          const auth = JSON.parse(localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken'));
+          
+          if (!auth) {
+            throw new Error('Authentication token not found');
+          }
+
+          // Send confirmation request
+          const response = await axios.post('/api/upload-csv', {
+            fileId: duplicates.fileId,
+            confirmDuplicates: selectedDuplicates
+          }, {
+            headers: {
+              'Authorization': `Bearer ${auth}`
+            }
+          });
+
+          if (response.data) {
+            if (response.data.errors && response.data.errors.length > 0) {
+              setError(`Import completed with errors:\n${response.data.errors.join('\n')}`);
+            } else {
+              // Refresh the list view
+              window.location.reload();
+            }
+          }
+        } catch (err) {
+          console.error('Duplicate confirmation error:', err);
+          const errorMessage = err.response?.data?.error?.message || err.message || 'Error updating duplicates';
+          setError(errorMessage);
+        } finally {
+          setIsUploading(false);
+          setDuplicates(null);
+        }
+      };
+
       const handleUpload = async () => {
         if (!file) {
           setError('Please select a file first');
@@ -151,8 +208,15 @@ export default {
             });
 
             if (response.data) {
-              if (response.data.errors && response.data.errors.length > 0) {
-                setError(`Import completed with errors:\\n${response.data.errors.join('\\n')}`);
+              if (response.data.needsConfirmation) {
+                // Store duplicates for confirmation
+                setDuplicates({
+                  ...response.data,
+                  fileId: uploadResponse.data[0].id
+                });
+                setCreatedCount(response.data.createdCount || 0);
+              } else if (response.data.errors && response.data.errors.length > 0) {
+                setError(`Import completed with errors:\n${response.data.errors.join('\n')}`);
               } else {
                 // Refresh the list view
                 window.location.reload();
@@ -214,63 +278,148 @@ export default {
         color: '#4945FF'
       };
 
-      return (
-        <>
-          <div style={overlayStyle} onClick={() => setIsVisible(false)} />
-          <div style={modalStyle}>
-            <h2 style={{ marginTop: 0 }}>Import from CSV</h2>
-            <div style={{ marginBottom: '1rem' }}>
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileChange}
-                style={{ marginBottom: '1rem' }}
-              />
-              {error && (
-                <div style={{ color: '#d02b20', marginTop: '0.5rem' }}>
-                  {error}
-                </div>
-              )}
+      const modalContentStyle = {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        backgroundColor: 'white',
+        padding: '20px',
+        borderRadius: '5px',
+        boxShadow: '0 2px 10px rgba(0, 0, 0, 0.1)',
+        width: '500px',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        zIndex: 1001,
+      };
+
+            // Render duplicate confirmation content
+      const renderDuplicateContent = () => {
+        return (
+          <>
+            <h2 style={{ marginTop: 0 }}>Duplicate URLs Found</h2>
+            
+            <div style={{ marginBottom: '20px' }}>
+              <p>We found {duplicates.duplicates.length} URLs that already exist. Select the ones you want to update:</p>
+              <p>{createdCount} new records were already created.</p>
+              
+              <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #ddd', padding: '10px' }}>
+                {duplicates.duplicates.map((dup, index) => (
+                  <div key={index} style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
+                      <input
+                        type="checkbox"
+                        id={`dup-${index}`}
+                        checked={selectedDuplicates.includes(dup.url)}
+                        onChange={() => handleDuplicateToggle(dup.url)}
+                        style={{ marginRight: '10px' }}
+                      />
+                      <label htmlFor={`dup-${index}`} style={{ fontWeight: 'bold' }}>{dup.url}</label>
+                    </div>
+                    
+                    <div style={{ display: 'flex', marginLeft: '25px' }}>
+                      <div style={{ flex: 1 }}>
+                        <h4 style={{ margin: '5px 0' }}>Current Data</h4>
+                        <div>Price: {dup.existingData.price}</div>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <h4 style={{ margin: '5px 0' }}>New Data</h4>
+                        <div>Price: {dup.newData.price}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div style={{ marginBottom: '1.5rem' }}>
-              <h4 style={{ marginBottom: '0.5rem' }}>Required columns:</h4>
-              <ul style={{ margin: '0 0 0 1.5rem', padding: 0 }}>
-                <li>url (required)</li>
-                <li>price (required)</li>
-                <li>publisher_name (required)</li>
-                <li>publisher_email (required)</li>
-                <li>backlink_type (required)</li>
-                <li>category (required)</li>
-                <li>other_category (required)</li>
-                <li>guidelines (required)</li>
-                <li>backlink_validity (required)</li>
-                <li>ahrefs_dr (required)</li>
-                <li>ahrefs_traffic (required)</li>
-                <li>ahrefs_rank (required)</li>
-                <li>moz_da (required)</li>
-                <li>fast_placement_status (required)</li>
-                <li>sample_post (required)</li>
-                <li>tat (required)</li>
-                <li>min_word_count (required)</li>
-                <li>forbidden_gp_price (required)</li>
-                <li>forbidden_li_price (required)</li>
-              </ul>
-            </div>
+            
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button
-                onClick={() => setIsVisible(false)}
+              <button 
+                onClick={() => setDuplicates(null)}
                 style={secondaryButtonStyle}
               >
                 Cancel
               </button>
-              <button
-                onClick={handleUpload}
-                disabled={!file || isUploading}
-                style={primaryButtonStyle}
+              <button 
+                onClick={handleConfirmDuplicates}
+                disabled={isUploading || selectedDuplicates.length === 0}
+                style={{
+                  ...primaryButtonStyle,
+                  backgroundColor: selectedDuplicates.length > 0 ? '#4945FF' : '#ccc',
+                  cursor: selectedDuplicates.length > 0 ? 'pointer' : 'not-allowed',
+                }}
               >
-                {isUploading ? 'Uploading...' : 'Upload'}
+                {isUploading ? 'Updating...' : 'Update Selected'}
               </button>
             </div>
+          </>
+        );
+      };
+
+      return (
+        <>
+          <div style={overlayStyle} onClick={() => setIsVisible(false)} />
+          <div style={modalStyle}>
+            <h2 style={{ marginTop: 0 }}>{duplicates ? 'Duplicate URLs Found' : 'Import from CSV'}</h2>
+            
+            {error && (
+              <div style={{ color: '#d02b20', marginTop: '0.5rem' }}>
+                {error}
+              </div>
+            )}
+            
+            {duplicates ? (
+              renderDuplicateContent()
+            ) : (
+              <>
+                <div style={{ marginBottom: '1rem' }}>
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleFileChange}
+                    style={{ marginBottom: '1rem' }}
+                  />
+                </div>
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <h4 style={{ marginBottom: '0.5rem' }}>Required columns:</h4>
+                  <ul style={{ margin: '0 0 0 1.5rem', padding: 0 }}>
+                    <li>url (required)</li>
+                    <li>price (required)</li>
+                    <li>publisher_name (required)</li>
+                    <li>publisher_email (required)</li>
+                    <li>backlink_type (required)</li>
+                    <li>category (required)</li>
+                    <li>other_category (required)</li>
+                    <li>guidelines (required)</li>
+                    <li>backlink_validity (required)</li>
+                    <li>ahrefs_dr (required)</li>
+                    <li>ahrefs_traffic (required)</li>
+                    <li>ahrefs_rank (required)</li>
+                    <li>moz_da (required)</li>
+                    <li>fast_placement_status (required)</li>
+                    <li>sample_post (required)</li>
+                    <li>tat (required)</li>
+                    <li>min_word_count (required)</li>
+                    <li>forbidden_gp_price (required)</li>
+                    <li>forbidden_li_price (required)</li>
+                  </ul>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button
+                    onClick={() => setIsVisible(false)}
+                    style={secondaryButtonStyle}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleUpload}
+                    disabled={!file || isUploading}
+                    style={primaryButtonStyle}
+                  >
+                    {isUploading ? 'Uploading...' : 'Upload'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </>
       );
