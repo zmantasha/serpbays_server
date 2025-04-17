@@ -1,6 +1,58 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
+// Required fields for CSV validation
+const REQUIRED_FIELDS = [
+  'url', 
+  'price', 
+  'publisher_name', 
+  'publisher_price', 
+  'publisher_email', 
+  'backlink_type', 
+  'category', 
+  // 'other_category', 
+  // 'guidelines', 
+  'backlink_validity', 
+  // 'ahrefs_dr', 
+  // 'ahrefs_traffic', 
+  // 'ahrefs_rank', 
+  // 'moz_da', 
+  // 'fast_placement_status', 
+  // 'sample_post', 
+  // 'tat', 
+  'min_word_count', 
+  // 'forbidden_gp_price', 
+  // 'forbidden_li_price'
+];
+const MISSING_FIELDS = [
+  'url', 
+  'price', 
+  'link_insertion_price',
+  'publisher_name', 
+  'publisher_price', 
+  'publisher_email', 
+  'publisher_forbidden_gp_price', 
+  'publisher_forbidden_li_price', 
+  'publisher_link_insertion_price', 
+  'backlink_type', 
+  'category', 
+  'other_category', 
+  'guidelines',
+  'dofollow_link',
+  'sample_post', 
+  'backlink_validity', 
+  'ahrefs_dr', 
+  'ahrefs_traffic', 
+  'ahrefs_rank', 
+  'moz_da', 
+  'fast_placement_status', 
+  'sample_post', 
+  'tat', 
+  'min_word_count', 
+  'forbidden_gp_price', 
+  'forbidden_li_price'
+];
+
 export default {
   bootstrap() {},
   async registerTrads() {
@@ -14,11 +66,46 @@ export default {
       const [isUploading, setIsUploading] = useState(false);
       const [error, setError] = useState(null);
 
-      const handleFileChange = (e) => {
+      const validateCSVHeaders = async (file) => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            try {
+              // Get first line and parse headers
+              const firstLine = event.target.result.toString().split('\n')[0];
+              const headers = firstLine.split(',').map(h => h.trim().toLowerCase());
+              
+              // Check for missing required fields
+              const missingFields = MISSING_FIELDS.filter(field => !headers.includes(field));
+              const requiredFields = REQUIRED_FIELDS.filter(field => !headers.includes(field));
+              
+              if (missingFields.length > 0) {
+                reject(`Missing required fields: ${missingFields.join(', ')}`);
+              }else if(requiredFields.length>0){
+                reject(`Required fields are: ${REQUIRED_FIELDS.join(', ')}`);
+              } else {
+                resolve(true);
+              }
+            } catch (error) {
+              reject('Error reading CSV headers');
+            }
+          };
+          reader.onerror = () => reject('Error reading file');
+          reader.readAsText(file);
+        });
+      };
+
+      const handleFileChange = async (e) => {
         const selectedFile = e.target.files[0];
         if (selectedFile && selectedFile.type === 'text/csv') {
-          setFile(selectedFile);
-          setError(null);
+          try {
+            await validateCSVHeaders(selectedFile);
+            setFile(selectedFile);
+            setError(null);
+          } catch (error) {
+            setError(error);
+            setFile(null);
+          }
         } else {
           setError('Please select a valid CSV file');
           setFile(null);
@@ -64,8 +151,12 @@ export default {
             });
 
             if (response.data) {
-              // Refresh the list view
-              window.location.reload();
+              if (response.data.errors && response.data.errors.length > 0) {
+                setError(`Import completed with errors:\\n${response.data.errors.join('\\n')}`);
+              } else {
+                // Refresh the list view
+                window.location.reload();
+              }
             }
           }
         } catch (err) {
@@ -146,27 +237,23 @@ export default {
               <ul style={{ margin: '0 0 0 1.5rem', padding: 0 }}>
                 <li>url (required)</li>
                 <li>price (required)</li>
-                <li>link_insertion_price</li>
-                <li>TAT</li>
-                <li>min_word_count</li>
-                <li>forbidden_gp_price</li>
-                <li>forbidden_li_price</li>
-                <li>sample_post</li>
-                <li>backlink_type (Do follow/No follow)</li>
-                <li>category (JSON array)</li>
-                <li>other_category (JSON array)</li>
-                <li>guidelines</li>
-                <li>backlink_validity</li>
-                <li>ahrefs_dr</li>
-                <li>ahrefs_traffic</li>
-                <li>ahrefs_rank</li>
-                <li>moz_da</li>
-                <li>fast_placement_status (true/false)</li>
                 <li>publisher_name (required)</li>
                 <li>publisher_email (required)</li>
-                <li>publisher_price</li>
-                <li>publisher_forbidden_gp_price</li>
-                <li>publisher_forbidden_li_price</li>
+                <li>backlink_type (required)</li>
+                <li>category (required)</li>
+                <li>other_category (required)</li>
+                <li>guidelines (required)</li>
+                <li>backlink_validity (required)</li>
+                <li>ahrefs_dr (required)</li>
+                <li>ahrefs_traffic (required)</li>
+                <li>ahrefs_rank (required)</li>
+                <li>moz_da (required)</li>
+                <li>fast_placement_status (required)</li>
+                <li>sample_post (required)</li>
+                <li>tat (required)</li>
+                <li>min_word_count (required)</li>
+                <li>forbidden_gp_price (required)</li>
+                <li>forbidden_li_price (required)</li>
               </ul>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>

@@ -549,9 +549,11 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     ahrefs_dr: Schema.Attribute.Integer;
     ahrefs_rank: Schema.Attribute.Integer;
     ahrefs_traffic: Schema.Attribute.Integer;
-    backlink_type: Schema.Attribute.Enumeration<['Do follow', 'No follow']>;
-    backlink_validity: Schema.Attribute.String;
-    category: Schema.Attribute.JSON;
+    backlink_type: Schema.Attribute.Enumeration<['Do follow', 'No follow']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'Do follow'>;
+    backlink_validity: Schema.Attribute.String & Schema.Attribute.Required;
+    category: Schema.Attribute.JSON & Schema.Attribute.Required;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -568,23 +570,25 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
       'api::marketplace.marketplace'
     > &
       Schema.Attribute.Private;
-    min_word_count: Schema.Attribute.Integer;
+    min_word_count: Schema.Attribute.Integer & Schema.Attribute.Required;
     moz_da: Schema.Attribute.Integer;
     other_category: Schema.Attribute.JSON;
-    price: Schema.Attribute.Integer;
+    price: Schema.Attribute.Integer & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
-    publisher_email: Schema.Attribute.Email;
+    publisher_email: Schema.Attribute.Email & Schema.Attribute.Required;
     publisher_forbidden_gp_price: Schema.Attribute.Integer;
     publisher_forbidden_li_price: Schema.Attribute.Integer;
     publisher_link_insertion_price: Schema.Attribute.Integer;
-    publisher_name: Schema.Attribute.String;
-    publisher_price: Schema.Attribute.Integer;
+    publisher_name: Schema.Attribute.String & Schema.Attribute.Required;
+    publisher_price: Schema.Attribute.Integer & Schema.Attribute.Required;
     sample_post: Schema.Attribute.Text;
-    TAT: Schema.Attribute.Integer;
+    tat: Schema.Attribute.Integer;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    url: Schema.Attribute.String;
+    url: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
   };
 }
 
