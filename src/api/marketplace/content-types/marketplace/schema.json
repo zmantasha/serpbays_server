@@ -102,6 +102,122 @@
     },
     "publisher_link_insertion_price": {
       "type": "integer"
+    },
+    "language": {
+      "type": "enumeration",
+      "enum": [
+        "English",
+        "Spanish",
+        "French",
+        "German",
+        "Italian",
+        "Portuguese",
+        "Dutch",
+        "Russian",
+        "Chinese (Simplified)",
+        "Chinese (Traditional)",
+        "Japanese",
+        "Korean",
+        "Arabic",
+        "Turkish",
+        "Hindi",
+        "Bengali",
+        "Urdu",
+        "Vietnamese",
+        "Thai",
+        "Polish",
+        "Romanian",
+        "Swedish",
+        "Danish",
+        "Norwegian",
+        "Finnish",
+        "Czech",
+        "Hungarian",
+        "Greek",
+        "Slovak",
+        "Bulgarian",
+        "Serbian",
+        "Croatian",
+        "Ukrainian",
+        "Lithuanian",
+        "Latvian",
+        "Estonian",
+        "Slovenian",
+        "Hebrew",
+        "Farsi (Persian)",
+        "Malay",
+        "Indonesian",
+        "Tamil",
+        "Kannada",
+        "Gujarati",
+        "Marathi",
+        "Nepali",
+        "Sinhala",
+        "Burmese",
+        "Khmer (Cambodian)",
+        "Lao",
+        "Pashto",
+        "Swahili",
+        "Hausa",
+        "Amharic",
+        "Yoruba",
+        "Igbo",
+        "Zulu",
+        "Afrikaan",
+        "Filipino (Tagalog)",
+        "Bosnian",
+        "Macedonian",
+        "Armenian",
+        "Georgian",
+        "Azerbaijani",
+        "Kazakh",
+        "Uzbek"
+      ],
+      "required": true,
+      "default": "English"
+    },
+    "semrush_authority_score": {
+      "type": "integer"
+    },
+    "semrush_traffic": {
+      "type": "integer"
+    },
+    "spam_score": {
+      "type": "integer"
+    },
+    "adv_crypto_pricing": {
+      "type": "integer"
+    },
+    "adv_casino_pricing": {
+      "type": "integer"
+    },
+    "adv_cbd_pricing": {
+      "type": "integer"
+    },
+    "publisher_crypto_pricing": {
+      "type": "integer"
+    },
+    "publisher_casino_pricing": {
+      "type": "integer"
+    },
+    "publisher_cbd_pricing": {
+      "type": "integer"
+    },
+    "similarweb_traffic": {
+      "type": "integer"
+    },
+    "ahrefs_referring_domain": {
+      "type": "integer"
+    },
+    "domain_zone": {
+      "type": "string"
+    },
+    "only_with_us": {
+      "type": "boolean",
+      "default": false
+    },
+    "countries": {
+      "type": "json"
     }
   }
 }

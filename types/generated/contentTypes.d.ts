@@ -546,23 +546,101 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     draftAndPublish: true;
   };
   attributes: {
+    adv_casino_pricing: Schema.Attribute.Integer;
+    adv_cbd_pricing: Schema.Attribute.Integer;
+    adv_crypto_pricing: Schema.Attribute.Integer;
     ahrefs_dr: Schema.Attribute.Integer;
     ahrefs_rank: Schema.Attribute.Integer;
+    ahrefs_referring_domain: Schema.Attribute.Integer;
     ahrefs_traffic: Schema.Attribute.Integer;
     backlink_type: Schema.Attribute.Enumeration<['Do follow', 'No follow']> &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'Do follow'>;
     backlink_validity: Schema.Attribute.String & Schema.Attribute.Required;
     category: Schema.Attribute.JSON & Schema.Attribute.Required;
+    countries: Schema.Attribute.JSON;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     dofollow_link: Schema.Attribute.Integer;
+    domain_zone: Schema.Attribute.String;
     fast_placement_status: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
     forbidden_gp_price: Schema.Attribute.Integer;
     forbidden_li_price: Schema.Attribute.Integer;
     guidelines: Schema.Attribute.Text & Schema.Attribute.DefaultTo<'N/A'>;
+    language: Schema.Attribute.Enumeration<
+      [
+        'English',
+        'Spanish',
+        'French',
+        'German',
+        'Italian',
+        'Portuguese',
+        'Dutch',
+        'Russian',
+        'Chinese (Simplified)',
+        'Chinese (Traditional)',
+        'Japanese',
+        'Korean',
+        'Arabic',
+        'Turkish',
+        'Hindi',
+        'Bengali',
+        'Urdu',
+        'Vietnamese',
+        'Thai',
+        'Polish',
+        'Romanian',
+        'Swedish',
+        'Danish',
+        'Norwegian',
+        'Finnish',
+        'Czech',
+        'Hungarian',
+        'Greek',
+        'Slovak',
+        'Bulgarian',
+        'Serbian',
+        'Croatian',
+        'Ukrainian',
+        'Lithuanian',
+        'Latvian',
+        'Estonian',
+        'Slovenian',
+        'Hebrew',
+        'Farsi (Persian)',
+        'Malay',
+        'Indonesian',
+        'Tamil',
+        'Kannada',
+        'Gujarati',
+        'Marathi',
+        'Nepali',
+        'Sinhala',
+        'Burmese',
+        'Khmer (Cambodian)',
+        'Lao',
+        'Pashto',
+        'Swahili',
+        'Hausa',
+        'Amharic',
+        'Yoruba',
+        'Igbo',
+        'Zulu',
+        'Afrikaan',
+        'Filipino (Tagalog)',
+        'Bosnian',
+        'Macedonian',
+        'Armenian',
+        'Georgian',
+        'Azerbaijani',
+        'Kazakh',
+        'Uzbek',
+      ]
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'English'>;
     link_insertion_price: Schema.Attribute.Integer;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
@@ -572,9 +650,13 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
       Schema.Attribute.Private;
     min_word_count: Schema.Attribute.Integer & Schema.Attribute.Required;
     moz_da: Schema.Attribute.Integer;
+    only_with_us: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     other_category: Schema.Attribute.JSON;
     price: Schema.Attribute.Integer & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
+    publisher_casino_pricing: Schema.Attribute.Integer;
+    publisher_cbd_pricing: Schema.Attribute.Integer;
+    publisher_crypto_pricing: Schema.Attribute.Integer;
     publisher_email: Schema.Attribute.Email & Schema.Attribute.Required;
     publisher_forbidden_gp_price: Schema.Attribute.Integer;
     publisher_forbidden_li_price: Schema.Attribute.Integer;
@@ -582,6 +664,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     publisher_name: Schema.Attribute.String & Schema.Attribute.Required;
     publisher_price: Schema.Attribute.Integer & Schema.Attribute.Required;
     sample_post: Schema.Attribute.Text;
+    semrush_authority_score: Schema.Attribute.Integer;
+    semrush_traffic: Schema.Attribute.Integer;
+    similarweb_traffic: Schema.Attribute.Integer;
+    spam_score: Schema.Attribute.Integer;
     tat: Schema.Attribute.Integer;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &

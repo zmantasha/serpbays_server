@@ -125,6 +125,51 @@ export default {
         });
       };
 
+      const handleDownloadDuplicates = () => {
+        if (!duplicates || !duplicates.duplicates.length) return;
+        
+        // Create CSV content with more columns
+        const headers = [
+          'URL', 
+          'Current Price', 
+          'New Price', 
+          'Current Publisher Name',
+          'New Publisher Name',
+          'Current Publisher Email',
+          'New Publisher Email',
+          'Current Publisher Price',
+          'New Publisher Price'
+        ];
+        
+        const rows = duplicates.duplicates.map(dup => [
+          dup.url,
+          dup.existingData.price,
+          dup.newData.price,
+          dup.existingData.publisher_name || '',
+          dup.newData.publisher_name || '',
+          dup.existingData.publisher_email || '',
+          dup.newData.publisher_email || '',
+          dup.existingData.publisher_price || '',
+          dup.newData.publisher_price || ''
+        ]);
+        
+        const csvContent = [
+          headers.join(','),
+          ...rows.map(row => row.join(','))
+        ].join('\n');
+        
+        // Create download link
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', 'duplicate_urls.csv');
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
       const handleConfirmDuplicates = async () => {
         if (selectedDuplicates.length === 0) {
           setError('No duplicates selected for update');
@@ -321,10 +366,16 @@ export default {
                       <div style={{ flex: 1 }}>
                         <h4 style={{ margin: '5px 0' }}>Current Data</h4>
                         <div>Price: {dup.existingData.price}</div>
+                        <div>Publisher: {dup.existingData.publisher_name || 'N/A'}</div>
+                        <div>Publisher Email: {dup.existingData.publisher_email || 'N/A'}</div>
+                        <div>Publisher Price: {dup.existingData.publisher_price || 'N/A'}</div>
                       </div>
                       <div style={{ flex: 1 }}>
                         <h4 style={{ margin: '5px 0' }}>New Data</h4>
                         <div>Price: {dup.newData.price}</div>
+                        <div>Publisher: {dup.newData.publisher_name || 'N/A'}</div>
+                        <div>Publisher Email: {dup.newData.publisher_email || 'N/A'}</div>
+                        <div>Publisher Price: {dup.newData.publisher_price || 'N/A'}</div>
                       </div>
                     </div>
                   </div>
@@ -332,24 +383,37 @@ export default {
               </div>
             </div>
             
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <button 
-                onClick={() => setDuplicates(null)}
-                style={secondaryButtonStyle}
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleConfirmDuplicates}
-                disabled={isUploading || selectedDuplicates.length === 0}
+                onClick={handleDownloadDuplicates}
                 style={{
-                  ...primaryButtonStyle,
-                  backgroundColor: selectedDuplicates.length > 0 ? '#4945FF' : '#ccc',
-                  cursor: selectedDuplicates.length > 0 ? 'pointer' : 'not-allowed',
+                  ...secondaryButtonStyle,
+                  backgroundColor: '#4CAF50',
+                  marginRight: 'auto'
                 }}
               >
-                {isUploading ? 'Updating...' : 'Update Selected'}
+                Download List
               </button>
+              
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button 
+                  onClick={() => setDuplicates(null)}
+                  style={secondaryButtonStyle}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleConfirmDuplicates}
+                  disabled={isUploading || selectedDuplicates.length === 0}
+                  style={{
+                    ...primaryButtonStyle,
+                    backgroundColor: selectedDuplicates.length > 0 ? '#4945FF' : '#ccc',
+                    cursor: selectedDuplicates.length > 0 ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  {isUploading ? 'Updating...' : 'Update Selected'}
+                </button>
+              </div>
             </div>
           </>
         );
