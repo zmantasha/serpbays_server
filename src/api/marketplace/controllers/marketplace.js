@@ -148,34 +148,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
             // Check if field exists in schema
             if (schema[field]) {
-              // Special handling for language field
-              if (field === 'language') {
-                // Get the allowed language values
-                const allowedLanguages = schema.language.enum;
-                
-                // Normalize the language value (trim & proper case)
-                const normalizedValue = String(value).trim();
-                
-                // Find a case-insensitive match in allowed languages
-                const matchedLanguage = allowedLanguages.find(lang => 
-                  lang.toLowerCase() === normalizedValue.toLowerCase());
-                
-                if (matchedLanguage) {
-                  // Use the properly cased version from the schema
-                  convertedData[field] = matchedLanguage;
-                } else {
-                  // Use default if no match
-                  convertedData[field] = 'English';
-                  console.warn(`Invalid language value "${normalizedValue}" - using default "English"`); 
-                }
+              const validation = validateType(value, schema[field].type);
+              if (!validation.isValid) {
+                rowErrors.push(`${field}: ${validation.error}`);
               } else {
-                // Normal validation for other fields
-                const validation = validateType(value, schema[field].type);
-                if (!validation.isValid) {
-                  rowErrors.push(`${field}: ${validation.error}`);
-                } else {
-                  convertedData[field] = validation.value;
-                }
+                convertedData[field] = validation.value;
               }
             } else {
               console.warn(`Unknown field in CSV: ${field}`);
