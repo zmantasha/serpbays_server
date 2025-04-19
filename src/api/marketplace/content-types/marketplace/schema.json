@@ -149,6 +149,15 @@
     "language": {
       "type": "json",
       "required": true
+    },
+    "blacklist_status": {
+      "type": "enumeration",
+      "enum": [
+        "active",
+        "blacklisted",
+        "suspended"
+      ],
+      "default": "active"
     }
   }
 }

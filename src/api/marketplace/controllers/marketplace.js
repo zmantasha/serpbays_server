@@ -79,6 +79,40 @@ const validateType = (value, type) => {
 };
 
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
+  // Publisher filtering: Only allow publishers to see their own listings
+  async find(ctx) {
+    // Get authenticated user from context
+    const user = ctx.state.user;
+    console.log(user)
+    // Advertiser (user.Advertiser === true) can see all listings
+    // Publisher (user.Advertiser === false) only sees their listings
+    if (user && user.Advertiser === false) {
+      if (!ctx.query) ctx.query = {};
+      if (!ctx.query.filters) ctx.query.filters = {};
+      ctx.query.filters.publisher_email = user.email;
+    }
+    // Call the default core action
+    return await super.find(ctx);
+  },
+
+  async findOne(ctx) {
+    // Get authenticated user from context
+    const user = ctx.state.user;
+    // console.log(user)
+    // Advertiser (user.Advertiser === true) can see all listings
+    // Publisher (user.Advertiser === false) can only access their own listings
+    if (user && user.Advertiser === false) {
+      const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
+        fields: ['publisher_email']
+      });
+      if (!entry || entry.publisher_email !== user.email) {
+        return ctx.unauthorized('You are not allowed to view this listing.');
+      }
+    }
+    // Call the default core action
+    return await super.findOne(ctx);
+  },
+
   async uploadCSV(ctx) {
     try {
       const { fileId, confirmDuplicates } = ctx.request.body;

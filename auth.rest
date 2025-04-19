@@ -2,8 +2,8 @@ POST http://localhost:1337/api/auth/local
 Content-Type: application/json
 
 {
-  "identifier": "test3@gmail.com",
-  "password": "test12345"
+  "identifier": "publisher@gmail.com",
+  "password": "publisher"
 }
 
 ###
@@ -37,3 +37,7 @@ Content-Type: application/json
     "user": 10
   }
 }
+
+###
+GET http://localhost:1337/api/marketplaces
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjUsImlhdCI6MTc0NDk3MjQ5MiwiZXhwIjoxNzQ3NTY0NDkyfQ.Kl1AkJiePmSSpNF9zbwzagznT7P0kGF1ZgQNJ-f7k1c
