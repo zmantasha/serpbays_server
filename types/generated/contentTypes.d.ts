@@ -557,9 +557,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'Do follow'>;
     backlink_validity: Schema.Attribute.String & Schema.Attribute.Required;
-    blacklist_status: Schema.Attribute.Enumeration<
-      ['active', 'blacklisted', 'suspended']
-    > &
+    blacklist_status: Schema.Attribute.Enumeration<['active', 'inactive']> &
       Schema.Attribute.DefaultTo<'active'>;
     category: Schema.Attribute.JSON & Schema.Attribute.Required;
     countries: Schema.Attribute.JSON;

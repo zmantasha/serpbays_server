@@ -154,8 +154,7 @@
       "type": "enumeration",
       "enum": [
         "active",
-        "blacklisted",
-        "suspended"
+        "inactive"
       ],
       "default": "active"
     }
