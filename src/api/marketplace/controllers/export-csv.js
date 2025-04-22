@@ -36,12 +36,41 @@ module.exports = {
         return ctx.badRequest('No entries found matching the criteria');
       }
       
+      // Format entries to handle category field
+      const formattedEntries = entries.map(entry => {
+        const formattedEntry = { ...entry };
+        
+        // Convert category to comma-separated string if it's an array or object
+        if (formattedEntry.category) {
+          if (Array.isArray(formattedEntry.category)) {
+            formattedEntry.category = formattedEntry.category.join(', ');
+          } else if (typeof formattedEntry.category === 'object') {
+            formattedEntry.category = Object.values(formattedEntry.category).join(', ');
+          }
+        }
+        
+        // Convert other_category to comma-separated string if it's an array or object
+        if (formattedEntry.other_category) {
+          if (Array.isArray(formattedEntry.other_category)) {
+            formattedEntry.other_category = formattedEntry.other_category.join(', ');
+          } else if (typeof formattedEntry.other_category === 'object') {
+            formattedEntry.other_category = Object.values(formattedEntry.other_category).join(', ');
+          }
+        }
+        
+        // Remove unwanted fields
+        delete formattedEntry.id;
+        delete formattedEntry.document;
+        
+        return formattedEntry;
+      });
+      
       // Get fields from first entry
-      const fields = Object.keys(entries[0]);
+      const fields = Object.keys(formattedEntries[0]);
       
       // Convert to CSV
       const json2csvParser = new Parser({ fields });
-      const csv = json2csvParser.parse(entries);
+      const csv = json2csvParser.parse(formattedEntries);
       
       // Set response headers for CSV download
       ctx.type = 'text/csv';
@@ -155,12 +184,41 @@ module.exports = {
         return ctx.badRequest('No entries found with the provided IDs');
       }
       
+      // Format entries to handle category field
+      const formattedEntries = entries.map(entry => {
+        const formattedEntry = { ...entry };
+        
+        // Convert category to comma-separated string if it's an array or object
+        if (formattedEntry.category) {
+          if (Array.isArray(formattedEntry.category)) {
+            formattedEntry.category = formattedEntry.category.join(', ');
+          } else if (typeof formattedEntry.category === 'object') {
+            formattedEntry.category = Object.values(formattedEntry.category).join(', ');
+          }
+        }
+        
+        // Convert other_category to comma-separated string if it's an array or object
+        if (formattedEntry.other_category) {
+          if (Array.isArray(formattedEntry.other_category)) {
+            formattedEntry.other_category = formattedEntry.other_category.join(', ');
+          } else if (typeof formattedEntry.other_category === 'object') {
+            formattedEntry.other_category = Object.values(formattedEntry.other_category).join(', ');
+          }
+        }
+        
+        // Remove unwanted fields
+        delete formattedEntry.id;
+        delete formattedEntry.document;
+        
+        return formattedEntry;
+      });
+      
       // Get fields from first entry for complete data export
-      const fields = Object.keys(entries[0]);
+      const fields = Object.keys(formattedEntries[0]);
       
       // Convert to CSV
       const json2csvParser = new Parser({ fields });
-      const csv = json2csvParser.parse(entries);
+      const csv = json2csvParser.parse(formattedEntries);
       
       // Set response headers for CSV download
       ctx.type = 'text/csv';
