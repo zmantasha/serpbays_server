@@ -862,6 +862,18 @@ export default {
     const ExportModal = ({ isVisible, setIsVisible }) => {
       const [filterEmail, setFilterEmail] = useState('');
       const [filterUrl, setFilterUrl] = useState('');
+      const [filterCategory, setFilterCategory] = useState('');
+      const [filterBacklinkType, setFilterBacklinkType] = useState('');
+      const [filterPublisherName, setFilterPublisherName] = useState('');
+      const [filterMinDR, setFilterMinDR] = useState('');
+      const [filterMaxDR, setFilterMaxDR] = useState('');
+      const [filterMinDA, setFilterMinDA] = useState('');
+      const [filterMaxDA, setFilterMaxDA] = useState('');
+      const [filterMinPrice, setFilterMinPrice] = useState('');
+      const [filterMaxPrice, setFilterMaxPrice] = useState('');
+      const [filterMinWordCount, setFilterMinWordCount] = useState('');
+      const [filterDofollow, setFilterDofollow] = useState('');
+      const [filterFastPlacement, setFilterFastPlacement] = useState('');
       const [maxRecords, setMaxRecords] = useState(1000);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
@@ -881,6 +893,54 @@ export default {
       const handleFilterUrlChange = (e) => {
         setFilterUrl(e.target.value);
       };
+
+      const handleFilterCategoryChange = (e) => {
+        setFilterCategory(e.target.value);
+      };
+
+      const handleFilterBacklinkTypeChange = (e) => {
+        setFilterBacklinkType(e.target.value);
+      };
+
+      const handleFilterPublisherNameChange = (e) => {
+        setFilterPublisherName(e.target.value);
+      };
+
+      const handleFilterMinDRChange = (e) => {
+        setFilterMinDR(e.target.value);
+      };
+
+      const handleFilterMaxDRChange = (e) => {
+        setFilterMaxDR(e.target.value);
+      };
+
+      const handleFilterMinDAChange = (e) => {
+        setFilterMinDA(e.target.value);
+      };
+
+      const handleFilterMaxDAChange = (e) => {
+        setFilterMaxDA(e.target.value);
+      };
+
+      const handleFilterMinPriceChange = (e) => {
+        setFilterMinPrice(e.target.value);
+      };
+
+      const handleFilterMaxPriceChange = (e) => {
+        setFilterMaxPrice(e.target.value);
+      };
+
+      const handleFilterMinWordCountChange = (e) => {
+        setFilterMinWordCount(e.target.value);
+      };
+
+      const handleFilterDofollowChange = (e) => {
+        setFilterDofollow(e.target.value);
+      };
+
+      const handleFilterFastPlacementChange = (e) => {
+        setFilterFastPlacement(e.target.value);
+      };
       
       const handleMaxRecordsChange = (e) => {
         const value = parseInt(e.target.value) || 0;
@@ -892,13 +952,7 @@ export default {
         setLoading(true);
         setError(null);
         try {
-          const filters = {};
-          if (filterEmail && filterEmail.trim()) {
-            filters['filters[publisher_email][$containsi]'] = filterEmail.trim();
-          }
-          if (filterUrl && filterUrl.trim()) {
-            filters['filters[url][$containsi]'] = filterUrl.trim();
-          }
+          const filters = buildFilters();
           
           const res = await axios.get('/api/marketplaces/admin-list', {
             params: {
@@ -918,32 +972,83 @@ export default {
           setLoading(false);
         }
       };
+
+      // Build filter object based on all filters
+      const buildFilters = () => {
+        const filters = {};
+        if (filterEmail && filterEmail.trim()) {
+          filters['filters[publisher_email][$containsi]'] = filterEmail.trim();
+        }
+        if (filterUrl && filterUrl.trim()) {
+          filters['filters[url][$containsi]'] = filterUrl.trim();
+        }
+        if (filterCategory && filterCategory.trim()) {
+          filters['filters[category][$containsi]'] = filterCategory.trim();
+        }
+        if (filterBacklinkType && filterBacklinkType.trim()) {
+          filters['filters[backlink_type][$eq]'] = filterBacklinkType.trim();
+        }
+        if (filterPublisherName && filterPublisherName.trim()) {
+          filters['filters[publisher_name][$containsi]'] = filterPublisherName.trim();
+        }
+        if (filterMinDR && !isNaN(parseInt(filterMinDR))) {
+          filters['filters[ahrefs_dr][$gte]'] = parseInt(filterMinDR);
+        }
+        if (filterMaxDR && !isNaN(parseInt(filterMaxDR))) {
+          filters['filters[ahrefs_dr][$lte]'] = parseInt(filterMaxDR);
+        }
+        if (filterMinDA && !isNaN(parseInt(filterMinDA))) {
+          filters['filters[moz_da][$gte]'] = parseInt(filterMinDA);
+        }
+        if (filterMaxDA && !isNaN(parseInt(filterMaxDA))) {
+          filters['filters[moz_da][$lte]'] = parseInt(filterMaxDA);
+        }
+        if (filterMinPrice && !isNaN(parseInt(filterMinPrice))) {
+          filters['filters[price][$gte]'] = parseInt(filterMinPrice);
+        }
+        if (filterMaxPrice && !isNaN(parseInt(filterMaxPrice))) {
+          filters['filters[price][$lte]'] = parseInt(filterMaxPrice);
+        }
+        if (filterMinWordCount && !isNaN(parseInt(filterMinWordCount))) {
+          filters['filters[min_word_count][$gte]'] = parseInt(filterMinWordCount);
+        }
+        if (filterDofollow && filterDofollow !== 'any') {
+          filters['filters[dofollow_link][$eq]'] = filterDofollow === 'yes';
+        }
+        if (filterFastPlacement && filterFastPlacement !== 'any') {
+          filters['filters[fast_placement_status][$eq]'] = filterFastPlacement === 'yes';
+        }
+        return filters;
+      };
       
       // Search and load records based on filters
       const handleSearch = async () => {
         setLoading(true);
         setError(null);
         try {
-          const filters = {};
-          if (filterEmail && filterEmail.trim()) {
-            filters['filters[publisher_email][$containsi]'] = filterEmail.trim();
-          }
-          if (filterUrl && filterUrl.trim()) {
-            filters['filters[url][$containsi]'] = filterUrl.trim();
-          }
+          const filters = buildFilters();
           
           const res = await axios.get('/api/marketplaces/admin-list', {
             params: {
               ...filters,
               page: 1, 
-              pageSize,
+              pageSize: Math.min(pageSize, maxRecords), // Respect maxRecords limit for search too
+              limit: maxRecords, // Add explicit limit parameter
             },
             withCredentials: true,
           });
         console.log(res.data)
           setRecords(res.data.data || []);
-          setTotalCount(res.data.meta?.pagination?.total || 0);
-          setPageCount(res.data.meta?.pagination?.pageCount || 1);
+          
+          // Limit the total count to respect maxRecords setting
+          const actualTotal = res.data.meta?.pagination?.total || 0;
+          setTotalCount(Math.min(actualTotal, maxRecords));
+          
+          // Recalculate page count based on limited total
+          const limitedTotal = Math.min(actualTotal, maxRecords);
+          const calculatedPageCount = Math.ceil(limitedTotal / pageSize);
+          setPageCount(calculatedPageCount);
+          
           setCurrentPage(1);
           setSearchPerformed(true);
           // Clear existing selections when loading new data
@@ -963,19 +1068,25 @@ export default {
         setLoading(true);
         setError(null);
         try {
-          const filters = {};
-          if (filterEmail && filterEmail.trim()) {
-            filters['filters[publisher_email][$containsi]'] = filterEmail.trim();
-          }
-          if (filterUrl && filterUrl.trim()) {
-            filters['filters[url][$containsi]'] = filterUrl.trim();
+          const filters = buildFilters();
+          
+          // Calculate proper offset and limit to respect maxRecords
+          const offset = (page - 1) * pageSize;
+          const remainingRecords = maxRecords - offset;
+          const effectivePageSize = Math.min(pageSize, Math.max(0, remainingRecords));
+          
+          // Don't load page if we've already reached the max records limit
+          if (effectivePageSize <= 0) {
+            setLoading(false);
+            return;
           }
           
           const res = await axios.get('/api/marketplaces/admin-list', {
             params: {
               ...filters,
               page,
-              pageSize,
+              pageSize: effectivePageSize,
+              limit: maxRecords,
             },
             withCredentials: true,
           });
@@ -1083,13 +1194,7 @@ export default {
         setLoading(true);
         setError(null);
         try {
-          const filters = {};
-          if (filterEmail && filterEmail.trim()) {
-            filters['filters[publisher_email][$containsi]'] = filterEmail.trim();
-          }
-          if (filterUrl && filterUrl.trim()) {
-            filters['filters[url][$containsi]'] = filterUrl.trim();
-          }
+          const filters = buildFilters();
           
           // Get auth token from localStorage
           const token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt');
@@ -1140,28 +1245,199 @@ export default {
             {/* Filter section */}
             <div style={{ marginBottom: 24 }}>
               <h3>Filter Records</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Publisher Email:</label>
-                  <input
-                    type="text"
-                    value={filterEmail}
-                    onChange={handleFilterEmailChange}
-                    placeholder="Filter by publisher email"
-                    style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>URL:</label>
-                  <input
-                    type="text"
-                    value={filterUrl}
-                    onChange={handleFilterUrlChange}
-                    placeholder="Filter by URL"
-                    style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
-                  />
+              
+              {/* Basic filters */}
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 8, fontWeight: 500 }}>Basic Filters</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>URL:</label>
+                    <input
+                      type="text"
+                      value={filterUrl}
+                      onChange={handleFilterUrlChange}
+                      placeholder="Filter by URL"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Category:</label>
+                    <input
+                      type="text"
+                      value={filterCategory}
+                      onChange={handleFilterCategoryChange}
+                      placeholder="Filter by category"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Backlink Type:</label>
+                    <select
+                      value={filterBacklinkType}
+                      onChange={handleFilterBacklinkTypeChange}
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' }}
+                    >
+                      <option value="">Any Type</option>
+                      <option value="guest post">Guest Post</option>
+                      <option value="link insertion">Link Insertion</option>
+                    </select>
+                  </div>
                 </div>
               </div>
+
+              {/* Publisher filters */}
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 8, fontWeight: 500 }}>Publisher Filters</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Publisher Email:</label>
+                    <input
+                      type="text"
+                      value={filterEmail}
+                      onChange={handleFilterEmailChange}
+                      placeholder="Filter by publisher email"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Publisher Name:</label>
+                    <input
+                      type="text"
+                      value={filterPublisherName}
+                      onChange={handleFilterPublisherNameChange}
+                      placeholder="Filter by publisher name"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Domain metrics filters */}
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 8, fontWeight: 500 }}>Domain Metrics</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Min DR:</label>
+                    <input
+                      type="number"
+                      value={filterMinDR}
+                      onChange={handleFilterMinDRChange}
+                      placeholder="Min DR"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Max DR:</label>
+                    <input
+                      type="number"
+                      value={filterMaxDR}
+                      onChange={handleFilterMaxDRChange}
+                      placeholder="Max DR"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Min DA:</label>
+                    <input
+                      type="number"
+                      value={filterMinDA}
+                      onChange={handleFilterMinDAChange}
+                      placeholder="Min DA"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Max DA:</label>
+                    <input
+                      type="number"
+                      value={filterMaxDA}
+                      onChange={handleFilterMaxDAChange}
+                      placeholder="Max DA"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Price and content filters */}
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 8, fontWeight: 500 }}>Price & Content Requirements</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Min Price ($):</label>
+                    <input
+                      type="number"
+                      value={filterMinPrice}
+                      onChange={handleFilterMinPriceChange}
+                      placeholder="Min price"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Max Price ($):</label>
+                    <input
+                      type="number"
+                      value={filterMaxPrice}
+                      onChange={handleFilterMaxPriceChange}
+                      placeholder="Max price"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Min Word Count:</label>
+                    <input
+                      type="number"
+                      value={filterMinWordCount}
+                      onChange={handleFilterMinWordCountChange}
+                      placeholder="Min word count"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Additional filters */}
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 8, fontWeight: 500 }}>Additional Filters</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Dofollow Link:</label>
+                    <select
+                      value={filterDofollow}
+                      onChange={handleFilterDofollowChange}
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' }}
+                    >
+                      <option value="">Any</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Fast Placement:</label>
+                    <select
+                      value={filterFastPlacement}
+                      onChange={handleFilterFastPlacementChange}
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' }}
+                    >
+                      <option value="">Any</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Max Records:</label>
+                    <input
+                      type="number"
+                      value={maxRecords}
+                      onChange={handleMaxRecordsChange}
+                      min="1"
+                      max="50000"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div style={{ marginTop: 16 }}>
                 <button
                   onClick={handleSearch}
@@ -1211,6 +1487,10 @@ export default {
                             <th style={{ padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' }}>Publisher</th>
                             <th style={{ padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' }}>Email</th>
                             <th style={{ padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' }}>Price</th>
+                            <th style={{ padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' }}>DR</th>
+                            <th style={{ padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' }}>DA</th>
+                            <th style={{ padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' }}>Category</th>
+                            <th style={{ padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' }}>Type</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1224,13 +1504,34 @@ export default {
                                 />
                               </td>
                               <td style={{ padding: 8 }}>
-                                <div style={{ maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <div style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {record.url || record.attributes?.url || 'N/A'}
                                 </div>
                               </td>
                               <td style={{ padding: 8 }}>{record.publisher_name || record.attributes?.publisher_name || 'N/A'}</td>
                               <td style={{ padding: 8 }}>{record.publisher_email || record.attributes?.publisher_email || 'N/A'}</td>
                               <td style={{ padding: 8 }}>${record.price || record.attributes?.price || 'N/A'}</td>
+                              <td style={{ padding: 8 }}>{record.ahrefs_dr || record.attributes?.ahrefs_dr || 'N/A'}</td>
+                              <td style={{ padding: 8 }}>{record.moz_da || record.attributes?.moz_da || 'N/A'}</td>
+                              <td style={{ padding: 8 }}>
+                                {(() => {
+                                  const category = record.category || record.attributes?.category;
+                                  if (!category) return 'N/A';
+                                  
+                                  // Handle array of categories
+                                  if (Array.isArray(category)) {
+                                    return category.join(', ');
+                                  }
+                                  
+                                  // Handle string that might contain multiple categories
+                                  if (typeof category === 'string' && category.includes(',')) {
+                                    return category.split(',').map(cat => cat.trim()).join(', ');
+                                  }
+                                  
+                                  return category;
+                                })()}
+                              </td>
+                              <td style={{ padding: 8 }}>{record.backlink_type || record.attributes?.backlink_type || 'N/A'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1383,7 +1684,23 @@ export default {
     if (plugin) {
       plugin.injectComponent('listView', 'actions', {
         name: 'csv-import',
-        Component: Injected
+        Component: (props) => {
+          // Check if we're on a marketplace-related page
+          const currentPath = window.location.pathname;
+          console.log('Current path:', currentPath);
+          
+          // Use a more flexible check for marketplace collection
+          if (
+            currentPath.includes('marketplace') || 
+            currentPath.includes('Marketplace') ||
+            currentPath.includes('marketplaces')
+          ) {
+            return <Injected {...props} />;
+          }
+          
+          // Not on marketplace page
+          return null;
+        }
       });
     }
   },
