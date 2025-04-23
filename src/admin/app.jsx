@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Download } from '@strapi/icons';
-import { exportMarketplaceCsv } from './exportCsv';
+import { exportMarketplaceCsv } from './exportCsv.js';
 
 // Required fields for CSV validation
 const REQUIRED_FIELDS = [
