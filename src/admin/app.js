@@ -1,0 +1,1342 @@
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Download } from '@strapi/icons';
+import { exportMarketplaceCsv } from './exportCsv.js';
+// Required fields for CSV validation
+const REQUIRED_FIELDS = [
+    'url',
+    'price',
+    'publisher_name',
+    'publisher_price',
+    'publisher_email',
+    'backlink_type',
+    'category',
+    'backlink_validity',
+    'min_word_count',
+];
+const MISSING_FIELDS = [
+    'url',
+    'price',
+    'link_insertion_price',
+    'publisher_name',
+    'publisher_price',
+    'publisher_email',
+    'publisher_forbidden_gp_price',
+    'publisher_forbidden_li_price',
+    'publisher_link_insertion_price',
+    'backlink_type',
+    'category',
+    'other_category',
+    'guidelines',
+    'dofollow_link',
+    'sample_post',
+    'backlink_validity',
+    'ahrefs_dr',
+    'ahrefs_traffic',
+    'ahrefs_rank',
+    'moz_da',
+    'fast_placement_status',
+    'sample_post',
+    'tat',
+    'min_word_count',
+    'forbidden_gp_price',
+    'forbidden_li_price'
+];
+export default {
+    bootstrap() { },
+    registerTrads() {
+        return __awaiter(this, void 0, void 0, function* () {
+            return [];
+        });
+    },
+    register({ getPlugin }) {
+        const plugin = getPlugin('content-manager');
+        // Import Modal Component
+        const ImportModal = ({ setIsVisible }) => {
+            const [file, setFile] = useState(null);
+            const [isUploading, setIsUploading] = useState(false);
+            const [error, setError] = useState(null);
+            const [duplicates, setDuplicates] = useState(null);
+            const [createdCount, setCreatedCount] = useState(0);
+            const [selectedDuplicates, setSelectedDuplicates] = useState([]);
+            const validateCSVHeaders = (file) => __awaiter(this, void 0, void 0, function* () {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            // Get first line and parse headers
+                            const firstLine = event.target.result.toString().split('\n')[0];
+                            const headers = firstLine.split(',').map(h => h.trim().toLowerCase());
+                            // Check for missing required fields
+                            const missingFields = MISSING_FIELDS.filter(field => !headers.includes(field));
+                            const requiredFields = REQUIRED_FIELDS.filter(field => !headers.includes(field));
+                            if (missingFields.length > 0) {
+                                reject(`Missing required fields: ${missingFields.join(', ')}`);
+                            }
+                            else if (requiredFields.length > 0) {
+                                reject(`Required fields are: ${REQUIRED_FIELDS.join(', ')}`);
+                            }
+                            else {
+                                resolve(true);
+                            }
+                        }
+                        catch (error) {
+                            reject('Error reading CSV headers');
+                        }
+                    };
+                    reader.onerror = () => reject('Error reading file');
+                    reader.readAsText(file);
+                });
+            });
+            const handleFileChange = (e) => __awaiter(this, void 0, void 0, function* () {
+                const selectedFile = e.target.files[0];
+                if (selectedFile && selectedFile.type === 'text/csv') {
+                    try {
+                        yield validateCSVHeaders(selectedFile);
+                        setFile(selectedFile);
+                        setError(null);
+                    }
+                    catch (error) {
+                        setError(error);
+                        setFile(null);
+                    }
+                }
+                else {
+                    setError('Please select a valid CSV file');
+                    setFile(null);
+                }
+            });
+            const handleDuplicateToggle = (url) => {
+                setSelectedDuplicates(prev => {
+                    if (prev.includes(url)) {
+                        return prev.filter(item => item !== url);
+                    }
+                    else {
+                        return [...prev, url];
+                    }
+                });
+            };
+            const handleDownloadDuplicates = () => {
+                if (!duplicates || !duplicates.duplicates.length)
+                    return;
+                // Create CSV content with more columns
+                const headers = [
+                    'URL',
+                    'Current Price',
+                    'New Price',
+                    'Current Publisher Name',
+                    'New Publisher Name',
+                    'Current Publisher Email',
+                    'New Publisher Email',
+                    'Current Publisher Price',
+                    'New Publisher Price'
+                ];
+                const rows = duplicates.duplicates.map(dup => [
+                    dup.url,
+                    dup.existingData.price,
+                    dup.newData.price,
+                    dup.existingData.publisher_name || '',
+                    dup.newData.publisher_name || '',
+                    dup.existingData.publisher_email || '',
+                    dup.newData.publisher_email || '',
+                    dup.existingData.publisher_price || '',
+                    dup.newData.publisher_price || ''
+                ]);
+                const csvContent = [
+                    headers.join(','),
+                    ...rows.map(row => row.join(','))
+                ].join('\n');
+                // Create download link
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.setAttribute('href', url);
+                link.setAttribute('download', 'duplicate_urls.csv');
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+            const handleConfirmDuplicates = () => __awaiter(this, void 0, void 0, function* () {
+                var _a, _b, _c;
+                if (!duplicates || !duplicates.duplicates.length || !selectedDuplicates.length) {
+                    return;
+                }
+                setIsUploading(true);
+                setError(null);
+                try {
+                    // Get auth token from localStorage, sessionStorage, or cookies
+                    let auth = null;
+                    try {
+                        auth = JSON.parse(localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken'));
+                    }
+                    catch (e) {
+                        console.log('Error parsing token from storage:', e);
+                    }
+                    // If not found in storage, try to get from cookies
+                    if (!auth) {
+                        const cookies = document.cookie.split(';');
+                        for (let i = 0; i < cookies.length; i++) {
+                            const cookie = cookies[i].trim();
+                            if (cookie.startsWith('jwtToken')) {
+                                const equalPos = cookie.indexOf('=');
+                                if (equalPos !== -1) {
+                                    auth = cookie.substring(equalPos + 1);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!auth) {
+                        throw new Error('Authentication token not found in storage or cookies');
+                    }
+                    // Send confirmation request with enhanced duplicate handling
+                    const response = yield axios.post('/api/upload-csv', {
+                        fileId: duplicates.fileId,
+                        confirmDuplicates: selectedDuplicates,
+                        strictDuplicatePrevention: true, // Add flag to enforce strict duplicate checks
+                        uniqueIdentifier: 'url', // Specify which field should be used for uniqueness
+                        updateExisting: true, // Update existing records instead of creating new ones
+                        strategy: 'replace' // Replace existing records with new data
+                    }, {
+                        headers: {
+                            'Authorization': `Bearer ${auth}`
+                        },
+                        withCredentials: true, // Include cookies in the request
+                    });
+                    if (response.data) {
+                        if (response.data.errors && response.data.errors.length > 0) {
+                            setError(`Import completed with errors:\n${response.data.errors.join('\n')}`);
+                        }
+                        else {
+                            // Refresh the list view
+                            window.location.reload();
+                        }
+                    }
+                }
+                catch (err) {
+                    console.error('Duplicate confirmation error:', err);
+                    const errorMessage = ((_c = (_b = (_a = err.response) === null || _a === void 0 ? void 0 : _a.data) === null || _b === void 0 ? void 0 : _b.error) === null || _c === void 0 ? void 0 : _c.message) || err.message || 'Error updating duplicates';
+                    setError(errorMessage);
+                }
+                finally {
+                    setIsUploading(false);
+                    setDuplicates(null);
+                }
+            });
+            const handleUpload = () => __awaiter(this, void 0, void 0, function* () {
+                var _d, _e, _f;
+                if (!file) {
+                    setError('Please select a file first');
+                    return;
+                }
+                setIsUploading(true);
+                setError(null);
+                const formData = new FormData();
+                formData.append('files', file);
+                try {
+                    // Get auth token from localStorage, sessionStorage, or cookies
+                    let auth = null;
+                    try {
+                        auth = JSON.parse(localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken'));
+                        console.log('Token from storage:', auth ? 'Found' : 'Not found');
+                    }
+                    catch (e) {
+                        console.log('Error parsing token from storage:', e);
+                    }
+                    // If not found in storage, try to get from cookies
+                    if (!auth) {
+                        console.log('Searching for token in cookies...');
+                        const cookies = document.cookie.split(';');
+                        console.log('All cookies:', cookies);
+                        // Try direct access to the cookie
+                        const jwtTokenCookie = document.cookie
+                            .split('; ')
+                            .find(row => row.startsWith('jwtToken'));
+                        if (jwtTokenCookie) {
+                            console.log('Found jwtToken cookie:', jwtTokenCookie);
+                            // Just use the entire cookie value
+                            auth = jwtTokenCookie.split('=')[1];
+                            console.log('Extracted auth token:', auth ? 'Found' : 'Not found');
+                        }
+                        else {
+                            console.log('jwtToken cookie not found');
+                            // Try finding the token in any cookie for safety
+                            for (let i = 0; i < cookies.length; i++) {
+                                const cookie = cookies[i].trim();
+                                console.log(`Checking cookie: ${cookie}`);
+                                if (cookie.startsWith('jwtToken')) {
+                                    console.log('Found cookie starting with jwtToken:', cookie);
+                                    // Try both methods of extraction
+                                    const parts = cookie.split('=');
+                                    if (parts.length > 1) {
+                                        auth = parts[1];
+                                        console.log('Extracted token using split:', auth ? 'Found' : 'Not found');
+                                    }
+                                    else {
+                                        // If no equals sign, take everything after "jwtToken"
+                                        auth = cookie.substring('jwtToken'.length).trim();
+                                        console.log('Extracted token using substring:', auth ? 'Found' : 'Not found');
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Last resort: try parsing the cookie string manually
+                    if (!auth) {
+                        console.log('Trying alternative cookie parsing');
+                        const cookieString = document.cookie;
+                        console.log('Full cookie string:', cookieString);
+                        // Check if jwtToken is anywhere in the cookie string
+                        if (cookieString.includes('jwtToken')) {
+                            const startIndex = cookieString.indexOf('jwtToken') + 'jwtToken'.length;
+                            let endIndex = cookieString.indexOf(';', startIndex);
+                            if (endIndex === -1)
+                                endIndex = cookieString.length;
+                            // Extract everything after jwtToken
+                            const tokenPart = cookieString.substring(startIndex, endIndex).trim();
+                            // Check if it starts with =
+                            if (tokenPart.startsWith('=')) {
+                                auth = tokenPart.substring(1);
+                            }
+                            else {
+                                auth = tokenPart;
+                            }
+                            console.log('Extracted using manual parsing:', auth ? 'Found' : 'Not found');
+                        }
+                    }
+                    if (!auth) {
+                        console.log('Failed to find token in cookies. Raw cookie string:', document.cookie);
+                        throw new Error('Authentication token not found in storage or cookies');
+                    }
+                    console.log('Successfully found authentication token');
+                    // First upload the file
+                    const uploadResponse = yield axios.post('/upload', formData, {
+                        headers: {
+                            'Content-Type': 'multipart/form-data',
+                            'Authorization': `Bearer ${auth}`
+                        },
+                        withCredentials: true, // Include cookies in the request
+                    });
+                    if (uploadResponse.data) {
+                        // Now process the uploaded file with stricter duplicate prevention
+                        const response = yield axios.post('/api/upload-csv', {
+                            fileId: uploadResponse.data[0].id,
+                            strictDuplicatePrevention: true, // Add flag to enforce strict duplicate checks
+                            uniqueIdentifier: 'url', // Specify which field should be used for uniqueness
+                            updateExisting: true, // Update existing records instead of creating new ones
+                            skipDuplicates: false // Force check for duplicates
+                        }, {
+                            headers: {
+                                'Authorization': `Bearer ${auth}`
+                            },
+                            withCredentials: true, // Include cookies in the request
+                        });
+                        if (response.data) {
+                            if (response.data.needsConfirmation) {
+                                // Store duplicates for confirmation
+                                setDuplicates(Object.assign(Object.assign({}, response.data), { fileId: uploadResponse.data[0].id }));
+                                setCreatedCount(response.data.createdCount || 0);
+                            }
+                            else if (response.data.errors && response.data.errors.length > 0) {
+                                setError(`Import completed with errors:\n${response.data.errors.join('\n')}`);
+                            }
+                            else {
+                                // Refresh the list view
+                                window.location.reload();
+                            }
+                        }
+                    }
+                }
+                catch (err) {
+                    console.error('Upload error:', err);
+                    const errorMessage = ((_f = (_e = (_d = err.response) === null || _d === void 0 ? void 0 : _d.data) === null || _e === void 0 ? void 0 : _e.error) === null || _f === void 0 ? void 0 : _f.message) || err.message || 'Error uploading file';
+                    console.log('File being uploaded:', file);
+                    setError(errorMessage);
+                }
+                finally {
+                    setIsUploading(false);
+                }
+            });
+            // Improved modern styling
+            const modalOverlayStyle = {
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                backdropFilter: 'blur(4px)',
+                zIndex: 999,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+            };
+            const modalStyle = {
+                backgroundColor: 'white',
+                borderRadius: '8px',
+                boxShadow: '0 10px 25px rgba(0, 0, 0, 0.15)',
+                width: '600px',
+                maxWidth: '90vw',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                padding: '28px',
+                position: 'relative',
+                animation: 'modalFadeIn 0.3s ease-out',
+                border: '1px solid #eaeaea'
+            };
+            const modalHeaderStyle = {
+                marginTop: 0,
+                marginBottom: '24px',
+                fontSize: '24px',
+                fontWeight: '600',
+                color: '#32324d',
+                borderBottom: '1px solid #f5f5f5',
+                paddingBottom: '16px'
+            };
+            const buttonStyle = {
+                padding: '10px 16px',
+                borderRadius: '4px',
+                fontSize: '14px',
+                fontWeight: '500',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+            };
+            const primaryButtonStyle = Object.assign(Object.assign({}, buttonStyle), { backgroundColor: '#4945FF', color: 'white', border: 'none', boxShadow: '0 2px 6px rgba(73, 69, 255, 0.25)', '&:hover': {
+                    backgroundColor: '#3732e5',
+                    boxShadow: '0 4px 12px rgba(73, 69, 255, 0.4)'
+                } });
+            const secondaryButtonStyle = Object.assign(Object.assign({}, buttonStyle), { backgroundColor: '#ffffff', color: '#4945FF', border: '1px solid #dcdce4', '&:hover': {
+                    backgroundColor: '#f0f0ff',
+                    borderColor: '#4945FF'
+                } });
+            const fileInputStyle = {
+                display: 'none'
+            };
+            const fileInputLabelStyle = {
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '10px 16px',
+                borderRadius: '4px',
+                border: '1px dashed #4945FF',
+                backgroundColor: '#f0f0ff',
+                color: '#4945FF',
+                fontWeight: '500',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                marginBottom: '16px',
+                '&:hover': {
+                    backgroundColor: '#e6e6ff',
+                    boxShadow: '0 2px 4px rgba(73, 69, 255, 0.1)'
+                }
+            };
+            const fileNameStyle = {
+                marginLeft: '8px',
+                fontSize: '14px',
+                color: '#666687'
+            };
+            const formGroupStyle = {
+                marginBottom: '20px'
+            };
+            const errorStyle = {
+                backgroundColor: '#fcecea',
+                color: '#d02b20',
+                padding: '12px 16px',
+                borderRadius: '4px',
+                fontSize: '14px',
+                marginBottom: '20px',
+                border: '1px solid #f5c0b8'
+            };
+            const infoBoxStyle = {
+                backgroundColor: '#eaf5ff',
+                border: '1px solid #b8e1ff',
+                borderRadius: '4px',
+                padding: '16px',
+                color: '#006096',
+                marginBottom: '20px'
+            };
+            const tableStyle = {
+                width: '100%',
+                borderCollapse: 'separate',
+                borderSpacing: 0,
+                border: '1px solid #eaeaea',
+                borderRadius: '4px',
+                overflow: 'hidden'
+            };
+            const tableHeaderStyle = {
+                backgroundColor: '#f6f6f9',
+                color: '#666687',
+                fontSize: '12px',
+                fontWeight: '600',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px'
+            };
+            const tableHeaderCellStyle = {
+                padding: '12px 16px',
+                textAlign: 'left',
+                borderBottom: '1px solid #eaeaea'
+            };
+            const tableCellStyle = {
+                padding: '12px 16px',
+                borderBottom: '1px solid #eaeaea',
+                fontSize: '14px'
+            };
+            const checkboxStyle = {
+                cursor: 'pointer',
+                width: '16px',
+                height: '16px'
+            };
+            const successStyle = {
+                color: '#328048',
+                backgroundColor: '#eafbe7',
+                padding: '16px',
+                borderRadius: '4px',
+                marginBottom: '20px',
+                border: '1px solid #c6f0c2'
+            };
+            const buttonContainerStyle = {
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '12px',
+                marginTop: '24px'
+            };
+            const duplicateItemStyle = {
+                backgroundColor: 'white',
+                border: '1px solid #eaeaea',
+                borderRadius: '4px',
+                padding: '16px',
+                marginBottom: '12px',
+                boxShadow: '0 1px 4px rgba(0, 0, 0, 0.05)',
+                transition: 'all 0.2s ease',
+                '&:hover': {
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
+                }
+            };
+            const duplicateContainerStyle = {
+                maxHeight: '400px',
+                overflowY: 'auto',
+                padding: '4px',
+                marginBottom: '20px'
+            };
+            const columnStyle = {
+                flex: 1
+            };
+            const downloadButtonStyle = Object.assign(Object.assign({}, secondaryButtonStyle), { backgroundColor: '#4CAF50', color: 'white', borderColor: '#4CAF50', '&:hover': {
+                    backgroundColor: '#43a047',
+                    boxShadow: '0 2px 6px rgba(76, 175, 80, 0.3)'
+                } });
+            const requiredFieldsListStyle = {
+                margin: '0 0 0 1.5rem',
+                padding: 0,
+                columns: '2',
+                fontSize: '13px',
+                color: '#666687'
+            };
+            const requiredFieldsHeaderStyle = {
+                marginBottom: '8px',
+                fontWeight: '500',
+                color: '#32324d',
+                fontSize: '14px'
+            };
+            // Render duplicate confirmation content
+            const renderDuplicateContent = () => {
+                return (React.createElement(React.Fragment, null,
+                    React.createElement("h2", { style: modalHeaderStyle }, "Duplicate URLs Found"),
+                    React.createElement("div", { style: infoBoxStyle },
+                        React.createElement("p", { style: { margin: '0 0 8px 0' } },
+                            "We found ",
+                            duplicates.duplicates.length,
+                            " URLs that already exist. Select the ones you want to update."),
+                        React.createElement("p", { style: { margin: 0 } },
+                            createdCount,
+                            " new records were already created.")),
+                    React.createElement("div", { style: duplicateContainerStyle }, duplicates.duplicates.map((dup, index) => (React.createElement("div", { key: index, style: duplicateItemStyle },
+                        React.createElement("div", { style: { display: 'flex', alignItems: 'center', marginBottom: '10px' } },
+                            React.createElement("input", { type: "checkbox", id: `dup-${index}`, checked: selectedDuplicates.includes(dup.url), onChange: () => handleDuplicateToggle(dup.url), style: checkboxStyle }),
+                            React.createElement("label", { htmlFor: `dup-${index}`, style: {
+                                    fontWeight: 'bold',
+                                    marginLeft: '10px',
+                                    color: '#32324d',
+                                    flex: 1,
+                                    textDecoration: 'underline',
+                                    textDecorationColor: '#4945FF'
+                                } }, dup.url)),
+                        React.createElement("div", { style: { display: 'flex', marginLeft: '25px', gap: '24px' } },
+                            React.createElement("div", { style: columnStyle },
+                                React.createElement("h4", { style: { margin: '0 0 8px 0', fontSize: '14px', color: '#666687' } }, "Current Data"),
+                                React.createElement("div", { style: { fontSize: '13px', lineHeight: '1.5' } },
+                                    React.createElement("div", null,
+                                        "Price: ",
+                                        React.createElement("span", { style: { fontWeight: '500' } },
+                                            "$",
+                                            dup.existingData.price)),
+                                    React.createElement("div", null,
+                                        "Publisher: ",
+                                        React.createElement("span", { style: { fontWeight: '500' } }, dup.existingData.publisher_name || 'N/A')),
+                                    React.createElement("div", null,
+                                        "Publisher Email: ",
+                                        React.createElement("span", { style: { fontWeight: '500' } }, dup.existingData.publisher_email || 'N/A')),
+                                    React.createElement("div", null,
+                                        "Publisher Price: ",
+                                        React.createElement("span", { style: { fontWeight: '500' } },
+                                            "$",
+                                            dup.existingData.publisher_price || 'N/A')))),
+                            React.createElement("div", { style: columnStyle },
+                                React.createElement("h4", { style: { margin: '0 0 8px 0', fontSize: '14px', color: '#009f26' } }, "New Data"),
+                                React.createElement("div", { style: { fontSize: '13px', lineHeight: '1.5' } },
+                                    React.createElement("div", null,
+                                        "Price: ",
+                                        React.createElement("span", { style: { fontWeight: '500', color: dup.newData.price !== dup.existingData.price ? '#009f26' : 'inherit' } },
+                                            "$",
+                                            dup.newData.price)),
+                                    React.createElement("div", null,
+                                        "Publisher: ",
+                                        React.createElement("span", { style: { fontWeight: '500', color: dup.newData.publisher_name !== dup.existingData.publisher_name ? '#009f26' : 'inherit' } }, dup.newData.publisher_name || 'N/A')),
+                                    React.createElement("div", null,
+                                        "Publisher Email: ",
+                                        React.createElement("span", { style: { fontWeight: '500', color: dup.newData.publisher_email !== dup.existingData.publisher_email ? '#009f26' : 'inherit' } }, dup.newData.publisher_email || 'N/A')),
+                                    React.createElement("div", null,
+                                        "Publisher Price: ",
+                                        React.createElement("span", { style: { fontWeight: '500', color: dup.newData.publisher_price !== dup.existingData.publisher_price ? '#009f26' : 'inherit' } },
+                                            "$",
+                                            dup.newData.publisher_price || 'N/A'))))))))),
+                    React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between' } },
+                        React.createElement("button", { onClick: handleDownloadDuplicates, style: downloadButtonStyle },
+                            React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", xmlns: "http://www.w3.org/2000/svg", style: { marginRight: '8px' } },
+                                React.createElement("path", { d: "M12 16L12 8", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }),
+                                React.createElement("path", { d: "M9 13L12 16L15 13", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }),
+                                React.createElement("path", { d: "M20 20H4", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" })),
+                            "Download List"),
+                        React.createElement("div", { style: { display: 'flex', gap: '12px' } },
+                            React.createElement("button", { onClick: () => setDuplicates(null), style: secondaryButtonStyle }, "Cancel"),
+                            React.createElement("button", { onClick: handleConfirmDuplicates, disabled: isUploading || selectedDuplicates.length === 0, style: Object.assign(Object.assign({}, primaryButtonStyle), { opacity: selectedDuplicates.length > 0 ? 1 : 0.6, cursor: selectedDuplicates.length > 0 ? 'pointer' : 'not-allowed' }) }, isUploading ? (React.createElement(React.Fragment, null,
+                                React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", xmlns: "http://www.w3.org/2000/svg", style: {
+                                        animation: 'spin 1s linear infinite',
+                                        marginRight: '8px'
+                                    } },
+                                    React.createElement("circle", { cx: "12", cy: "12", r: "10", stroke: "currentColor", strokeWidth: "4", fill: "none", strokeDasharray: "calc(3.14 * 20)", strokeDashoffset: "calc(3.14 * 10)" })),
+                                "Updating...")) : `Update Selected (${selectedDuplicates.length})`)))));
+            };
+            return (React.createElement(React.Fragment, null,
+                React.createElement("div", { style: modalOverlayStyle, onClick: () => setIsVisible(false) },
+                    React.createElement("div", { style: modalStyle, onClick: (e) => e.stopPropagation() }, duplicates ? (renderDuplicateContent()) : (React.createElement(React.Fragment, null,
+                        React.createElement("h2", { style: modalHeaderStyle }, "Import from CSV"),
+                        error && (React.createElement("div", { style: errorStyle }, error)),
+                        React.createElement("div", { style: formGroupStyle },
+                            React.createElement("input", { type: "file", id: "csv-upload", accept: ".csv", onChange: handleFileChange, style: fileInputStyle }),
+                            React.createElement("label", { htmlFor: "csv-upload", style: fileInputLabelStyle },
+                                React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", xmlns: "http://www.w3.org/2000/svg", style: { marginRight: '8px' } },
+                                    React.createElement("path", { d: "M12 8L12 16", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }),
+                                    React.createElement("path", { d: "M15 11L12 8L9 11", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }),
+                                    React.createElement("path", { d: "M8 4H6C4.89543 4 4 4.89543 4 6V18C4 19.1046 4.89543 20 6 20H18C19.1046 20 20 19.1046 20 18V6C20 4.89543 19.1046 4 18 4H16", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" })),
+                                "Select CSV File"),
+                            file && React.createElement("span", { style: fileNameStyle }, file.name)),
+                        React.createElement("div", { style: infoBoxStyle },
+                            React.createElement("h4", { style: requiredFieldsHeaderStyle }, "Required columns:"),
+                            React.createElement("ul", { style: requiredFieldsListStyle },
+                                REQUIRED_FIELDS.map((field, index) => (React.createElement("li", { key: index, style: { marginBottom: '4px' } }, field))),
+                                MISSING_FIELDS.filter(field => !REQUIRED_FIELDS.includes(field)).map((field, index) => (React.createElement("li", { key: index, style: { marginBottom: '4px', color: '#8e8ea9' } }, field))))),
+                        React.createElement("div", { style: buttonContainerStyle },
+                            React.createElement("button", { onClick: () => setIsVisible(false), style: secondaryButtonStyle }, "Cancel"),
+                            React.createElement("button", { onClick: handleUpload, disabled: !file || isUploading, style: Object.assign(Object.assign({}, primaryButtonStyle), { opacity: file && !isUploading ? 1 : 0.6, cursor: file && !isUploading ? 'pointer' : 'not-allowed' }) }, isUploading ? (React.createElement(React.Fragment, null,
+                                React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", xmlns: "http://www.w3.org/2000/svg", style: {
+                                        animation: 'spin 1s linear infinite',
+                                        marginRight: '8px'
+                                    } },
+                                    React.createElement("circle", { cx: "12", cy: "12", r: "10", stroke: "currentColor", strokeWidth: "4", fill: "none", strokeDasharray: "calc(3.14 * 20)", strokeDashoffset: "calc(3.14 * 10)" })),
+                                "Uploading...")) : 'Upload')))))),
+                React.createElement("style", null, `
+              @keyframes modalFadeIn {
+                from { opacity: 0; transform: translateY(-20px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+              }
+            `)));
+        };
+        // CSV Export Component
+        const ExportModal = ({ isVisible, setIsVisible }) => {
+            const [filterEmail, setFilterEmail] = useState('');
+            const [filterUrl, setFilterUrl] = useState('');
+            const [filterCategory, setFilterCategory] = useState('');
+            const [filterBacklinkType, setFilterBacklinkType] = useState('');
+            const [filterPublisherName, setFilterPublisherName] = useState('');
+            const [filterMinDR, setFilterMinDR] = useState('');
+            const [filterMaxDR, setFilterMaxDR] = useState('');
+            const [filterMinDA, setFilterMinDA] = useState('');
+            const [filterMaxDA, setFilterMaxDA] = useState('');
+            const [filterMinPrice, setFilterMinPrice] = useState('');
+            const [filterMaxPrice, setFilterMaxPrice] = useState('');
+            const [filterMinWordCount, setFilterMinWordCount] = useState('');
+            const [filterDofollow, setFilterDofollow] = useState('');
+            const [filterFastPlacement, setFilterFastPlacement] = useState('');
+            const [maxRecords, setMaxRecords] = useState(1000);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState(null);
+            const [totalCount, setTotalCount] = useState(0);
+            const [records, setRecords] = useState([]);
+            const [selectedRecords, setSelectedRecords] = useState([]);
+            const [searchPerformed, setSearchPerformed] = useState(false);
+            const [currentPage, setCurrentPage] = useState(1);
+            const [pageCount, setPageCount] = useState(1);
+            const pageSize = 50; // Number of records per page
+            // Handle filter changes
+            const handleFilterEmailChange = (e) => {
+                setFilterEmail(e.target.value);
+            };
+            const handleFilterUrlChange = (e) => {
+                setFilterUrl(e.target.value);
+            };
+            const handleFilterCategoryChange = (e) => {
+                setFilterCategory(e.target.value);
+            };
+            const handleFilterBacklinkTypeChange = (e) => {
+                setFilterBacklinkType(e.target.value);
+            };
+            const handleFilterPublisherNameChange = (e) => {
+                setFilterPublisherName(e.target.value);
+            };
+            const handleFilterMinDRChange = (e) => {
+                setFilterMinDR(e.target.value);
+            };
+            const handleFilterMaxDRChange = (e) => {
+                setFilterMaxDR(e.target.value);
+            };
+            const handleFilterMinDAChange = (e) => {
+                setFilterMinDA(e.target.value);
+            };
+            const handleFilterMaxDAChange = (e) => {
+                setFilterMaxDA(e.target.value);
+            };
+            const handleFilterMinPriceChange = (e) => {
+                setFilterMinPrice(e.target.value);
+            };
+            const handleFilterMaxPriceChange = (e) => {
+                setFilterMaxPrice(e.target.value);
+            };
+            const handleFilterMinWordCountChange = (e) => {
+                setFilterMinWordCount(e.target.value);
+            };
+            const handleFilterDofollowChange = (e) => {
+                setFilterDofollow(e.target.value);
+            };
+            const handleFilterFastPlacementChange = (e) => {
+                setFilterFastPlacement(e.target.value);
+            };
+            const handleMaxRecordsChange = (e) => {
+                const value = parseInt(e.target.value) || 0;
+                const newMaxRecords = Math.min(Math.max(value, 1), 50000); // Limit between 1 and 50000
+                console.log(`Setting maxRecords: ${newMaxRecords} (from input: ${value})`);
+                setMaxRecords(newMaxRecords);
+                // If we've already done a search, update results with new limit
+                if (searchPerformed) {
+                    console.log('Search already performed, refreshing results with new maxRecords');
+                    handleSearch();
+                }
+            };
+            // Check total count with current filters
+            const checkTotalCount = () => __awaiter(this, void 0, void 0, function* () {
+                var _a, _b, _c;
+                setLoading(true);
+                setError(null);
+                try {
+                    const filters = buildFilters();
+                    const res = yield axios.get('/api/marketplaces/admin-list', {
+                        params: Object.assign(Object.assign({}, filters), { page: 1, pageSize: 1, removeDuplicates: true }),
+                        withCredentials: true,
+                    });
+                    const total = ((_c = (_b = (_a = res.data) === null || _a === void 0 ? void 0 : _a.meta) === null || _b === void 0 ? void 0 : _b.pagination) === null || _c === void 0 ? void 0 : _c.total) || 0;
+                    setTotalCount(total);
+                }
+                catch (err) {
+                    console.error('Count error:', err);
+                    setError('Failed to get count. Please try again.');
+                }
+                finally {
+                    setLoading(false);
+                }
+            });
+            // Build filter object based on all filters
+            const buildFilters = () => {
+                const filters = {};
+                if (filterEmail && filterEmail.trim()) {
+                    filters['filters[publisher_email][$containsi]'] = filterEmail.trim();
+                }
+                if (filterUrl && filterUrl.trim()) {
+                    filters['filters[url][$containsi]'] = filterUrl.trim();
+                }
+                if (filterCategory && filterCategory.trim()) {
+                    filters['filters[category][$containsi]'] = filterCategory.trim();
+                }
+                if (filterBacklinkType && filterBacklinkType.trim()) {
+                    filters['filters[backlink_type][$eq]'] = filterBacklinkType.trim();
+                }
+                if (filterPublisherName && filterPublisherName.trim()) {
+                    filters['filters[publisher_name][$containsi]'] = filterPublisherName.trim();
+                }
+                if (filterMinDR && !isNaN(parseInt(filterMinDR))) {
+                    filters['filters[ahrefs_dr][$gte]'] = parseInt(filterMinDR);
+                }
+                if (filterMaxDR && !isNaN(parseInt(filterMaxDR))) {
+                    filters['filters[ahrefs_dr][$lte]'] = parseInt(filterMaxDR);
+                }
+                if (filterMinDA && !isNaN(parseInt(filterMinDA))) {
+                    filters['filters[moz_da][$gte]'] = parseInt(filterMinDA);
+                }
+                if (filterMaxDA && !isNaN(parseInt(filterMaxDA))) {
+                    filters['filters[moz_da][$lte]'] = parseInt(filterMaxDA);
+                }
+                if (filterMinPrice && !isNaN(parseInt(filterMinPrice))) {
+                    filters['filters[price][$gte]'] = parseInt(filterMinPrice);
+                }
+                if (filterMaxPrice && !isNaN(parseInt(filterMaxPrice))) {
+                    filters['filters[price][$lte]'] = parseInt(filterMaxPrice);
+                }
+                if (filterMinWordCount && !isNaN(parseInt(filterMinWordCount))) {
+                    filters['filters[min_word_count][$gte]'] = parseInt(filterMinWordCount);
+                }
+                if (filterDofollow && filterDofollow !== 'any') {
+                    filters['filters[dofollow_link][$eq]'] = filterDofollow === 'yes';
+                }
+                if (filterFastPlacement && filterFastPlacement !== 'any') {
+                    filters['filters[fast_placement_status][$eq]'] = filterFastPlacement === 'yes';
+                }
+                return filters;
+            };
+            // Search and load records based on filters
+            const handleSearch = () => __awaiter(this, void 0, void 0, function* () {
+                var _d, _e, _f, _g, _h;
+                setLoading(true);
+                setError(null);
+                try {
+                    const filters = buildFilters();
+                    console.log(`Requesting records with max limit: ${maxRecords}`);
+                    const res = yield axios.get('/api/marketplaces/admin-list', {
+                        params: Object.assign(Object.assign({}, filters), { page: 1, pageSize: maxRecords, limit: maxRecords, removeDuplicates: true }),
+                        withCredentials: true,
+                    });
+                    console.log(`API returned ${((_e = (_d = res.data) === null || _d === void 0 ? void 0 : _d.data) === null || _e === void 0 ? void 0 : _e.length) || 0} records, pagination total: ${((_h = (_g = (_f = res.data) === null || _f === void 0 ? void 0 : _f.meta) === null || _g === void 0 ? void 0 : _g.pagination) === null || _h === void 0 ? void 0 : _h.total) || 0}`);
+                    // Check for and handle duplicates in the client side too
+                    const uniqueItems = [];
+                    const seenUrls = new Set();
+                    // Filter duplicates by URL (or any other unique identifier you prefer)
+                    if (res.data && res.data.data) {
+                        res.data.data.forEach(item => {
+                            var _a;
+                            const url = item.url || ((_a = item.attributes) === null || _a === void 0 ? void 0 : _a.url);
+                            if (url && !seenUrls.has(url)) {
+                                seenUrls.add(url);
+                                uniqueItems.push(item);
+                            }
+                        });
+                        // Log if duplicates were found and removed
+                        if (uniqueItems.length < res.data.data.length) {
+                            console.log(`Removed ${res.data.data.length - uniqueItems.length} duplicate items from the results`);
+                        }
+                        // Limit items to exactly maxRecords
+                        const limitedItems = uniqueItems.slice(0, maxRecords);
+                        console.log(`Setting records: ${limitedItems.length} items (after filtering and limiting)`);
+                        setRecords(limitedItems);
+                        // Set the total count to the actual number of visible records
+                        // This ensures the count display matches what's shown in the table
+                        const actualVisibleCount = limitedItems.length;
+                        console.log(`Setting total count to actual visible records: ${actualVisibleCount}`);
+                        setTotalCount(actualVisibleCount);
+                    }
+                    else {
+                        setRecords([]);
+                        setTotalCount(0);
+                    }
+                    // Calculate page count based on the actual items we have and pageSize for display
+                    const displayPageSize = pageSize;
+                    const visibleRecordsCount = uniqueItems.length;
+                    const calculatedPageCount = Math.ceil(visibleRecordsCount / displayPageSize);
+                    console.log(`Setting page count: ${calculatedPageCount} (based on ${visibleRecordsCount} visible records)`);
+                    setPageCount(calculatedPageCount);
+                    setCurrentPage(1);
+                    setSearchPerformed(true);
+                    setSelectedRecords([]);
+                }
+                catch (err) {
+                    console.error('Search error:', err);
+                    setError('Failed to fetch records. Please try again.');
+                }
+                finally {
+                    setLoading(false);
+                }
+            });
+            // Load page of data
+            const loadPage = (page) => __awaiter(this, void 0, void 0, function* () {
+                var _j, _k;
+                if (page < 1 || page > pageCount || page === currentPage)
+                    return;
+                setLoading(true);
+                setError(null);
+                try {
+                    const filters = buildFilters();
+                    // Calculate proper offset and limit to respect maxRecords
+                    const displayPageSize = pageSize;
+                    const offset = (page - 1) * displayPageSize;
+                    // Make sure we don't exceed maxRecords in total
+                    const remainingRecords = maxRecords - offset;
+                    const effectivePageSize = Math.min(displayPageSize, Math.max(0, remainingRecords));
+                    console.log(`Loading page ${page}, offset: ${offset}, effectivePageSize: ${effectivePageSize}, maxRecords: ${maxRecords}`);
+                    // Don't load page if we've already reached the max records limit
+                    if (effectivePageSize <= 0) {
+                        setLoading(false);
+                        console.log('Skipping page load: no more records available within maxRecords limit');
+                        return;
+                    }
+                    const res = yield axios.get('/api/marketplaces/admin-list', {
+                        params: Object.assign(Object.assign({}, filters), { page: page, pageSize: effectivePageSize, offset: offset, limit: maxRecords, removeDuplicates: true }),
+                        withCredentials: true,
+                    });
+                    console.log(`API returned ${((_k = (_j = res.data) === null || _j === void 0 ? void 0 : _j.data) === null || _k === void 0 ? void 0 : _k.length) || 0} records for page ${page}`);
+                    // Check for and process duplicates
+                    const uniqueItems = [];
+                    const seenUrls = new Set();
+                    if (res.data && res.data.data) {
+                        res.data.data.forEach(item => {
+                            var _a;
+                            const url = item.url || ((_a = item.attributes) === null || _a === void 0 ? void 0 : _a.url);
+                            if (url && !seenUrls.has(url)) {
+                                seenUrls.add(url);
+                                uniqueItems.push(item);
+                            }
+                        });
+                        if (uniqueItems.length < res.data.data.length) {
+                            console.log(`Removed ${res.data.data.length - uniqueItems.length} duplicate items from page ${page}`);
+                        }
+                        setRecords(uniqueItems);
+                    }
+                    else {
+                        setRecords([]);
+                    }
+                    setCurrentPage(page);
+                }
+                catch (err) {
+                    console.error('Page fetch error:', err);
+                    setError('Failed to fetch page. Please try again.');
+                }
+                finally {
+                    setLoading(false);
+                }
+            });
+            // Toggle record selection
+            const toggleRecordSelection = (id) => {
+                setSelectedRecords(prev => {
+                    if (prev.includes(id)) {
+                        return prev.filter(recordId => recordId !== id);
+                    }
+                    else {
+                        return [...prev, id];
+                    }
+                });
+            };
+            // Select all records on current page
+            const selectAllOnPage = () => {
+                const allSelected = records.every(record => selectedRecords.includes(record.id));
+                if (allSelected) {
+                    // If all are selected, deselect records on this page
+                    setSelectedRecords(prev => prev.filter(id => !records.some(record => record.id === id)));
+                }
+                else {
+                    // Otherwise select all records on this page
+                    const pageIds = records.map(record => record.id);
+                    setSelectedRecords(prev => {
+                        const newSelected = [...prev];
+                        pageIds.forEach(id => {
+                            if (!newSelected.includes(id)) {
+                                newSelected.push(id);
+                            }
+                        });
+                        return newSelected;
+                    });
+                }
+            };
+            // Effect to check count when modal becomes visible
+            useEffect(() => {
+                if (isVisible) {
+                    checkTotalCount();
+                    // Reset state when modal opens
+                    setSearchPerformed(false);
+                    setRecords([]);
+                    setSelectedRecords([]);
+                }
+            }, [isVisible]);
+            // Export selected records
+            const handleExportSelected = () => __awaiter(this, void 0, void 0, function* () {
+                var _l, _m;
+                if (selectedRecords.length === 0) {
+                    setError('Please select at least one record to export');
+                    return;
+                }
+                setLoading(true);
+                setError(null);
+                try {
+                    // Check for duplicate IDs in selected records
+                    const uniqueIds = new Set(selectedRecords);
+                    if (uniqueIds.size !== selectedRecords.length) {
+                        console.warn(`Found ${selectedRecords.length - uniqueIds.size} duplicate IDs in selection`);
+                        // Continue with unique IDs only
+                        const uniqueIdArray = [...uniqueIds];
+                        setSelectedRecords(uniqueIdArray);
+                        console.log(`Proceeding with ${uniqueIdArray.length} unique records`);
+                    }
+                    // Get auth token from localStorage, sessionStorage, or cookies
+                    let token = null;
+                    try {
+                        token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt') ||
+                            sessionStorage.getItem('jwtToken') || sessionStorage.getItem('jwt');
+                    }
+                    catch (e) {
+                        console.log('Error getting token from storage:', e);
+                    }
+                    // If not found in storage, try to get from cookies
+                    if (!token) {
+                        const cookies = document.cookie.split(';');
+                        for (let i = 0; i < cookies.length; i++) {
+                            const cookie = cookies[i].trim();
+                            if (cookie.startsWith('jwtToken')) {
+                                const equalPos = cookie.indexOf('=');
+                                if (equalPos !== -1) {
+                                    token = cookie.substring(equalPos + 1);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Make request for CSV download with unique IDs
+                    const response = yield axios.post('/api/marketplaces/export-selected-csv', {
+                        ids: [...uniqueIds]
+                    }, {
+                        responseType: 'blob', // Important for file download
+                        withCredentials: true, // Include cookies in the request
+                        headers: Object.assign(Object.assign({}, (token ? { 'Authorization': `Bearer ${token}` } : {})), { 'Content-Type': 'application/json' })
+                    });
+                    // Create a download link
+                    const url = window.URL.createObjectURL(new Blob([response.data]));
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', `marketplace_export_${new Date().toISOString().split('T')[0]}.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    // Cleanup
+                    window.URL.revokeObjectURL(url);
+                    link.remove();
+                }
+                catch (err) {
+                    console.error('Export error:', err.response || err);
+                    setError(((_m = (_l = err.response) === null || _l === void 0 ? void 0 : _l.data) === null || _m === void 0 ? void 0 : _m.message) || err.message || 'Export failed');
+                }
+                finally {
+                    setLoading(false);
+                }
+            });
+            // Export all filtered records
+            const handleBulkExport = () => __awaiter(this, void 0, void 0, function* () {
+                var _o, _p;
+                setLoading(true);
+                setError(null);
+                try {
+                    const filters = buildFilters();
+                    // Get auth token from localStorage, sessionStorage, or cookies
+                    let token = null;
+                    try {
+                        token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt') ||
+                            sessionStorage.getItem('jwtToken') || sessionStorage.getItem('jwt');
+                    }
+                    catch (e) {
+                        console.log('Error getting token from storage:', e);
+                    }
+                    // If not found in storage, try to get from cookies
+                    if (!token) {
+                        const cookies = document.cookie.split(';');
+                        for (let i = 0; i < cookies.length; i++) {
+                            const cookie = cookies[i].trim();
+                            if (cookie.startsWith('jwtToken')) {
+                                const equalPos = cookie.indexOf('=');
+                                if (equalPos !== -1) {
+                                    token = cookie.substring(equalPos + 1);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Add additional parameters to request
+                    const params = Object.assign(Object.assign({}, filters), { limit: maxRecords, removeDuplicates: true // Add flag to remove duplicates on the server side
+                     });
+                    // Make request for CSV download
+                    const response = yield axios.get('/api/marketplaces/export-filtered-csv', {
+                        params,
+                        responseType: 'blob', // Important for file download
+                        withCredentials: true, // Include cookies in the request
+                        headers: Object.assign({}, (token ? { 'Authorization': `Bearer ${token}` } : {}))
+                    });
+                    // Create a download link
+                    const url = window.URL.createObjectURL(new Blob([response.data]));
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', `marketplace_export_${new Date().toISOString().split('T')[0]}.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    // Cleanup
+                    window.URL.revokeObjectURL(url);
+                    link.remove();
+                    setIsVisible(false);
+                }
+                catch (err) {
+                    console.error('Export error:', err.response || err);
+                    setError(((_p = (_o = err.response) === null || _o === void 0 ? void 0 : _o.data) === null || _p === void 0 ? void 0 : _p.message) || err.message || 'Export failed');
+                }
+                finally {
+                    setLoading(false);
+                }
+            });
+            if (!isVisible)
+                return null;
+            return (React.createElement("div", { style: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.2)', zIndex: 1000 } },
+                React.createElement("div", { style: { background: 'white', padding: 24, borderRadius: 8, maxWidth: 900, margin: '60px auto', maxHeight: '80vh', overflowY: 'auto' } },
+                    React.createElement("h2", null, "Export Marketplace Data to CSV"),
+                    React.createElement("div", { style: { marginBottom: 24 } },
+                        React.createElement("h3", null, "Filter Records"),
+                        React.createElement("div", { style: { marginBottom: 16 } },
+                            React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Basic Filters"),
+                            React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 } },
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "URL:"),
+                                    React.createElement("input", { type: "text", value: filterUrl, onChange: handleFilterUrlChange, placeholder: "Filter by URL", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Category:"),
+                                    React.createElement("input", { type: "text", value: filterCategory, onChange: handleFilterCategoryChange, placeholder: "Filter by category", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Backlink Type:"),
+                                    React.createElement("select", { value: filterBacklinkType, onChange: handleFilterBacklinkTypeChange, style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' } },
+                                        React.createElement("option", { value: "" }, "Any Type"),
+                                        React.createElement("option", { value: "guest post" }, "Guest Post"),
+                                        React.createElement("option", { value: "link insertion" }, "Link Insertion"))))),
+                        React.createElement("div", { style: { marginBottom: 16 } },
+                            React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Publisher Filters"),
+                            React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 } },
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Publisher Email:"),
+                                    React.createElement("input", { type: "text", value: filterEmail, onChange: handleFilterEmailChange, placeholder: "Filter by publisher email", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Publisher Name:"),
+                                    React.createElement("input", { type: "text", value: filterPublisherName, onChange: handleFilterPublisherNameChange, placeholder: "Filter by publisher name", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })))),
+                        React.createElement("div", { style: { marginBottom: 16 } },
+                            React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Domain Metrics"),
+                            React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 } },
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Min DR:"),
+                                    React.createElement("input", { type: "number", value: filterMinDR, onChange: handleFilterMinDRChange, placeholder: "Min DR", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Max DR:"),
+                                    React.createElement("input", { type: "number", value: filterMaxDR, onChange: handleFilterMaxDRChange, placeholder: "Max DR", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Min DA:"),
+                                    React.createElement("input", { type: "number", value: filterMinDA, onChange: handleFilterMinDAChange, placeholder: "Min DA", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Max DA:"),
+                                    React.createElement("input", { type: "number", value: filterMaxDA, onChange: handleFilterMaxDAChange, placeholder: "Max DA", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })))),
+                        React.createElement("div", { style: { marginBottom: 16 } },
+                            React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Price & Content Requirements"),
+                            React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 } },
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Min Price ($):"),
+                                    React.createElement("input", { type: "number", value: filterMinPrice, onChange: handleFilterMinPriceChange, placeholder: "Min price", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Max Price ($):"),
+                                    React.createElement("input", { type: "number", value: filterMaxPrice, onChange: handleFilterMaxPriceChange, placeholder: "Max price", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Min Word Count:"),
+                                    React.createElement("input", { type: "number", value: filterMinWordCount, onChange: handleFilterMinWordCountChange, placeholder: "Min word count", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })))),
+                        React.createElement("div", { style: { marginBottom: 16 } },
+                            React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Additional Filters"),
+                            React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 } },
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Dofollow Link:"),
+                                    React.createElement("select", { value: filterDofollow, onChange: handleFilterDofollowChange, style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' } },
+                                        React.createElement("option", { value: "" }, "Any"),
+                                        React.createElement("option", { value: "yes" }, "Yes"),
+                                        React.createElement("option", { value: "no" }, "No"))),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Fast Placement:"),
+                                    React.createElement("select", { value: filterFastPlacement, onChange: handleFilterFastPlacementChange, style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' } },
+                                        React.createElement("option", { value: "" }, "Any"),
+                                        React.createElement("option", { value: "yes" }, "Yes"),
+                                        React.createElement("option", { value: "no" }, "No"))),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Max Records:"),
+                                    React.createElement("input", { type: "number", value: maxRecords, onChange: handleMaxRecordsChange, min: "1", max: "50000", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })))),
+                        React.createElement("div", { style: { marginTop: 16 } },
+                            React.createElement("button", { onClick: handleSearch, disabled: loading, style: {
+                                    padding: '8px 16px',
+                                    borderRadius: 4,
+                                    border: 'none',
+                                    background: loading ? '#aaa' : '#4945FF',
+                                    color: 'white',
+                                    cursor: loading ? 'not-allowed' : 'pointer'
+                                } }, loading ? 'Searching...' : 'Search Records'))),
+                    searchPerformed && (React.createElement("div", { style: { marginBottom: 24 } },
+                        React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
+                            React.createElement("h3", { style: { margin: 0 } },
+                                "Results (",
+                                records.length,
+                                " records found)"),
+                            React.createElement("div", null,
+                                React.createElement("label", { style: { marginRight: 8 } },
+                                    React.createElement("input", { type: "checkbox", checked: records.length > 0 && records.every(record => selectedRecords.includes(record.id)), onChange: selectAllOnPage }),
+                                    records.length > 0 && records.every(record => selectedRecords.includes(record.id))
+                                        ? 'Deselect All'
+                                        : 'Select All'))),
+                        records.length > 0 ? (React.createElement("div", null,
+                            React.createElement("div", { style: { overflowX: 'auto', maxHeight: '400px', border: '1px solid #eee' } },
+                                React.createElement("table", { style: { width: '100%', borderCollapse: 'collapse' } },
+                                    React.createElement("thead", null,
+                                        React.createElement("tr", { style: { background: '#f5f5f5' } },
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }),
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }, "URL"),
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }, "Publisher"),
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }, "Email"),
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }, "Price"),
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }, "DR"),
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }, "DA"),
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }, "Category"),
+                                            React.createElement("th", { style: { padding: 8, textAlign: 'left', borderBottom: '1px solid #ddd' } }, "Type"))),
+                                    React.createElement("tbody", null, records.map(record => {
+                                        var _a, _b, _c, _d, _e, _f, _g;
+                                        return (React.createElement("tr", { key: record.id, style: { borderBottom: '1px solid #eee' } },
+                                            React.createElement("td", { style: { padding: 8 } },
+                                                React.createElement("input", { type: "checkbox", checked: selectedRecords.includes(record.id), onChange: () => toggleRecordSelection(record.id) })),
+                                            React.createElement("td", { style: { padding: 8 } },
+                                                React.createElement("div", { style: { maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, record.url || ((_a = record.attributes) === null || _a === void 0 ? void 0 : _a.url) || 'N/A')),
+                                            React.createElement("td", { style: { padding: 8 } }, record.publisher_name || ((_b = record.attributes) === null || _b === void 0 ? void 0 : _b.publisher_name) || 'N/A'),
+                                            React.createElement("td", { style: { padding: 8 } }, record.publisher_email || ((_c = record.attributes) === null || _c === void 0 ? void 0 : _c.publisher_email) || 'N/A'),
+                                            React.createElement("td", { style: { padding: 8 } },
+                                                "$",
+                                                record.price || ((_d = record.attributes) === null || _d === void 0 ? void 0 : _d.price) || 'N/A'),
+                                            React.createElement("td", { style: { padding: 8 } }, record.ahrefs_dr || ((_e = record.attributes) === null || _e === void 0 ? void 0 : _e.ahrefs_dr) || 'N/A'),
+                                            React.createElement("td", { style: { padding: 8 } }, record.moz_da || ((_f = record.attributes) === null || _f === void 0 ? void 0 : _f.moz_da) || 'N/A'),
+                                            React.createElement("td", { style: { padding: 8 } }, (() => {
+                                                var _a;
+                                                const category = record.category || ((_a = record.attributes) === null || _a === void 0 ? void 0 : _a.category);
+                                                if (!category)
+                                                    return 'N/A';
+                                                // Handle array of categories
+                                                if (Array.isArray(category)) {
+                                                    return category.join(', ');
+                                                }
+                                                // Handle string that might contain multiple categories
+                                                if (typeof category === 'string' && category.includes(',')) {
+                                                    return category.split(',').map(cat => cat.trim()).join(', ');
+                                                }
+                                                return category;
+                                            })()),
+                                            React.createElement("td", { style: { padding: 8 } }, record.backlink_type || ((_g = record.attributes) === null || _g === void 0 ? void 0 : _g.backlink_type) || 'N/A')));
+                                    })))),
+                            pageCount > 1 && (React.createElement("div", { style: { display: 'flex', justifyContent: 'center', marginTop: 16, gap: 8 } },
+                                React.createElement("button", { onClick: () => loadPage(currentPage - 1), disabled: currentPage === 1 || loading, style: { padding: '4px 8px', borderRadius: 4, border: '1px solid #ddd' } }, "Previous"),
+                                React.createElement("span", { style: { padding: '4px 8px' } },
+                                    "Page ",
+                                    currentPage,
+                                    " of ",
+                                    pageCount),
+                                React.createElement("button", { onClick: () => loadPage(currentPage + 1), disabled: currentPage === pageCount || loading, style: { padding: '4px 8px', borderRadius: 4, border: '1px solid #ddd' } }, "Next"))),
+                            React.createElement("div", { style: { marginTop: 16, padding: 12, background: '#f0f8ff', borderRadius: 4 } },
+                                React.createElement("strong", null,
+                                    selectedRecords.length,
+                                    " records selected")))) : (React.createElement("div", { style: { padding: 16, background: '#f5f5f5', borderRadius: 4, textAlign: 'center' } }, "No records found matching your filter criteria")))),
+                    error && (React.createElement("div", { style: { padding: 12, background: '#fee', color: '#c00', borderRadius: 4, marginBottom: 16 } }, error)),
+                    React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', gap: 12 } },
+                        React.createElement("div", null, searchPerformed && records.length > 0 && (React.createElement("button", { onClick: handleExportSelected, disabled: loading || selectedRecords.length === 0, style: {
+                                padding: '8px 16px',
+                                borderRadius: 4,
+                                border: 'none',
+                                background: loading || selectedRecords.length === 0 ? '#aaa' : '#4CAF50',
+                                color: 'white',
+                                cursor: loading || selectedRecords.length === 0 ? 'not-allowed' : 'pointer'
+                            } }, loading ? 'Processing...' : `Export Selected (${selectedRecords.length})`))),
+                        React.createElement("div", { style: { display: 'flex', gap: 12 } },
+                            React.createElement("button", { onClick: () => setIsVisible(false), style: { padding: '8px 16px', borderRadius: 4, border: '1px solid #ddd', background: '#f5f5f5' } }, "Cancel"),
+                            React.createElement("button", { onClick: handleBulkExport, disabled: loading || records.length === 0, style: {
+                                    padding: '8px 16px',
+                                    borderRadius: 4,
+                                    border: 'none',
+                                    background: loading || records.length === 0 ? '#aaa' : '#4945FF',
+                                    color: 'white',
+                                    cursor: loading || records.length === 0 ? 'not-allowed' : 'pointer'
+                                } }, loading ? 'Processing...' : `Export All (${records.length})`))))));
+        };
+        // Main Injected Component
+        const Injected = () => {
+            const [isVisible, setIsVisible] = useState(false);
+            const [exportVisible, setExportVisible] = useState(false);
+            return (React.createElement(React.Fragment, null,
+                React.createElement("button", { onClick: () => setIsVisible(true), style: {
+                        backgroundColor: '#4945FF',
+                        color: 'white',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginLeft: '1rem'
+                    } },
+                    React.createElement("span", null, "+"),
+                    "Import from CSV"),
+                React.createElement("button", { onClick: () => setExportVisible(true), style: {
+                        backgroundColor: '#4945FF',
+                        color: 'white',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginLeft: '1rem'
+                    } },
+                    React.createElement("span", null, "+"),
+                    "Export CSV"),
+                isVisible && React.createElement(ImportModal, { setIsVisible: setIsVisible }),
+                React.createElement(ExportModal, { isVisible: exportVisible, setIsVisible: setExportVisible })));
+        };
+        if (plugin) {
+            plugin.injectComponent('listView', 'actions', {
+                name: 'csv-import',
+                Component: (props) => {
+                    // Check if we're on a marketplace-related page
+                    const currentPath = window.location.pathname;
+                    console.log('Current path:', currentPath);
+                    // Use a more flexible check for marketplace collection
+                    if (currentPath.includes('marketplace') ||
+                        currentPath.includes('Marketplace') ||
+                        currentPath.includes('marketplaces')) {
+                        return React.createElement(Injected, Object.assign({}, props));
+                    }
+                    // Not on marketplace page
+                    return null;
+                }
+            });
+        }
+    },
+};

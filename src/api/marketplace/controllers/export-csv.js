@@ -114,14 +114,14 @@ module.exports = {
       
       console.log('Applied filters:', JSON.stringify(filters));
       
-      // Count total matching records (for pagination)
+      // Use consistent method for both count and data retrieval
       const total = await strapi.entityService.count('api::marketplace.marketplace', { filters });
       
-      // Fetch paginated data with all fields
-      const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
-        where: filters,
-        orderBy: { updatedAt: 'desc' },
-        offset: (page - 1) * pageSize,
+      // Fetch paginated data with entityService for consistency
+      const entries = await strapi.entityService.findMany('api::marketplace.marketplace', {
+        filters,
+        sort: [{ updatedAt: 'desc' }, { id: 'desc' }], // Added secondary sort by ID to ensure consistent order
+        start: (page - 1) * pageSize,
         limit: pageSize,
       });
       

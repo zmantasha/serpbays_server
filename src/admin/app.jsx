@@ -56,379 +56,6 @@ export default {
     const plugin = getPlugin('content-manager');
     
     // Import Modal Component
-    // const ImportModal = ({ setIsVisible }) => {
-    //   const [file, setFile] = useState(null);
-    //   const [isUploading, setIsUploading] = useState(false);
-    //   const [error, setError] = useState(null);
-    //   const [duplicates, setDuplicates] = useState(null);
-    //   const [createdCount, setCreatedCount] = useState(0);
-    //   const [selectedDuplicates, setSelectedDuplicates] = useState([]);
-
-    //   const validateCSVHeaders = async (file) => {
-    //     return new Promise((resolve, reject) => {
-    //       const reader = new FileReader();
-    //       reader.onload = (event) => {
-    //         try {
-    //           // Get first line and parse headers
-    //           const firstLine = event.target.result.toString().split('\n')[0];
-    //           const headers = firstLine.split(',').map(h => h.trim().toLowerCase());
-              
-    //           // Check for missing required fields
-    //           const missingFields = MISSING_FIELDS.filter(field => !headers.includes(field));
-    //           const requiredFields = REQUIRED_FIELDS.filter(field => !headers.includes(field));
-              
-    //           if (missingFields.length > 0) {
-    //             reject(`Missing required fields: ${missingFields.join(', ')}`);
-    //           } else if(requiredFields.length > 0) {
-    //             reject(`Required fields are: ${REQUIRED_FIELDS.join(', ')}`);
-    //           } else {
-    //             resolve(true);
-    //           }
-    //         } catch (error) {
-    //           reject('Error reading CSV headers');
-    //         }
-    //       };
-    //       reader.onerror = () => reject('Error reading file');
-    //       reader.readAsText(file);
-    //     });
-    //   };
-
-    //   const handleFileChange = async (e) => {
-    //     const selectedFile = e.target.files[0];
-    //     if (selectedFile && selectedFile.type === 'text/csv') {
-    //       try {
-    //         await validateCSVHeaders(selectedFile);
-    //         setFile(selectedFile);
-    //         setError(null);
-    //       } catch (error) {
-    //         setError(error);
-    //         setFile(null);
-    //       }
-    //     } else {
-    //       setError('Please select a valid CSV file');
-    //       setFile(null);
-    //     }
-    //   };
-
-    //   const handleDuplicateToggle = (url) => {
-    //     setSelectedDuplicates(prev => {
-    //       if (prev.includes(url)) {
-    //         return prev.filter(item => item !== url);
-    //       } else {
-    //         return [...prev, url];
-    //       }
-    //     });
-    //   };
-
-    //   const handleDownloadDuplicates = () => {
-    //     if (!duplicates || !duplicates.duplicates.length) return;
-        
-    //     // Create CSV content with more columns
-    //     const headers = [
-    //       'URL', 
-    //       'Current Price', 
-    //       'New Price', 
-    //       'Current Publisher Name', 
-    //       'New Publisher Name', 
-    //       'Current Publisher Email', 
-    //       'New Publisher Email', 
-    //       'Current Publisher Price', 
-    //       'New Publisher Price'
-    //     ];
-    //     let csvContent = headers.join(',') + '\n';
-        
-    //     duplicates.duplicates.forEach(dup => {
-    //       const row = [
-    //         `"${dup.url}"`,
-    //         `"${dup.existingItem.price || ''}"`,
-    //         `"${dup.newItem.price || ''}"`,
-    //         `"${dup.existingItem.publisher_name || ''}"`,
-    //         `"${dup.newItem.publisher_name || ''}"`,
-    //         `"${dup.existingItem.publisher_email || ''}"`,
-    //         `"${dup.newItem.publisher_email || ''}"`,
-    //         `"${dup.existingItem.publisher_price || ''}"`,
-    //         `"${dup.newItem.publisher_price || ''}"`
-    //       ];
-    //       csvContent += row.join(',') + '\n';
-    //     });
-        
-    //     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    //     const url = URL.createObjectURL(blob);
-    //     const link = document.createElement('a');
-    //     link.setAttribute('href', url);
-    //     link.setAttribute('download', 'duplicate-items.csv');
-    //     link.style.visibility = 'hidden';
-    //     document.body.appendChild(link);
-    //     link.click();
-    //     document.body.removeChild(link);
-    //   };
-
-    //   const handleConfirmDuplicates = () => {
-    //     if (!duplicates || !duplicates.duplicates.length || !selectedDuplicates.length) {
-    //       return;
-    //     }
-
-    //     setIsUploading(true);
-    //     setError(null);
-
-    //     // Filter the CSVData to include only selected duplicates
-    //     const updatedDuplicates = duplicates.duplicates.filter(dup => 
-    //       selectedDuplicates.includes(dup.url)
-    //     );
-        
-    //     // Create the final data for upload with confirmDuplicates array
-    //     const finalData = {
-    //       confirmDuplicates: selectedDuplicates,
-    //     };
-        
-    //     // Send to the server
-    //     axios.post('/api/upload-csv', finalData)
-    //       .then(response => {
-    //         setDuplicates(null);
-    //         setSelectedDuplicates([]);
-    //         setCreatedCount(response.data.created);
-    //         setFile(null);
-    //       })
-    //       .catch(err => {
-    //         console.error('Error updating items:', err);
-    //         setError(err.response?.data?.message || 'Error updating items');
-    //       })
-    //       .finally(() => {
-    //         setIsUploading(false);
-    //       });
-    //   };
-
-    //   const handleUpload = async () => {
-    //     if (!file) {
-    //       setError('Please select a file first');
-    //       return;
-    //     }
-
-    //     setIsUploading(true);
-    //     setError(null);
-
-    //     const formData = new FormData();
-    //     formData.append('files', file);
-
-    //     try {
-    //       // Get auth token from localStorage
-    //       const auth = JSON.parse(localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken'));
-          
-    //       if (!auth) {
-    //         throw new Error('Authentication token not found');
-    //       }
-
-    //       // First upload the file
-    //       const uploadResponse = await axios.post('/upload', formData, {
-    //         headers: {
-    //           'Content-Type': 'multipart/form-data',
-    //           'Authorization': `Bearer ${auth}`
-    //         },
-    //       });
-
-    //       if (uploadResponse.data) {
-    //         // Now process the uploaded file
-    //         const response = await axios.post('/api/upload-csv', {
-    //           fileId: uploadResponse.data[0].id
-    //         }, {
-    //           headers: {
-    //             'Authorization': `Bearer ${auth}`
-    //           }
-    //         });
-
-    //         if (response.data) {
-    //           if (response.data.needsConfirmation) {
-    //             // Store duplicates for confirmation
-    //             setDuplicates({
-    //               ...response.data,
-    //               fileId: uploadResponse.data[0].id
-    //             });
-    //             setCreatedCount(response.data.createdCount || 0);
-    //           } else if (response.data.errors && response.data.errors.length > 0) {
-    //             setError(`Import completed with errors:\n${response.data.errors.join('\n')}`);
-    //           } else {
-    //             // Refresh the list view
-    //             window.location.reload();
-    //           }
-    //         }
-    //       }
-    //     } catch (err) {
-    //       console.error('Upload error:', err);
-    //       const errorMessage = err.response?.data?.error?.message || err.message || 'Error uploading file';
-    //       console.log('File being uploaded:', file);
-    //       setError(errorMessage);
-    //     } finally {
-    //       setIsUploading(false);
-    //     }
-    //   };
-
-    //   // Styling
-    //   const primaryButtonStyle = {
-    //     padding: '8px 16px',
-    //     borderRadius: 4,
-    //     border: 'none',
-    //     background: '#4945FF',
-    //     color: 'white',
-    //     cursor: 'pointer'
-    //   };
-      
-    //   const secondaryButtonStyle = {
-    //     padding: '8px 16px',
-    //     borderRadius: 4,
-    //     border: '1px solid #ccc',
-    //     background: '#f5f5f5',
-    //     cursor: 'pointer'
-    //   };
-
-    //   // Render duplicate confirmation content
-    //   const renderDuplicateContent = () => {
-    //     if (!duplicates) return null;
-        
-    //     return (
-    //       <>
-    //         <h2>Duplicate entries found</h2>
-    //         <p>The following entries already exist in the database. Select which ones you want to update:</p>
-    //         <div style={{ maxHeight: 300, overflow: 'auto', marginBottom: 16 }}>
-    //           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-    //             <thead>
-    //               <tr style={{ backgroundColor: '#f5f5f5' }}>
-    //                 <th style={{ textAlign: 'left', padding: 8, border: '1px solid #ddd' }}>Select</th>
-    //                 <th style={{ textAlign: 'left', padding: 8, border: '1px solid #ddd' }}>URL</th>
-    //                 <th style={{ textAlign: 'left', padding: 8, border: '1px solid #ddd' }}>Current Price</th>
-    //                 <th style={{ textAlign: 'left', padding: 8, border: '1px solid #ddd' }}>New Price</th>
-    //                 <th style={{ textAlign: 'left', padding: 8, border: '1px solid #ddd' }}>Current Publisher</th>
-    //                 <th style={{ textAlign: 'left', padding: 8, border: '1px solid #ddd' }}>New Publisher</th>
-    //               </tr>
-    //             </thead>
-    //             <tbody>
-    //               {duplicates.duplicates.map((dup, index) => (
-    //                 <tr key={index}>
-    //                   <td style={{ padding: 8, border: '1px solid #ddd' }}>
-    //                     <input 
-    //                       type="checkbox" 
-    //                       checked={selectedDuplicates.includes(dup.url)}
-    //                       onChange={() => handleDuplicateToggle(dup.url)}
-    //                     />
-    //                   </td>
-    //                   <td style={{ padding: 8, border: '1px solid #ddd' }}>{dup.url}</td>
-    //                   <td style={{ padding: 8, border: '1px solid #ddd' }}>{dup.existingItem.price}</td>
-    //                   <td style={{ padding: 8, border: '1px solid #ddd' }}>{dup.newItem.price}</td>
-    //                   <td style={{ padding: 8, border: '1px solid #ddd' }}>{dup.existingItem.publisher_name}</td>
-    //                   <td style={{ padding: 8, border: '1px solid #ddd' }}>{dup.newItem.publisher_name}</td>
-    //                 </tr>
-    //               ))}
-    //             </tbody>
-    //           </table>
-    //         </div>
-    //         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-    //           <button 
-    //             onClick={handleDownloadDuplicates} 
-    //             style={{ display: 'flex', alignItems: 'center', gap: 8, ...secondaryButtonStyle }}
-    //           >
-    //             <Download />
-    //             Download Comparison
-    //           </button>
-    //           <div>
-    //             <button 
-    //               onClick={() => {
-    //                 setDuplicates(null);
-    //                 setSelectedDuplicates([]);
-    //               }} 
-    //               style={secondaryButtonStyle}
-    //             >
-    //               Cancel
-    //             </button>
-    //             <button 
-    //               onClick={handleConfirmDuplicates} 
-    //               style={{ ...primaryButtonStyle, marginLeft: 8 }}
-    //               disabled={selectedDuplicates.length === 0}
-    //             >
-    //               Update Selected ({selectedDuplicates.length})
-    //             </button>
-    //           </div>
-    //         </div>
-    //       </>
-    //     );
-    //   };
-
-    //   return (
-    //     <>
-    //       <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.2)', zIndex: 1000 }}>
-    //         <div style={{ background: 'white', padding: 24, borderRadius: 8, maxWidth: 700, margin: '60px auto' }}>
-    //           <h2>Import CSV</h2>
-              
-    //           {duplicates ? (
-    //             renderDuplicateContent()
-    //           ) : createdCount > 0 ? (
-    //             <>
-    //               <h2>Upload Successful</h2>
-    //               <p>{createdCount} entries have been created/updated.</p>
-    //               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-    //                 <button 
-    //                   onClick={() => {
-    //                     setCreatedCount(0);
-    //                     setIsVisible(false);
-    //                   }} 
-    //                   style={primaryButtonStyle}
-    //                 >
-    //                   Close
-    //                 </button>
-    //               </div>
-    //             </>
-    //           ) : (
-    //             <>
-    //               <div style={{ marginBottom: 16 }}>
-    //                 <input 
-    //                   type="file" 
-    //                   accept=".csv" 
-    //                   onChange={handleFileChange}
-    //                   style={{ display: 'none' }}
-    //                   id="csv-upload"
-    //                 />
-    //                 <label 
-    //                   htmlFor="csv-upload" 
-    //                   style={{
-    //                     display: 'inline-block',
-    //                     padding: '8px 16px',
-    //                     borderRadius: 4,
-    //                     border: '1px dashed #4945FF',
-    //                     background: '#f0f0ff',
-    //                     cursor: 'pointer'
-    //                   }}
-    //                 >
-    //                   Select CSV File
-    //                 </label>
-    //                 {file && <span style={{ marginLeft: 8 }}>{file.name}</span>}
-    //               </div>
-                  
-    //               {error && (
-    //                 <div style={{ color: 'red', marginBottom: 16 }}>
-    //                   {error}
-    //                 </div>
-    //               )}
-                  
-    //               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-    //                 <button
-    //                   onClick={() => setIsVisible(false)}
-    //                   style={secondaryButtonStyle}
-    //                 >
-    //                   Cancel
-    //                 </button>
-    //                 <button
-    //                   onClick={handleUpload}
-    //                   disabled={!file || isUploading}
-    //                   style={primaryButtonStyle}
-    //                 >
-    //                   {isUploading ? 'Uploading...' : 'Upload'}
-    //                 </button>
-    //               </div>
-    //             </>
-    //           )}
-    //         </div>
-    //       </div>
-    //     </>
-    //   );
-    // };
     const ImportModal = ({ setIsVisible }) => {
       const [file, setFile] = useState(null);
       const [isUploading, setIsUploading] = useState(false);
@@ -539,8 +166,7 @@ export default {
       };
 
       const handleConfirmDuplicates = async () => {
-        if (selectedDuplicates.length === 0) {
-          setError('No duplicates selected for update');
+        if (!duplicates || !duplicates.duplicates.length || !selectedDuplicates.length) {
           return;
         }
 
@@ -548,20 +174,47 @@ export default {
         setError(null);
 
         try {
-          const auth = JSON.parse(localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken'));
+          // Get auth token from localStorage, sessionStorage, or cookies
+          let auth = null;
+          
+          try {
+            auth = JSON.parse(localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken'));
+          } catch (e) {
+            console.log('Error parsing token from storage:', e);
+          }
+          
+          // If not found in storage, try to get from cookies
+          if (!auth) {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+              const cookie = cookies[i].trim();
+              if (cookie.startsWith('jwtToken')) {
+                const equalPos = cookie.indexOf('=');
+                if (equalPos !== -1) {
+                  auth = cookie.substring(equalPos + 1);
+                  break;
+                }
+              }
+            }
+          }
           
           if (!auth) {
-            throw new Error('Authentication token not found');
+            throw new Error('Authentication token not found in storage or cookies');
           }
 
-          // Send confirmation request
+          // Send confirmation request with enhanced duplicate handling
           const response = await axios.post('/api/upload-csv', {
             fileId: duplicates.fileId,
-            confirmDuplicates: selectedDuplicates
+            confirmDuplicates: selectedDuplicates,
+            strictDuplicatePrevention: true, // Add flag to enforce strict duplicate checks
+            uniqueIdentifier: 'url', // Specify which field should be used for uniqueness
+            updateExisting: true, // Update existing records instead of creating new ones
+            strategy: 'replace' // Replace existing records with new data
           }, {
             headers: {
               'Authorization': `Bearer ${auth}`
-            }
+            },
+            withCredentials: true, // Include cookies in the request
           });
 
           if (response.data) {
@@ -595,12 +248,92 @@ export default {
         formData.append('files', file);
 
         try {
-          // Get auth token from localStorage
-          const auth = JSON.parse(localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken'));
+          // Get auth token from localStorage, sessionStorage, or cookies
+          let auth = null;
+          
+          try {
+            auth = JSON.parse(localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken'));
+            console.log('Token from storage:', auth ? 'Found' : 'Not found');
+          } catch (e) {
+            console.log('Error parsing token from storage:', e);
+          }
+          
+          // If not found in storage, try to get from cookies
+          if (!auth) {
+            console.log('Searching for token in cookies...');
+            const cookies = document.cookie.split(';');
+            console.log('All cookies:', cookies);
+            
+            // Try direct access to the cookie
+            const jwtTokenCookie = document.cookie
+              .split('; ')
+              .find(row => row.startsWith('jwtToken'));
+              
+            if (jwtTokenCookie) {
+              console.log('Found jwtToken cookie:', jwtTokenCookie);
+              // Just use the entire cookie value
+              auth = jwtTokenCookie.split('=')[1];
+              console.log('Extracted auth token:', auth ? 'Found' : 'Not found');
+            } else {
+              console.log('jwtToken cookie not found');
+              
+              // Try finding the token in any cookie for safety
+              for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                console.log(`Checking cookie: ${cookie}`);
+                
+                if (cookie.startsWith('jwtToken')) {
+                  console.log('Found cookie starting with jwtToken:', cookie);
+                  
+                  // Try both methods of extraction
+                  const parts = cookie.split('=');
+                  if (parts.length > 1) {
+                    auth = parts[1];
+                    console.log('Extracted token using split:', auth ? 'Found' : 'Not found');
+                  } else {
+                    // If no equals sign, take everything after "jwtToken"
+                    auth = cookie.substring('jwtToken'.length).trim();
+                    console.log('Extracted token using substring:', auth ? 'Found' : 'Not found');
+                  }
+                  
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Last resort: try parsing the cookie string manually
+          if (!auth) {
+            console.log('Trying alternative cookie parsing');
+            const cookieString = document.cookie;
+            console.log('Full cookie string:', cookieString);
+            
+            // Check if jwtToken is anywhere in the cookie string
+            if (cookieString.includes('jwtToken')) {
+              const startIndex = cookieString.indexOf('jwtToken') + 'jwtToken'.length;
+              let endIndex = cookieString.indexOf(';', startIndex);
+              if (endIndex === -1) endIndex = cookieString.length;
+              
+              // Extract everything after jwtToken
+              const tokenPart = cookieString.substring(startIndex, endIndex).trim();
+              
+              // Check if it starts with =
+              if (tokenPart.startsWith('=')) {
+                auth = tokenPart.substring(1);
+              } else {
+                auth = tokenPart;
+              }
+              
+              console.log('Extracted using manual parsing:', auth ? 'Found' : 'Not found');
+            }
+          }
           
           if (!auth) {
-            throw new Error('Authentication token not found');
+            console.log('Failed to find token in cookies. Raw cookie string:', document.cookie);
+            throw new Error('Authentication token not found in storage or cookies');
           }
+
+          console.log('Successfully found authentication token');
 
           // First upload the file
           const uploadResponse = await axios.post('/upload', formData, {
@@ -608,16 +341,22 @@ export default {
               'Content-Type': 'multipart/form-data',
               'Authorization': `Bearer ${auth}`
             },
+            withCredentials: true, // Include cookies in the request
           });
 
           if (uploadResponse.data) {
-            // Now process the uploaded file
+            // Now process the uploaded file with stricter duplicate prevention
             const response = await axios.post('/api/upload-csv', {
-              fileId: uploadResponse.data[0].id
+              fileId: uploadResponse.data[0].id,
+              strictDuplicatePrevention: true, // Add flag to enforce strict duplicate checks
+              uniqueIdentifier: 'url', // Specify which field should be used for uniqueness
+              updateExisting: true, // Update existing records instead of creating new ones
+              skipDuplicates: false // Force check for duplicates
             }, {
               headers: {
                 'Authorization': `Bearer ${auth}`
-              }
+              },
+              withCredentials: true, // Include cookies in the request
             });
 
             if (response.data) {
@@ -646,124 +385,306 @@ export default {
         }
       };
 
-      const modalStyle = {
-        position: 'fixed',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        backgroundColor: 'white',
-        padding: '2rem',
-        borderRadius: '4px',
-        boxShadow: '0 2px 10px rgba(0, 0, 0, 0.1)',
-        width: '500px',
-        maxHeight: '80vh',
-        overflowY: 'auto',
-        zIndex: 1000
-      };
-
-      const overlayStyle = {
+      // Improved modern styling
+      const modalOverlayStyle = {
         position: 'fixed',
         top: 0,
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        zIndex: 999
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        backdropFilter: 'blur(4px)',
+        zIndex: 999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      };
+
+      const modalStyle = {
+        backgroundColor: 'white',
+        borderRadius: '8px',
+        boxShadow: '0 10px 25px rgba(0, 0, 0, 0.15)',
+        width: '600px',
+        maxWidth: '90vw',
+        maxHeight: '85vh',
+        overflowY: 'auto',
+        padding: '28px',
+        position: 'relative',
+        animation: 'modalFadeIn 0.3s ease-out',
+        border: '1px solid #eaeaea'
+      };
+
+      const modalHeaderStyle = {
+        marginTop: 0,
+        marginBottom: '24px',
+        fontSize: '24px',
+        fontWeight: '600',
+        color: '#32324d',
+        borderBottom: '1px solid #f5f5f5',
+        paddingBottom: '16px'
       };
 
       const buttonStyle = {
-        padding: '8px 16px',
+        padding: '10px 16px',
         borderRadius: '4px',
-        border: 'none',
+        fontSize: '14px',
+        fontWeight: '500',
         cursor: 'pointer',
-        marginRight: '8px'
+        transition: 'all 0.2s ease',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center'
       };
 
       const primaryButtonStyle = {
         ...buttonStyle,
         backgroundColor: '#4945FF',
-        color: 'white'
+        color: 'white',
+        border: 'none',
+        boxShadow: '0 2px 6px rgba(73, 69, 255, 0.25)',
+        '&:hover': {
+          backgroundColor: '#3732e5',
+          boxShadow: '0 4px 12px rgba(73, 69, 255, 0.4)'
+        }
       };
 
       const secondaryButtonStyle = {
         ...buttonStyle,
-        backgroundColor: '#F0F0FF',
-        color: '#4945FF'
+        backgroundColor: '#ffffff',
+        color: '#4945FF',
+        border: '1px solid #dcdce4',
+        '&:hover': {
+          backgroundColor: '#f0f0ff',
+          borderColor: '#4945FF'
+        }
       };
 
-      const modalContentStyle = {
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
+      const fileInputStyle = {
+        display: 'none'
+      };
+
+      const fileInputLabelStyle = {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '10px 16px',
+        borderRadius: '4px',
+        border: '1px dashed #4945FF',
+        backgroundColor: '#f0f0ff',
+        color: '#4945FF',
+        fontWeight: '500',
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        marginBottom: '16px',
+        '&:hover': {
+          backgroundColor: '#e6e6ff',
+          boxShadow: '0 2px 4px rgba(73, 69, 255, 0.1)'
+        }
+      };
+
+      const fileNameStyle = {
+        marginLeft: '8px',
+        fontSize: '14px',
+        color: '#666687'
+      };
+
+      const formGroupStyle = {
+        marginBottom: '20px'
+      };
+
+      const errorStyle = {
+        backgroundColor: '#fcecea',
+        color: '#d02b20',
+        padding: '12px 16px',
+        borderRadius: '4px',
+        fontSize: '14px',
+        marginBottom: '20px',
+        border: '1px solid #f5c0b8'
+      };
+
+      const infoBoxStyle = {
+        backgroundColor: '#eaf5ff',
+        border: '1px solid #b8e1ff',
+        borderRadius: '4px',
+        padding: '16px',
+        color: '#006096',
+        marginBottom: '20px'
+      };
+
+      const tableStyle = {
+        width: '100%',
+        borderCollapse: 'separate',
+        borderSpacing: 0,
+        border: '1px solid #eaeaea',
+        borderRadius: '4px',
+        overflow: 'hidden'
+      };
+
+      const tableHeaderStyle = {
+        backgroundColor: '#f6f6f9',
+        color: '#666687',
+        fontSize: '12px',
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px'
+      };
+
+      const tableHeaderCellStyle = {
+        padding: '12px 16px',
+        textAlign: 'left',
+        borderBottom: '1px solid #eaeaea'
+      };
+
+      const tableCellStyle = {
+        padding: '12px 16px',
+        borderBottom: '1px solid #eaeaea',
+        fontSize: '14px'
+      };
+
+      const checkboxStyle = {
+        cursor: 'pointer',
+        width: '16px',
+        height: '16px'
+      };
+
+      const successStyle = {
+        color: '#328048',
+        backgroundColor: '#eafbe7',
+        padding: '16px',
+        borderRadius: '4px',
+        marginBottom: '20px',
+        border: '1px solid #c6f0c2'
+      };
+
+      const buttonContainerStyle = {
+        display: 'flex',
+        justifyContent: 'flex-end',
+        gap: '12px',
+        marginTop: '24px'
+      };
+
+      const duplicateItemStyle = {
         backgroundColor: 'white',
-        padding: '20px',
-        borderRadius: '5px',
-        boxShadow: '0 2px 10px rgba(0, 0, 0, 0.1)',
-        width: '500px',
-        maxHeight: '80vh',
-        overflowY: 'auto',
-        zIndex: 1001,
+        border: '1px solid #eaeaea',
+        borderRadius: '4px',
+        padding: '16px',
+        marginBottom: '12px',
+        boxShadow: '0 1px 4px rgba(0, 0, 0, 0.05)',
+        transition: 'all 0.2s ease',
+        '&:hover': {
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
+        }
       };
 
-            // Render duplicate confirmation content
+      const duplicateContainerStyle = {
+        maxHeight: '400px', 
+        overflowY: 'auto',
+        padding: '4px',
+        marginBottom: '20px'
+      };
+
+      const columnStyle = {
+        flex: 1
+      };
+
+      const downloadButtonStyle = {
+        ...secondaryButtonStyle,
+        backgroundColor: '#4CAF50',
+        color: 'white',
+        borderColor: '#4CAF50',
+        '&:hover': {
+          backgroundColor: '#43a047',
+          boxShadow: '0 2px 6px rgba(76, 175, 80, 0.3)'
+        }
+      };
+
+      const requiredFieldsListStyle = {
+        margin: '0 0 0 1.5rem',
+        padding: 0,
+        columns: '2',
+        fontSize: '13px',
+        color: '#666687'
+      };
+
+      const requiredFieldsHeaderStyle = {
+        marginBottom: '8px',
+        fontWeight: '500',
+        color: '#32324d',
+        fontSize: '14px'
+      };
+
+      // Render duplicate confirmation content
       const renderDuplicateContent = () => {
         return (
           <>
-            <h2 style={{ marginTop: 0 }}>Duplicate URLs Found</h2>
+            <h2 style={modalHeaderStyle}>Duplicate URLs Found</h2>
             
-            <div style={{ marginBottom: '20px' }}>
-              <p>We found {duplicates.duplicates.length} URLs that already exist. Select the ones you want to update:</p>
-              <p>{createdCount} new records were already created.</p>
-              
-              <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #ddd', padding: '10px' }}>
-                {duplicates.duplicates.map((dup, index) => (
-                  <div key={index} style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
-                      <input
-                        type="checkbox"
-                        id={`dup-${index}`}
-                        checked={selectedDuplicates.includes(dup.url)}
-                        onChange={() => handleDuplicateToggle(dup.url)}
-                        style={{ marginRight: '10px' }}
-                      />
-                      <label htmlFor={`dup-${index}`} style={{ fontWeight: 'bold' }}>{dup.url}</label>
-                    </div>
-                    
-                    <div style={{ display: 'flex', marginLeft: '25px' }}>
-                      <div style={{ flex: 1 }}>
-                        <h4 style={{ margin: '5px 0' }}>Current Data</h4>
-                        <div>Price: {dup.existingData.price}</div>
-                        <div>Publisher: {dup.existingData.publisher_name || 'N/A'}</div>
-                        <div>Publisher Email: {dup.existingData.publisher_email || 'N/A'}</div>
-                        <div>Publisher Price: {dup.existingData.publisher_price || 'N/A'}</div>
+            <div style={infoBoxStyle}>
+              <p style={{ margin: '0 0 8px 0' }}>We found {duplicates.duplicates.length} URLs that already exist. Select the ones you want to update.</p>
+              <p style={{ margin: 0 }}>{createdCount} new records were already created.</p>
+            </div>
+            
+            <div style={duplicateContainerStyle}>
+              {duplicates.duplicates.map((dup, index) => (
+                <div key={index} style={duplicateItemStyle}>
+                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px' }}>
+                    <input
+                      type="checkbox"
+                      id={`dup-${index}`}
+                      checked={selectedDuplicates.includes(dup.url)}
+                      onChange={() => handleDuplicateToggle(dup.url)}
+                      style={checkboxStyle}
+                    />
+                    <label htmlFor={`dup-${index}`} style={{ 
+                      fontWeight: 'bold', 
+                      marginLeft: '10px',
+                      color: '#32324d',
+                      flex: 1,
+                      textDecoration: 'underline',
+                      textDecorationColor: '#4945FF'
+                    }}>
+                      {dup.url}
+                    </label>
+                  </div>
+                  
+                  <div style={{ display: 'flex', marginLeft: '25px', gap: '24px' }}>
+                    <div style={columnStyle}>
+                      <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#666687' }}>Current Data</h4>
+                      <div style={{ fontSize: '13px', lineHeight: '1.5' }}>
+                        <div>Price: <span style={{ fontWeight: '500' }}>${dup.existingData.price}</span></div>
+                        <div>Publisher: <span style={{ fontWeight: '500' }}>{dup.existingData.publisher_name || 'N/A'}</span></div>
+                        <div>Publisher Email: <span style={{ fontWeight: '500' }}>{dup.existingData.publisher_email || 'N/A'}</span></div>
+                        <div>Publisher Price: <span style={{ fontWeight: '500' }}>${dup.existingData.publisher_price || 'N/A'}</span></div>
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <h4 style={{ margin: '5px 0' }}>New Data</h4>
-                        <div>Price: {dup.newData.price}</div>
-                        <div>Publisher: {dup.newData.publisher_name || 'N/A'}</div>
-                        <div>Publisher Email: {dup.newData.publisher_email || 'N/A'}</div>
-                        <div>Publisher Price: {dup.newData.publisher_price || 'N/A'}</div>
+                    </div>
+                    <div style={columnStyle}>
+                      <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#009f26' }}>New Data</h4>
+                      <div style={{ fontSize: '13px', lineHeight: '1.5' }}>
+                        <div>Price: <span style={{ fontWeight: '500', color: dup.newData.price !== dup.existingData.price ? '#009f26' : 'inherit' }}>${dup.newData.price}</span></div>
+                        <div>Publisher: <span style={{ fontWeight: '500', color: dup.newData.publisher_name !== dup.existingData.publisher_name ? '#009f26' : 'inherit' }}>{dup.newData.publisher_name || 'N/A'}</span></div>
+                        <div>Publisher Email: <span style={{ fontWeight: '500', color: dup.newData.publisher_email !== dup.existingData.publisher_email ? '#009f26' : 'inherit' }}>{dup.newData.publisher_email || 'N/A'}</span></div>
+                        <div>Publisher Price: <span style={{ fontWeight: '500', color: dup.newData.publisher_price !== dup.existingData.publisher_price ? '#009f26' : 'inherit' }}>${dup.newData.publisher_price || 'N/A'}</span></div>
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
             
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <button 
                 onClick={handleDownloadDuplicates}
-                style={{
-                  ...secondaryButtonStyle,
-                  backgroundColor: '#4CAF50',
-                  marginRight: 'auto'
-                }}
+                style={downloadButtonStyle}
               >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '8px' }}>
+                  <path d="M12 16L12 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M9 13L12 16L15 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M20 20H4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
                 Download List
               </button>
               
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '12px' }}>
                 <button 
                   onClick={() => setDuplicates(null)}
                   style={secondaryButtonStyle}
@@ -775,11 +696,21 @@ export default {
                   disabled={isUploading || selectedDuplicates.length === 0}
                   style={{
                     ...primaryButtonStyle,
-                    backgroundColor: selectedDuplicates.length > 0 ? '#4945FF' : '#ccc',
+                    opacity: selectedDuplicates.length > 0 ? 1 : 0.6,
                     cursor: selectedDuplicates.length > 0 ? 'pointer' : 'not-allowed',
                   }}
                 >
-                  {isUploading ? 'Updating...' : 'Update Selected'}
+                  {isUploading ? (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style={{ 
+                        animation: 'spin 1s linear infinite',
+                        marginRight: '8px'
+                      }}>
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="calc(3.14 * 20)" strokeDashoffset="calc(3.14 * 10)" />
+                      </svg>
+                      Updating...
+                    </>
+                  ) : `Update Selected (${selectedDuplicates.length})`}
                 </button>
               </div>
             </div>
@@ -789,75 +720,99 @@ export default {
 
       return (
         <>
-          <div style={overlayStyle} onClick={() => setIsVisible(false)} />
-          <div style={modalStyle}>
-            <h2 style={{ marginTop: 0 }}>{duplicates ? 'Duplicate URLs Found' : 'Import from CSV'}</h2>
-            
-            {error && (
-              <div style={{ color: '#d02b20', marginTop: '0.5rem' }}>
-                {error}
-              </div>
-            )}
-            
-            {duplicates ? (
-              renderDuplicateContent()
-            ) : (
-              <>
-                <div style={{ marginBottom: '1rem' }}>
-                  <input
-                    type="file"
-                    accept=".csv"
-                    onChange={handleFileChange}
-                    style={{ marginBottom: '1rem' }}
-                  />
-                </div>
-                <div style={{ marginBottom: '1.5rem' }}>
-                  <h4 style={{ marginBottom: '0.5rem' }}>Required columns:</h4>
-                  <ul style={{ margin: '0 0 0 1.5rem', padding: 0 }}>
-                    <li>url (required)</li>
-                    <li>price (required)</li>
-                    <li>publisher_name (required)</li>
-                    <li>publisher_email (required)</li>
-                    <li>backlink_type (required)</li>
-                    <li>category (required)</li>
-                    <li>other_category (required)</li>
-                    <li>guidelines (required)</li>
-                    <li>backlink_validity (required)</li>
-                    <li>ahrefs_dr (required)</li>
-                    <li>ahrefs_traffic (required)</li>
-                    <li>ahrefs_rank (required)</li>
-                    <li>moz_da (required)</li>
-                    <li>fast_placement_status (required)</li>
-                    <li>sample_post (required)</li>
-                    <li>tat (required)</li>
-                    <li>min_word_count (required)</li>
-                    <li>forbidden_gp_price (required)</li>
-                    <li>forbidden_li_price (required)</li>
-                  </ul>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                  <button
-                    onClick={() => setIsVisible(false)}
-                    style={secondaryButtonStyle}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleUpload}
-                    disabled={!file || isUploading}
-                    style={primaryButtonStyle}
-                  >
-                    {isUploading ? 'Uploading...' : 'Upload'}
-                  </button>
-                </div>
-              </>
-            )}
+          <div style={modalOverlayStyle} onClick={() => setIsVisible(false)}>
+            <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+              {duplicates ? (
+                renderDuplicateContent()
+              ) : (
+                <>
+                  <h2 style={modalHeaderStyle}>Import from CSV</h2>
+                  
+                  {error && (
+                    <div style={errorStyle}>{error}</div>
+                  )}
+                  
+                  <div style={formGroupStyle}>
+                    <input
+                      type="file"
+                      id="csv-upload"
+                      accept=".csv"
+                      onChange={handleFileChange}
+                      style={fileInputStyle}
+                    />
+                    <label htmlFor="csv-upload" style={fileInputLabelStyle}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '8px' }}>
+                        <path d="M12 8L12 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M15 11L12 8L9 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M8 4H6C4.89543 4 4 4.89543 4 6V18C4 19.1046 4.89543 20 6 20H18C19.1046 20 20 19.1046 20 18V6C20 4.89543 19.1046 4 18 4H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      Select CSV File
+                    </label>
+                    {file && <span style={fileNameStyle}>{file.name}</span>}
+                  </div>
+
+                  <div style={infoBoxStyle}>
+                    <h4 style={requiredFieldsHeaderStyle}>Required columns:</h4>
+                    <ul style={requiredFieldsListStyle}>
+                      {REQUIRED_FIELDS.map((field, index) => (
+                        <li key={index} style={{ marginBottom: '4px' }}>{field}</li>
+                      ))}
+                      {MISSING_FIELDS.filter(field => !REQUIRED_FIELDS.includes(field)).map((field, index) => (
+                        <li key={index} style={{ marginBottom: '4px', color: '#8e8ea9' }}>{field}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div style={buttonContainerStyle}>
+                    <button
+                      onClick={() => setIsVisible(false)}
+                      style={secondaryButtonStyle}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleUpload}
+                      disabled={!file || isUploading}
+                      style={{
+                        ...primaryButtonStyle,
+                        opacity: file && !isUploading ? 1 : 0.6,
+                        cursor: file && !isUploading ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      {isUploading ? (
+                        <>
+                          <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style={{ 
+                            animation: 'spin 1s linear infinite',
+                            marginRight: '8px'
+                          }}>
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="calc(3.14 * 20)" strokeDashoffset="calc(3.14 * 10)" />
+                          </svg>
+                          Uploading...
+                        </>
+                      ) : 'Upload'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
+
+          <style>
+            {`
+              @keyframes modalFadeIn {
+                from { opacity: 0; transform: translateY(-20px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+              }
+            `}
+          </style>
         </>
       );
     };
 
-   
     // CSV Export Component
     const ExportModal = ({ isVisible, setIsVisible }) => {
       const [filterEmail, setFilterEmail] = useState('');
@@ -944,7 +899,15 @@ export default {
       
       const handleMaxRecordsChange = (e) => {
         const value = parseInt(e.target.value) || 0;
-        setMaxRecords(Math.min(Math.max(value, 1), 50000)); // Limit between 1 and 50000
+        const newMaxRecords = Math.min(Math.max(value, 1), 50000); // Limit between 1 and 50000
+        console.log(`Setting maxRecords: ${newMaxRecords} (from input: ${value})`);
+        setMaxRecords(newMaxRecords);
+        
+        // If we've already done a search, update results with new limit
+        if (searchPerformed) {
+          console.log('Search already performed, refreshing results with new maxRecords');
+          handleSearch();
+        }
       };
 
       // Check total count with current filters
@@ -959,6 +922,7 @@ export default {
               ...filters,
               page: 1,
               pageSize: 1, // Just need count
+              removeDuplicates: true, // Add parameter to get accurate count without duplicates
             },
             withCredentials: true,
           });
@@ -1028,30 +992,65 @@ export default {
         try {
           const filters = buildFilters();
           
+          console.log(`Requesting records with max limit: ${maxRecords}`);
+          
           const res = await axios.get('/api/marketplaces/admin-list', {
             params: {
               ...filters,
               page: 1, 
-              pageSize: Math.min(pageSize, maxRecords), // Respect maxRecords limit for search too
-              limit: maxRecords, // Add explicit limit parameter
+              pageSize: maxRecords, // Request exactly maxRecords items
+              limit: maxRecords,
+              removeDuplicates: true,
             },
             withCredentials: true,
           });
-        console.log(res.data)
-          setRecords(res.data.data || []);
           
-          // Limit the total count to respect maxRecords setting
-          const actualTotal = res.data.meta?.pagination?.total || 0;
-          setTotalCount(Math.min(actualTotal, maxRecords));
+          console.log(`API returned ${res.data?.data?.length || 0} records, pagination total: ${res.data?.meta?.pagination?.total || 0}`);
           
-          // Recalculate page count based on limited total
-          const limitedTotal = Math.min(actualTotal, maxRecords);
-          const calculatedPageCount = Math.ceil(limitedTotal / pageSize);
+          // Check for and handle duplicates in the client side too
+          const uniqueItems = [];
+          const seenUrls = new Set();
+          
+          // Filter duplicates by URL (or any other unique identifier you prefer)
+          if (res.data && res.data.data) {
+            res.data.data.forEach(item => {
+              const url = item.url || item.attributes?.url;
+              if (url && !seenUrls.has(url)) {
+                seenUrls.add(url);
+                uniqueItems.push(item);
+              }
+            });
+            
+            // Log if duplicates were found and removed
+            if (uniqueItems.length < res.data.data.length) {
+              console.log(`Removed ${res.data.data.length - uniqueItems.length} duplicate items from the results`);
+            }
+            
+            // Limit items to exactly maxRecords
+            const limitedItems = uniqueItems.slice(0, maxRecords);
+            console.log(`Setting records: ${limitedItems.length} items (after filtering and limiting)`);
+            
+            setRecords(limitedItems);
+            
+            // Set the total count to the actual number of visible records
+            // This ensures the count display matches what's shown in the table
+            const actualVisibleCount = limitedItems.length;
+            console.log(`Setting total count to actual visible records: ${actualVisibleCount}`);
+            setTotalCount(actualVisibleCount);
+          } else {
+            setRecords([]);
+            setTotalCount(0);
+          }
+          
+          // Calculate page count based on the actual items we have and pageSize for display
+          const displayPageSize = pageSize;
+          const visibleRecordsCount = uniqueItems.length;
+          const calculatedPageCount = Math.ceil(visibleRecordsCount / displayPageSize);
+          console.log(`Setting page count: ${calculatedPageCount} (based on ${visibleRecordsCount} visible records)`);
           setPageCount(calculatedPageCount);
           
           setCurrentPage(1);
           setSearchPerformed(true);
-          // Clear existing selections when loading new data
           setSelectedRecords([]);
         } catch (err) {
           console.error('Search error:', err);
@@ -1071,27 +1070,58 @@ export default {
           const filters = buildFilters();
           
           // Calculate proper offset and limit to respect maxRecords
-          const offset = (page - 1) * pageSize;
+          const displayPageSize = pageSize;
+          const offset = (page - 1) * displayPageSize;
+          
+          // Make sure we don't exceed maxRecords in total
           const remainingRecords = maxRecords - offset;
-          const effectivePageSize = Math.min(pageSize, Math.max(0, remainingRecords));
+          const effectivePageSize = Math.min(displayPageSize, Math.max(0, remainingRecords));
+          
+          console.log(`Loading page ${page}, offset: ${offset}, effectivePageSize: ${effectivePageSize}, maxRecords: ${maxRecords}`);
           
           // Don't load page if we've already reached the max records limit
           if (effectivePageSize <= 0) {
             setLoading(false);
+            console.log('Skipping page load: no more records available within maxRecords limit');
             return;
           }
           
           const res = await axios.get('/api/marketplaces/admin-list', {
             params: {
               ...filters,
-              page,
+              page: page,
               pageSize: effectivePageSize,
+              offset: offset, // Add explicit offset parameter
               limit: maxRecords,
+              removeDuplicates: true,
             },
             withCredentials: true,
           });
           
-          setRecords(res.data.data || []);
+          console.log(`API returned ${res.data?.data?.length || 0} records for page ${page}`);
+          
+          // Check for and process duplicates
+          const uniqueItems = [];
+          const seenUrls = new Set();
+          
+          if (res.data && res.data.data) {
+            res.data.data.forEach(item => {
+              const url = item.url || item.attributes?.url;
+              if (url && !seenUrls.has(url)) {
+                seenUrls.add(url);
+                uniqueItems.push(item);
+              }
+            });
+            
+            if (uniqueItems.length < res.data.data.length) {
+              console.log(`Removed ${res.data.data.length - uniqueItems.length} duplicate items from page ${page}`);
+            }
+            
+            setRecords(uniqueItems);
+          } else {
+            setRecords([]);
+          }
+          
           setCurrentPage(page);
         } catch (err) {
           console.error('Page fetch error:', err);
@@ -1155,17 +1185,49 @@ export default {
         setLoading(true);
         setError(null);
         try {
-          // Get auth token from localStorage
-          const token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt');
+          // Check for duplicate IDs in selected records
+          const uniqueIds = new Set(selectedRecords);
+          if (uniqueIds.size !== selectedRecords.length) {
+            console.warn(`Found ${selectedRecords.length - uniqueIds.size} duplicate IDs in selection`);
+            // Continue with unique IDs only
+            const uniqueIdArray = [...uniqueIds];
+            setSelectedRecords(uniqueIdArray);
+            console.log(`Proceeding with ${uniqueIdArray.length} unique records`);
+          }
           
-          // Make request for CSV download with selected IDs
+          // Get auth token from localStorage, sessionStorage, or cookies
+          let token = null;
+          
+          try {
+            token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt') || 
+                   sessionStorage.getItem('jwtToken') || sessionStorage.getItem('jwt');
+          } catch (e) {
+            console.log('Error getting token from storage:', e);
+          }
+          
+          // If not found in storage, try to get from cookies
+          if (!token) {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+              const cookie = cookies[i].trim();
+              if (cookie.startsWith('jwtToken')) {
+                const equalPos = cookie.indexOf('=');
+                if (equalPos !== -1) {
+                  token = cookie.substring(equalPos + 1);
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Make request for CSV download with unique IDs
           const response = await axios.post('/api/marketplaces/export-selected-csv', {
-            ids: selectedRecords
+            ids: [...uniqueIds]
           }, {
             responseType: 'blob', // Important for file download
-            withCredentials: true,
+            withCredentials: true, // Include cookies in the request
             headers: {
-              Authorization: `Bearer ${token}`,
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
               'Content-Type': 'application/json'
             }
           });
@@ -1196,22 +1258,45 @@ export default {
         try {
           const filters = buildFilters();
           
-          // Get auth token from localStorage
-          const token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt');
+          // Get auth token from localStorage, sessionStorage, or cookies
+          let token = null;
           
-          // Add limit parameter
+          try {
+            token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt') || 
+                   sessionStorage.getItem('jwtToken') || sessionStorage.getItem('jwt');
+          } catch (e) {
+            console.log('Error getting token from storage:', e);
+          }
+          
+          // If not found in storage, try to get from cookies
+          if (!token) {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+              const cookie = cookies[i].trim();
+              if (cookie.startsWith('jwtToken')) {
+                const equalPos = cookie.indexOf('=');
+                if (equalPos !== -1) {
+                  token = cookie.substring(equalPos + 1);
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Add additional parameters to request
           const params = {
             ...filters,
             limit: maxRecords,
+            removeDuplicates: true // Add flag to remove duplicates on the server side
           };
           
           // Make request for CSV download
           const response = await axios.get('/api/marketplaces/export-filtered-csv', {
             params,
             responseType: 'blob', // Important for file download
-            withCredentials: true,
+            withCredentials: true, // Include cookies in the request
             headers: {
-              Authorization: `Bearer ${token}`,
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             }
           });
           
@@ -1460,7 +1545,7 @@ export default {
             {searchPerformed && (
               <div style={{ marginBottom: 24 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <h3 style={{ margin: 0 }}>Results ({totalCount} records found)</h3>
+                  <h3 style={{ margin: 0 }}>Results ({records.length} records found)</h3>
                   <div>
                     <label style={{ marginRight: 8 }}>
                       <input 
@@ -1608,17 +1693,17 @@ export default {
                 </button>
                 <button
                   onClick={handleBulkExport}
-                  disabled={loading || totalCount === 0}
+                  disabled={loading || records.length === 0}
                   style={{ 
                     padding: '8px 16px', 
                     borderRadius: 4, 
                     border: 'none', 
-                    background: loading || totalCount === 0 ? '#aaa' : '#4945FF', 
+                    background: loading || records.length === 0 ? '#aaa' : '#4945FF', 
                     color: 'white',
-                    cursor: loading || totalCount === 0 ? 'not-allowed' : 'pointer'
+                    cursor: loading || records.length === 0 ? 'not-allowed' : 'pointer'
                   }}
                 >
-                  {loading ? 'Processing...' : `Export All (${totalCount})`}
+                  {loading ? 'Processing...' : `Export All (${records.length})`}
                 </button>
               </div>
             </div>
