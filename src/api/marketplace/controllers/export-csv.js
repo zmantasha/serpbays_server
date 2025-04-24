@@ -14,7 +14,7 @@ module.exports = {
       const category = ctx.query['filters[category][$containsi]'];
       const otherCategory = ctx.query['filters[other_category][$containsi]'];
       const language = ctx.query['filters[language][$containsi]'];
-      const country = ctx.query['filters[country][$containsi]'];
+      const country = ctx.query['filters[countries][$containsi]'];
       const domainZone = ctx.query['filters[url][$endsWith]'];
       const backlinkType = ctx.query['filters[backlink_type][$eq]'];
       const publisherName = ctx.query['filters[publisher_name][$containsi]'];
@@ -46,12 +46,21 @@ module.exports = {
         filters.language = { $containsi: language.trim() };
       }
       if (country && country.trim()) {
-        filters.country = { $containsi: country.trim() };
+        // For JSON fields, we need to search differently
+        // This will vary depending on how the data is stored (array vs object)
+        // Try a more flexible approach for JSON search
+        filters.$or = [
+          // If stored as string in JSON
+          { countries: { $containsi: country.trim() } },
+          // If stored as array of strings
+          { countries: { $contains: country.trim() } },
+        ];
       }
       if (domainZone && domainZone.trim()) {
         filters.url = { ...(filters.url || {}), $endsWith: domainZone.trim() };
       }
       if (backlinkType && backlinkType.trim()) {
+        // Ensure backlink_type value matches enumeration in schema (Do follow, No follow)
         filters.backlink_type = { $eq: backlinkType.trim() };
       }
       if (publisherName && publisherName.trim()) {
@@ -78,10 +87,9 @@ module.exports = {
       if (minWordCount && !isNaN(parseInt(minWordCount))) {
         filters.min_word_count = { $gte: parseInt(minWordCount) };
       }
-      if (dofollow === 'true' || dofollow === true) {
-        filters.dofollow_link = { $eq: true };
-      } else if (dofollow === 'false' || dofollow === false) {
-        filters.dofollow_link = { $eq: false };
+      if (dofollow && !isNaN(parseInt(dofollow))) {
+        // Handle dofollow_link as an integer
+        filters.dofollow_link = { $eq: parseInt(dofollow) };
       }
       if (fastPlacement === 'true' || fastPlacement === true) {
         filters.fast_placement_status = { $eq: true };
@@ -175,7 +183,7 @@ module.exports = {
           'filters[category][$containsi]': category,
           'filters[other_category][$containsi]': otherCategory,
           'filters[language][$containsi]': language,
-          'filters[country][$containsi]': country,
+          'filters[countries][$containsi]': country,
           'filters[url][$endsWith]': domainZone,
           'filters[backlink_type][$eq]': backlinkType,
           'filters[publisher_name][$containsi]': publisherName,
@@ -207,7 +215,7 @@ module.exports = {
           filters.language = { $containsi: language.trim() };
         }
         if (country && country.trim().length > 0) {
-          filters.country = { $containsi: country.trim() };
+          filters.countries = { $containsi: country.trim() };
         }
         if (domainZone && domainZone.trim().length > 0) {
           filters.url = { ...(filters.url || {}), $endsWith: domainZone.trim() };
@@ -239,10 +247,9 @@ module.exports = {
         if (minWordCount && !isNaN(parseInt(minWordCount))) {
           filters.min_word_count = { $gte: parseInt(minWordCount) };
         }
-        if (dofollow === 'true' || dofollow === true) {
-          filters.dofollow_link = { $eq: true };
-        } else if (dofollow === 'false' || dofollow === false) {
-          filters.dofollow_link = { $eq: false };
+        if (dofollow && !isNaN(parseInt(dofollow))) {
+          // Handle dofollow_link as an integer
+          filters.dofollow_link = { $eq: parseInt(dofollow) };
         }
         if (fastPlacement === 'true' || fastPlacement === true) {
           filters.fast_placement_status = { $eq: true };

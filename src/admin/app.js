@@ -801,7 +801,7 @@ export default {
                     filters['filters[language][$containsi]'] = filterLanguage.trim();
                 }
                 if (filterCountry && filterCountry.trim()) {
-                    filters['filters[country][$containsi]'] = filterCountry.trim();
+                    filters['filters[countries][$containsi]'] = filterCountry.trim();
                 }
                 if (filterDomainZone && filterDomainZone.trim()) {
                     filters['filters[url][$endsWith]'] = filterDomainZone.trim();
@@ -833,8 +833,8 @@ export default {
                 if (filterMinWordCount && !isNaN(parseInt(filterMinWordCount))) {
                     filters['filters[min_word_count][$gte]'] = parseInt(filterMinWordCount);
                 }
-                if (filterDofollow && filterDofollow !== 'any') {
-                    filters['filters[dofollow_link][$eq]'] = filterDofollow === 'yes';
+                if (filterDofollow && !isNaN(parseInt(filterDofollow))) {
+                    filters['filters[dofollow_link][$eq]'] = parseInt(filterDofollow);
                 }
                 if (filterFastPlacement && filterFastPlacement !== 'any') {
                     filters['filters[fast_placement_status][$eq]'] = filterFastPlacement === 'yes';
@@ -853,6 +853,7 @@ export default {
                         params: Object.assign(Object.assign({}, filters), { page: 1, pageSize: maxRecords, limit: maxRecords, removeDuplicates: true }),
                         withCredentials: true,
                     });
+                    console.log(res.data);
                     console.log(`API returned ${((_e = (_d = res.data) === null || _d === void 0 ? void 0 : _d.data) === null || _e === void 0 ? void 0 : _e.length) || 0} records, pagination total: ${((_h = (_g = (_f = res.data) === null || _f === void 0 ? void 0 : _f.meta) === null || _g === void 0 ? void 0 : _g.pagination) === null || _h === void 0 ? void 0 : _h.total) || 0}`);
                     // Check for and handle duplicates in the client side too
                     const uniqueItems = [];
@@ -1151,8 +1152,8 @@ export default {
                                     React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Backlink Type:"),
                                     React.createElement("select", { value: filterBacklinkType, onChange: handleFilterBacklinkTypeChange, style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' } },
                                         React.createElement("option", { value: "" }, "Any Type"),
-                                        React.createElement("option", { value: "guest post" }, "Guest Post"),
-                                        React.createElement("option", { value: "link insertion" }, "Link Insertion"))))),
+                                        React.createElement("option", { value: "Do follow" }, "Do follow"),
+                                        React.createElement("option", { value: "No follow" }, "No follow"))))),
                         React.createElement("div", { style: { marginBottom: 16 } },
                             React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Additional Categories"),
                             React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(1, 1fr)', gap: 16 } },
@@ -1212,10 +1213,7 @@ export default {
                             React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 } },
                                 React.createElement("div", null,
                                     React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Dofollow Link:"),
-                                    React.createElement("select", { value: filterDofollow, onChange: handleFilterDofollowChange, style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' } },
-                                        React.createElement("option", { value: "" }, "Any"),
-                                        React.createElement("option", { value: "yes" }, "Yes"),
-                                        React.createElement("option", { value: "no" }, "No"))),
+                                    React.createElement("input", { type: "number", value: filterDofollow, onChange: handleFilterDofollowChange, placeholder: "Enter value", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
                                 React.createElement("div", null,
                                     React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Fast Placement:"),
                                     React.createElement("select", { value: filterFastPlacement, onChange: handleFilterFastPlacementChange, style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' } },

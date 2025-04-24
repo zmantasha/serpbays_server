@@ -201,6 +201,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             }
           }
 
+          // Special handling for JSON fields that might be missing
+          if (!convertedData.countries && record.country) {
+            // If 'countries' is missing but 'country' is present, use that
+            convertedData.countries = [record.country.trim()];
+          } else if (!convertedData.countries) {
+            // Ensure countries is properly initialized as an empty array, not defaulting to anything
+            convertedData.countries = [];
+          }
+
           if (rowErrors.length > 0) {
             throw new Error(rowErrors.join(', '));
           }

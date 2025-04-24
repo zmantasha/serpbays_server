@@ -970,7 +970,7 @@ export default {
           filters['filters[language][$containsi]'] = filterLanguage.trim();
         }
         if (filterCountry && filterCountry.trim()) {
-          filters['filters[country][$containsi]'] = filterCountry.trim();
+          filters['filters[countries][$containsi]'] = filterCountry.trim();
         }
         if (filterDomainZone && filterDomainZone.trim()) {
           filters['filters[url][$endsWith]'] = filterDomainZone.trim();
@@ -1002,8 +1002,8 @@ export default {
         if (filterMinWordCount && !isNaN(parseInt(filterMinWordCount))) {
           filters['filters[min_word_count][$gte]'] = parseInt(filterMinWordCount);
         }
-        if (filterDofollow && filterDofollow !== 'any') {
-          filters['filters[dofollow_link][$eq]'] = filterDofollow === 'yes';
+        if (filterDofollow && !isNaN(parseInt(filterDofollow))) {
+          filters['filters[dofollow_link][$eq]'] = parseInt(filterDofollow);
         }
         if (filterFastPlacement && filterFastPlacement !== 'any') {
           filters['filters[fast_placement_status][$eq]'] = filterFastPlacement === 'yes';
@@ -1030,7 +1030,7 @@ export default {
             },
             withCredentials: true,
           });
-          
+          console.log(res.data)
           console.log(`API returned ${res.data?.data?.length || 0} records, pagination total: ${res.data?.meta?.pagination?.total || 0}`);
           
           // Check for and handle duplicates in the client side too
@@ -1389,8 +1389,8 @@ export default {
                       style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' }}
                     >
                       <option value="">Any Type</option>
-                      <option value="guest post">Guest Post</option>
-                      <option value="link insertion">Link Insertion</option>
+                      <option value="Do follow">Do follow</option>
+                      <option value="No follow">No follow</option>
                     </select>
                   </div>
                 </div>
@@ -1567,15 +1567,13 @@ export default {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
                   <div>
                     <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Dofollow Link:</label>
-                    <select
+                    <input
+                      type="number"
                       value={filterDofollow}
                       onChange={handleFilterDofollowChange}
-                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%', height: '38px' }}
-                    >
-                      <option value="">Any</option>
-                      <option value="yes">Yes</option>
-                      <option value="no">No</option>
-                    </select>
+                      placeholder="Enter value"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
                   </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Fast Placement:</label>
