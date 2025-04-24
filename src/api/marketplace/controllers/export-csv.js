@@ -5,8 +5,12 @@ module.exports = {
     try {
       console.log('Export filtered called with query:', ctx.query);
       
-      // Get limit parameter (max records to export)
-      const limit = Math.min(parseInt(ctx.query.limit, 10) || 1000, 50000);
+      // Get start and end parameters for range export
+      const startRecord = Math.max(1, parseInt(ctx.query.startRecord, 10) || 1);
+      const endRecord = Math.min(parseInt(ctx.query.endRecord, 10) || 1000, 50000);
+      const limit = endRecord - startRecord + 1;
+      
+      console.log(`Exporting records from ${startRecord} to ${endRecord} (${limit} records)`);
       
       // Handle filters directly from query string
       const publisherEmail = ctx.query['filters[publisher_email][$containsi]'];
@@ -164,14 +168,15 @@ module.exports = {
         console.error('Error in direct query test:', err);
       }
       
-      // Fetch data with filters and limit
+      // Fetch data with filters and pagination to get specific range
       const entries = await strapi.entityService.findMany('api::marketplace.marketplace', {
         filters,
+        start: startRecord - 1, // Adjust for 0-based index
         limit,
         sort: { updatedAt: 'desc' },
       });
       
-      console.log(`Found ${entries.length} entries to export`);
+      console.log(`Found ${entries.length} entries to export in requested range`);
       
       if (entries.length === 0) {
         return ctx.badRequest('No entries found matching the criteria');

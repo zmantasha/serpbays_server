@@ -832,7 +832,8 @@ export default {
       const [filterMaxAhrefsTraffic, setFilterMaxAhrefsTraffic] = useState('');
       const [filterMaxSemrushTraffic, setFilterMaxSemrushTraffic] = useState('');
       const [filterMaxSimilarwebTraffic, setFilterMaxSimilarwebTraffic] = useState('');
-      const [maxRecords, setMaxRecords] = useState(1000);
+      const [startRecord, setStartRecord] = useState(1);
+      const [endRecord, setEndRecord] = useState(1000);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
       const [totalCount, setTotalCount] = useState(0);
@@ -1533,8 +1534,15 @@ export default {
         setFilterMinWordCount('');
         setFilterDofollow('');
         setFilterFastPlacement('');
-        // Keep maxRecords as is
-        
+        setFilterMinAhrefsTraffic('');
+        setFilterMaxAhrefsTraffic('');
+        setFilterMinSemrushTraffic('');
+        setFilterMaxSemrushTraffic('');
+        setFilterMinSimilarwebTraffic('');
+        setFilterMaxSimilarwebTraffic('');
+        // Reset record range to defaults
+        setStartRecord(1);
+        setEndRecord(1000);
         // Clear search results if any
         if (searchPerformed) {
           setSearchPerformed(false);
@@ -1577,14 +1585,14 @@ export default {
         try {
           const filters = buildFilters();
           
-          console.log(`Requesting records with max limit: ${maxRecords}`);
+          console.log(`Requesting records with max limit: ${endRecord - startRecord + 1}`);
           
           const res = await axios.get('/api/marketplaces/admin-list', {
             params: {
               ...filters,
               page: 1, 
-              pageSize: maxRecords, // Request exactly maxRecords items
-              limit: maxRecords,
+              pageSize: endRecord - startRecord + 1, // Request exactly maxRecords items
+              limit: endRecord - startRecord + 1,
               removeDuplicates: true,
             },
             withCredentials: true,
@@ -1612,7 +1620,7 @@ export default {
             }
             
             // Limit items to exactly maxRecords
-            const limitedItems = uniqueItems.slice(0, maxRecords);
+            const limitedItems = uniqueItems.slice(0, endRecord - startRecord + 1);
             console.log(`Setting records: ${limitedItems.length} items (after filtering and limiting)`);
             
             setRecords(limitedItems);
@@ -1659,10 +1667,10 @@ export default {
           const offset = (page - 1) * displayPageSize;
           
           // Make sure we don't exceed maxRecords in total
-          const remainingRecords = maxRecords - offset;
+          const remainingRecords = endRecord - startRecord - offset;
           const effectivePageSize = Math.min(displayPageSize, Math.max(0, remainingRecords));
           
-          console.log(`Loading page ${page}, offset: ${offset}, effectivePageSize: ${effectivePageSize}, maxRecords: ${maxRecords}`);
+          console.log(`Loading page ${page}, offset: ${offset}, effectivePageSize: ${effectivePageSize}, maxRecords: ${endRecord - startRecord + 1}`);
           
           // Don't load page if we've already reached the max records limit
           if (effectivePageSize <= 0) {
@@ -1677,7 +1685,7 @@ export default {
               page: page,
               pageSize: effectivePageSize,
               offset: offset, // Add explicit offset parameter
-              limit: maxRecords,
+              limit: endRecord - startRecord + 1,
               removeDuplicates: true,
             },
             withCredentials: true,
@@ -1838,69 +1846,32 @@ export default {
       
       // Export all filtered records
       const handleBulkExport = async () => {
-        setLoading(true);
-        setError(null);
         try {
+          setLoading(true);
+          setError(null);
+          
+          // Get current filters
           const filters = buildFilters();
           
-          // Get auth token from localStorage, sessionStorage, or cookies
-          let token = null;
-          
-          try {
-            token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt') || 
-                   sessionStorage.getItem('jwtToken') || sessionStorage.getItem('jwt');
-          } catch (e) {
-            console.log('Error getting token from storage:', e);
-          }
-          
-          // If not found in storage, try to get from cookies
-          if (!token) {
-            const cookies = document.cookie.split(';');
-            for (let i = 0; i < cookies.length; i++) {
-              const cookie = cookies[i].trim();
-              if (cookie.startsWith('jwtToken')) {
-                const equalPos = cookie.indexOf('=');
-                if (equalPos !== -1) {
-                  token = cookie.substring(equalPos + 1);
-                  break;
-                }
-              }
-            }
-          }
-          
-          // Add additional parameters to request
-          const params = {
+          // Create query string with all filters
+          const queryParams = new URLSearchParams({
             ...filters,
-            limit: maxRecords,
-            removeDuplicates: true // Add flag to remove duplicates on the server side
-          };
+            startRecord: startRecord,  // Add start record
+            endRecord: endRecord,     // Add end record
+          }).toString();
           
-          // Make request for CSV download
-          const response = await axios.get('/api/marketplaces/export-filtered-csv', {
-            params,
-            responseType: 'blob', // Important for file download
-            withCredentials: true, // Include cookies in the request
-            headers: {
-              ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-            }
-          });
+          console.log(`Exporting records ${startRecord} to ${endRecord} with filters:`, filters);
           
-          // Create a download link
-          const url = window.URL.createObjectURL(new Blob([response.data]));
-          const link = document.createElement('a');
-          link.href = url;
-          link.setAttribute('download', `marketplace_export_${new Date().toISOString().split('T')[0]}.csv`);
-          document.body.appendChild(link);
-          link.click();
+          // Use file download approach
+          window.location.href = `/api/marketplace/export-filtered?${queryParams}`;
           
-          // Cleanup
-          window.URL.revokeObjectURL(url);
-          link.remove();
-          setIsVisible(false);
-        } catch (err) {
-          console.error('Export error:', err.response || err);
-          setError(err.response?.data?.message || err.message || 'Export failed');
-        } finally {
+          // Set short timeout just to show loading indicator
+          setTimeout(() => {
+            setLoading(false);
+          }, 1500);
+        } catch (error) {
+          console.error('Error in bulk export:', error);
+          setError(`Export failed: ${error.message}`);
           setLoading(false);
         }
       };
@@ -2275,16 +2246,24 @@ export default {
       
       // Handle max records change
       const handleMaxRecordsChange = (e) => {
-        const value = parseInt(e.target.value) || 0;
-        const newMaxRecords = Math.min(Math.max(value, 1), 50000); // Limit between 1 and 50000
-        console.log(`Setting maxRecords: ${newMaxRecords} (from input: ${value})`);
-        setMaxRecords(newMaxRecords);
+        const value = parseInt(e.target.value, 10);
+        if (isNaN(value)) return;
         
-        // If we've already done a search, update results with new limit
-        if (searchPerformed) {
-          console.log('Search already performed, refreshing results with new maxRecords');
-          handleSearch();
-        }
+        const range = value;
+        // Keep the start record the same and adjust the end record to maintain the requested range size
+        const newEndRecord = Math.min(startRecord + range - 1, 50000);
+        setEndRecord(newEndRecord);
+      };
+
+      // Add handlers for the new inputs
+      const handleStartRecordChange = (e) => {
+        const value = parseInt(e.target.value, 10);
+        setStartRecord(isNaN(value) ? 1 : Math.max(1, value));
+      };
+
+      const handleEndRecordChange = (e) => {
+        const value = parseInt(e.target.value, 10);
+        setEndRecord(isNaN(value) ? 1000 : Math.min(50000, Math.max(startRecord, value)));
       };
 
       return (
@@ -2599,16 +2578,27 @@ export default {
                 <h4 style={filterGroupLabelStyle}>Export Settings</h4>
                 <div style={filterSettingsStyle}>
                   <div>
-                    <label style={labelStyle}>Max Records:</label>
-                    <input
-                      type="number"
-                      value={maxRecords}
-                      onChange={handleMaxRecordsChange}
-                      min="1"
-                      max="50000"
-                      style={inputStyle}
-                    />
-                    <p style={hintStyle}>Maximum: 50,000 records</p>
+                    <label style={labelStyle}>Record Range:</label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="number"
+                        value={startRecord}
+                        onChange={handleStartRecordChange}
+                        min="1"
+                        max="50000"
+                        style={{ ...inputStyle, width: '45%' }}
+                      />
+                      <span style={{ color: colors.textSecondary }}>to</span>
+                      <input
+                        type="number"
+                        value={endRecord}
+                        onChange={handleEndRecordChange}
+                        min={startRecord}
+                        max="50000"
+                        style={{ ...inputStyle, width: '45%' }}
+                      />
+                    </div>
+                    <p style={hintStyle}>Maximum range: 50,000 records</p>
                   </div>
                   <div>
                     <label style={labelStyle}>Fast Placement:</label>

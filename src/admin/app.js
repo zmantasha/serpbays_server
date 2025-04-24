@@ -689,7 +689,8 @@ export default {
             const [filterMaxAhrefsTraffic, setFilterMaxAhrefsTraffic] = useState('');
             const [filterMaxSemrushTraffic, setFilterMaxSemrushTraffic] = useState('');
             const [filterMaxSimilarwebTraffic, setFilterMaxSimilarwebTraffic] = useState('');
-            const [maxRecords, setMaxRecords] = useState(1000);
+            const [startRecord, setStartRecord] = useState(1);
+            const [endRecord, setEndRecord] = useState(1000);
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState(null);
             const [totalCount, setTotalCount] = useState(0);
@@ -1279,7 +1280,15 @@ export default {
                 setFilterMinWordCount('');
                 setFilterDofollow('');
                 setFilterFastPlacement('');
-                // Keep maxRecords as is
+                setFilterMinAhrefsTraffic('');
+                setFilterMaxAhrefsTraffic('');
+                setFilterMinSemrushTraffic('');
+                setFilterMaxSemrushTraffic('');
+                setFilterMinSimilarwebTraffic('');
+                setFilterMaxSimilarwebTraffic('');
+                // Reset record range to defaults
+                setStartRecord(1);
+                setEndRecord(1000);
                 // Clear search results if any
                 if (searchPerformed) {
                     setSearchPerformed(false);
@@ -1316,9 +1325,9 @@ export default {
                 setError(null);
                 try {
                     const filters = buildFilters();
-                    console.log(`Requesting records with max limit: ${maxRecords}`);
+                    console.log(`Requesting records with max limit: ${endRecord - startRecord + 1}`);
                     const res = yield axios.get('/api/marketplaces/admin-list', {
-                        params: Object.assign(Object.assign({}, filters), { page: 1, pageSize: maxRecords, limit: maxRecords, removeDuplicates: true }),
+                        params: Object.assign(Object.assign({}, filters), { page: 1, pageSize: endRecord - startRecord + 1, limit: endRecord - startRecord + 1, removeDuplicates: true }),
                         withCredentials: true,
                     });
                     console.log(res.data);
@@ -1341,7 +1350,7 @@ export default {
                             console.log(`Removed ${res.data.data.length - uniqueItems.length} duplicate items from the results`);
                         }
                         // Limit items to exactly maxRecords
-                        const limitedItems = uniqueItems.slice(0, maxRecords);
+                        const limitedItems = uniqueItems.slice(0, endRecord - startRecord + 1);
                         console.log(`Setting records: ${limitedItems.length} items (after filtering and limiting)`);
                         setRecords(limitedItems);
                         // Set the total count to the actual number of visible records
@@ -1385,9 +1394,9 @@ export default {
                     const displayPageSize = pageSize;
                     const offset = (page - 1) * displayPageSize;
                     // Make sure we don't exceed maxRecords in total
-                    const remainingRecords = maxRecords - offset;
+                    const remainingRecords = endRecord - startRecord - offset;
                     const effectivePageSize = Math.min(displayPageSize, Math.max(0, remainingRecords));
-                    console.log(`Loading page ${page}, offset: ${offset}, effectivePageSize: ${effectivePageSize}, maxRecords: ${maxRecords}`);
+                    console.log(`Loading page ${page}, offset: ${offset}, effectivePageSize: ${effectivePageSize}, maxRecords: ${endRecord - startRecord + 1}`);
                     // Don't load page if we've already reached the max records limit
                     if (effectivePageSize <= 0) {
                         setLoading(false);
@@ -1395,7 +1404,7 @@ export default {
                         return;
                     }
                     const res = yield axios.get('/api/marketplaces/admin-list', {
-                        params: Object.assign(Object.assign({}, filters), { page: page, pageSize: effectivePageSize, offset: offset, limit: maxRecords, removeDuplicates: true }),
+                        params: Object.assign(Object.assign({}, filters), { page: page, pageSize: effectivePageSize, offset: offset, limit: endRecord - startRecord + 1, removeDuplicates: true }),
                         withCredentials: true,
                     });
                     console.log(`API returned ${((_k = (_j = res.data) === null || _j === void 0 ? void 0 : _j.data) === null || _k === void 0 ? void 0 : _k.length) || 0} records for page ${page}`);
@@ -1542,61 +1551,24 @@ export default {
             });
             // Export all filtered records
             const handleBulkExport = () => __awaiter(this, void 0, void 0, function* () {
-                var _o, _p;
-                setLoading(true);
-                setError(null);
                 try {
+                    setLoading(true);
+                    setError(null);
+                    // Get current filters
                     const filters = buildFilters();
-                    // Get auth token from localStorage, sessionStorage, or cookies
-                    let token = null;
-                    try {
-                        token = localStorage.getItem('jwtToken') || localStorage.getItem('jwt') ||
-                            sessionStorage.getItem('jwtToken') || sessionStorage.getItem('jwt');
-                    }
-                    catch (e) {
-                        console.log('Error getting token from storage:', e);
-                    }
-                    // If not found in storage, try to get from cookies
-                    if (!token) {
-                        const cookies = document.cookie.split(';');
-                        for (let i = 0; i < cookies.length; i++) {
-                            const cookie = cookies[i].trim();
-                            if (cookie.startsWith('jwtToken')) {
-                                const equalPos = cookie.indexOf('=');
-                                if (equalPos !== -1) {
-                                    token = cookie.substring(equalPos + 1);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    // Add additional parameters to request
-                    const params = Object.assign(Object.assign({}, filters), { limit: maxRecords, removeDuplicates: true // Add flag to remove duplicates on the server side
-                     });
-                    // Make request for CSV download
-                    const response = yield axios.get('/api/marketplaces/export-filtered-csv', {
-                        params,
-                        responseType: 'blob', // Important for file download
-                        withCredentials: true, // Include cookies in the request
-                        headers: Object.assign({}, (token ? { 'Authorization': `Bearer ${token}` } : {}))
-                    });
-                    // Create a download link
-                    const url = window.URL.createObjectURL(new Blob([response.data]));
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.setAttribute('download', `marketplace_export_${new Date().toISOString().split('T')[0]}.csv`);
-                    document.body.appendChild(link);
-                    link.click();
-                    // Cleanup
-                    window.URL.revokeObjectURL(url);
-                    link.remove();
-                    setIsVisible(false);
+                    // Create query string with all filters
+                    const queryParams = new URLSearchParams(Object.assign(Object.assign({}, filters), { startRecord: startRecord, endRecord: endRecord })).toString();
+                    console.log(`Exporting records ${startRecord} to ${endRecord} with filters:`, filters);
+                    // Use file download approach
+                    window.location.href = `/api/marketplace/export-filtered?${queryParams}`;
+                    // Set short timeout just to show loading indicator
+                    setTimeout(() => {
+                        setLoading(false);
+                    }, 1500);
                 }
-                catch (err) {
-                    console.error('Export error:', err.response || err);
-                    setError(((_p = (_o = err.response) === null || _o === void 0 ? void 0 : _o.data) === null || _p === void 0 ? void 0 : _p.message) || err.message || 'Export failed');
-                }
-                finally {
+                catch (error) {
+                    console.error('Error in bulk export:', error);
+                    setError(`Export failed: ${error.message}`);
                     setLoading(false);
                 }
             });
@@ -1894,15 +1866,22 @@ export default {
             };
             // Handle max records change
             const handleMaxRecordsChange = (e) => {
-                const value = parseInt(e.target.value) || 0;
-                const newMaxRecords = Math.min(Math.max(value, 1), 50000); // Limit between 1 and 50000
-                console.log(`Setting maxRecords: ${newMaxRecords} (from input: ${value})`);
-                setMaxRecords(newMaxRecords);
-                // If we've already done a search, update results with new limit
-                if (searchPerformed) {
-                    console.log('Search already performed, refreshing results with new maxRecords');
-                    handleSearch();
-                }
+                const value = parseInt(e.target.value, 10);
+                if (isNaN(value))
+                    return;
+                const range = value;
+                // Keep the start record the same and adjust the end record to maintain the requested range size
+                const newEndRecord = Math.min(startRecord + range - 1, 50000);
+                setEndRecord(newEndRecord);
+            };
+            // Add handlers for the new inputs
+            const handleStartRecordChange = (e) => {
+                const value = parseInt(e.target.value, 10);
+                setStartRecord(isNaN(value) ? 1 : Math.max(1, value));
+            };
+            const handleEndRecordChange = (e) => {
+                const value = parseInt(e.target.value, 10);
+                setEndRecord(isNaN(value) ? 1000 : Math.min(50000, Math.max(startRecord, value)));
             };
             return (React.createElement("div", { style: overlayStyle },
                 React.createElement("div", { style: modalStyle },
@@ -2004,9 +1983,12 @@ export default {
                             React.createElement("h4", { style: filterGroupLabelStyle }, "Export Settings"),
                             React.createElement("div", { style: filterSettingsStyle },
                                 React.createElement("div", null,
-                                    React.createElement("label", { style: labelStyle }, "Max Records:"),
-                                    React.createElement("input", { type: "number", value: maxRecords, onChange: handleMaxRecordsChange, min: "1", max: "50000", style: inputStyle }),
-                                    React.createElement("p", { style: hintStyle }, "Maximum: 50,000 records")),
+                                    React.createElement("label", { style: labelStyle }, "Record Range:"),
+                                    React.createElement("div", { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+                                        React.createElement("input", { type: "number", value: startRecord, onChange: handleStartRecordChange, min: "1", max: "50000", style: Object.assign(Object.assign({}, inputStyle), { width: '45%' }) }),
+                                        React.createElement("span", { style: { color: colors.textSecondary } }, "to"),
+                                        React.createElement("input", { type: "number", value: endRecord, onChange: handleEndRecordChange, min: startRecord, max: "50000", style: Object.assign(Object.assign({}, inputStyle), { width: '45%' }) })),
+                                    React.createElement("p", { style: hintStyle }, "Maximum range: 50,000 records")),
                                 React.createElement("div", null,
                                     React.createElement("label", { style: labelStyle }, "Fast Placement:"),
                                     React.createElement("select", { value: filterFastPlacement, onChange: handleFilterFastPlacementChange, style: inputStyle },
