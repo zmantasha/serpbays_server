@@ -11,6 +11,22 @@ module.exports = {
       // Handle filters directly from query string
       const publisherEmail = ctx.query['filters[publisher_email][$containsi]'];
       const url = ctx.query['filters[url][$containsi]'];
+      const category = ctx.query['filters[category][$containsi]'];
+      const otherCategory = ctx.query['filters[other_category][$containsi]'];
+      const language = ctx.query['filters[language][$containsi]'];
+      const country = ctx.query['filters[country][$containsi]'];
+      const domainZone = ctx.query['filters[url][$endsWith]'];
+      const backlinkType = ctx.query['filters[backlink_type][$eq]'];
+      const publisherName = ctx.query['filters[publisher_name][$containsi]'];
+      const minDR = ctx.query['filters[ahrefs_dr][$gte]'];
+      const maxDR = ctx.query['filters[ahrefs_dr][$lte]'];
+      const minDA = ctx.query['filters[moz_da][$gte]'];
+      const maxDA = ctx.query['filters[moz_da][$lte]'];
+      const minPrice = ctx.query['filters[price][$gte]'];
+      const maxPrice = ctx.query['filters[price][$lte]'];
+      const minWordCount = ctx.query['filters[min_word_count][$gte]'];
+      const dofollow = ctx.query['filters[dofollow_link][$eq]'];
+      const fastPlacement = ctx.query['filters[fast_placement_status][$eq]'];
       
       // Build filter object for Strapi
       const filters = {};
@@ -19,6 +35,58 @@ module.exports = {
       }
       if (url && url.trim()) {
         filters.url = { $containsi: url.trim() };
+      }
+      if (category && category.trim()) {
+        filters.category = { $containsi: category.trim() };
+      }
+      if (otherCategory && otherCategory.trim()) {
+        filters.other_category = { $containsi: otherCategory.trim() };
+      }
+      if (language && language.trim()) {
+        filters.language = { $containsi: language.trim() };
+      }
+      if (country && country.trim()) {
+        filters.country = { $containsi: country.trim() };
+      }
+      if (domainZone && domainZone.trim()) {
+        filters.url = { ...(filters.url || {}), $endsWith: domainZone.trim() };
+      }
+      if (backlinkType && backlinkType.trim()) {
+        filters.backlink_type = { $eq: backlinkType.trim() };
+      }
+      if (publisherName && publisherName.trim()) {
+        filters.publisher_name = { $containsi: publisherName.trim() };
+      }
+      if (minDR && !isNaN(parseInt(minDR))) {
+        filters.ahrefs_dr = { ...(filters.ahrefs_dr || {}), $gte: parseInt(minDR) };
+      }
+      if (maxDR && !isNaN(parseInt(maxDR))) {
+        filters.ahrefs_dr = { ...(filters.ahrefs_dr || {}), $lte: parseInt(maxDR) };
+      }
+      if (minDA && !isNaN(parseInt(minDA))) {
+        filters.moz_da = { ...(filters.moz_da || {}), $gte: parseInt(minDA) };
+      }
+      if (maxDA && !isNaN(parseInt(maxDA))) {
+        filters.moz_da = { ...(filters.moz_da || {}), $lte: parseInt(maxDA) };
+      }
+      if (minPrice && !isNaN(parseInt(minPrice))) {
+        filters.price = { ...(filters.price || {}), $gte: parseInt(minPrice) };
+      }
+      if (maxPrice && !isNaN(parseInt(maxPrice))) {
+        filters.price = { ...(filters.price || {}), $lte: parseInt(maxPrice) };
+      }
+      if (minWordCount && !isNaN(parseInt(minWordCount))) {
+        filters.min_word_count = { $gte: parseInt(minWordCount) };
+      }
+      if (dofollow === 'true' || dofollow === true) {
+        filters.dofollow_link = { $eq: true };
+      } else if (dofollow === 'false' || dofollow === false) {
+        filters.dofollow_link = { $eq: false };
+      }
+      if (fastPlacement === 'true' || fastPlacement === true) {
+        filters.fast_placement_status = { $eq: true };
+      } else if (fastPlacement === 'false' || fastPlacement === false) {
+        filters.fast_placement_status = { $eq: false };
       }
       
       console.log(`Exporting up to ${limit} records with filters:`, JSON.stringify(filters));
@@ -101,7 +169,26 @@ module.exports = {
         Object.assign(filters, ctx.query.filters);
       } else {
         // Old format with string keys: 'filters[publisher_email][$containsi]'
-        const { 'filters[publisher_email][$containsi]': publisherEmail, 'filters[url][$containsi]': url } = ctx.query;
+        const { 
+          'filters[publisher_email][$containsi]': publisherEmail, 
+          'filters[url][$containsi]': url,
+          'filters[category][$containsi]': category,
+          'filters[other_category][$containsi]': otherCategory,
+          'filters[language][$containsi]': language,
+          'filters[country][$containsi]': country,
+          'filters[url][$endsWith]': domainZone,
+          'filters[backlink_type][$eq]': backlinkType,
+          'filters[publisher_name][$containsi]': publisherName,
+          'filters[ahrefs_dr][$gte]': minDR,
+          'filters[ahrefs_dr][$lte]': maxDR,
+          'filters[moz_da][$gte]': minDA,
+          'filters[moz_da][$lte]': maxDA,
+          'filters[price][$gte]': minPrice,
+          'filters[price][$lte]': maxPrice,
+          'filters[min_word_count][$gte]': minWordCount,
+          'filters[dofollow_link][$eq]': dofollow,
+          'filters[fast_placement_status][$eq]': fastPlacement
+        } = ctx.query;
         
         // Build filter object for Strapi
         if (publisherEmail && publisherEmail.trim().length > 0) {
@@ -109,6 +196,58 @@ module.exports = {
         }
         if (url && url.trim().length > 0) {
           filters.url = { $containsi: url.trim() };
+        }
+        if (category && category.trim().length > 0) {
+          filters.category = { $containsi: category.trim() };
+        }
+        if (otherCategory && otherCategory.trim().length > 0) {
+          filters.other_category = { $containsi: otherCategory.trim() };
+        }
+        if (language && language.trim().length > 0) {
+          filters.language = { $containsi: language.trim() };
+        }
+        if (country && country.trim().length > 0) {
+          filters.country = { $containsi: country.trim() };
+        }
+        if (domainZone && domainZone.trim().length > 0) {
+          filters.url = { ...(filters.url || {}), $endsWith: domainZone.trim() };
+        }
+        if (backlinkType && backlinkType.trim().length > 0) {
+          filters.backlink_type = { $eq: backlinkType.trim() };
+        }
+        if (publisherName && publisherName.trim().length > 0) {
+          filters.publisher_name = { $containsi: publisherName.trim() };
+        }
+        if (minDR && !isNaN(parseInt(minDR))) {
+          filters.ahrefs_dr = { ...(filters.ahrefs_dr || {}), $gte: parseInt(minDR) };
+        }
+        if (maxDR && !isNaN(parseInt(maxDR))) {
+          filters.ahrefs_dr = { ...(filters.ahrefs_dr || {}), $lte: parseInt(maxDR) };
+        }
+        if (minDA && !isNaN(parseInt(minDA))) {
+          filters.moz_da = { ...(filters.moz_da || {}), $gte: parseInt(minDA) };
+        }
+        if (maxDA && !isNaN(parseInt(maxDA))) {
+          filters.moz_da = { ...(filters.moz_da || {}), $lte: parseInt(maxDA) };
+        }
+        if (minPrice && !isNaN(parseInt(minPrice))) {
+          filters.price = { ...(filters.price || {}), $gte: parseInt(minPrice) };
+        }
+        if (maxPrice && !isNaN(parseInt(maxPrice))) {
+          filters.price = { ...(filters.price || {}), $lte: parseInt(maxPrice) };
+        }
+        if (minWordCount && !isNaN(parseInt(minWordCount))) {
+          filters.min_word_count = { $gte: parseInt(minWordCount) };
+        }
+        if (dofollow === 'true' || dofollow === true) {
+          filters.dofollow_link = { $eq: true };
+        } else if (dofollow === 'false' || dofollow === false) {
+          filters.dofollow_link = { $eq: false };
+        }
+        if (fastPlacement === 'true' || fastPlacement === true) {
+          filters.fast_placement_status = { $eq: true };
+        } else if (fastPlacement === 'false' || fastPlacement === false) {
+          filters.fast_placement_status = { $eq: false };
         }
       }
       

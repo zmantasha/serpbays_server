@@ -168,7 +168,8 @@ export default {
             };
             const handleConfirmDuplicates = () => __awaiter(this, void 0, void 0, function* () {
                 var _a, _b, _c;
-                if (!duplicates || !duplicates.duplicates.length || !selectedDuplicates.length) {
+                if (selectedDuplicates.length === 0) {
+                    setError('No duplicates selected for update');
                     return;
                 }
                 setIsUploading(true);
@@ -199,14 +200,10 @@ export default {
                     if (!auth) {
                         throw new Error('Authentication token not found in storage or cookies');
                     }
-                    // Send confirmation request with enhanced duplicate handling
+                    // Send confirmation request
                     const response = yield axios.post('/api/upload-csv', {
                         fileId: duplicates.fileId,
-                        confirmDuplicates: selectedDuplicates,
-                        strictDuplicatePrevention: true, // Add flag to enforce strict duplicate checks
-                        uniqueIdentifier: 'url', // Specify which field should be used for uniqueness
-                        updateExisting: true, // Update existing records instead of creating new ones
-                        strategy: 'replace' // Replace existing records with new data
+                        confirmDuplicates: selectedDuplicates
                     }, {
                         headers: {
                             'Authorization': `Bearer ${auth}`
@@ -329,13 +326,9 @@ export default {
                         withCredentials: true, // Include cookies in the request
                     });
                     if (uploadResponse.data) {
-                        // Now process the uploaded file with stricter duplicate prevention
+                        // Now process the uploaded file
                         const response = yield axios.post('/api/upload-csv', {
-                            fileId: uploadResponse.data[0].id,
-                            strictDuplicatePrevention: true, // Add flag to enforce strict duplicate checks
-                            uniqueIdentifier: 'url', // Specify which field should be used for uniqueness
-                            updateExisting: true, // Update existing records instead of creating new ones
-                            skipDuplicates: false // Force check for duplicates
+                            fileId: uploadResponse.data[0].id
                         }, {
                             headers: {
                                 'Authorization': `Bearer ${auth}`
@@ -675,6 +668,10 @@ export default {
             const [filterEmail, setFilterEmail] = useState('');
             const [filterUrl, setFilterUrl] = useState('');
             const [filterCategory, setFilterCategory] = useState('');
+            const [filterOtherCategory, setFilterOtherCategory] = useState('');
+            const [filterLanguage, setFilterLanguage] = useState('');
+            const [filterCountry, setFilterCountry] = useState('');
+            const [filterDomainZone, setFilterDomainZone] = useState('');
             const [filterBacklinkType, setFilterBacklinkType] = useState('');
             const [filterPublisherName, setFilterPublisherName] = useState('');
             const [filterMinDR, setFilterMinDR] = useState('');
@@ -705,6 +702,19 @@ export default {
             };
             const handleFilterCategoryChange = (e) => {
                 setFilterCategory(e.target.value);
+            };
+            // New filter handlers
+            const handleFilterOtherCategoryChange = (e) => {
+                setFilterOtherCategory(e.target.value);
+            };
+            const handleFilterLanguageChange = (e) => {
+                setFilterLanguage(e.target.value);
+            };
+            const handleFilterCountryChange = (e) => {
+                setFilterCountry(e.target.value);
+            };
+            const handleFilterDomainZoneChange = (e) => {
+                setFilterDomainZone(e.target.value);
             };
             const handleFilterBacklinkTypeChange = (e) => {
                 setFilterBacklinkType(e.target.value);
@@ -783,6 +793,18 @@ export default {
                 }
                 if (filterCategory && filterCategory.trim()) {
                     filters['filters[category][$containsi]'] = filterCategory.trim();
+                }
+                if (filterOtherCategory && filterOtherCategory.trim()) {
+                    filters['filters[other_category][$containsi]'] = filterOtherCategory.trim();
+                }
+                if (filterLanguage && filterLanguage.trim()) {
+                    filters['filters[language][$containsi]'] = filterLanguage.trim();
+                }
+                if (filterCountry && filterCountry.trim()) {
+                    filters['filters[country][$containsi]'] = filterCountry.trim();
+                }
+                if (filterDomainZone && filterDomainZone.trim()) {
+                    filters['filters[url][$endsWith]'] = filterDomainZone.trim();
                 }
                 if (filterBacklinkType && filterBacklinkType.trim()) {
                     filters['filters[backlink_type][$eq]'] = filterBacklinkType.trim();
@@ -1131,6 +1153,24 @@ export default {
                                         React.createElement("option", { value: "" }, "Any Type"),
                                         React.createElement("option", { value: "guest post" }, "Guest Post"),
                                         React.createElement("option", { value: "link insertion" }, "Link Insertion"))))),
+                        React.createElement("div", { style: { marginBottom: 16 } },
+                            React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Additional Categories"),
+                            React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(1, 1fr)', gap: 16 } },
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Other Category:"),
+                                    React.createElement("input", { type: "text", value: filterOtherCategory, onChange: handleFilterOtherCategoryChange, placeholder: "Filter by other category", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })))),
+                        React.createElement("div", { style: { marginBottom: 16 } },
+                            React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Geo & Domain Filters"),
+                            React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 } },
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Language:"),
+                                    React.createElement("input", { type: "text", value: filterLanguage, onChange: handleFilterLanguageChange, placeholder: "Filter by language", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Country:"),
+                                    React.createElement("input", { type: "text", value: filterCountry, onChange: handleFilterCountryChange, placeholder: "Filter by country", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })),
+                                React.createElement("div", null,
+                                    React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Domain Zone:"),
+                                    React.createElement("input", { type: "text", value: filterDomainZone, onChange: handleFilterDomainZoneChange, placeholder: "e.g. .com, .org, .io", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })))),
                         React.createElement("div", { style: { marginBottom: 16 } },
                             React.createElement("h4", { style: { marginBottom: 8, fontWeight: 500 } }, "Publisher Filters"),
                             React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 } },

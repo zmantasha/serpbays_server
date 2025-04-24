@@ -166,7 +166,8 @@ export default {
       };
 
       const handleConfirmDuplicates = async () => {
-        if (!duplicates || !duplicates.duplicates.length || !selectedDuplicates.length) {
+        if (selectedDuplicates.length === 0) {
+          setError('No duplicates selected for update');
           return;
         }
 
@@ -202,14 +203,10 @@ export default {
             throw new Error('Authentication token not found in storage or cookies');
           }
 
-          // Send confirmation request with enhanced duplicate handling
+          // Send confirmation request
           const response = await axios.post('/api/upload-csv', {
             fileId: duplicates.fileId,
-            confirmDuplicates: selectedDuplicates,
-            strictDuplicatePrevention: true, // Add flag to enforce strict duplicate checks
-            uniqueIdentifier: 'url', // Specify which field should be used for uniqueness
-            updateExisting: true, // Update existing records instead of creating new ones
-            strategy: 'replace' // Replace existing records with new data
+            confirmDuplicates: selectedDuplicates
           }, {
             headers: {
               'Authorization': `Bearer ${auth}`
@@ -345,13 +342,9 @@ export default {
           });
 
           if (uploadResponse.data) {
-            // Now process the uploaded file with stricter duplicate prevention
+            // Now process the uploaded file
             const response = await axios.post('/api/upload-csv', {
-              fileId: uploadResponse.data[0].id,
-              strictDuplicatePrevention: true, // Add flag to enforce strict duplicate checks
-              uniqueIdentifier: 'url', // Specify which field should be used for uniqueness
-              updateExisting: true, // Update existing records instead of creating new ones
-              skipDuplicates: false // Force check for duplicates
+              fileId: uploadResponse.data[0].id
             }, {
               headers: {
                 'Authorization': `Bearer ${auth}`
@@ -613,7 +606,7 @@ export default {
         fontSize: '14px'
       };
 
-      // Render duplicate confirmation content
+            // Render duplicate confirmation content
       const renderDuplicateContent = () => {
         return (
           <>
@@ -625,14 +618,14 @@ export default {
             </div>
             
             <div style={duplicateContainerStyle}>
-              {duplicates.duplicates.map((dup, index) => (
+                {duplicates.duplicates.map((dup, index) => (
                 <div key={index} style={duplicateItemStyle}>
                   <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px' }}>
-                    <input
-                      type="checkbox"
-                      id={`dup-${index}`}
-                      checked={selectedDuplicates.includes(dup.url)}
-                      onChange={() => handleDuplicateToggle(dup.url)}
+                      <input
+                        type="checkbox"
+                        id={`dup-${index}`}
+                        checked={selectedDuplicates.includes(dup.url)}
+                        onChange={() => handleDuplicateToggle(dup.url)}
                       style={checkboxStyle}
                     />
                     <label htmlFor={`dup-${index}`} style={{ 
@@ -645,8 +638,8 @@ export default {
                     }}>
                       {dup.url}
                     </label>
-                  </div>
-                  
+                    </div>
+                    
                   <div style={{ display: 'flex', marginLeft: '25px', gap: '24px' }}>
                     <div style={columnStyle}>
                       <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#666687' }}>Current Data</h4>
@@ -656,7 +649,7 @@ export default {
                         <div>Publisher Email: <span style={{ fontWeight: '500' }}>{dup.existingData.publisher_email || 'N/A'}</span></div>
                         <div>Publisher Price: <span style={{ fontWeight: '500' }}>${dup.existingData.publisher_price || 'N/A'}</span></div>
                       </div>
-                    </div>
+                      </div>
                     <div style={columnStyle}>
                       <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#009f26' }}>New Data</h4>
                       <div style={{ fontSize: '13px', lineHeight: '1.5' }}>
@@ -664,9 +657,9 @@ export default {
                         <div>Publisher: <span style={{ fontWeight: '500', color: dup.newData.publisher_name !== dup.existingData.publisher_name ? '#009f26' : 'inherit' }}>{dup.newData.publisher_name || 'N/A'}</span></div>
                         <div>Publisher Email: <span style={{ fontWeight: '500', color: dup.newData.publisher_email !== dup.existingData.publisher_email ? '#009f26' : 'inherit' }}>{dup.newData.publisher_email || 'N/A'}</span></div>
                         <div>Publisher Price: <span style={{ fontWeight: '500', color: dup.newData.publisher_price !== dup.existingData.publisher_price ? '#009f26' : 'inherit' }}>${dup.newData.publisher_price || 'N/A'}</span></div>
-                      </div>
                     </div>
                   </div>
+              </div>
                 </div>
               ))}
             </div>
@@ -722,10 +715,10 @@ export default {
         <>
           <div style={modalOverlayStyle} onClick={() => setIsVisible(false)}>
             <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-              {duplicates ? (
-                renderDuplicateContent()
-              ) : (
-                <>
+            {duplicates ? (
+              renderDuplicateContent()
+            ) : (
+              <>
                   <h2 style={modalHeaderStyle}>Import from CSV</h2>
                   
                   {error && (
@@ -733,11 +726,11 @@ export default {
                   )}
                   
                   <div style={formGroupStyle}>
-                    <input
-                      type="file"
+                  <input
+                    type="file"
                       id="csv-upload"
-                      accept=".csv"
-                      onChange={handleFileChange}
+                    accept=".csv"
+                    onChange={handleFileChange}
                       style={fileInputStyle}
                     />
                     <label htmlFor="csv-upload" style={fileInputLabelStyle}>
@@ -749,7 +742,7 @@ export default {
                       Select CSV File
                     </label>
                     {file && <span style={fileNameStyle}>{file.name}</span>}
-                  </div>
+                </div>
 
                   <div style={infoBoxStyle}>
                     <h4 style={requiredFieldsHeaderStyle}>Required columns:</h4>
@@ -760,19 +753,19 @@ export default {
                       {MISSING_FIELDS.filter(field => !REQUIRED_FIELDS.includes(field)).map((field, index) => (
                         <li key={index} style={{ marginBottom: '4px', color: '#8e8ea9' }}>{field}</li>
                       ))}
-                    </ul>
-                  </div>
+                  </ul>
+                </div>
 
                   <div style={buttonContainerStyle}>
-                    <button
-                      onClick={() => setIsVisible(false)}
-                      style={secondaryButtonStyle}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleUpload}
-                      disabled={!file || isUploading}
+                  <button
+                    onClick={() => setIsVisible(false)}
+                    style={secondaryButtonStyle}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleUpload}
+                    disabled={!file || isUploading}
                       style={{
                         ...primaryButtonStyle,
                         opacity: file && !isUploading ? 1 : 0.6,
@@ -790,11 +783,11 @@ export default {
                           Uploading...
                         </>
                       ) : 'Upload'}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           </div>
 
           <style>
@@ -812,12 +805,16 @@ export default {
         </>
       );
     };
-
+   
     // CSV Export Component
     const ExportModal = ({ isVisible, setIsVisible }) => {
       const [filterEmail, setFilterEmail] = useState('');
       const [filterUrl, setFilterUrl] = useState('');
       const [filterCategory, setFilterCategory] = useState('');
+      const [filterOtherCategory, setFilterOtherCategory] = useState('');
+      const [filterLanguage, setFilterLanguage] = useState('');
+      const [filterCountry, setFilterCountry] = useState('');
+      const [filterDomainZone, setFilterDomainZone] = useState('');
       const [filterBacklinkType, setFilterBacklinkType] = useState('');
       const [filterPublisherName, setFilterPublisherName] = useState('');
       const [filterMinDR, setFilterMinDR] = useState('');
@@ -851,6 +848,23 @@ export default {
 
       const handleFilterCategoryChange = (e) => {
         setFilterCategory(e.target.value);
+      };
+
+      // New filter handlers
+      const handleFilterOtherCategoryChange = (e) => {
+        setFilterOtherCategory(e.target.value);
+      };
+      
+      const handleFilterLanguageChange = (e) => {
+        setFilterLanguage(e.target.value);
+      };
+      
+      const handleFilterCountryChange = (e) => {
+        setFilterCountry(e.target.value);
+      };
+      
+      const handleFilterDomainZoneChange = (e) => {
+        setFilterDomainZone(e.target.value);
       };
 
       const handleFilterBacklinkTypeChange = (e) => {
@@ -948,6 +962,18 @@ export default {
         }
         if (filterCategory && filterCategory.trim()) {
           filters['filters[category][$containsi]'] = filterCategory.trim();
+        }
+        if (filterOtherCategory && filterOtherCategory.trim()) {
+          filters['filters[other_category][$containsi]'] = filterOtherCategory.trim();
+        }
+        if (filterLanguage && filterLanguage.trim()) {
+          filters['filters[language][$containsi]'] = filterLanguage.trim();
+        }
+        if (filterCountry && filterCountry.trim()) {
+          filters['filters[country][$containsi]'] = filterCountry.trim();
+        }
+        if (filterDomainZone && filterDomainZone.trim()) {
+          filters['filters[url][$endsWith]'] = filterDomainZone.trim();
         }
         if (filterBacklinkType && filterBacklinkType.trim()) {
           filters['filters[backlink_type][$eq]'] = filterBacklinkType.trim();
@@ -1366,6 +1392,60 @@ export default {
                       <option value="guest post">Guest Post</option>
                       <option value="link insertion">Link Insertion</option>
                     </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Other category filter */}
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 8, fontWeight: 500 }}>Additional Categories</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(1, 1fr)', gap: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Other Category:</label>
+                    <input
+                      type="text"
+                      value={filterOtherCategory}
+                      onChange={handleFilterOtherCategoryChange}
+                      placeholder="Filter by other category"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Geo & domain filters */}
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 8, fontWeight: 500 }}>Geo & Domain Filters</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Language:</label>
+                    <input
+                      type="text"
+                      value={filterLanguage}
+                      onChange={handleFilterLanguageChange}
+                      placeholder="Filter by language"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Country:</label>
+                    <input
+                      type="text"
+                      value={filterCountry}
+                      onChange={handleFilterCountryChange}
+                      placeholder="Filter by country"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Domain Zone:</label>
+                    <input
+                      type="text"
+                      value={filterDomainZone}
+                      onChange={handleFilterDomainZoneChange}
+                      placeholder="e.g. .com, .org, .io"
+                      style={{ padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' }}
+                    />
                   </div>
                 </div>
               </div>
