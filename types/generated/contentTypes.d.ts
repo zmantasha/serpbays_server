@@ -564,7 +564,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    dofollow_link: Schema.Attribute.Integer;
+    dofollow_link: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<1>;
     domain_zone: Schema.Attribute.String;
     fast_placement_status: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;

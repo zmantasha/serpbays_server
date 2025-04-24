@@ -25,8 +25,14 @@ module.exports = {
       const minPrice = ctx.query['filters[price][$gte]'];
       const maxPrice = ctx.query['filters[price][$lte]'];
       const minWordCount = ctx.query['filters[min_word_count][$gte]'];
-      const dofollow = ctx.query['filters[dofollow_link][$eq]'];
+      const dofollow = ctx.query['filters[dofollow_link][$eq]'] || ctx.query['filters[dofollow_link]'];
       const fastPlacement = ctx.query['filters[fast_placement_status][$eq]'];
+      const minAhrefsTraffic = ctx.query['filters[ahrefs_traffic][$gte]'];
+      const maxAhrefsTraffic = ctx.query['filters[ahrefs_traffic][$lte]'];
+      const minSemrushTraffic = ctx.query['filters[semrush_traffic][$gte]'];
+      const maxSemrushTraffic = ctx.query['filters[semrush_traffic][$lte]'];
+      const minSimilarwebTraffic = ctx.query['filters[similarweb_traffic][$gte]'];
+      const maxSimilarwebTraffic = ctx.query['filters[similarweb_traffic][$lte]'];
       
       // Build filter object for Strapi
       const filters = {};
@@ -87,17 +93,76 @@ module.exports = {
       if (minWordCount && !isNaN(parseInt(minWordCount))) {
         filters.min_word_count = { $gte: parseInt(minWordCount) };
       }
-      if (dofollow && !isNaN(parseInt(dofollow))) {
+      if (dofollow && dofollow !== '') {
         // Handle dofollow_link as an integer
-        filters.dofollow_link = { $eq: parseInt(dofollow) };
+        console.log('Filtering by dofollow_link:', dofollow, 'type:', typeof dofollow);
+        const dofollowValue = parseInt(dofollow, 10);
+        if (!isNaN(dofollowValue)) {
+          // Handle dofollow as a direct field without using $or
+          filters.dofollow_link = { $eq: dofollowValue };
+        }
       }
       if (fastPlacement === 'true' || fastPlacement === true) {
         filters.fast_placement_status = { $eq: true };
       } else if (fastPlacement === 'false' || fastPlacement === false) {
         filters.fast_placement_status = { $eq: false };
       }
+      if (minAhrefsTraffic && !isNaN(parseInt(minAhrefsTraffic))) {
+        filters.ahrefs_traffic = { ...(filters.ahrefs_traffic || {}), $gte: parseInt(minAhrefsTraffic) };
+      }
+      if (maxAhrefsTraffic && !isNaN(parseInt(maxAhrefsTraffic))) {
+        filters.ahrefs_traffic = { ...(filters.ahrefs_traffic || {}), $lte: parseInt(maxAhrefsTraffic) };
+      }
+      if (minSemrushTraffic && !isNaN(parseInt(minSemrushTraffic))) {
+        filters.semrush_traffic = { ...(filters.semrush_traffic || {}), $gte: parseInt(minSemrushTraffic) };
+      }
+      if (maxSemrushTraffic && !isNaN(parseInt(maxSemrushTraffic))) {
+        filters.semrush_traffic = { ...(filters.semrush_traffic || {}), $lte: parseInt(maxSemrushTraffic) };
+      }
+      if (minSimilarwebTraffic && !isNaN(parseInt(minSimilarwebTraffic))) {
+        filters.similarweb_traffic = { ...(filters.similarweb_traffic || {}), $gte: parseInt(minSimilarwebTraffic) };
+      }
+      if (maxSimilarwebTraffic && !isNaN(parseInt(maxSimilarwebTraffic))) {
+        filters.similarweb_traffic = { ...(filters.similarweb_traffic || {}), $lte: parseInt(maxSimilarwebTraffic) };
+      }
       
       console.log(`Exporting up to ${limit} records with filters:`, JSON.stringify(filters));
+      
+      // Debug: Check database values for dofollow_link
+      console.log('Checking database values for dofollow_link');
+      const debugEntries = await strapi.entityService.findMany('api::marketplace.marketplace', {
+        fields: ['id', 'url', 'dofollow_link'],
+        limit: 5,
+      });
+      console.log('Sample entries from database:', debugEntries);
+      
+      // After the debug entries, add a specific query for dofollow_link = 2
+      console.log('Specifically checking for dofollow_link = 2');
+      const dofollow2Entries = await strapi.entityService.findMany('api::marketplace.marketplace', {
+        filters: { dofollow_link: 2 },
+        fields: ['id', 'url', 'dofollow_link'],
+        limit: 5,
+      });
+      console.log('Entries with dofollow_link = 2:', dofollow2Entries);
+      
+      // Debug the exact query by adding this after the filter creation
+      console.log('Full query filters object:', JSON.stringify(filters, null, 2));
+      console.log('Looking for dofollow_link value exactly equal to:', typeof filters.dofollow_link === 'object' ? 
+        filters.dofollow_link.$eq : filters.dofollow_link);
+      
+      // After the debug entries code but before the main query
+      console.log('Direct query test for dofollow_link = 2');
+      try {
+        const testQuery = await strapi.db.query('api::marketplace.marketplace').findMany({
+          where: { dofollow_link: 2 }
+        });
+        console.log(`Found ${testQuery.length} records with dofollow_link = 2 in direct query`);
+        if (testQuery.length > 0) {
+          console.log('Sample record:', testQuery[0]);
+        }
+      } catch (err) {
+        console.error('Error in direct query test:', err);
+      }
       
       // Fetch data with filters and limit
       const entries = await strapi.entityService.findMany('api::marketplace.marketplace', {
@@ -195,7 +260,13 @@ module.exports = {
           'filters[price][$lte]': maxPrice,
           'filters[min_word_count][$gte]': minWordCount,
           'filters[dofollow_link][$eq]': dofollow,
-          'filters[fast_placement_status][$eq]': fastPlacement
+          'filters[fast_placement_status][$eq]': fastPlacement,
+          'filters[ahrefs_traffic][$gte]': minAhrefsTraffic,
+          'filters[ahrefs_traffic][$lte]': maxAhrefsTraffic,
+          'filters[semrush_traffic][$gte]': minSemrushTraffic,
+          'filters[semrush_traffic][$lte]': maxSemrushTraffic,
+          'filters[similarweb_traffic][$gte]': minSimilarwebTraffic,
+          'filters[similarweb_traffic][$lte]': maxSimilarwebTraffic
         } = ctx.query;
         
         // Build filter object for Strapi
@@ -247,18 +318,45 @@ module.exports = {
         if (minWordCount && !isNaN(parseInt(minWordCount))) {
           filters.min_word_count = { $gte: parseInt(minWordCount) };
         }
-        if (dofollow && !isNaN(parseInt(dofollow))) {
+        if (dofollow && dofollow !== '') {
           // Handle dofollow_link as an integer
-          filters.dofollow_link = { $eq: parseInt(dofollow) };
+          console.log('Filtering by dofollow_link:', dofollow, 'type:', typeof dofollow);
+          const dofollowValue = parseInt(dofollow, 10);
+          if (!isNaN(dofollowValue)) {
+            // Handle dofollow as a direct field without using $or
+            filters.dofollow_link = { $eq: dofollowValue };
+          }
         }
         if (fastPlacement === 'true' || fastPlacement === true) {
           filters.fast_placement_status = { $eq: true };
         } else if (fastPlacement === 'false' || fastPlacement === false) {
           filters.fast_placement_status = { $eq: false };
         }
+        if (minAhrefsTraffic && !isNaN(parseInt(minAhrefsTraffic))) {
+          filters.ahrefs_traffic = { ...(filters.ahrefs_traffic || {}), $gte: parseInt(minAhrefsTraffic) };
+        }
+        if (maxAhrefsTraffic && !isNaN(parseInt(maxAhrefsTraffic))) {
+          filters.ahrefs_traffic = { ...(filters.ahrefs_traffic || {}), $lte: parseInt(maxAhrefsTraffic) };
+        }
+        if (minSemrushTraffic && !isNaN(parseInt(minSemrushTraffic))) {
+          filters.semrush_traffic = { ...(filters.semrush_traffic || {}), $gte: parseInt(minSemrushTraffic) };
+        }
+        if (maxSemrushTraffic && !isNaN(parseInt(maxSemrushTraffic))) {
+          filters.semrush_traffic = { ...(filters.semrush_traffic || {}), $lte: parseInt(maxSemrushTraffic) };
+        }
+        if (minSimilarwebTraffic && !isNaN(parseInt(minSimilarwebTraffic))) {
+          filters.similarweb_traffic = { ...(filters.similarweb_traffic || {}), $gte: parseInt(minSimilarwebTraffic) };
+        }
+        if (maxSimilarwebTraffic && !isNaN(parseInt(maxSimilarwebTraffic))) {
+          filters.similarweb_traffic = { ...(filters.similarweb_traffic || {}), $lte: parseInt(maxSimilarwebTraffic) };
+        }
       }
       
-      console.log('Applied filters:', JSON.stringify(filters));
+      console.log('Full query filters object in adminList:', JSON.stringify(filters, null, 2));
+      if (filters.dofollow_link) {
+        console.log('adminList: Looking for dofollow_link value exactly equal to:', 
+          typeof filters.dofollow_link === 'object' ? filters.dofollow_link.$eq : filters.dofollow_link);
+      }
       
       // Use consistent method for both count and data retrieval
       const total = await strapi.entityService.count('api::marketplace.marketplace', { filters });
