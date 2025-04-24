@@ -749,6 +749,7 @@ export default {
             const handleFilterFastPlacementChange = (e) => {
                 setFilterFastPlacement(e.target.value);
             };
+            // Handle max records change
             const handleMaxRecordsChange = (e) => {
                 const value = parseInt(e.target.value) || 0;
                 const newMaxRecords = Math.min(Math.max(value, 1), 50000); // Limit between 1 and 50000
@@ -758,6 +759,34 @@ export default {
                 if (searchPerformed) {
                     console.log('Search already performed, refreshing results with new maxRecords');
                     handleSearch();
+                }
+            };
+            // Reset all filters
+            const resetFilters = () => {
+                setFilterEmail('');
+                setFilterUrl('');
+                setFilterCategory('');
+                setFilterOtherCategory('');
+                setFilterLanguage('');
+                setFilterCountry('');
+                setFilterDomainZone('');
+                setFilterBacklinkType('');
+                setFilterPublisherName('');
+                setFilterMinDR('');
+                setFilterMaxDR('');
+                setFilterMinDA('');
+                setFilterMaxDA('');
+                setFilterMinPrice('');
+                setFilterMaxPrice('');
+                setFilterMinWordCount('');
+                setFilterDofollow('');
+                setFilterFastPlacement('');
+                // Keep maxRecords as is
+                // Clear search results if any
+                if (searchPerformed) {
+                    setSearchPerformed(false);
+                    setRecords([]);
+                    setTotalCount(0);
                 }
             };
             // Check total count with current filters
@@ -1223,7 +1252,15 @@ export default {
                                 React.createElement("div", null,
                                     React.createElement("label", { style: { display: 'block', marginBottom: 4, fontWeight: 500 } }, "Max Records:"),
                                     React.createElement("input", { type: "number", value: maxRecords, onChange: handleMaxRecordsChange, min: "1", max: "50000", style: { padding: 8, borderRadius: 4, border: '1px solid #ddd', width: '100%' } })))),
-                        React.createElement("div", { style: { marginTop: 16 } },
+                        React.createElement("div", { style: { marginTop: 16, display: 'flex', gap: '12px' } },
+                            React.createElement("button", { onClick: resetFilters, style: {
+                                    padding: '8px 16px',
+                                    borderRadius: 4,
+                                    border: '1px solid #ddd',
+                                    background: '#f5f5f5',
+                                    color: '#666',
+                                    cursor: 'pointer'
+                                } }, "Reset Filters"),
                             React.createElement("button", { onClick: handleSearch, disabled: loading, style: {
                                     padding: '8px 16px',
                                     borderRadius: 4,
