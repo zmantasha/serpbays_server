@@ -67,6 +67,24 @@
     },
     "Advertiser": {
       "type": "boolean"
+    },
+    "orders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "users_permissions_user"
+    },
+    "withdrawalRequests": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::withdrawal-request.withdrawal-request",
+      "mappedBy": "publisher"
+    },
+    "user_wallet": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::user-wallet.user-wallet",
+      "mappedBy": "user"
     }
   }
 }

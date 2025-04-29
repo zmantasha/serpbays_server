@@ -1,0 +1,58 @@
+{
+  "kind": "collectionType",
+  "collectionName": "transactions",
+  "info": {
+    "singularName": "transaction",
+    "pluralName": "transactions",
+    "displayName": "Transaction"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "type": {
+      "type": "enumeration",
+      "enum": [
+        "deposit",
+        "escrow-hold",
+        "escrow-release",
+        "fee",
+        "refund",
+        "payout"
+      ],
+      "required": true
+    },
+    "amount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "transactionStatus": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "success",
+        "failed"
+      ],
+      "default": "pending"
+    },
+    "gateway": {
+      "type": "enumeration",
+      "enum": [
+        "stripe"
+      ]
+    },
+    "gatewayTransactionId": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "json"
+    },
+    "user_wallet": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::user-wallet.user-wallet",
+      "inversedBy": "transactions"
+    }
+  }
+}
