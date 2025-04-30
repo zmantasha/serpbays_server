@@ -37,6 +37,7 @@
     "npm": ">=6.0.0"
   },
   "strapi": {
-    "uuid": "b4c149bf-3c2a-43e7-9b88-c734b2f192b9"
+    "uuid": "b4c149bf-3c2a-43e7-9b88-c734b2f192b9",
+    "template": "src/templates"
   }
 }

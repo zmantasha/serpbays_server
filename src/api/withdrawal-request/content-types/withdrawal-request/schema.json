@@ -1,0 +1,40 @@
+{
+  "kind": "collectionType",
+  "collectionName": "withdrawal_requests",
+  "info": {
+    "singularName": "withdrawal-request",
+    "pluralName": "withdrawal-requests",
+    "displayName": "Withdrawal Request"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "publisher": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "withdrawalRequests"
+    },
+    "amount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "method": {
+      "type": "enumeration",
+      "enum": ["razorpay", "paypal", "bank_transfer", "payoneer"],
+      "required": true
+    },
+    "details": {
+      "type": "json",
+      "required": true
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["pending", "approved", "denied", "paid"],
+      "default": "pending",
+      "required": true
+    }
+  }
+}
