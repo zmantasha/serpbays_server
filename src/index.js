@@ -16,5 +16,21 @@ module.exports = {
    * This gives you an opportunity to set up your data model,
    * run jobs, or perform some special logic.
    */
-  bootstrap(/*{ strapi }*/) {},
+  async bootstrap({ strapi }) {
+    // Add request debugging middleware
+    strapi.server.use(async (ctx, next) => {
+      // Log the request details for debugging
+      console.log(`[${new Date().toISOString()}] ${ctx.method} ${ctx.url}`);
+      
+      // Log authentication info
+      if (ctx.state?.user?.id) {
+        console.log(`Request by authenticated user: ${ctx.state.user.id}`);
+      } else {
+        console.log('Request by unauthenticated user');
+      }
+      
+      // Continue with the request
+      await next();
+    });
+  },
 };

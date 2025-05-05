@@ -39,7 +39,10 @@
     "gateway": {
       "type": "enumeration",
       "enum": [
-        "stripe"
+        "stripe",
+        "paypal",
+        "razorpay",
+        "test"
       ]
     },
     "gatewayTransactionId": {

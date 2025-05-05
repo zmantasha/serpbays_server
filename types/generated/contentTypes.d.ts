@@ -713,7 +713,9 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    gateway: Schema.Attribute.Enumeration<['stripe']>;
+    gateway: Schema.Attribute.Enumeration<
+      ['stripe', 'paypal', 'razorpay', 'test']
+    >;
     gatewayTransactionId: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
@@ -744,6 +746,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
 export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   collectionName: 'user_wallets';
   info: {
+    description: '';
     displayName: 'User-Wallet';
     pluralName: 'user-wallets';
     singularName: 'user-wallet';
@@ -778,7 +781,7 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    user: Schema.Attribute.Relation<
+    users_permissions_user: Schema.Attribute.Relation<
       'oneToOne',
       'plugin::users-permissions.user'
     >;

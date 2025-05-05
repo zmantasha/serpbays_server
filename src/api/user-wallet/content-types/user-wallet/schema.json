@@ -4,7 +4,8 @@
   "info": {
     "singularName": "user-wallet",
     "pluralName": "user-wallets",
-    "displayName": "User-Wallet"
+    "displayName": "User-Wallet",
+    "description": ""
   },
   "options": {
     "draftAndPublish": true
@@ -32,7 +33,7 @@
       "default": 0,
       "required": true
     },
-    "user": {
+    "users_permissions_user": {
       "type": "relation",
       "relation": "oneToOne",
       "target": "plugin::users-permissions.user",
