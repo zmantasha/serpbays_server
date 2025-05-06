@@ -27,10 +27,18 @@
     "json2csv": "^6.0.0-alpha.2",
     "mime-types": "^2.1.27",
     "pg": "8.8.0",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "react-router-dom": "6.0.0",
-    "styled-components": "6.0.0"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.4.0",
+    "styled-components": "^6.0.0",
+    "stripe": "^14.18.0",
+    "razorpay": "^2.9.2",
+    "@paypal/checkout-server-sdk": "^1.0.3"
+  },
+  "resolutions": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.4.0"
   },
   "engines": {
     "node": ">=18.0.0 <=22.x.x",
