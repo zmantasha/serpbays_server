@@ -2,8 +2,8 @@ POST http://localhost:1337/api/auth/local
 Content-Type: application/json
 
 {
-  "identifier": "publisher@gmail.com",
-  "password": "publisher"
+  "identifier": "advertiser@gmail.com",
+  "password": "advertiser"
 }
 
 ###
@@ -40,4 +40,18 @@ Content-Type: application/json
 
 ###
 GET http://localhost:1337/api/marketplaces
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjUsImlhdCI6MTc0NDk3MjQ5MiwiZXhwIjoxNzQ3NTY0NDkyfQ.Kl1AkJiePmSSpNF9zbwzagznT7P0kGF1ZgQNJ-f7k1c
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTMzODU4LCJleHAiOjE3NDcxMzg2NTh9.SYXakgTOQeLWLNWGCTAHLLt8LdXM9ThYcjaNfwgPnkM
+
+###
+GET http://localhost:1337/api/wallet
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTMzODU4LCJleHAiOjE3NDcxMzg2NTh9.SYXakgTOQeLWLNWGCTAHLLt8LdXM9ThYcjaNfwgPnkM
+###
+POST http://localhost:1337/api/user-wallets
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTMzODU4LCJleHAiOjE3NDcxMzg2NTh9.SYXakgTOQeLWLNWGCTAHLLt8LdXM9ThYcjaNfwgPnkM
+Content-Type: application/json
+
+{
+  "balance": "0",
+  "escrowBalance": "0",
+  "currency": "USD"
+}
