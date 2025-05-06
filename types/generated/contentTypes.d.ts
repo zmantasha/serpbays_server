@@ -691,6 +691,31 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiTestTest extends Struct.CollectionTypeSchema {
+  collectionName: 'tests';
+  info: {
+    displayName: 'test';
+    pluralName: 'tests';
+    singularName: 'test';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::test.test'> &
+      Schema.Attribute.Private;
+    other_category: Schema.Attribute.String;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
   collectionName: 'transactions';
   info: {
@@ -744,7 +769,8 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
 export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   collectionName: 'user_wallets';
   info: {
-    displayName: 'User-Wallet';
+    description: 'User wallet for managing funds and transactions';
+    displayName: 'User Wallet';
     pluralName: 'user-wallets';
     singularName: 'user-wallet';
   };
@@ -758,7 +784,9 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    currency: Schema.Attribute.String & Schema.Attribute.DefaultTo<'USD'>;
+    currency: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'USD'>;
     escrowBalance: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<0>;
@@ -771,16 +799,61 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
     publishedAt: Schema.Attribute.DateTime;
     transactions: Schema.Attribute.Relation<
       'oneToMany',
-      'api::transaction.transaction'
+      'api::wallet-transaction.wallet-transaction'
     >;
     type: Schema.Attribute.Enumeration<['advertiser', 'publisher']> &
-      Schema.Attribute.Required;
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'advertiser'>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     user: Schema.Attribute.Relation<
       'oneToOne',
       'plugin::users-permissions.user'
+    >;
+  };
+}
+
+export interface ApiWalletTransactionWalletTransaction
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'wallet_transactions';
+  info: {
+    description: 'Transactions for user wallets';
+    displayName: 'Wallet Transaction';
+    pluralName: 'wallet-transactions';
+    singularName: 'wallet-transaction';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    amount: Schema.Attribute.Decimal & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    gateway: Schema.Attribute.Enumeration<['razorpay', 'paypal', 'stripe']>;
+    gatewayTransactionId: Schema.Attribute.String;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::wallet-transaction.wallet-transaction'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    status: Schema.Attribute.Enumeration<['pending', 'success', 'failed']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
+    type: Schema.Attribute.Enumeration<
+      ['deposit', 'escrow_hold', 'escrow_release', 'fee', 'refund', 'payout']
+    > &
+      Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    wallet: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::user-wallet.user-wallet'
     >;
   };
 }
@@ -1360,8 +1433,10 @@ declare module '@strapi/strapi' {
       'api::global.global': ApiGlobalGlobal;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
       'api::order.order': ApiOrderOrder;
+      'api::test.test': ApiTestTest;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
+      'api::wallet-transaction.wallet-transaction': ApiWalletTransactionWalletTransaction;
       'api::withdrawal-request.withdrawal-request': ApiWithdrawalRequestWithdrawalRequest;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;

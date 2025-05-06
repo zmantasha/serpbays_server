@@ -68,17 +68,17 @@
     "Advertiser": {
       "type": "boolean"
     },
-    "user_wallet": {
-      "type": "relation",
-      "relation": "oneToOne",
-      "target": "api::user-wallet.user-wallet",
-      "mappedBy": "user"
-    },
     "withdrawalRequests": {
       "type": "relation",
       "relation": "oneToMany",
       "target": "api::withdrawal-request.withdrawal-request",
       "mappedBy": "publisher"
+    },
+    "user_wallet": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::user-wallet.user-wallet",
+      "mappedBy": "users_permissions_user"
     }
   }
 }

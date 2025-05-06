@@ -4,11 +4,13 @@
   "info": {
     "singularName": "user-wallet",
     "pluralName": "user-wallets",
-    "displayName": "User-Wallet"
+    "displayName": "User Wallet",
+    "description": "User wallet for managing funds and transactions"
   },
   "options": {
     "draftAndPublish": true
   },
+  "pluginOptions": {},
   "attributes": {
     "type": {
       "type": "enumeration",
@@ -16,11 +18,13 @@
         "advertiser",
         "publisher"
       ],
+      "default": "advertiser",
       "required": true
     },
     "currency": {
       "type": "string",
-      "default": "USD"
+      "default": "USD",
+      "required": true
     },
     "balance": {
       "type": "decimal",
@@ -41,8 +45,8 @@
     "transactions": {
       "type": "relation",
       "relation": "oneToMany",
-      "target": "api::transaction.transaction",
-      "mappedBy": "user_wallet"
+      "target": "api::wallet-transaction.wallet-transaction",
+      "mappedBy": "wallet"
     }
   }
 }

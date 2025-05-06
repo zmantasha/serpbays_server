@@ -17,6 +17,7 @@
     "upgrade:dry": "npx @strapi/upgrade latest --dry"
   },
   "dependencies": {
+    "@paypal/paypal-server-sdk": "^1.0.0",
     "@strapi/design-system": "^1.16.0",
     "@strapi/icons": "^1.16.0",
     "@strapi/plugin-cloud": "5.12.4",
@@ -27,9 +28,11 @@
     "json2csv": "^6.0.0-alpha.2",
     "mime-types": "^2.1.27",
     "pg": "8.8.0",
+    "razorpay": "^2.9.6",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
     "react-router-dom": "^6.0.0",
+    "stripe": "^18.1.0",
     "styled-components": "^6.0.0"
   },
   "engines": {
@@ -39,5 +42,8 @@
   "strapi": {
     "uuid": "b4c149bf-3c2a-43e7-9b88-c734b2f192b9",
     "template": "src/templates"
+  },
+  "devDependencies": {
+    "axios": "^1.9.0"
   }
 }

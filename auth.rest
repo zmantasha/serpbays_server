@@ -41,3 +41,6 @@ Content-Type: application/json
 ###
 GET http://localhost:1337/api/marketplaces
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjUsImlhdCI6MTc0NDk3MjQ5MiwiZXhwIjoxNzQ3NTY0NDkyfQ.Kl1AkJiePmSSpNF9zbwzagznT7P0kGF1ZgQNJ-f7k1c
+
+###
+GET http://localhost:1337//api/user-wallet

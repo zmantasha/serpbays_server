@@ -1,0 +1,62 @@
+{
+  "kind": "collectionType",
+  "collectionName": "wallet_transactions",
+  "info": {
+    "singularName": "wallet-transaction",
+    "pluralName": "wallet-transactions",
+    "displayName": "Wallet Transaction",
+    "description": "Transactions for user wallets"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "type": {
+      "type": "enumeration",
+      "enum": [
+        "deposit",
+        "escrow_hold",
+        "escrow_release",
+        "fee",
+        "refund",
+        "payout"
+      ],
+      "required": true
+    },
+    "amount": {
+      "type": "decimal",
+      "required": true
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "success",
+        "failed"
+      ],
+      "default": "pending",
+      "required": true
+    },
+    "gateway": {
+      "type": "enumeration",
+      "enum": [
+        "razorpay",
+        "paypal",
+        "stripe"
+      ]
+    },
+    "gatewayTransactionId": {
+      "type": "string"
+    },
+    "description": {
+      "type": "text"
+    },
+    "wallet": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::user-wallet.user-wallet",
+      "inversedBy": "transactions"
+    }
+  }
+}
