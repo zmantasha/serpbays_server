@@ -694,7 +694,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
 export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
   collectionName: 'transactions';
   info: {
-    description: 'Tracks all wallet transactions including deposits, withdrawals, and escrow operations';
+    description: 'Wallet transactions for deposits, withdrawals, and escrow';
     displayName: 'Transaction';
     pluralName: 'transactions';
     singularName: 'transaction';
@@ -714,8 +714,20 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    gateway: Schema.Attribute.Enumeration<['razorpay', 'paypal', 'stripe']>;
-    gatewayTransactionId: Schema.Attribute.String;
+    description: Schema.Attribute.Text;
+    fee: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    gateway: Schema.Attribute.Enumeration<
+      ['stripe', 'paypal', 'razorpay', 'test']
+    > &
+      Schema.Attribute.Required;
+    gatewayTransactionId: Schema.Attribute.String & Schema.Attribute.Required;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -723,8 +735,19 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
     > &
       Schema.Attribute.Private;
     metadata: Schema.Attribute.JSON;
+    netAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     publishedAt: Schema.Attribute.DateTime;
-    status: Schema.Attribute.Enumeration<['pending', 'success', 'failed']> &
+    transactionStatus: Schema.Attribute.Enumeration<
+      ['pending', 'success', 'failed']
+    > &
+      Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'pending'>;
     type: Schema.Attribute.Enumeration<
       ['deposit', 'escrow_hold', 'escrow_release', 'fee', 'refund', 'payout']
@@ -743,8 +766,8 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
 export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   collectionName: 'user_wallets';
   info: {
-    description: 'Digital wallet for advertisers and publishers';
-    displayName: 'User Wallet';
+    description: 'Wallet system for advertisers and publishers';
+    displayName: 'User-Wallet';
     pluralName: 'user-wallets';
     singularName: 'user-wallet';
   };
@@ -783,6 +806,9 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
     > &
       Schema.Attribute.Private;
     publishedAt: Schema.Attribute.DateTime;
+    status: Schema.Attribute.Enumeration<['active', 'suspended', 'closed']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'active'>;
     transactions: Schema.Attribute.Relation<
       'oneToMany',
       'api::transaction.transaction'

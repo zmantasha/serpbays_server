@@ -4,7 +4,8 @@
   "info": {
     "singularName": "transaction",
     "pluralName": "transactions",
-    "displayName": "Transaction"
+    "displayName": "Transaction",
+    "description": "Wallet transactions for deposits, withdrawals, and escrow"
   },
   "options": {
     "draftAndPublish": true
@@ -14,8 +15,8 @@
       "type": "enumeration",
       "enum": [
         "deposit",
-        "escrow-hold",
-        "escrow-release",
+        "escrow_hold",
+        "escrow_release",
         "fee",
         "refund",
         "payout"
@@ -34,7 +35,8 @@
         "success",
         "failed"
       ],
-      "default": "pending"
+      "default": "pending",
+      "required": true
     },
     "gateway": {
       "type": "enumeration",
@@ -43,10 +45,12 @@
         "paypal",
         "razorpay",
         "test"
-      ]
+      ],
+      "required": true
     },
     "gatewayTransactionId": {
-      "type": "string"
+      "type": "string",
+      "required": true
     },
     "metadata": {
       "type": "json"
@@ -56,6 +60,19 @@
       "relation": "manyToOne",
       "target": "api::user-wallet.user-wallet",
       "inversedBy": "transactions"
+    },
+    "description": {
+      "type": "text"
+    },
+    "fee": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0
+    },
+    "netAmount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
     }
   }
 }
