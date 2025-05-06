@@ -4,7 +4,8 @@
   "info": {
     "singularName": "transaction",
     "pluralName": "transactions",
-    "displayName": "Transaction"
+    "displayName": "Transaction",
+    "description": "Tracks all wallet transactions including deposits, withdrawals, and escrow operations"
   },
   "options": {
     "draftAndPublish": true
@@ -14,48 +15,55 @@
       "type": "enumeration",
       "enum": [
         "deposit",
-        "escrow-hold",
-        "escrow-release",
+        "escrow_hold",
+        "escrow_release",
         "fee",
         "refund",
         "payout"
       ],
-      "required": true
+      "required": true,
+      "description": "Type of transaction"
     },
     "amount": {
       "type": "decimal",
       "required": true,
-      "min": 0
+      "min": 0,
+      "description": "Transaction amount"
     },
-    "transactionStatus": {
+    "status": {
       "type": "enumeration",
       "enum": [
         "pending",
         "success",
         "failed"
       ],
-      "default": "pending"
+      "default": "pending",
+      "description": "Transaction status"
     },
     "gateway": {
       "type": "enumeration",
       "enum": [
-        "stripe",
-        "paypal",
         "razorpay",
-        "test"
-      ]
+        "paypal",
+        "stripe"
+      ],
+      "description": "Payment gateway used"
     },
     "gatewayTransactionId": {
-      "type": "string"
+      "type": "string",
+      "description": "Transaction ID from the payment gateway"
     },
     "metadata": {
-      "type": "json"
+      "type": "json",
+      "description": "Additional transaction information"
     },
     "user_wallet": {
       "type": "relation",
       "relation": "manyToOne",
       "target": "api::user-wallet.user-wallet",
-      "inversedBy": "transactions"
+      "inversedBy": "transactions",
+      "description": "Associated wallet"
     }
   }
 }
+

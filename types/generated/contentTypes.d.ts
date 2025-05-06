@@ -694,6 +694,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
 export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
   collectionName: 'transactions';
   info: {
+    description: 'Tracks all wallet transactions including deposits, withdrawals, and escrow operations';
     displayName: 'Transaction';
     pluralName: 'transactions';
     singularName: 'transaction';
@@ -713,9 +714,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    gateway: Schema.Attribute.Enumeration<
-      ['stripe', 'paypal', 'razorpay', 'test']
-    >;
+    gateway: Schema.Attribute.Enumeration<['razorpay', 'paypal', 'stripe']>;
     gatewayTransactionId: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
@@ -725,12 +724,10 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       Schema.Attribute.Private;
     metadata: Schema.Attribute.JSON;
     publishedAt: Schema.Attribute.DateTime;
-    transactionStatus: Schema.Attribute.Enumeration<
-      ['pending', 'success', 'failed']
-    > &
+    status: Schema.Attribute.Enumeration<['pending', 'success', 'failed']> &
       Schema.Attribute.DefaultTo<'pending'>;
     type: Schema.Attribute.Enumeration<
-      ['deposit', 'escrow-hold', 'escrow-release', 'fee', 'refund', 'payout']
+      ['deposit', 'escrow_hold', 'escrow_release', 'fee', 'refund', 'payout']
     > &
       Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;
@@ -746,8 +743,8 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
 export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   collectionName: 'user_wallets';
   info: {
-    description: '';
-    displayName: 'User-Wallet';
+    description: 'Digital wallet for advertisers and publishers';
+    displayName: 'User Wallet';
     pluralName: 'user-wallets';
     singularName: 'user-wallet';
   };
@@ -757,13 +754,27 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   attributes: {
     balance: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
       Schema.Attribute.DefaultTo<0>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    currency: Schema.Attribute.String & Schema.Attribute.DefaultTo<'USD'>;
+    currency: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'USD'>;
     escrowBalance: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
       Schema.Attribute.DefaultTo<0>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<

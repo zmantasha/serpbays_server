@@ -1,7 +1,9 @@
-"use strict";
+'use strict';
+
 /**
  * order service
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-var strapi_1 = require("@strapi/strapi");
-exports.default = strapi_1.factories.createCoreService('api::order.order');
+
+const { createCoreService } = require('@strapi/strapi').factories;
+
+module.exports = createCoreService('api::order.order');

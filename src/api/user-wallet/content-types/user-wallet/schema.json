@@ -4,8 +4,8 @@
   "info": {
     "singularName": "user-wallet",
     "pluralName": "user-wallets",
-    "displayName": "User-Wallet",
-    "description": ""
+    "displayName": "User Wallet",
+    "description": "Digital wallet for advertisers and publishers"
   },
   "options": {
     "draftAndPublish": true
@@ -17,33 +17,43 @@
         "advertiser",
         "publisher"
       ],
-      "required": true
+      "required": true,
+      "description": "Type of wallet user"
     },
     "currency": {
       "type": "string",
-      "default": "USD"
+      "default": "USD",
+      "required": true,
+      "description": "Wallet currency"
     },
     "balance": {
       "type": "decimal",
       "default": 0,
-      "required": true
+      "required": true,
+      "min": 0,
+      "description": "Available balance for spending or withdrawal"
     },
     "escrowBalance": {
       "type": "decimal",
       "default": 0,
-      "required": true
+      "required": true,
+      "min": 0,
+      "description": "Amount held in escrow until orders complete"
     },
     "users_permissions_user": {
       "type": "relation",
       "relation": "oneToOne",
       "target": "plugin::users-permissions.user",
-      "inversedBy": "user_wallet"
+      "inversedBy": "user_wallet",
+      "description": "Associated user account"
     },
     "transactions": {
       "type": "relation",
       "relation": "oneToMany",
       "target": "api::transaction.transaction",
-      "mappedBy": "user_wallet"
+      "mappedBy": "user_wallet",
+      "description": "Wallet transactions"
     }
   }
 }
+

@@ -1,7 +1,9 @@
-"use strict";
+'use strict';
+
 /**
  * global-config service
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-var strapi_1 = require("@strapi/strapi");
-exports.default = strapi_1.factories.createCoreService('api::global-config.global-config');
+
+const { createCoreService } = require('@strapi/strapi').factories;
+
+module.exports = createCoreService('api::global-config.global-config');
