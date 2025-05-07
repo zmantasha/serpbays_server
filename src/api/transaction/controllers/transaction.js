@@ -122,7 +122,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       if (isValid) {
         // Update transaction status
         const transaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: { gatewayTransactionId: transactionId }
+          where: { gatewayTransactionId: transactionId },
+          populate: ['user_wallet']
         });
 
         if (transaction) {
@@ -131,12 +132,20 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               transactionStatus: 'success'
             }
           });
+          console.log('Transaction in webhook:', transaction)
 
           // Update wallet balance
+          let walletId = transaction.user_wallet;
+          if (walletId && typeof walletId === 'object') {
+            walletId = walletId.id;
+          }
+          if (!walletId) {
+            return ctx.badRequest('No wallet ID found in transaction');
+          }
           const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-            where: { id: transaction.user_wallet }
+            where: { id: walletId }
           });
-          console.log(wallet);
+          console.log("wallet",wallet);
 
           if (wallet) {
             await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
