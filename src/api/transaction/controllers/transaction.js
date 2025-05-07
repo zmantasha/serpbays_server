@@ -5,18 +5,20 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 module.exports = createCoreController('api::transaction.transaction', ({ strapi }) => ({
   // Create payment intent
   async createPayment(ctx) {
     try {
       const { amount, currency, gateway } = ctx.request.body;
-      const userId = ctx.state.user.id;
+      const userId = ctx.state?.user?.id;
 
       // Get user's wallet
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { users_permissions_user: userId }
       });
+      console.log("wallet",wallet.id)
 
       if (!wallet) {
         return ctx.notFound('Wallet not found');
@@ -42,6 +44,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         data: {
           type: 'deposit',
           amount: amount,
+          netAmount: amount,
           currency: currency,
           gateway: gateway,
           gatewayTransactionId: paymentData.id,
@@ -50,8 +53,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           metadata: {
             paymentData: paymentData
           }
-        }
+        },
+        populate: ['user_wallet']
       });
+      console.log("transaction",transaction.user_wallet)
 
       return { data: { transaction, paymentData } };
     } catch (error) {
@@ -71,11 +76,20 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       switch (gateway.toLowerCase()) {
         case 'stripe': {
           const stripeSignature = ctx.request.headers['stripe-signature'];
-          const event = stripe.webhooks.constructEvent(
-            payload,
-            stripeSignature,
-            process.env.STRIPE_WEBHOOK_SECRET
-          );
+          let event;
+          
+          if (process.env.NODE_ENV === 'development') {
+            // Skip signature verification in development
+            event = payload;
+          } else {
+            // Verify signature in production
+            event = stripe.webhooks.constructEvent(
+              payload,
+              stripeSignature,
+              process.env.STRIPE_WEBHOOK_SECRET
+            );
+          }
+          
           if (event.type === 'payment_intent.succeeded') {
             isValid = true;
             transactionId = event.data.object.id;
@@ -114,7 +128,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         if (transaction) {
           await strapi.entityService.update('api::transaction.transaction', transaction.id, {
             data: {
-              transactionStatus: 'completed'
+              transactionStatus: 'success'
             }
           });
 
@@ -122,6 +136,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
             where: { id: transaction.user_wallet }
           });
+          console.log(wallet);
 
           if (wallet) {
             await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {

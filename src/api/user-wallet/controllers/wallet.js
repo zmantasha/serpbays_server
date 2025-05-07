@@ -156,6 +156,7 @@ module.exports = {
           data: {
             type,
             amount: parsedAmount,
+            netAmount: parsedAmount,
             transactionStatus: 'pending',
             gateway,
             user_wallet: wallet.id,

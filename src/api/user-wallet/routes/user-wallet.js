@@ -7,52 +7,52 @@
 const { createCoreRouter } = require('@strapi/strapi').factories;
 
 module.exports = {
-  routes: [
-    {
-      method: 'GET',
-      path: '/api/user-wallets',
+    routes: [
+        {
+            method: 'GET',
+            path: '/api/user-wallets',
       handler: 'user-wallet.find',
-      config: {
+            config: {
         auth: {
           scope: ['api::user-wallet.user-wallet.find']
         }
       }
-    },
-    {
-      method: 'GET',
-      path: '/api/user-wallets/:id',
+        },
+        {
+            method: 'GET',
+            path: '/api/user-wallets/:id',
       handler: 'user-wallet.findOne',
-      config: {
+            config: {
         auth: {
           scope: ['api::user-wallet.user-wallet.findOne']
         }
       }
-    },
-    {
-      method: 'POST',
-      path: '/api/user-wallets',
+        },
+        {
+            method: 'POST',
+            path: '/api/user-wallets',
       handler: 'user-wallet.create',
-      config: {
+            config: {
         auth: {
           scope: ['api::user-wallet.user-wallet.create']
         }
       }
-    },
-    {
-      method: 'PUT',
-      path: '/api/user-wallets/:id',
+        },
+        {
+            method: 'PUT',
+            path: '/api/user-wallets/:id',
       handler: 'user-wallet.update',
-      config: {
+            config: {
         auth: {
           scope: ['api::user-wallet.user-wallet.update']
         }
       }
-    },
-    {
-      method: 'DELETE',
-      path: '/api/user-wallets/:id',
+        },
+        {
+            method: 'DELETE',
+            path: '/api/user-wallets/:id',
       handler: 'user-wallet.delete',
-      config: {
+            config: {
         auth: {
           scope: ['api::user-wallet.user-wallet.delete']
         }
@@ -68,11 +68,11 @@ module.exports = {
         }
       }
     },
-    {
-      method: 'GET',
+        {
+            method: 'GET',
       path: '/api/wallet/transactions',
       handler: 'user-wallet.getTransactions',
-      config: {
+            config: {
         auth: {
           scope: ['api::user-wallet.user-wallet.find']
         }
