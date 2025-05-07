@@ -109,7 +109,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         }
 
         case 'paypal': {
-          const { orderID } = payload;
+          const orderID  = payload.resource.id;
+          console.log(orderID)
           isValid = await strapi.service('api::transaction.payment').capturePayPalPayment(orderID);
           transactionId = orderID;
           break;

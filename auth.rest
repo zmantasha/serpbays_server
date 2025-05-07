@@ -2,8 +2,8 @@ POST http://localhost:1337/api/auth/local
 Content-Type: application/json
 
 {
-  "identifier": "publisher@gmail.com",
-  "password": "publisher"
+  "identifier": "test5@gmail.com",
+  "password": "test12345"
 }
 
 ###
@@ -11,10 +11,10 @@ POST http://localhost:1337/api/auth/local/register
 Content-Type: application/json
 
 {
-  "username": "test3",
-  "email": "test3@gmail.com",
-  "password": "test12345"
-  ""
+  "username": "test5",
+  "email": "test5@gmail.com",
+  "password": "test12345",
+  "Advertiser":true
 }
 ###
 PUT http://localhost:1337/api/users/11
@@ -45,17 +45,17 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxN
 
 ###
 GET http://localhost:1337/api/api/wallet/balance
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MiwiaWF0IjoxNzQ2NTk5NTYzLCJleHAiOjE3NDcyMDQzNjN9.I4xvWPeELbKbMQ3nBnoLmxpn_nHWF5c9vQcXHYTW17U
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
 ###
 GET http://localhost:1337/api/api/wallet/transactions
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTk2NjQzLCJleHAiOjE3NDcyMDE0NDN9.bG50XXOD1MzGyUXtB1-jdVOcuzoB5cqas8QYrFk8Bz0
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
 ###
 GET http://localhost:1337/api/api/user-wallets
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTk2NjQzLCJleHAiOjE3NDcyMDE0NDN9.bG50XXOD1MzGyUXtB1-jdVOcuzoB5cqas8QYrFk8Bz0
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
 
 ###
 POST http://localhost:1337/api/user-wallets
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTMzODU4LCJleHAiOjE3NDcxMzg2NTh9.SYXakgTOQeLWLNWGCTAHLLt8LdXM9ThYcjaNfwgPnkM
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NSwiaWF0IjoxNzQ2NjEyMDMxLCJleHAiOjE3NDcyMTY4MzF9.KsXbrLJ7Uk5iC0bYDFJZbSsBxapZtY5cMGXY8unLr8M
 Content-Type: application/json
 
 {
@@ -65,22 +65,22 @@ Content-Type: application/json
 }
 ###
 POST http://localhost:1337/api/api/wallet/create
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MiwiaWF0IjoxNzQ2NTk5NTYzLCJleHAiOjE3NDcyMDQzNjN9.I4xvWPeELbKbMQ3nBnoLmxpn_nHWF5c9vQcXHYTW17U
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
 Content-Type: application/json
 
 {
-  "type": "publisher",
+  "type": "advertiser",
   "currency": "USD"
 }
 ###
 POST http://localhost:1337/api/api/transactions/payment
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTk2NjQzLCJleHAiOjE3NDcyMDE0NDN9.bG50XXOD1MzGyUXtB1-jdVOcuzoB5cqas8QYrFk8Bz0
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
 Content-Type: application/json
 
 {
   "amount": 1,
   "currency": "USD",
-  "gateway": "stripe"
+  "gateway": "paypal"
 }
 
 ###
@@ -92,10 +92,26 @@ Content-Type: application/json
   "type": "payment_intent.succeeded",
   "data": {
     "object": {
-      "id": "pi_3RM0hDGfw70wnNOg0kFPDXFM",
-      "amount": 1000,
+      "id": "pi_3RM85oGfw70wnNOg1uSN9O78",
+      "amount": 1,
       "currency": "usd",
       "transactionStatus": "success"
+    }
+  }
+}
+
+###
+POST http://localhost:1337/api/api/transactions/webhook/paypal
+Content-Type: application/json
+
+{
+  "event_type": "PAYMENT.CAPTURE.COMPLETED",
+  "resource": {
+    "id": "97E72104Y8791914G",
+    "transactionStatus": "success",
+     "amount": {
+      "currency_code": "USD",
+      "value": "1.00"
     }
   }
 }
