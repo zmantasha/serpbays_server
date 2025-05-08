@@ -76,6 +76,16 @@ module.exports = {
       config: {
         auth: false // Webhooks don't need authentication
       }
+    },
+    {
+      method: 'POST',
+      path: '/api/transactions/pending',
+      handler: 'transaction.createPendingTransaction',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.create']
+        }
+      }
     }
   ]
 };
