@@ -12,6 +12,14 @@ module.exports = [
           upgradeInsecureRequests: null,
         },
       },
+      xssProtection: {/* ... */},
+      frameguard: {/* ... */},
+      cors: {/* ... */},
+      csrf: {
+        enabled: true,
+        ignoredMethods: ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
+        ignoredRoutes: ['/api/transactions/webhook/:gateway']
+      }
     },
   },
   {

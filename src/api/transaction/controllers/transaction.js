@@ -61,7 +61,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           transactionStatus: 'pending',
           user_wallet: wallet.id,
           metadata: {
-            paymentData: paymentData
+            paymentData: paymentData || { id: paymentData.id }
           },
           publishedAt: new Date()
         },
@@ -81,7 +81,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const { gateway } = ctx.params;
       const payload = ctx.request.body;
       
-      console.log(`Received ${gateway} webhook:`, JSON.stringify(payload, null, 2));
+      // Add detailed logging to troubleshoot
+      console.log(`📣 RECEIVED ${gateway.toUpperCase()} WEBHOOK:`, JSON.stringify(payload, null, 2));
 
       let isValid = false;
       let transactionId;
@@ -91,26 +92,32 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           const stripeSignature = ctx.request.headers['stripe-signature'];
           let event;
           
+          // For development, we'll process without signature verification
           if (process.env.NODE_ENV === 'development') {
-            // Skip signature verification in development
             event = payload;
           } else {
             // Verify signature in production
-            event = stripe.webhooks.constructEvent(
-              payload,
-              stripeSignature,
-              process.env.STRIPE_WEBHOOK_SECRET
-            );
+            try {
+              event = stripe.webhooks.constructEvent(
+                payload,
+                stripeSignature,
+                process.env.STRIPE_WEBHOOK_SECRET
+              );
+            } catch (err) {
+              console.error("⚠️ Webhook signature verification failed:", err.message);
+              return ctx.badRequest(`Webhook signature verification failed: ${err.message}`);
+            }
           }
+          
+          console.log(`✅ Webhook event type: ${event.type}`);
           
           if (event.type === 'payment_intent.succeeded') {
             isValid = true;
             transactionId = event.data.object.id;
-            console.log(`Stripe payment intent ${transactionId} succeeded`);
+            console.log(`💰 Stripe payment intent ${transactionId} succeeded`);
           } else if (event.type === 'payment_intent.payment_failed') {
-            // Handle payment failure
             transactionId = event.data.object.id;
-            console.log(`Stripe payment intent ${transactionId} failed`);
+            console.log(`❌ Stripe payment intent ${transactionId} failed`);
             return { success: true, status: 'failed' };
           }
           break;
@@ -139,67 +146,107 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       }
 
       if (isValid) {
-        // Retrieve the stored payment intent data
-        const paymentIntent = await strapi.service('api::transaction.payment').getPaymentIntent(transactionId);
+        console.log(`🔍 Looking for transaction with gatewayTransactionId: ${transactionId}`);
         
-        if (!paymentIntent) {
-          console.error(`No payment intent data found for ID: ${transactionId}`);
-          return ctx.notFound('Payment intent data not found');
-        }
-        
-        // NOW create the transaction with success status
-        const transaction = await strapi.entityService.create('api::transaction.transaction', {
-          data: {
-            type: 'deposit',
-            amount: paymentIntent.amount,
-            netAmount: paymentIntent.amount,
-            currency: paymentIntent.currency,
-            gateway: paymentIntent.gateway,
-            gatewayTransactionId: transactionId,
-            transactionStatus: 'success', // Create directly as success
-            user_wallet: paymentIntent.walletId,
-            metadata: {
-              paymentData: { id: transactionId }
-            },
-            publishedAt: new Date()
-          },
+        // Find existing transaction
+        const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+          where: { gatewayTransactionId: transactionId }
         });
         
-        console.log(`Created successful transaction ${transaction.id} for wallet ${paymentIntent.walletId}`);
-        
-        // Update wallet balance
-        const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-          where: { id: paymentIntent.walletId }
-        });
-        
-        if (!wallet) {
-          console.error(`Wallet not found with ID: ${paymentIntent.walletId}`);
-          return ctx.notFound('Wallet not found');
-        }
-        
-        const currentBalance = parseFloat(wallet.balance) || 0;
-        const transactionAmount = parseFloat(paymentIntent.amount) || 0;
-        const newBalance = currentBalance + transactionAmount;
-        
-        console.log(`Updating wallet ${wallet.id} balance from ${currentBalance} to ${newBalance}`);
-        
-        // Update balance
-        await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-          data: {
-            balance: newBalance
+        if (existingTransaction) {
+          console.log(`📝 Found transaction ${existingTransaction.id} with status ${existingTransaction.transactionStatus}`);
+          
+          // Only update if not already successful
+          if (existingTransaction.transactionStatus !== 'success') {
+            console.log(`🔄 Updating transaction ${existingTransaction.id} to success`);
+            
+            // Update transaction status
+            await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
+              data: { transactionStatus: 'success' }
+            });
+            
+            // Find the wallet
+            const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+              where: { id: existingTransaction.user_wallet }
+            });
+            
+            if (wallet) {
+              const currentBalance = parseFloat(wallet.balance) || 0;
+              const transactionAmount = parseFloat(existingTransaction.amount) || 0;
+              const newBalance = currentBalance + transactionAmount;
+              
+              console.log(`💵 Updating wallet ${wallet.id} balance: ${currentBalance} + ${transactionAmount} = ${newBalance}`);
+              
+              // Update wallet balance
+              await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+                data: { balance: newBalance }
+              });
+              
+              console.log(`✅ Wallet balance updated successfully`);
+            } else {
+              console.error(`❌ Wallet not found for transaction ${existingTransaction.id}`);
+            }
+          } else {
+            console.log(`ℹ️ Transaction ${existingTransaction.id} already successful, skipping`);
           }
-        });
-        
-        // Clean up the stored payment intent
-        await strapi.service('api::transaction.payment').removePaymentIntent(transactionId);
-        
-        console.log(`Transaction created and wallet ${wallet.id} successfully updated`);
+        } else {
+          console.log(`⚠️ No transaction found with gatewayTransactionId: ${transactionId}`);
+          
+          // Look for most recent pending transaction with matching amount (fallback)
+          const amount = payload.data?.object?.amount ? payload.data.object.amount / 100 : null;
+          
+          if (amount) {
+            console.log(`🔍 Looking for pending transaction with amount: ${amount}`);
+            
+            const pendingTransactions = await strapi.db.query('api::transaction.transaction').findMany({
+              where: { 
+                transactionStatus: 'pending',
+                amount: amount.toString()
+              },
+              orderBy: { createdAt: 'DESC' },
+              limit: 1
+            });
+            
+            if (pendingTransactions.length > 0) {
+              const pendingTransaction = pendingTransactions[0];
+              console.log(`📝 Found pending transaction ${pendingTransaction.id} with matching amount ${amount}`);
+              
+              // Update transaction status
+              await strapi.entityService.update('api::transaction.transaction', pendingTransaction.id, {
+                data: { 
+                  transactionStatus: 'success',
+                  gatewayTransactionId: transactionId // Update with correct ID
+                }
+              });
+              
+              // Update wallet balance
+              const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+                where: { id: pendingTransaction.user_wallet }
+              });
+              
+              if (wallet) {
+                const currentBalance = parseFloat(wallet.balance) || 0;
+                const transactionAmount = parseFloat(pendingTransaction.amount) || 0;
+                const newBalance = currentBalance + transactionAmount;
+                
+                console.log(`💵 Updating wallet ${wallet.id} balance: ${currentBalance} + ${transactionAmount} = ${newBalance}`);
+                
+                await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+                  data: { balance: newBalance }
+                });
+                
+                console.log(`✅ Wallet balance updated successfully`);
+              }
+            } else {
+              console.log(`⚠️ No pending transaction found with matching amount: ${amount}`);
+            }
+          }
+        }
       }
 
-      // Always return success to the payment gateway to acknowledge receipt
       return { success: true };
     } catch (error) {
-      console.error('Webhook processing error:', error);
+      console.error('❌ Webhook processing error:', error);
       return ctx.badRequest(error.message);
     }
   },
@@ -208,7 +255,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async markTransactionFailed(gatewayTransactionId) {
     try {
       const transaction = await strapi.db.query('api::transaction.transaction').findOne({
-        where: { gatewayTransactionId }
+        where: { gatewayTransactionId },
+          transactionStatus: 'pending'
       });
       
       if (transaction) {
@@ -254,6 +302,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           gatewayTransactionId: gatewayTransactionId,
           transactionStatus: 'pending',
           user_wallet: parsedWalletId, // Use the parsed ID
+          metadata: {
+            paymentData: { id: gatewayTransactionId }
+          },
           publishedAt: new Date()
         }
       });

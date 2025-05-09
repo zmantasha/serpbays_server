@@ -74,7 +74,7 @@ module.exports = {
       path: '/api/transactions/webhook/:gateway',
       handler: 'transaction.handleWebhook',
       config: {
-        auth: false // Webhooks don't need authentication
+        auth: false // Webhooks must be public
       }
     },
     {
