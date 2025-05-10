@@ -73,6 +73,12 @@
       "type": "decimal",
       "required": true,
       "min": 0
+    },
+    "order": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::order.order",
+      "inversedBy": "transactions"
     }
   }
 }

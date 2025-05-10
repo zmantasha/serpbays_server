@@ -80,7 +80,7 @@ Content-Type: application/json
 {
   "amount": 1,
   "currency": "USD",
-  "gateway": "paypal"
+  "gateway": "stripe"
 }
 
 ###
@@ -88,17 +88,19 @@ POST http://localhost:1337/api/api/transactions/webhook/stripe
 Content-Type: application/json
 
 {
-  "id": "pmc_1RLekuGfw70wnNOgIh74K4gy",
+  "id": "gcus_1RMjFKGfw70wnNOgLguT5BGE",
   "type": "payment_intent.succeeded",
   "data": {
     "object": {
-      "id": "pi_3RM85oGfw70wnNOg1uSN9O78",
+      "id": "pi_3RMjDLGfw70wnNOg0MY63pFL",
       "amount": 1,
       "currency": "usd",
       "transactionStatus": "success"
     }
   }
 }
+
+
 
 ###
 POST http://localhost:1337/api/api/transactions/webhook/paypal
@@ -117,3 +119,22 @@ Content-Type: application/json
 }
 
 # > Done! The Stripe CLI is configured for New business sandbox with account id acct_1RLekMGfw70wnNOg
+
+curl -X POST http://localhost:1337/api/api/transactions/webhook/stripe \
+  -H "Content-Type: application/json" \
+  -d '{
+   "id": "evt_3RMjhcGfw70wnNOg0FeCyR6d",
+  "object": "event",
+  "type": "payment_intent.succeeded",
+  "data": {
+    "object": {
+      "id": "pi_3RMjhcGfw70wnNOg0OpByqUv",
+      "object": "payment_intent",
+      "amount": 1,
+      "currency": "usd",
+      "status": "succeeded"
+      }
+    }
+  }'
+
+  curl -X POST http://localhost:1337/api/api/transactions/webhook/stripe -H "Content-Type: application/json" -d "{\"id\":\"evt_3RMjhcGfw70wnNOg0FeCyR6d\",\"object\":\"event\",\"type\":\"payment_intent.succeeded\",\"data\":{\"object\":{\"id\":\"pi_3RMjhcGfw70wnNOg0OpByqUv\",\"object\":\"payment_intent\",\"amount\":50,\"currency\":\"usd\",\"status\":\"succeeded\"}}}"

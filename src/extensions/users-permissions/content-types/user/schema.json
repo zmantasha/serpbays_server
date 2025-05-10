@@ -79,6 +79,18 @@
       "relation": "oneToOne",
       "target": "api::user-wallet.user-wallet",
       "mappedBy": "users_permissions_user"
+    },
+    "advertiserOrders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "advertiser"
+    },
+    "publisherOrders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "publisher"
     }
   }
 }

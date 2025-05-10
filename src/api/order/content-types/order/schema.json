@@ -4,58 +4,82 @@
   "info": {
     "singularName": "order",
     "pluralName": "orders",
-    "displayName": "Order"
+    "displayName": "Order",
+    "description": "Link building orders between advertisers and publishers"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish":true
   },
+  "pluginOptions": {},
   "attributes": {
-    "advertiser": {
-      "type": "relation",
-      "relation": "manyToOne",
-      "target": "plugin::users-permissions.user"
-    },
-    "publisher": {
-      "type": "relation",
-      "relation": "manyToOne",
-      "target": "plugin::users-permissions.user"
-    },
     "status": {
       "type": "enumeration",
-      "enum": [
-        "pending",
-        "accepted",
-        "delivered",
-        "approved",
-        "cancelled",
-        "disputed"
-      ],
+      "enum": ["pending", "accepted", "delivered", "approved", "cancelled", "disputed"],
       "default": "pending",
       "required": true
     },
     "totalAmount": {
       "type": "decimal",
+      "min": 0.01,
       "required": true
     },
     "feeRate": {
       "type": "decimal",
-      "required": true
+      "min": 0,
+      "max": 1,
+      "default": 0.1
+    },
+    "platformFee": {
+      "type": "decimal",
+      "min": 0,
+      "required": true,
+      "description": "Calculated fee amount (totalAmount * feeRate)"
     },
     "escrowHeld": {
       "type": "decimal",
+      "min": 0,
       "required": true
     },
     "description": {
-      "type": "text"
+      "type": "text",
+      "required": true
     },
     "deliveryProof": {
       "type": "string"
+    },
+    "orderDate": {
+      "type": "datetime",
+      "required": true
+    },
+    "website": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::marketplace.marketplace",
+      "inversedBy": "orders"
+    },
+    "advertiser": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "advertiserOrders"
+    },
+    "publisher": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "publisherOrders"
     },
     "createdAt": {
       "type": "timestamp"
     },
     "updatedAt": {
       "type": "timestamp"
+    },
+    "transactions": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::transaction.transaction",
+      "mappedBy": "order"
     }
   }
 }
