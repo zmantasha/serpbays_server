@@ -27,6 +27,15 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       switch (gateway.toLowerCase()) {
         case 'stripe':
           paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(amount, currency);
+          // Store userId and walletId in metadata for the webhook to use
+          if (paymentData && paymentData.id) {
+            await stripe.paymentIntents.update(paymentData.id, {
+              metadata: { 
+                walletId: wallet.id.toString(),
+                userId: userId.toString()
+              }
+            });
+          }
           break;
         case 'razorpay':
           paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(amount, currency);
@@ -40,7 +49,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // For Stripe and PayPal, don't create a transaction yet - just return payment intent
       // We'll let the client create the transaction when the user submits their card details
-      console.log("wallet",wallet.id)
+      console.log("wallet", wallet.id)
       if (gateway.toLowerCase() === 'stripe' || gateway.toLowerCase() === 'paypal') {
         return { data: { 
           walletId: wallet.id,
@@ -61,7 +70,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           transactionStatus: 'pending',
           user_wallet: wallet.id,
           metadata: {
-            paymentData: paymentData
+            paymentData: paymentData,
+            walletId: wallet.id,  // Store the wallet ID in metadata
+            userId: userId        // Store the user ID in metadata
           },
           publishedAt: new Date()
         },
@@ -85,6 +96,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       let isValid = false;
       let transactionId;
+      let walletIdFromMetadata;
 
       switch (gateway.toLowerCase()) {
         case 'stripe': {
@@ -106,6 +118,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           if (event.type === 'payment_intent.succeeded') {
             isValid = true;
             transactionId = event.data.object.id;
+            
+            // Get metadata from the payment intent if available
+            if (event.data.object.metadata && event.data.object.metadata.walletId) {
+              walletIdFromMetadata = parseInt(event.data.object.metadata.walletId);
+              console.log(`Found walletId ${walletIdFromMetadata} in Stripe payment intent metadata`);
+            }
+            
             if (event.data.object.payment_intent) {
               transactionId = event.data.object.payment_intent;
             }
@@ -144,7 +163,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       if (isValid && transactionId) {
         // Find transaction by gatewayTransactionId
         const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: { gatewayTransactionId: transactionId }
+          where: { gatewayTransactionId: transactionId },
+          populate: ['user_wallet']
         });
         
         if (existingTransaction) {
@@ -155,43 +175,34 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             data: { transactionStatus: 'success' }
           });
           
-          // Get walletId directly from the original transaction creation
-          console.log(`Full transaction data:`, JSON.stringify(existingTransaction, null, 2));
-          
           // Try to get walletId from transaction data
-          let walletId = existingTransaction.user_wallet;
+          let walletId = existingTransaction.user_wallet?.id;
           
-          // If we can't get the walletId directly, try the createPendingTransaction data
-          if (!walletId) {
-            // Look for the most recent pending transaction creation log
-            console.log("Looking for walletId in pending transaction logs");
-            
-            // For direct access, let's use the walletId from the log
-            if (existingTransaction.metadata && existingTransaction.metadata.walletId) {
-              walletId = existingTransaction.metadata.walletId;
-              console.log(`Found walletId ${walletId} in transaction metadata`);
-            }
+          // If we can't get the walletId directly, try the metadata
+          if (!walletId && existingTransaction.metadata && existingTransaction.metadata.walletId) {
+            walletId = existingTransaction.metadata.walletId;
+            console.log(`Found walletId ${walletId} in transaction metadata`);
           }
           
-          // If still no walletId and we have the user, try to find their wallet
-          if (!walletId && existingTransaction.user) {
+          // Try the wallet ID from payment intent metadata
+          if (!walletId && walletIdFromMetadata) {
+            walletId = walletIdFromMetadata;
+            console.log(`Using walletId ${walletId} from payment intent metadata`);
+          }
+          
+          // If we have userId in metadata but no wallet, try to find their wallet
+          if (!walletId && existingTransaction.metadata && existingTransaction.metadata.userId) {
+            const userId = existingTransaction.metadata.userId;
+            console.log(`Looking for wallet belonging to user ${userId}`);
+            
             const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-              where: { users_permissions_user: existingTransaction.user }
+              where: { users_permissions_user: userId }
             });
+            
             if (wallet) {
               walletId = wallet.id;
-              console.log(`Found user's wallet: ${walletId}`);
+              console.log(`Found wallet ${walletId} for user ${userId}`);
             }
-          }
-          
-          // Direct walletId from createPendingTransaction logs
-          // This is the most straightforward approach - get the walletId from your logs
-          if (!walletId) {
-            console.log("Manually getting walletId from logs");
-            // The log shows walletId: 31 in your createPendingTransaction call
-            // For testing, use this direct value
-            walletId = 31; // Hardcoded from your logs for testing
-            console.log(`Using hardcoded walletId: ${walletId} from logs`);
           }
           
           if (walletId) {
@@ -199,11 +210,12 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             
             // Find the wallet
             const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-              where: { id: walletId }
+              where: { id: walletId },
+              populate: ['users_permissions_user']
             });
             
             if (wallet) {
-              console.log(`Found wallet:`, JSON.stringify(wallet, null, 2));
+              console.log(`Found wallet for user: ${wallet.users_permissions_user?.id}`);
               
               const currentBalance = parseFloat(wallet.balance) || 0;
               const transactionAmount = parseFloat(existingTransaction.amount) || 0;
@@ -294,6 +306,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           gatewayTransactionId: gatewayTransactionId,
           transactionStatus: 'pending',
           user_wallet: walletId,
+          metadata: {
+            walletId: walletId,  // Store the wallet ID in metadata
+            userId: userId       // Store the user ID in metadata
+          },
           publishedAt: new Date()
         }
       });
