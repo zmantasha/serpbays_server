@@ -2,8 +2,8 @@ POST http://localhost:1337/api/auth/local
 Content-Type: application/json
 
 {
-  "identifier": "test5@gmail.com",
-  "password": "test12345"
+  "identifier": "new@gmail.com",
+  "password": "new@12345"
 }
 
 ###
@@ -27,7 +27,7 @@ Content-Type: application/json
 
 ###
 POST http://localhost:1337/api/user-profiles
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTY1MDgwLCJleHAiOjE3NDcxNjk4ODB9.6af_YFVkt7MDVLBkyVWU4Mqhwua1p7FLj8rAI6oNg5s
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzAyNzA2MywiZXhwIjoxNzQ3NjMxODYzfQ.h0hCqxgzbjpNnSZdwNN1mj9O_v2xTcdWfRaELDHxs_Q
 Content-Type: application/json
 
 {
@@ -80,7 +80,7 @@ Content-Type: application/json
 {
   "amount": 1,
   "currency": "USD",
-  "gateway": "stripe"
+  "gateway": "paypal"
 }
 
 ###
@@ -88,11 +88,11 @@ POST http://localhost:1337/api/api/transactions/webhook/stripe
 Content-Type: application/json
 
 {
-  "id": "gcus_1RMjFKGfw70wnNOgLguT5BGE",
+  "id": "pmc_1RLekuGfw70wnNOgIh74K4gy",
   "type": "payment_intent.succeeded",
   "data": {
     "object": {
-      "id": "pi_3RMjDLGfw70wnNOg0MY63pFL",
+      "id": "pi_3RM85oGfw70wnNOg1uSN9O78",
       "amount": 1,
       "currency": "usd",
       "transactionStatus": "success"
@@ -101,40 +101,24 @@ Content-Type: application/json
 }
 
 
-
 ###
-POST http://localhost:1337/api/api/transactions/webhook/paypal
+POST http://localhost:1337/api/orders
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzAyNzIyNCwiZXhwIjoxNzQ3NjMyMDI0fQ.s-gKcuZwEv_TMZks6JA65xk_6xynDVzA71CNU4tH_ng
 Content-Type: application/json
 
 {
-  "event_type": "PAYMENT.CAPTURE.COMPLETED",
-  "resource": {
-    "id": "97E72104Y8791914G",
-    "transactionStatus": "success",
-     "amount": {
-      "currency_code": "USD",
-      "value": "1.00"
-    }
-  }
+  "totalAmount": "1000",
+  "description": "description",
+  "website":"keymaker3.com"
 }
+###
+GET http://localhost:1337/api/orders/my-orders
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzAyNzIyNCwiZXhwIjoxNzQ3NjMyMDI0fQ.s-gKcuZwEv_TMZks6JA65xk_6xynDVzA71CNU4tH_ng
+
+
+###
+GET http://localhost:1337/api/api/transactions/debug-relationships
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NjgwMzQzNSwiZXhwIjoxNzQ3NDA4MjM1fQ.f8_Wg_l7cFJh-Wwh-HLU6xOL3rVfNj_quqs2WLJktTg
+
 
 # > Done! The Stripe CLI is configured for New business sandbox with account id acct_1RLekMGfw70wnNOg
-
-curl -X POST http://localhost:1337/api/api/transactions/webhook/stripe \
-  -H "Content-Type: application/json" \
-  -d '{
-   "id": "evt_3RMjhcGfw70wnNOg0FeCyR6d",
-  "object": "event",
-  "type": "payment_intent.succeeded",
-  "data": {
-    "object": {
-      "id": "pi_3RMjhcGfw70wnNOg0OpByqUv",
-      "object": "payment_intent",
-      "amount": 1,
-      "currency": "usd",
-      "status": "succeeded"
-      }
-    }
-  }'
-
-  curl -X POST http://localhost:1337/api/api/transactions/webhook/stripe -H "Content-Type: application/json" -d "{\"id\":\"evt_3RMjhcGfw70wnNOg0FeCyR6d\",\"object\":\"event\",\"type\":\"payment_intent.succeeded\",\"data\":{\"object\":{\"id\":\"pi_3RMjhcGfw70wnNOg0OpByqUv\",\"object\":\"payment_intent\",\"amount\":50,\"currency\":\"usd\",\"status\":\"succeeded\"}}}"

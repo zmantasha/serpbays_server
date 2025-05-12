@@ -622,6 +622,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     min_word_count: Schema.Attribute.Integer & Schema.Attribute.Required;
     moz_da: Schema.Attribute.Integer;
     only_with_us: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    orders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
     other_category: Schema.Attribute.JSON;
     price: Schema.Attribute.Integer & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
@@ -649,9 +650,47 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiOrderContentOrderContent
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'order_contents';
+  info: {
+    description: 'Content details associated with orders';
+    displayName: 'OrderContent';
+    pluralName: 'order-contents';
+    singularName: 'order-content';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    content: Schema.Attribute.RichText & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    keywords: Schema.Attribute.Text;
+    links: Schema.Attribute.JSON;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::order-content.order-content'
+    > &
+      Schema.Attribute.Private;
+    metaDescription: Schema.Attribute.Text;
+    minWordCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<1000>;
+    order: Schema.Attribute.Relation<'oneToOne', 'api::order.order'>;
+    publishedAt: Schema.Attribute.DateTime;
+    title: Schema.Attribute.String & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    url: Schema.Attribute.String;
+  };
+}
+
 export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
   collectionName: 'orders';
   info: {
+    description: 'Link building orders between advertisers and publishers';
     displayName: 'Order';
     pluralName: 'orders';
     singularName: 'order';
@@ -668,12 +707,40 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     deliveryProof: Schema.Attribute.String;
-    description: Schema.Attribute.Text;
-    escrowHeld: Schema.Attribute.Decimal & Schema.Attribute.Required;
-    feeRate: Schema.Attribute.Decimal & Schema.Attribute.Required;
+    description: Schema.Attribute.Text & Schema.Attribute.Required;
+    escrowHeld: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    feeRate: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 1;
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0.1>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::order.order'> &
       Schema.Attribute.Private;
+    orderContent: Schema.Attribute.Relation<
+      'oneToOne',
+      'api::order-content.order-content'
+    >;
+    orderDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    platformFee: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     publishedAt: Schema.Attribute.DateTime;
     publisher: Schema.Attribute.Relation<
       'manyToOne',
@@ -684,10 +751,25 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'pending'>;
-    totalAmount: Schema.Attribute.Decimal & Schema.Attribute.Required;
+    totalAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0.01;
+        },
+        number
+      >;
+    transactions: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::transaction.transaction'
+    >;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    website: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::marketplace.marketplace'
+    >;
   };
 }
 
@@ -743,6 +825,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
     publishedAt: Schema.Attribute.DateTime;
     transactionStatus: Schema.Attribute.Enumeration<
       ['pending', 'success', 'failed']
@@ -1333,6 +1416,10 @@ export interface PluginUsersPermissionsUser
   };
   attributes: {
     Advertiser: Schema.Attribute.Boolean;
+    advertiserOrders: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::order.order'
+    >;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     confirmationToken: Schema.Attribute.String & Schema.Attribute.Private;
     confirmed: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
@@ -1357,6 +1444,7 @@ export interface PluginUsersPermissionsUser
       }>;
     provider: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
+    publisherOrders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
     resetPasswordToken: Schema.Attribute.String & Schema.Attribute.Private;
     role: Schema.Attribute.Relation<
       'manyToOne',
@@ -1399,6 +1487,7 @@ declare module '@strapi/strapi' {
       'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
+      'api::order-content.order-content': ApiOrderContentOrderContent;
       'api::order.order': ApiOrderOrder;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;

@@ -80,6 +80,12 @@
       "relation": "oneToMany",
       "target": "api::transaction.transaction",
       "mappedBy": "order"
+    },
+    "orderContent": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::order-content.order-content",
+      "mappedBy": "order"
     }
   }
 }
