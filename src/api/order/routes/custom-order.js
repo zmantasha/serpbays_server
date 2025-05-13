@@ -38,6 +38,19 @@ module.exports = {
         }
       },
     },
+    // Route to fix links in order content
+    {
+      method: 'POST',
+      path: '/orders/fix-links',
+      handler: 'order.fixLinks',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update']
+        }
+      },
+    },
     // Route to get orders available for publishers to accept
     {
       method: 'GET',
