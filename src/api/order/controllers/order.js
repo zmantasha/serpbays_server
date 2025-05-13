@@ -19,7 +19,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       const user = ctx.state.user;
       
       // Extract order data and content data from request body
-      const { content, ...orderData } = ctx.request.body.data || ctx.request.body;
+      const { content, links,metaDescription,keywords,url, ...orderData } = ctx.request.body.data || ctx.request.body;
+      
+      console.log('Creating order with data:', orderData);
       
       // Validate required fields
       if (!orderData.totalAmount || !orderData.description || !orderData.website) {
@@ -43,17 +45,104 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
         orderData.website = marketplace.id;
       }
       
-      // Use the service to create the order (handles escrow and wallet operations)
-      const order = await strapi.service('api::order.order').create(orderData, user);
+      // Remove links from orderData if present to prevent conflicts
+      if (orderData.links) {
+        delete orderData.links;
+      }
       
-      // If content data was provided, create order content
-      if (content && order) {
-        await strapi.entityService.create('api::order-content.order-content', {
-          data: {
-            ...content,
-            order: order.id,
-          },
+      // Create the order first
+      const order = await strapi.service('api::order.order').create(orderData, user);
+      console.log('Order created:', order);
+      
+      if (!order || !order.id) {
+        throw new Error('Failed to create order');
+      }
+      
+      // Define default title for content
+      const defaultTitle = `Order for ${orderData.description}`;
+      
+      try {
+        // Process order content if needed
+        let contentData = {
+          // Default required fields
+          content: orderData.description || '',
+          title: defaultTitle,
+          // Default to 1000 words if not specified
+          minWordCount: 1000,
+          // Important: establish the relationship with the order
+          order: order.id
+        };
+        
+        // If HTML content was provided
+        if (content) {
+          // If content is a string, treat it as content field
+          if (typeof content === 'string') {
+            contentData.content = content;
+          } 
+          // If content is an object, merge its properties
+          else if (typeof content === 'object') {
+            contentData = { 
+              ...contentData,
+              ...content,
+              // Ensure the order relation is preserved
+              order: order.id
+            };
+          }
+        }
+        
+        // Add links if they were provided - ensure it's stored as JSON
+        if (links && Array.isArray(links)) {
+          contentData.links = links;
+        }
+        
+        // Add metadata fields if they were provided in the request body
+        if (ctx.request.body.metaDescription) {
+          contentData.metaDescription = ctx.request.body.metaDescription;
+        }
+        
+        if (ctx.request.body.keywords) {
+          contentData.keywords = ctx.request.body.keywords;
+        }
+        
+        if (ctx.request.body.url) {
+          contentData.url = ctx.request.body.url;
+        } 
+        // If URL isn't provided but website is, try to use website URL
+        else if (!contentData.url && orderData.website) {
+          try {
+            // Get the website URL to use as the content URL
+            const website = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: orderData.website }
+            });
+            
+            if (website && website.url) {
+              contentData.url = website.url;
+            }
+          } catch (err) {
+            console.log('Error fetching website URL:', err);
+            // Continue even if this fails
+          }
+        }
+        
+        console.log('Creating order content with data:', contentData);
+        
+        // Create the order content
+        const newOrderContent = await strapi.entityService.create('api::order-content.order-content', {
+          data: contentData
         });
+        
+        console.log('Order content created:', newOrderContent);
+        
+        // Update the order to ensure the relation is bidirectional
+        await strapi.entityService.update('api::order.order', order.id, {
+          data: {
+            orderContent: newOrderContent.id
+          }
+        });
+        
+      } catch (contentError) {
+        console.error('Error creating order content:', contentError);
+        // We don't want to fail the whole operation if just the content creation fails
       }
       
       // Return the created order with populated relations
@@ -95,6 +184,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       }
 
       // Query orders based on user's role (either as advertiser or publisher)
+      // Using distinct by ID to prevent duplicates
       const orders = await strapi.db.query('api::order.order').findMany({
         where: {
           $or: [
@@ -102,14 +192,39 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
             { publisher: user.id }
           ]
         },
-        populate: ['website', 'advertiser', 'publisher'],
+        populate: ['website', 'advertiser', 'publisher', 'orderContent'],
         orderBy: { orderDate: 'desc' }
       });
+      
+      // Remove potential duplicates by ID (even though the query should handle this)
+      const uniqueOrders = Array.from(new Map(orders.map(order => [order.id, order])).values());
+      
+      // Add website URL to the order for display purposes
+      const enhancedOrders = await Promise.all(uniqueOrders.map(async (order) => {
+        if (order.website && order.website.id) {
+          try {
+            const website = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: order.website.id }
+            });
+            
+            if (website) {
+              // Add website URL to the order
+              return {
+                ...order,
+                websiteUrl: website.url
+              };
+            }
+          } catch (err) {
+            console.error(`Error fetching website for order ${order.id}:`, err);
+          }
+        }
+        return order;
+      }));
 
       return {
-        data: orders,
+        data: enhancedOrders,
         meta: {
-          count: orders.length
+          count: enhancedOrders.length
         }
       };
     } catch (error) {
@@ -384,6 +499,102 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
     } catch (error) {
       console.error('Error disputing order:', error);
       return ctx.internalServerError('An error occurred while disputing the order');
+    }
+  },
+  
+  // Fix missing relations between orders and orderContent
+  async fixRelations(ctx) {
+    try {
+      const user = ctx.state.user;
+      
+      if (!user) {
+        return ctx.unauthorized('Authentication required');
+      }
+      
+      // Check if user is an admin
+      if (user.role && user.role.type !== 'admin') {
+        return ctx.forbidden('Only administrators can fix relations');
+      }
+      
+      let fixed = 0;
+      let errors = 0;
+      
+      // Find order-contents that have order relation but the order doesn't point back
+      const orderContents = await strapi.db.query('api::order-content.order-content').findMany({
+        populate: ['order']
+      });
+      
+      for (const content of orderContents) {
+        if (content.order && content.order.id) {
+          try {
+            // Get the order
+            const order = await strapi.db.query('api::order.order').findOne({
+              where: { id: content.order.id },
+              populate: ['orderContent']
+            });
+            
+            if (order && !order.orderContent) {
+              // Fix the order by adding the missing relation
+              await strapi.entityService.update('api::order.order', order.id, {
+                data: {
+                  orderContent: content.id
+                }
+              });
+              fixed++;
+              console.log(`Fixed relation for order ${order.id} and content ${content.id}`);
+            }
+          } catch (err) {
+            console.error(`Error fixing relation for content ${content.id}:`, err);
+            errors++;
+          }
+        }
+      }
+      
+      // Find orders that have missing titles/content
+      const ordersWithNoContent = await strapi.db.query('api::order.order').findMany({
+        populate: ['orderContent']
+      });
+      
+      for (const order of ordersWithNoContent) {
+        // If order has no orderContent, create one
+        if (!order.orderContent) {
+          try {
+            // Create default content
+            const newContent = await strapi.entityService.create('api::order-content.order-content', {
+              data: {
+                title: `Order for ${order.description}`,
+                content: order.description || 'Order content',
+                minWordCount: 1000,
+                order: order.id
+              }
+            });
+            
+            // Update the order to point to the new content
+            await strapi.entityService.update('api::order.order', order.id, {
+              data: {
+                orderContent: newContent.id
+              }
+            });
+            
+            fixed++;
+            console.log(`Created missing content for order ${order.id}`);
+          } catch (err) {
+            console.error(`Error creating content for order ${order.id}:`, err);
+            errors++;
+          }
+        }
+      }
+      
+      return {
+        data: {
+          fixed,
+          errors,
+          message: `Fixed ${fixed} relations, encountered ${errors} errors`
+        }
+      };
+    } catch (error) {
+      console.error('Error fixing relations:', error);
+      return ctx.internalServerError('An error occurred while fixing relations');
     }
   }
 }));

@@ -8,8 +8,8 @@ module.exports = {
         middlewares: [],
         policies: [],
         auth: {
-          scope: ['api::order.order.create'],
-        },
+          scope: ['api::order.order.create']
+        }
       },
     },
     // Route to get orders for the current user
@@ -21,8 +21,21 @@ module.exports = {
         middlewares: [],
         policies: [],
         auth: {
-          scope: ['api::order.order.find'],
-        },
+          scope: ['api::order.order.find']
+        }
+      },
+    },
+    // Route to fix relations between orders and orderContent
+    {
+      method: 'POST',
+      path: '/orders/fix-relations',
+      handler: 'order.fixRelations',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update']
+        }
       },
     },
     // Route to get orders available for publishers to accept
