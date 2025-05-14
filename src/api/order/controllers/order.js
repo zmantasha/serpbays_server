@@ -382,16 +382,37 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
 
-        // Get publisher's websites
+        // Get publisher's websites by matching the email
         const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
-          where: { user: user.id }
+          where: { publisher_email: user.email }
         });
 
         if (!publisherWebsites || publisherWebsites.length === 0) {
+          // Even if they don't have publisher websites, we can still show orders they created as advertiser
+          const advertisedOrders = await strapi.db.query('api::order.order').findMany({
+            where: {
+              advertiser: user.id,
+              status: 'pending',
+              publisher: null // No publisher assigned yet
+            },
+            populate: ['website', 'advertiser'],
+            orderBy: { orderDate: 'desc' }
+          });
+
+          if (advertisedOrders.length > 0) {
+            return {
+              data: advertisedOrders,
+              meta: {
+                count: advertisedOrders.length,
+                note: 'Showing orders you created as an advertiser'
+              }
+            };
+          }
+
           return {
             data: [],
             meta: {
-              message: 'No websites found for this publisher'
+              message: 'No websites found for this publisher and no orders created as advertiser'
             }
           };
         }
@@ -399,12 +420,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Get website IDs
         const websiteIds = publisherWebsites.map(website => website.id);
 
-        // Find pending orders for these websites
+        // Find all pending orders:
+        // 1. Orders for publisher's websites
+        // 2. Orders created by this user as advertiser
         const orders = await strapi.db.query('api::order.order').findMany({
           where: {
-            website: { $in: websiteIds },
-            status: 'pending',
-            publisher: null // No publisher assigned yet
+            $or: [
+              {
+                website: { $in: websiteIds },
+                status: 'pending',
+                publisher: null // No publisher assigned yet
+              },
+              {
+                advertiser: user.id,
+                status: 'pending',
+                publisher: null // No publisher assigned yet
+              }
+            ]
           },
           populate: ['website', 'advertiser'],
           orderBy: { orderDate: 'desc' }
@@ -448,9 +480,31 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.badRequest('Order is already accepted or not available');
         }
 
-        // Verify the publisher owns this website
+        // Special case: If the user is the advertiser for this order, allow them to accept it themselves
+        if (order.advertiser === user.id) {
+          console.log('User is accepting their own order as both advertiser and publisher');
+          
+          // Update the order
+          const updatedOrder = await strapi.db.query('api::order.order').update({
+            where: { id },
+            data: {
+              publisher: user.id,
+              status: 'accepted',
+              acceptedDate: new Date()
+            }
+          });
+
+          return {
+            data: updatedOrder,
+            meta: {
+              message: 'Order accepted successfully (self-assignment)'
+            }
+          };
+        }
+
+        // Normal case: Verify the publisher owns this website
         const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-          where: { id: order.website.id, user: user.id }
+          where: { id: order.website.id, publisher_email: user.email }
         });
 
         if (!isWebsiteOwner) {
