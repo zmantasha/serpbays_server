@@ -43,7 +43,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const user = ctx.state.user;
         
         // Extract order data and content data from request body
-        const { content, links,metaDescription,keywords,url, ...orderData } = ctx.request.body.data || ctx.request.body;
+        const { content, links,metaDescription,keywords,url,title, ...orderData } = ctx.request.body.data || ctx.request.body;
         
         console.log('Creating order with data:', orderData);
         
@@ -72,6 +72,34 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Remove links from orderData if present to prevent conflicts
         if (orderData.links) {
           delete orderData.links;
+        }
+        
+        // Check for duplicate recent orders to prevent duplicates
+        const recentOrders = await strapi.db.query('api::order.order').findMany({
+          where: {
+            website: orderData.website,
+            advertiser: user.id,
+            totalAmount: orderData.totalAmount,
+            createdAt: {
+              $gt: new Date(Date.now() - 60 * 1000) // Orders created in the last 60 seconds
+            }
+          },
+          limit: 1
+        });
+        
+        if (recentOrders && recentOrders.length > 0) {
+          console.log('Potential duplicate order detected, returning existing order');
+          // Return the existing order instead of creating a duplicate
+          const existingOrder = await strapi.entityService.findOne('api::order.order', recentOrders[0].id, {
+            populate: ['advertiser', 'publisher', 'website', 'orderContent'],
+          });
+          
+          return {
+            data: existingOrder,
+            meta: {
+              message: 'Order already exists'
+            }
+          };
         }
         
         // Create the order first
@@ -156,6 +184,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               console.log('Error fetching website URL:', err);
               // Continue even if this fails
             }
+          }
+          
+          // Add title if provided in the request
+          if (title) {
+            contentData.title = title;
           }
           
           console.log('Creating order content with data:', contentData);
