@@ -392,7 +392,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           const advertisedOrders = await strapi.db.query('api::order.order').findMany({
             where: {
               advertiser: user.id,
-              status: 'pending',
+              orderStatus: 'pending',
               publisher: null // No publisher assigned yet
             },
             populate: ['website', 'advertiser'],
@@ -428,12 +428,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             $or: [
               {
                 website: { $in: websiteIds },
-                status: 'pending',
+                orderStatus: 'pending',
                 publisher: null // No publisher assigned yet
               },
               {
                 advertiser: user.id,
-                status: 'pending',
+                orderStatus: 'pending',
                 publisher: null // No publisher assigned yet
               }
             ]
@@ -476,7 +476,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         // Check if order is already accepted
-        if (order.status !== 'pending' || order.publisher) {
+        if (order.orderStatus !== 'pending' || order.publisher) {
           return ctx.badRequest('Order is already accepted or not available');
         }
 
@@ -489,7 +489,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             where: { id },
             data: {
               publisher: user.id,
-              status: 'accepted',
+              orderStatus: 'accepted',
               acceptedDate: new Date()
             }
           });
@@ -516,7 +516,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           where: { id },
           data: {
             publisher: user.id,
-            status: 'accepted',
+            orderStatus: 'accepted',
             acceptedDate: new Date()
           }
         });
@@ -547,20 +547,82 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         
         // Get the order
         const order = await strapi.db.query('api::order.order').findOne({
-          where: { id }
+          where: { id },
+          populate: ['website', 'advertiser']
         });
 
         if (!order) {
           return ctx.notFound('Order not found');
         }
 
-        // Check if user is the publisher for this order
+        // Enhanced debugging for publisher mismatch
         if (order.publisher !== user.id) {
-          return ctx.forbidden('You do not have permission to update this order');
+          console.log('Publisher mismatch:', {
+            orderId: id,
+            orderPublisher: order.publisher,
+            currentUser: user.id
+          });
+          
+          // Check if this is the advertiser's own order
+          if (order.advertiser && order.advertiser.id === user.id) {
+            console.log('User is the advertiser for this order. Fixing publisher association...');
+            
+            // Update the order to set the user as the publisher
+            await strapi.db.query('api::order.order').update({
+              where: { id },
+              data: {
+                publisher: user.id
+              }
+            });
+            
+            // Refresh the order
+            const updatedOrder = await strapi.db.query('api::order.order').findOne({
+              where: { id }
+            });
+            
+            // Continue with the updated order
+            order.publisher = updatedOrder.publisher;
+          } else {
+            // Special case: Check if the website belongs to this user
+            if (order.website && order.website.id) {
+              const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
+                where: { id: order.website.id, publisher_email: user.email }
+              });
+              
+              if (isWebsiteOwner) {
+                console.log('User owns this website. Fixing publisher association...');
+                
+                // Update the order to set the user as the publisher
+                await strapi.db.query('api::order.order').update({
+                  where: { id },
+                  data: {
+                    publisher: user.id
+                  }
+                });
+                
+                // Refresh the order
+                const updatedOrder = await strapi.db.query('api::order.order').findOne({
+                  where: { id }
+                });
+                
+                // Continue with the updated order
+                order.publisher = updatedOrder.publisher;
+              } else {
+                return ctx.forbidden('You do not have permission to update this order. You are neither the publisher nor the website owner.');
+              }
+            } else {
+              return ctx.forbidden('You do not have permission to update this order. Publisher ID does not match your user ID.');
+            }
+          }
+        }
+
+        // Now check again if permission issue is fixed
+        if (order.publisher !== user.id) {
+          return ctx.forbidden('You still do not have permission to update this order after fix attempt.');
         }
 
         // Check if order is in 'accepted' status
-        if (order.status !== 'accepted') {
+        if (order.orderStatus !== 'accepted') {
           return ctx.badRequest('Order must be in "accepted" status to be marked as delivered');
         }
 
@@ -568,7 +630,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const updatedOrder = await strapi.db.query('api::order.order').update({
           where: { id },
           data: {
-            status: 'delivered',
+            orderStatus: 'delivered',
             deliveredDate: new Date(),
             deliveryProof: body.proof || ''
           }
@@ -613,7 +675,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         // Check if order is in 'delivered' status
-        if (order.status !== 'delivered') {
+        if (order.orderStatus !== 'delivered') {
           return ctx.badRequest('Order must be in "delivered" status to be completed');
         }
 
@@ -668,7 +730,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         // Check if order is in 'delivered' status
-        if (order.status !== 'delivered') {
+        if (order.orderStatus !== 'delivered') {
           return ctx.badRequest('Only delivered orders can be disputed');
         }
 
@@ -676,9 +738,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const updatedOrder = await strapi.db.query('api::order.order').update({
           where: { id },
           data: {
-            status: 'disputed',
-            disputeReason: body.reason,
-            disputeDate: new Date()
+            orderStatus: 'disputed',
+            disputeDate: new Date(),
+            disputeReason: body.reason || 'No reason provided'
           }
         });
 

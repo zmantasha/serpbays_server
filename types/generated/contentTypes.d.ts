@@ -733,6 +733,11 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'api::order-content.order-content'
     >;
     orderDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    orderStatus: Schema.Attribute.Enumeration<
+      ['pending', 'accepted', 'delivered', 'approved', 'cancelled', 'disputed']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
     platformFee: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<
@@ -746,11 +751,6 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'plugin::users-permissions.user'
     >;
-    status: Schema.Attribute.Enumeration<
-      ['pending', 'accepted', 'delivered', 'approved', 'cancelled', 'disputed']
-    > &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'pending'>;
     totalAmount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<

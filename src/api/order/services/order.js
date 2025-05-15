@@ -47,7 +47,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         platformFee,
         escrowHeld,
         orderDate: new Date(),
-        status: 'pending',
+        orderStatus: 'pending',
       };
 
       // Debug log to check data format
@@ -105,13 +105,13 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       throw new Error('Order not found');
     }
     
-    if (order.status !== 'accepted') {
+    if (order.orderStatus !== 'accepted') {
       throw new Error('Only accepted orders can be marked as delivered');
     }
     
     // Update with delivery proof if provided
     const updateData = {
-      status: 'delivered',
+      orderStatus: 'delivered',
       deliveryProof: deliveryData.proof || order.deliveryProof,
     };
     
@@ -127,17 +127,18 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
     return await strapi.db.transaction(async ({ trx }) => {
       // Get the order with all relations
       const order = await this.getCompleteOrder(id);
+      console.log("order",order)
       
       if (!order) {
         throw new Error('Order not found');
       }
       
       // Prevent duplicate completions - check if already approved
-      if (order.status === 'approved') {
+      if (order.orderStatus === 'approved') {
         return order; // Already completed, return existing order
       }
       
-      if (order.status !== 'delivered') {
+      if (order.orderStatus !== 'delivered') {
         throw new Error('Only delivered orders can be completed');
       }
       
@@ -223,7 +224,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       // Update the order
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
-          status: 'approved',
+          orderStatus: 'approved',
           completedDate: new Date()
         }
       });

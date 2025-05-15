@@ -8,13 +8,26 @@
     "description": "Link building orders between advertisers and publishers"
   },
   "options": {
-    "draftAndPublish":true
+    "draftAndPublish": true
   },
   "pluginOptions": {},
   "attributes": {
-    "status": {
+    "createdAt": {
+      "type": "timestamp"
+    },
+    "updatedAt": {
+      "type": "timestamp"
+    },
+    "orderStatus": {
       "type": "enumeration",
-      "enum": ["pending", "accepted", "delivered", "approved", "cancelled", "disputed"],
+      "enum": [
+        "pending",
+        "accepted",
+        "delivered",
+        "approved",
+        "cancelled",
+        "disputed"
+      ],
       "default": "pending",
       "required": true
     },
@@ -68,12 +81,6 @@
       "relation": "manyToOne",
       "target": "plugin::users-permissions.user",
       "inversedBy": "publisherOrders"
-    },
-    "createdAt": {
-      "type": "timestamp"
-    },
-    "updatedAt": {
-      "type": "timestamp"
     },
     "transactions": {
       "type": "relation",
