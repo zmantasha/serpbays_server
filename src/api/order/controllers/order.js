@@ -605,30 +605,100 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         const { id } = ctx.params;
         const { body } = ctx.request;
+        console.log("user", user);
+        console.log(id);
         
-        // Get the order
+        // Get the order - make sure we populate the publisher field
         const order = await strapi.db.query('api::order.order').findOne({
           where: { id },
-          populate: ['website', 'advertiser']
+          populate: ['website', 'advertiser', 'publisher']
         });
 
         if (!order) {
           return ctx.notFound('Order not found');
         }
+        console.log("order", order);
+        
+        // Initialize a flag to track if we need to update publisher
+        let publisherNeedsUpdate = false;
 
-        // Enhanced debugging for publisher mismatch
-        if (order.publisher !== user.id) {
+        // Check if the order doesn't have a publisher yet
+        if (!order.publisher || !order.publisher.id) {
+          console.log(`Order ${id} has no publisher assigned. Assigning current user as publisher.`);
+          publisherNeedsUpdate = true;
+          
+          // First check if this user is allowed to deliver this order
+          let canDeliver = false;
+          
+          // If the order is for a website owned by this user
+          if (order.website && order.website.id) {
+            const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: order.website.id, publisher_email: user.email }
+            });
+            
+            if (isWebsiteOwner) {
+              console.log('User owns this website. Assigning as publisher.');
+              canDeliver = true;
+            }
+          }
+          
+          // Or if they are the advertiser for their own order
+          if (order.advertiser && order.advertiser.id === user.id) {
+            console.log('User is the advertiser for this order. Assigning as publisher too.');
+            canDeliver = true;
+          }
+          
+          if (!canDeliver) {
+            return ctx.forbidden('You do not have permission to deliver this order.');
+          }
+          
+          // Update the order to set the user as the publisher
+          await strapi.db.query('api::order.order').update({
+            where: { id },
+            data: {
+              publisher: user.id
+            }
+          });
+          
+          // Set the publisher value in our order object
+          if (!order.publisher) {
+            order.publisher = { id: user.id };
+          } else {
+            order.publisher.id = user.id;
+          }
+        }
+
+        // Check for publisher mismatch (should only happen if publisherNeedsUpdate is false)
+        if (!publisherNeedsUpdate && order.publisher && order.publisher.id !== user.id) {
           console.log('Publisher mismatch:', {
             orderId: id,
-            orderPublisher: order.publisher,
+            orderPublisher: order.publisher.id,
             currentUser: user.id
           });
           
           // Check if this is the advertiser's own order
           if (order.advertiser && order.advertiser.id === user.id) {
             console.log('User is the advertiser for this order. Fixing publisher association...');
+            publisherNeedsUpdate = true;
+          } 
+          // Special case: Check if the website belongs to this user
+          else if (order.website && order.website.id) {
+            const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: order.website.id, publisher_email: user.email }
+            });
             
-            // Update the order to set the user as the publisher
+            if (isWebsiteOwner) {
+              console.log('User owns this website. Fixing publisher association...');
+              publisherNeedsUpdate = true;
+            } else {
+              return ctx.forbidden('You do not have permission to update this order. You are neither the publisher nor the website owner.');
+            }
+          } else {
+            return ctx.forbidden('You do not have permission to update this order. Publisher ID does not match your user ID.');
+          }
+          
+          // Update the publisher if needed
+          if (publisherNeedsUpdate) {
             await strapi.db.query('api::order.order').update({
               where: { id },
               data: {
@@ -636,58 +706,39 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               }
             });
             
-            // Refresh the order
-            const updatedOrder = await strapi.db.query('api::order.order').findOne({
-              where: { id }
-            });
-            
-            // Continue with the updated order
-            order.publisher = updatedOrder.publisher;
-          } else {
-            // Special case: Check if the website belongs to this user
-            if (order.website && order.website.id) {
-              const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-                where: { id: order.website.id, publisher_email: user.email }
-              });
-              
-              if (isWebsiteOwner) {
-                console.log('User owns this website. Fixing publisher association...');
-                
-                // Update the order to set the user as the publisher
-                await strapi.db.query('api::order.order').update({
-                  where: { id },
-                  data: {
-                    publisher: user.id
-                  }
-                });
-                
-                // Refresh the order
-                const updatedOrder = await strapi.db.query('api::order.order').findOne({
-                  where: { id }
-                });
-                
-                // Continue with the updated order
-                order.publisher = updatedOrder.publisher;
-              } else {
-                return ctx.forbidden('You do not have permission to update this order. You are neither the publisher nor the website owner.');
-              }
+            // Update our order object
+            if (!order.publisher) {
+              order.publisher = { id: user.id };
             } else {
-              return ctx.forbidden('You do not have permission to update this order. Publisher ID does not match your user ID.');
+              order.publisher.id = user.id;
             }
           }
         }
 
-        // Now check again if permission issue is fixed
-        if (order.publisher !== user.id) {
-          return ctx.forbidden('You still do not have permission to update this order after fix attempt.');
+        // Check if the order is in pending status
+        let statusNeedsUpdate = false;
+        
+        if (order.orderStatus === 'pending') {
+          console.log(`Order ${id} is in pending status. Updating to accepted first.`);
+          statusNeedsUpdate = true;
+          
+          // Update to accepted
+          await strapi.db.query('api::order.order').update({
+            where: { id },
+            data: {
+              orderStatus: 'accepted',
+              acceptedDate: new Date()
+            }
+          });
+          
+          // Update our order object
+          order.orderStatus = 'accepted';
+        } else if (order.orderStatus !== 'accepted') {
+          return ctx.badRequest(`Order must be in "accepted" or "pending" status to be marked as delivered (current status: ${order.orderStatus})`);
         }
-
-        // Check if order is in 'accepted' status
-        if (order.orderStatus !== 'accepted') {
-          return ctx.badRequest('Order must be in "accepted" status to be marked as delivered');
-        }
-
-        // Update the order
+        
+        // Now mark as delivered
+        console.log(`Marking order ${id} as delivered.`);
         const updatedOrder = await strapi.db.query('api::order.order').update({
           where: { id },
           data: {
