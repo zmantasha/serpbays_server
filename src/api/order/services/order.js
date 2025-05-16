@@ -15,6 +15,17 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         throw new Error('Authentication required');
       }
 
+      console.log(`Creating order for user ID: ${user.id}, username: ${user.username || 'unknown'}`);
+
+      // Validate that we have required fields for creating an order
+      if (!data.totalAmount) {
+        throw new Error('Total amount is required');
+      }
+
+      if (!data.website) {
+        throw new Error('Website is required');
+      }
+
       // Get user wallet - ensure user ID is properly formatted
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
@@ -24,25 +35,71 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         populate: ['users_permissions_user']
       });
 
+      console.log('Wallet check result:', wallet ? 'Found wallet' : 'No wallet found');
+
+      // If wallet doesn't exist, create one automatically
       if (!wallet) {
-        throw new Error('Advertiser wallet not found');
+        console.log(`No advertiser wallet found for user ${user.id}. Creating a new wallet.`);
+        try {
+          // Create a new wallet with zero balance
+          const newWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+            data: {
+              type: 'advertiser',
+              users_permissions_user: user.id,
+              balance: 0,
+              escrowBalance: 0,
+              description: 'Automatically created advertiser wallet'
+            }
+          });
+          
+          console.log('Created new wallet:', newWallet);
+          
+          // For the first wallet creation, we'll need to return a special error
+          throw new Error('New wallet created with zero balance. Please add funds to your wallet before creating an order.');
+        } catch (walletError) {
+          console.error('Error creating wallet:', walletError);
+          throw new Error(walletError.message || 'Advertiser wallet not found and could not be created');
+        }
       }
 
       // Calculate fee
       const feeRate = data.feeRate || 0.1; // Default 10% if not specified
       const totalAmount = parseFloat(data.totalAmount);
+      
+      // Handle NaN values
+      if (isNaN(totalAmount)) {
+        throw new Error('Invalid total amount');
+      }
+      
       const platformFee = parseFloat((totalAmount * feeRate).toFixed(2));
       const escrowHeld = totalAmount + platformFee;
 
       // Check if user has sufficient balance
-      if (wallet.balance < escrowHeld) {
+      const walletBalance = parseFloat(wallet.balance || 0);
+      if (isNaN(walletBalance)) {
+        console.log('Invalid wallet balance:', wallet.balance);
+        throw new Error('Invalid wallet balance');
+      }
+
+      if (walletBalance < escrowHeld) {
+        console.log(`Insufficient funds: balance ${walletBalance}, required ${escrowHeld}`);
         throw new Error('Insufficient funds');
       }
 
-      // Create the order with current date
+      // Create the order with current date and ensure advertiser ID is properly set
+      let advertiserId = user.id;
+      // Ensure advertiser ID is a number
+      if (typeof advertiserId === 'string') {
+        advertiserId = parseInt(advertiserId, 10);
+        if (isNaN(advertiserId)) {
+          console.error('Failed to parse advertiser ID as a number:', user.id);
+          throw new Error('Invalid advertiser ID format');
+        }
+      }
+
       const orderData = {
         ...data,
-        advertiser: user.id,
+        advertiser: advertiserId, // Use the properly formatted advertiser ID
         feeRate,
         platformFee,
         escrowHeld,
@@ -51,32 +108,56 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       };
 
       // Debug log to check data format
-      console.log('Creating order with data:', orderData);
+      console.log('Creating order with data:', JSON.stringify(orderData, null, 2));
 
       // Use database transaction to ensure everything completes or nothing does
       const result = await strapi.db.transaction(async ({ trx }) => {
-        // Create the order using the proper format for Strapi service
-        const order = await strapi.entityService.create('api::order.order', {
-          data: orderData
-        });
-
-        // Verify the order was created successfully
-        if (!order || !order.id) {
-          throw new Error('Failed to create order record');
-        }
-
-        console.log('Order created:', order);
-
-        // Update wallet balances - subtract from balance, add to escrow
-        await strapi.db.query('api::user-wallet.user-wallet').update({
-          where: { id: wallet.id },
-          data: {
-            balance: wallet.balance - escrowHeld,
-            escrowBalance: wallet.escrowBalance + escrowHeld
+        try {
+          // Ensure all required fields are available in a proper format
+          if (!orderData.advertiser) {
+            throw new Error('Advertiser ID is missing from order data');
           }
-        });
+          
+          // Convert numeric IDs to ensure proper format
+          if (orderData.website && typeof orderData.website === 'string') {
+            try {
+              orderData.website = parseInt(orderData.website);
+              if (isNaN(orderData.website)) {
+                throw new Error('Invalid website ID format');
+              }
+            } catch (e) {
+              throw new Error('Website ID must be a valid number');
+            }
+          }
+          
+          console.log('Creating order with final data:', JSON.stringify(orderData, null, 2));
+          
+          // Create the order using the proper format for Strapi service
+          const createdOrder = await strapi.entityService.create('api::order.order', {
+            data: orderData
+          });
 
-        return order;
+          // Verify the order was created successfully
+          if (!createdOrder || !createdOrder.id) {
+            throw new Error('Failed to create order record');
+          }
+
+          console.log(`Order created with ID ${createdOrder.id}, advertiser: ${createdOrder.advertiser}`);
+
+          // Update wallet balances - subtract from balance, add to escrow
+          await strapi.db.query('api::user-wallet.user-wallet').update({
+            where: { id: wallet.id },
+            data: {
+              balance: walletBalance - escrowHeld,
+              escrowBalance: (wallet.escrowBalance || 0) + escrowHeld
+            }
+          });
+
+          return createdOrder;
+        } catch (txError) {
+          console.error('Transaction error:', txError);
+          throw txError;
+        }
       });
 
       return result;

@@ -43,13 +43,21 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const user = ctx.state.user;
         
         // Extract order data and content data from request body
-        const { content, links,metaDescription,keywords,url,title, ...orderData } = ctx.request.body.data || ctx.request.body;
+        const { content, links, metaDescription, keywords, url, title, requestId, ...orderData } = ctx.request.body.data || ctx.request.body;
         
         console.log('Creating order with data:', orderData);
         
         // Validate required fields
-        if (!orderData.totalAmount || !orderData.description || !orderData.website) {
-          return ctx.badRequest('Missing required fields: totalAmount, description and website are required');
+        if (!orderData.totalAmount) {
+          return ctx.badRequest('Missing required field: totalAmount is required');
+        }
+        
+        if (!orderData.description) {
+          return ctx.badRequest('Missing required field: description is required');
+        }
+        
+        if (!orderData.website) {
+          return ctx.badRequest('Missing required field: website is required');
         }
         
         // If website is passed as a string ID, convert it to the proper format
@@ -74,14 +82,53 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           delete orderData.links;
         }
         
+        // Check for existing orders with the same requestId to implement idempotency
+        if (requestId) {
+          try {
+            // Store the requestId directly in the description field instead of using metadata
+            // Format: "[requestId:XYZ] Original description"
+            const requestIdPrefix = `[requestId:${requestId}]`;
+            
+            // Check if an order with this requestId already exists using the description field
+            const existingOrders = await strapi.db.query('api::order.order').findMany({
+              where: {
+                description: {
+                  $startsWith: requestIdPrefix
+                }
+              },
+              limit: 1,
+              populate: ['advertiser', 'publisher', 'website', 'orderContent']
+            });
+            
+            if (existingOrders && existingOrders.length > 0) {
+              console.log(`Found existing order with requestId ${requestId}, returning it instead of creating a new one`);
+              return {
+                data: existingOrders[0],
+                meta: {
+                  message: 'Order already exists (idempotency match)'
+                }
+              };
+            }
+            
+            // Modify the description to include the requestId at the beginning
+            orderData.description = `${requestIdPrefix} ${orderData.description}`;
+            
+          } catch (err) {
+            console.error('Error checking for duplicate requestId:', err);
+            // Continue with order creation even if the duplication check fails
+          }
+        }
+        
         // Check for duplicate recent orders to prevent duplicates
         const recentOrders = await strapi.db.query('api::order.order').findMany({
           where: {
             website: orderData.website,
             advertiser: user.id,
+            description: orderData.description,
             totalAmount: orderData.totalAmount,
+            // Check for orders created in the last 5 minutes
             createdAt: {
-              $gt: new Date(Date.now() - 60 * 1000) // Orders created in the last 60 seconds
+              $gt: new Date(Date.now() - 5 * 60 * 1000)
             }
           },
           limit: 1
@@ -97,132 +144,286 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return {
             data: existingOrder,
             meta: {
-              message: 'Order already exists'
+              message: 'Order already exists (duplicate check)'
             }
           };
         }
         
-        // Create the order first
-        const order = await strapi.service('api::order.order').create(orderData, user);
-        console.log('Order created:', order);
-        
-        if (!order || !order.id) {
-          throw new Error('Failed to create order');
-        }
-        
-        // Define default title for content
-        const defaultTitle = `Order for ${orderData.description}`;
-        
+        // Create the order with metadata for idempotency
+        const orderToCreate = {
+          ...orderData,
+          advertiser: user.id,
+          orderDate: new Date(),
+        };
+
+        console.log('Creating order with data:', JSON.stringify(orderToCreate, null, 2));
         try {
-          // Process order content if needed
-          let contentData = {
-            // Default required fields
-            content: orderData.description || '',
-            title: defaultTitle,
-            // Default to 1000 words if not specified
-            minWordCount: 1000,
-            // Important: establish the relationship with the order
-            order: order.id
-          };
+          const order = await strapi.service('api::order.order').create(orderToCreate, user);
+          console.log('Order created:', order);
           
-          // If HTML content was provided
-          if (content) {
-            // If content is a string, treat it as content field
-            if (typeof content === 'string') {
-              contentData.content = content;
-            } 
-            // If content is an object, merge its properties
-            else if (typeof content === 'object') {
-              contentData = { 
-                ...contentData,
-                ...content,
-                // Ensure the order relation is preserved
-                order: order.id
-              };
-            }
+          if (!order || !order.id) {
+            throw new Error('Failed to create order - order record was not returned');
           }
           
-          // Explicitly add each metadata field if they were provided in the request
-          
-          // Add links if they were provided - ensure it's stored as JSON
-          if (links && (Array.isArray(links) || typeof links === 'string')) {
-            // Use our formatLinks helper to ensure proper JSON storage
-            contentData.links = formatLinks(links);
-            console.log('Adding links to order content:', contentData.links);
-          } else if (ctx.request.body.links) {
-            // Try to get links directly from the request body
-            contentData.links = formatLinks(ctx.request.body.links);
-            console.log('Adding links from request body:', contentData.links);
-          }
-          
-          // Add metaDescription if provided in the request
-          if (metaDescription) {
-            contentData.metaDescription = metaDescription;
-          }
-          
-          // Add keywords if provided in the request
-          if (keywords) {
-            contentData.keywords = keywords;
-          }
-          
-          // Add URL if provided in the request
-          if (url) {
-            contentData.url = url;
-          } 
-          // If URL isn't provided but website is, try to use website URL
-          else if (!contentData.url && orderData.website) {
+          // Verify and fix the advertiser association if needed
+          if (!order.advertiser && user.id) {
+            console.log('Order created without advertiser association. Fixing it now...');
             try {
-              // Get the website URL to use as the content URL
-              const website = await strapi.db.query('api::marketplace.marketplace').findOne({
-                where: { id: orderData.website }
+              await strapi.entityService.update('api::order.order', order.id, {
+                data: {
+                  advertiser: user.id
+                }
+              });
+              console.log(`Successfully associated advertiser ${user.id} with order ${order.id}`);
+              
+              // Verify the update was successful
+              const verifyOrder = await strapi.entityService.findOne('api::order.order', order.id, {
+                populate: ['advertiser']
               });
               
-              if (website && website.url) {
-                contentData.url = website.url;
+              if (!verifyOrder.advertiser) {
+                console.error('Advertiser association failed. Database integrity issue detected.');
+              } else {
+                console.log(`Verified advertiser association: ID ${verifyOrder.advertiser.id}`);
               }
-            } catch (err) {
-              console.log('Error fetching website URL:', err);
-              // Continue even if this fails
+            } catch (updateError) {
+              console.error('Failed to update advertiser association:', updateError);
+              // Continue with process - we'll try to handle this gracefully
             }
           }
           
-          // Add title if provided in the request
-          if (title) {
-            contentData.title = title;
+          // Define default title for content
+          const defaultTitle = `Order for ${orderData.description}`;
+          
+          // Create order content in a transaction with the order update to ensure atomicity
+          let orderContent = null;
+          
+          try {
+            // Process order content if needed
+            let contentData = {
+              // Default required fields
+              content: orderData.description || '',
+              title: defaultTitle,
+              // Default to 1000 words if not specified
+              minWordCount: 1000,
+              // Important: establish the relationship with the order
+              order: order.id
+            };
+            
+            // Verify order exists in database before trying to create content
+            const orderExists = await strapi.db.query('api::order.order').findOne({
+              where: { id: order.id }
+            });
+            
+            if (!orderExists) {
+              throw new Error(`Order with ID ${order.id} does not exist in database, cannot create content`);
+            }
+            
+            console.log(`Verified order ${order.id} exists, creating content with order relation`);
+            
+            // If HTML content was provided
+            if (content) {
+              // If content is a string, treat it as content field
+              if (typeof content === 'string') {
+                contentData.content = content;
+              } 
+              // If content is an object, merge its properties
+              else if (typeof content === 'object') {
+                contentData = { 
+                  ...contentData,
+                  ...content,
+                  // Ensure the order relation is preserved
+                  order: order.id
+                };
+              }
+            }
+            
+            // Add links if they were provided - ensure it's stored as JSON
+            if (links && (Array.isArray(links) || typeof links === 'string')) {
+              // Use our formatLinks helper to ensure proper JSON storage
+              contentData.links = formatLinks(links);
+            } else if (ctx.request.body.links) {
+              // Try to get links directly from the request body
+              contentData.links = formatLinks(ctx.request.body.links);
+            }
+            
+            // Add other metadata fields if provided
+            if (metaDescription) contentData.metaDescription = metaDescription;
+            if (keywords) contentData.keywords = keywords;
+            if (title) contentData.title = title;
+            
+            // Add URL if provided or try to use website URL
+            if (url) {
+              contentData.url = url;
+            } else if (orderData.website) {
+              try {
+                const website = await strapi.db.query('api::marketplace.marketplace').findOne({
+                  where: { id: orderData.website }
+                });
+                if (website && website.url) {
+                  contentData.url = website.url;
+                }
+              } catch (err) {
+                console.log('Error fetching website URL:', err);
+              }
+            }
+            
+            // Create the order content using entityService directly rather than inside a transaction
+            console.log('Creating order content with data:', JSON.stringify(contentData, null, 2));
+            orderContent = await strapi.entityService.create('api::order-content.order-content', {
+              data: contentData
+            });
+
+            if (!orderContent) {
+              throw new Error('Failed to create order content');
+            }
+
+            console.log(`Successfully created content with ID ${orderContent.id} for order ${order.id}`);
+
+            // Update the order to link to the content
+            await strapi.entityService.update('api::order.order', order.id, {
+              data: {
+                orderContent: orderContent.id
+              }
+            });
+
+            console.log(`Successfully linked content ${orderContent.id} to order ${order.id}`);
+            
+          } catch (contentError) {
+            console.error('Error creating order content:', contentError);
+            // Create a basic content record if the detailed one failed
+            try {
+              // Verify order still exists before retrying
+              const orderStillExists = await strapi.db.query('api::order.order').findOne({
+                where: { id: order.id }
+              });
+              
+              if (!orderStillExists) {
+                console.error(`Order ${order.id} no longer exists, cannot create fallback content`);
+                throw new Error('Order record validation failed');
+              }
+              
+              // Use minimal data for fallback content
+              const basicContentData = {
+                content: orderData.description || 'Order content',
+                title: defaultTitle,
+                order: order.id
+              };
+              
+              console.log('Creating fallback content with minimal data:', basicContentData);
+              
+              const basicContent = await strapi.entityService.create('api::order-content.order-content', {
+                data: basicContentData
+              });
+              
+              if (!basicContent) {
+                throw new Error('Failed to create even fallback content');
+              }
+              
+              console.log(`Created fallback content with ID ${basicContent.id}`);
+              
+              // Update the order to link to the basic content
+              await strapi.entityService.update('api::order.order', order.id, {
+                data: {
+                  orderContent: basicContent.id
+                }
+              });
+              
+              console.log(`Linked fallback content ${basicContent.id} to order ${order.id}`);
+              
+              orderContent = basicContent;
+            } catch (fallbackError) {
+              console.error('Failed to create fallback content:', fallbackError);
+              // Continue without content - we'll return the order anyway
+            }
           }
           
-          console.log('Creating order content with data:', contentData);
-          
-          // Create the order content
-          const newOrderContent = await strapi.entityService.create('api::order-content.order-content', {
-            data: contentData
-          });
-          
-          console.log('Order content created:', newOrderContent);
-          
-          // Update the order to ensure the relation is bidirectional
-          await strapi.entityService.update('api::order.order', order.id, {
-            data: {
-              orderContent: newOrderContent.id
+          // Return a cleaner response with the order data in a flat structure
+          // Get the complete order with its relations
+          try {
+            const populatedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
+              populate: ['advertiser', 'publisher', 'website', 'orderContent'],
+            });
+            
+            if (!populatedOrder) {
+              throw new Error(`Could not find order with ID ${order.id} for response creation`);
             }
-          });
-          
-        } catch (contentError) {
-          console.error('Error creating order content:', contentError);
-          // We don't want to fail the whole operation if just the content creation fails
+            
+            // Create a safe order object that handles missing data
+            const safeOrder = {
+              id: populatedOrder.id,
+              orderDate: populatedOrder.orderDate || new Date().toISOString(),
+              orderStatus: populatedOrder.orderStatus || 'pending',
+              totalAmount: populatedOrder.totalAmount || 0,
+              description: populatedOrder.description || '',
+              escrowHeld: populatedOrder.escrowHeld || 0,
+              website: populatedOrder.website || null,
+              advertiser: populatedOrder.advertiser || { id: user.id, username: user.username || 'Unknown user' },
+              publisher: populatedOrder.publisher || null,
+              orderContent: populatedOrder.orderContent || null
+            };
+            
+            // Check if the order has a valid advertiser
+            if (!safeOrder.advertiser) {
+              console.warn(`Order ${order.id} has no advertiser associated. Using current user as fallback.`);
+              safeOrder.advertiser = { id: user.id, username: user.username || 'Unknown user' };
+            }
+            
+            // Extract only the needed fields to avoid nested objects that could cause frontend issues
+            const cleanOrder = {
+              id: safeOrder.id,
+              orderDate: safeOrder.orderDate,
+              orderStatus: safeOrder.orderStatus,
+              totalAmount: safeOrder.totalAmount,
+              description: safeOrder.description,
+              escrowHeld: safeOrder.escrowHeld,
+              websiteId: safeOrder.website?.id,
+              websiteUrl: safeOrder.website?.url,
+              advertiserId: safeOrder.advertiser?.id || user.id,
+              advertiserName: safeOrder.advertiser?.username || user.username || 'Unknown',
+              publisherId: safeOrder.publisher?.id,
+              publisherName: safeOrder.publisher?.username,
+              orderContentId: safeOrder.orderContent?.id,
+              contentTitle: safeOrder.orderContent?.title,
+              documentId: `order-${safeOrder.id}`
+            };
+            
+            return {
+              data: cleanOrder,
+              meta: {
+                message: 'Order created successfully'
+              }
+            };
+          } catch (responseError) {
+            console.error('Error generating response:', responseError);
+            
+            // Even if we can't format a nice response, return something to avoid a 500 error
+            return {
+              data: {
+                id: order.id,
+                orderStatus: 'pending',
+                totalAmount: orderData.totalAmount || 0,
+                description: orderData.description || '',
+                advertiserId: user.id,
+                advertiserName: user.username || 'Unknown user',
+                documentId: `order-${order.id}`
+              },
+              meta: {
+                message: 'Order created but response formatting had issues',
+                warning: 'Some data may be incomplete'
+              }
+            };
+          }
+        } catch (serviceError) {
+          console.error('Service error creating order:', serviceError);
+          if (serviceError.message === 'Insufficient funds') {
+            return ctx.badRequest('Insufficient funds in your wallet');
+          }
+          if (serviceError.message === 'Advertiser wallet not found') {
+            return ctx.badRequest('No advertiser wallet found for your account');
+          }
+          return ctx.badRequest(`Error creating order: ${serviceError.message}`);
         }
-        
-        // Return the created order with populated relations
-        const populatedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
-          populate: ['advertiser', 'publisher', 'website', 'orderContent'],
-        });
-        
-        return {
-          data: populatedOrder,
-          meta: {
-            message: 'Order created successfully with escrow hold'
-          }
-        };
       } catch (error) {
         // Handle common errors with appropriate responses
         if (error.message === 'Insufficient funds') {
@@ -323,48 +524,70 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
 
-        // Query orders based on user's role (either as advertiser or publisher)
-        // Using distinct by ID to prevent duplicates
-        const orders = await strapi.db.query('api::order.order').findMany({
-          where: {
+        console.log(`Fetching orders for user ID: ${user.id}, username: ${user.username}`);
+        
+        // If a specific role filter is provided in the query, use it
+        const roleFilter = ctx.query.role;
+        let whereCondition;
+        
+        if (roleFilter === 'advertiser') {
+          // Only show orders where user is advertiser
+          whereCondition = { advertiser: user.id };
+          console.log('Filtering as advertiser only');
+        } else if (roleFilter === 'publisher') {
+          // Only show orders where user is publisher
+          whereCondition = { publisher: user.id };
+          console.log('Filtering as publisher only');
+        } else {
+          // Show all orders for this user (default)
+          whereCondition = {
             $or: [
               { advertiser: user.id },
               { publisher: user.id }
             ]
-          },
+          };
+          console.log('Showing all orders (both advertiser and publisher roles)');
+        }
+
+        // Query orders based on the determined role filter
+        const orders = await strapi.db.query('api::order.order').findMany({
+          where: whereCondition,
           populate: ['website', 'advertiser', 'publisher', 'orderContent'],
           orderBy: { orderDate: 'desc' }
         });
         
-        // Remove potential duplicates by ID (even though the query should handle this)
-        const uniqueOrders = Array.from(new Map(orders.map(order => [order.id, order])).values());
+        console.log(`Found ${orders.length} orders for user ID: ${user.id}`);
         
-        // Add website URL to the order for display purposes
-        const enhancedOrders = await Promise.all(uniqueOrders.map(async (order) => {
-          if (order.website && order.website.id) {
-            try {
-              const website = await strapi.db.query('api::marketplace.marketplace').findOne({
-                where: { id: order.website.id }
-              });
-              
-              if (website) {
-                // Add website URL to the order
-                return {
-                  ...order,
-                  websiteUrl: website.url
-                };
-              }
-            } catch (err) {
-              console.error(`Error fetching website for order ${order.id}:`, err);
-            }
-          }
-          return order;
+        // Debug each order
+        orders.forEach((order, index) => {
+          console.log(`Order ${index + 1}: ID ${order.id}, Advertiser: ${order.advertiser?.id || 'none'}, Publisher: ${order.publisher?.id || 'none'}`);
+        });
+        
+        // Create a flat, clean structure for each order to avoid nested objects
+        const cleanOrders = orders.map(order => ({
+          id: order.id,
+          orderDate: order.orderDate,
+          orderStatus: order.orderStatus,
+          totalAmount: order.totalAmount,
+          description: order.description,
+          escrowHeld: order.escrowHeld,
+          websiteId: order.website?.id,
+          websiteUrl: order.website?.url,
+          advertiserId: order.advertiser?.id,
+          advertiserName: order.advertiser?.username,
+          publisherId: order.publisher?.id,
+          publisherName: order.publisher?.username,
+          orderContentId: order.orderContent?.id,
+          contentTitle: order.orderContent?.title,
+          // Add a unique document ID that frontend can use for deduplication
+          documentId: `order-${order.id}`
         }));
-
+        
         return {
-          data: enhancedOrders,
+          data: cleanOrders,
           meta: {
-            count: enhancedOrders.length
+            count: cleanOrders.length,
+            roleFilter: roleFilter || 'all'
           }
         };
       } catch (error) {
@@ -852,6 +1075,89 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         console.error('Error fixing relations:', error);
         return ctx.internalServerError('An error occurred while fixing relations');
       }
+    },
+    
+    // Fix data inconsistencies in orders (admin only)
+    async cleanupOrders(ctx) {
+      try {
+        const user = ctx.state.user;
+        
+        if (!user) {
+          return ctx.unauthorized('Authentication required');
+        }
+        
+        // Check if user is an admin
+        if (user.role && user.role.type !== 'admin') {
+          return ctx.forbidden('Only administrators can clean up orders');
+        }
+        
+        let fixed = 0;
+        let errors = 0;
+        
+        // Find all orders
+        const allOrders = await strapi.db.query('api::order.order').findMany({
+          populate: ['advertiser', 'publisher', 'website', 'orderContent'],
+        });
+        
+        console.log(`Found ${allOrders.length} total orders to check`);
+        
+        // Identify potential duplicates based on content similarity
+        const ordersByFingerprint = {};
+        
+        allOrders.forEach(order => {
+          if (!order.website || !order.advertiser) {
+            return; // Skip incomplete orders
+          }
+          
+          const websiteId = order.website.id;
+          const advertiserId = order.advertiser.id;
+          const amount = order.totalAmount || 0;
+          const description = order.description || '';
+          
+          // Create a unique fingerprint for this order
+          const fingerprint = `${websiteId}-${advertiserId}-${amount}-${description}`;
+          
+          if (!ordersByFingerprint[fingerprint]) {
+            ordersByFingerprint[fingerprint] = [];
+          }
+          
+          ordersByFingerprint[fingerprint].push(order);
+        });
+        
+        // Check for duplicates and log them
+        const duplicateGroups = [];
+        
+        for (const [fingerprint, orders] of Object.entries(ordersByFingerprint)) {
+          if (orders.length > 1) {
+            // We have potential duplicates
+            duplicateGroups.push({
+              fingerprint,
+              count: orders.length,
+              orders: orders.map(o => ({ 
+                id: o.id, 
+                status: o.orderStatus,
+                date: o.orderDate
+              }))
+            });
+            
+            console.log(`Found ${orders.length} potential duplicates with fingerprint: ${fingerprint}`);
+          }
+        }
+        
+        return {
+          data: {
+            total: allOrders.length,
+            potentialDuplicates: duplicateGroups,
+            fixed,
+            errors,
+            message: `Found ${duplicateGroups.length} groups of potential duplicates`
+          }
+        };
+      } catch (error) {
+        console.error('Error cleaning up orders:', error);
+        return ctx.internalServerError('An error occurred while cleaning up orders');
+      }
     }
   };
 });
+
