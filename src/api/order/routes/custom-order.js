@@ -25,32 +25,6 @@ module.exports = {
         }
       },
     },
-    // Route to get only advertiser orders for the current user
-    {
-      method: 'GET',
-      path: '/orders/my-advertiser-orders',
-      handler: 'order.getMyOrders',
-      config: {
-        middlewares: [],
-        policies: [],
-        auth: {
-          scope: ['api::order.order.find']
-        }
-      },
-    },
-    // Route to get only publisher orders for the current user
-    {
-      method: 'GET',
-      path: '/orders/my-publisher-orders',
-      handler: 'order.getMyOrders',
-      config: {
-        middlewares: [],
-        policies: [],
-        auth: {
-          scope: ['api::order.order.find']
-        }
-      },
-    },
     // Route to fix relations between orders and orderContent
     {
       method: 'POST',
@@ -139,19 +113,6 @@ module.exports = {
         policies: [],
         auth: {
           scope: ['api::order.order.update'],
-        },
-      },
-    },
-    // Route for administrators to find and fix order inconsistencies
-    {
-      method: 'GET',
-      path: '/orders/cleanup',
-      handler: 'order.cleanupOrders',
-      config: {
-        middlewares: [],
-        policies: [],
-        auth: {
-          scope: ['api::order.order.find'],
         },
       },
     },

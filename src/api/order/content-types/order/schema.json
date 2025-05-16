@@ -64,10 +64,6 @@
       "type": "datetime",
       "required": true
     },
-    "metadata": {
-      "type": "json",
-      "description": "Stores additional data like idempotency keys and other non-core information"
-    },
     "website": {
       "type": "relation",
       "relation": "manyToOne",
