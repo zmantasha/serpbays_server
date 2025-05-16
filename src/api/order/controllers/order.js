@@ -438,38 +438,38 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           });
 
           if (orders.length === 0) {
-            return {
-              data: [],
-              meta: {
-                message: 'No websites found for this publisher and no orders created as advertiser'
-              }
-            };
-          }
+          return {
+            data: [],
+            meta: {
+              message: 'No websites found for this publisher and no orders created as advertiser'
+            }
+          };
+        }
         } else {
-          // Get website IDs
-          const websiteIds = publisherWebsites.map(website => website.id);
+        // Get website IDs
+        const websiteIds = publisherWebsites.map(website => website.id);
 
-          // Find all pending orders:
-          // 1. Orders for publisher's websites
-          // 2. Orders created by this user as advertiser
+        // Find all pending orders:
+        // 1. Orders for publisher's websites
+        // 2. Orders created by this user as advertiser
           orders = await strapi.db.query('api::order.order').findMany({
-            where: {
-              $or: [
-                {
-                  website: { $in: websiteIds },
-                  orderStatus: 'pending',
-                  publisher: null // No publisher assigned yet
-                },
-                {
-                  advertiser: user.id,
-                  orderStatus: 'pending',
-                  publisher: null // No publisher assigned yet
-                }
-              ]
-            },
-            populate: ['website', 'advertiser'],
-            orderBy: { orderDate: 'desc' }
-          });
+          where: {
+            $or: [
+              {
+                website: { $in: websiteIds },
+                orderStatus: 'pending',
+                publisher: null // No publisher assigned yet
+              },
+              {
+                advertiser: user.id,
+                orderStatus: 'pending',
+                publisher: null // No publisher assigned yet
+              }
+            ]
+          },
+          populate: ['website', 'advertiser'],
+          orderBy: { orderDate: 'desc' }
+        });
         }
 
         // Remove duplicates both by ID and by content similarity (same as getMyOrders)
@@ -555,6 +555,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             }
           });
 
+          // Check if user has a publisher wallet, create if not exists
+          await this.ensurePublisherWallet(user.id);
+
           return {
             data: updatedOrder,
             meta: {
@@ -582,6 +585,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         });
 
+        // Check if user has a publisher wallet, create if not exists
+        await this.ensurePublisherWallet(user.id);
+
         return {
           data: updatedOrder,
           meta: {
@@ -591,6 +597,39 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       } catch (error) {
         console.error('Error accepting order:', error);
         return ctx.internalServerError('An error occurred while accepting the order');
+      }
+    },
+
+    // Helper method to ensure a publisher wallet exists
+    async ensurePublisherWallet(userId) {
+      try {
+        // Check if publisher wallet exists
+        const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { 
+            users_permissions_user: userId,
+            type: 'publisher'
+          }
+        });
+        
+        // If wallet doesn't exist, create one
+        if (!publisherWallet) {
+          console.log(`Creating publisher wallet for user ${userId}`);
+          const newWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+            data: {
+              users_permissions_user: userId,
+              type: 'publisher',
+              balance: 0,
+              escrowBalance: 0,
+              currency: 'USD',
+              status: 'active',
+              publishedAt: new Date()
+            }
+          });
+          
+          console.log(`Created new publisher wallet with ID: ${newWallet.id}`);
+        }
+      } catch (error) {
+        console.error('Error ensuring publisher wallet:', error);
       }
     },
 
@@ -666,6 +705,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           } else {
             order.publisher.id = user.id;
           }
+          
+          // Ensure publisher wallet exists
+          await this.ensurePublisherWallet(user.id);
         }
 
         // Check for publisher mismatch (should only happen if publisherNeedsUpdate is false)
@@ -770,11 +812,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         const { id } = ctx.params;
+        console.log(`Attempting to complete order ${id} by user ${user.id}`);
         
         // Get the order with related data
         const order = await strapi.db.query('api::order.order').findOne({
           where: { id },
-          populate: ['publisher']
+          populate: ['publisher', 'advertiser']
         });
 
         if (!order) {
@@ -782,7 +825,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         // Check if user is the advertiser for this order
-        if (order.advertiser !== user.id) {
+        if (!order.advertiser || (order.advertiser.id !== user.id && order.advertiser !== user.id)) {
+          console.log('Permission denied:', {
+            orderId: id,
+            orderAdvertiser: order.advertiser?.id || order.advertiser,
+            currentUser: user.id
+          });
           return ctx.forbidden('You do not have permission to complete this order');
         }
 
@@ -792,13 +840,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         try {
+          console.log(`Processing completion of order ${id}`);
           // Complete the order and release escrow using the order service
           const completedOrder = await strapi.service('api::order.order').completeOrder(order.id, user);
 
           return {
             data: completedOrder,
             meta: {
-              message: 'Order completed successfully and payment released'
+              message: 'Order completed successfully and marked for payment'
             }
           };
         } catch (serviceError) {

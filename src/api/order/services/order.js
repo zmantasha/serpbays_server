@@ -121,13 +121,17 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
     });
   },
 
-  // When an order is completed, transfer funds from escrow to publisher
+  // When an order is completed, mark funds as available to publisher but don't transfer yet
   async completeOrder(id, user) {
     // Use transaction to ensure data consistency
     return await strapi.db.transaction(async ({ trx }) => {
       // Get the order with all relations
       const order = await this.getCompleteOrder(id);
-      console.log("order",order)
+      console.log("Processing order completion:", { 
+        orderId: id, 
+        status: order.orderStatus, 
+        totalAmount: order.totalAmount 
+      });
       
       if (!order) {
         throw new Error('Order not found');
@@ -142,22 +146,28 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         throw new Error('Only delivered orders can be completed');
       }
       
-      // Make sure publisher exists
-      if (!order.publisher || !order.publisher.id) {
+      // Make sure publisher exists and get the publisher ID
+      if (!order.publisher) {
         throw new Error('Order has no assigned publisher');
       }
+      
+      // Get publisher and advertiser IDs (handling both object and direct ID references)
+      const publisherId = order.publisher.id || order.publisher;
+      const advertiserId = order.advertiser.id || order.advertiser;
+      
+      console.log("Getting wallets for:", { publisherId, advertiserId });
       
       // Get advertiser and publisher wallets
       const advertiserWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: order.advertiser.id,
+          users_permissions_user: advertiserId,
           type: 'advertiser'
         }
       });
       
-      const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+      let publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: order.publisher.id,
+          users_permissions_user: publisherId,
           type: 'publisher'
         }
       });
@@ -166,14 +176,39 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         throw new Error('Advertiser wallet not found');
       }
       
+      // Create publisher wallet if it doesn't exist
       if (!publisherWallet) {
-        throw new Error('Publisher wallet not found');
+        console.log(`Publisher wallet not found, creating one for user ${publisherId}`);
+        publisherWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+          data: {
+            users_permissions_user: publisherId,
+            type: 'publisher',
+            balance: 0,
+            escrowBalance: 0,
+            currency: 'USD',
+            status: 'active',
+            publishedAt: new Date()
+          },
+        });
+        
+        if (!publisherWallet) {
+          throw new Error('Failed to create publisher wallet');
+        }
+        console.log(`Created new publisher wallet with ID: ${publisherWallet.id}`);
       }
       
       // Calculate payment amount (without platform fee)
       const paymentAmount = order.totalAmount;
       
-      // Release escrow funds - Update advertiser wallet
+      console.log("Processing payment:", {
+        paymentAmount,
+        escrowHeld: order.escrowHeld,
+        platformFee: order.platformFee,
+        advertiserWalletId: advertiserWallet.id,
+        publisherWalletId: publisherWallet.id
+      });
+      
+      // Release escrow funds from advertiser wallet - this is the approval step
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: advertiserWallet.id },
         data: {
@@ -181,44 +216,42 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
       
-      // Add funds to publisher wallet
-      await strapi.db.query('api::user-wallet.user-wallet').update({
-        where: { id: publisherWallet.id },
-        data: {
-          balance: publisherWallet.balance + paymentAmount
-        }
-      });
-      
-      // Create transaction record for the payment
-      await strapi.entityService.create('api::transaction.transaction', {
+      // Instead of adding directly to publisher's balance, create a pending transaction 
+      // that marks it as available for withdrawal
+      const paymentTransaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'escrow_release',
           amount: paymentAmount,
           netAmount: paymentAmount,
           fee: order.platformFee,
-          transactionStatus: 'success',
-          gateway: 'internal',
-          gatewayTransactionId: `release_${order.id}_${Date.now()}`,
-          description: `Payment for order #${order.id}`,
+          transactionStatus: 'pending', // Pending until withdrawal
+          gateway: 'test',
+          gatewayTransactionId: `completed_${order.id}_${Date.now()}`,
+          description: `Payment pending for order #${order.id} - available for withdrawal`,
           user_wallet: publisherWallet.id,
           order: order.id
         }
       });
       
       // Create platform fee transaction
-      await strapi.entityService.create('api::transaction.transaction', {
+      const feeTransaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
-          type: 'platform_fee',
+          type: 'fee',
           amount: order.platformFee,
           netAmount: order.platformFee,
           fee: 0,
           transactionStatus: 'success',
-          gateway: 'internal',
+          gateway: 'test',
           gatewayTransactionId: `fee_${order.id}_${Date.now()}`,
           description: `Platform fee for order #${order.id}`,
           // This would go to the platform wallet in a production system
           order: order.id
         }
+      });
+      
+      console.log("Created transactions:", {
+        paymentTransactionId: paymentTransaction.id,
+        feeTransactionId: feeTransaction.id
       });
       
       // Update the order
@@ -229,6 +262,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
       
+      console.log(`Order ${id} completed successfully and marked available for withdrawal`);
       return updatedOrder;
     });
   }
