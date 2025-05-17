@@ -2,8 +2,8 @@ POST http://localhost:1337/api/auth/local
 Content-Type: application/json
 
 {
-  "identifier": "new@gmail.com",
-  "password": "new@12345"
+  "identifier": "publisher@gmail.com",
+  "password": "publisher@123"
 }
 
 ###
@@ -117,8 +117,8 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6M
 
 
 ###
-GET http://localhost:1337/api/api/transactions/debug-relationships
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NjgwMzQzNSwiZXhwIjoxNzQ3NDA4MjM1fQ.f8_Wg_l7cFJh-Wwh-HLU6xOL3rVfNj_quqs2WLJktTg
+GET http://localhost:1337/api/orders/143
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzM3MTQ4MCwiZXhwIjoxNzQ3OTc2MjgwfQ.OyNxF6LEFZ2LIny2g1PmrHS5F9Vung81Z9ldU_Eqqq4
 
 
 # > Done! The Stripe CLI is configured for New business sandbox with account id acct_1RLekMGfw70wnNOg

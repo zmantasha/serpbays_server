@@ -13,8 +13,11 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
     try {
       // Check if user is authenticated
       if (!ctx.state.user) {
+        console.log('Request by unauthenticated user');
         return ctx.unauthorized('Authentication required');
       }
+      
+      console.log('User authenticated with ID:', ctx.state.user.id);
       
       // Get the request body
       const { amount, method, details } = ctx.request.body.data || ctx.request.body;
@@ -22,6 +25,16 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Validate required fields
       if (!amount || !method || !details) {
         return ctx.badRequest('Missing required fields: amount, method, and details are required');
+      }
+      
+      // Ensure details is a valid JSON object
+      let formattedDetails = details;
+      if (typeof details === 'string') {
+        try {
+          formattedDetails = { value: details };
+        } catch (e) {
+          return ctx.badRequest('Details must be a valid JSON object');
+        }
       }
       
       // Validate amount is a positive number
@@ -70,7 +83,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           publisher: ctx.state.user.id,
           amount: requestAmount,
           method,
-          details,
+          details: formattedDetails,
           status: 'pending'
         }
       });
@@ -112,7 +125,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           // Update transaction status
           await strapi.entityService.update('api::transaction.transaction', tx.id, {
             data: {
-              transactionStatus: 'processing',
+              transactionStatus: 'pending',
               description: `${tx.description} - Included in withdrawal request #${withdrawalRequest.id}`
             }
           });
@@ -158,6 +171,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           fee: 0,
           transactionStatus: 'pending',
           gateway: method,
+          gatewayTransactionId: `withdrawal_req_${withdrawalRequest.id}_${Date.now()}`,
           description: `Withdrawal request via ${method} (${amountFromWallet} from wallet, ${amountFromOrders} from completed orders)`,
           user_wallet: publisherWallet.id
         }
