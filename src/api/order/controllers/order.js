@@ -55,9 +55,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // If website is passed as a string ID, convert it to the proper format
         if (typeof orderData.website === 'string' && !isNaN(parseInt(orderData.website))) {
           orderData.website = parseInt(orderData.website);
+          console.log(`Converted string website ID to integer: ${orderData.website}`);
         } 
         // If it's a domain name, try to find the corresponding marketplace entry
         else if (typeof orderData.website === 'string') {
+          console.log(`Looking up website by domain: ${orderData.website}`);
           const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { url: orderData.website }
           });
@@ -66,6 +68,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             return ctx.badRequest(`Website with domain ${orderData.website} not found in marketplace`);
           }
           
+          console.log(`Found website ID ${marketplace.id} for domain ${orderData.website}`);
           orderData.website = marketplace.id;
         }
         
@@ -333,47 +336,35 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
 
-        // Query orders based on user's role (either as advertiser or publisher)
-        const orders = await strapi.db.query('api::order.order').findMany({
-          where: {
-            $or: [
-              { advertiser: user.id },
-              { publisher: user.id }
-            ]
+        // Query orders using Strapi's entity service directly
+        // This ensures we're getting the raw data from Strapi without any filtering
+        const advertiserOrders = await strapi.entityService.findMany('api::order.order', {
+          filters: {
+            advertiser: { id: user.id }
           },
           populate: ['website', 'advertiser', 'publisher', 'orderContent'],
-          orderBy: { orderDate: 'desc' }
+          sort: { orderDate: 'desc' }
         });
         
-        // Remove duplicates both by ID and by content similarity
-        const uniqueOrders = [];
-        const seenIds = new Set();
-        const contentSignatures = new Set();
+        const publisherOrders = await strapi.entityService.findMany('api::order.order', {
+          filters: {
+            publisher: { id: user.id }
+          },
+          populate: ['website', 'advertiser', 'publisher', 'orderContent'],
+          sort: { orderDate: 'desc' }
+        });
         
-        for (const order of orders) {
-          // Skip if we've already seen this exact ID
-          if (seenIds.has(order.id)) {
-            continue;
-          }
-          
-          // Create a content signature to detect duplicate content
-          // We use website + description + totalAmount as a fingerprint
-          const websiteId = order.website?.id || 'unknown';
-          const description = order.description || '';
-          const amount = order.totalAmount || 0;
-          const signature = `${websiteId}-${description}-${amount}`;
-          
-          // Skip if we've seen this content signature before
-          if (contentSignatures.has(signature)) {
-            console.log(`Filtering duplicate order content: ${signature}, ID: ${order.id}`);
-            continue;
-          }
-          
-          // This is a unique order, add it
-          seenIds.add(order.id);
-          contentSignatures.add(signature);
-          uniqueOrders.push(order);
-        }
+        // Combine both sets of orders
+        const orders = [...advertiserOrders, ...publisherOrders];
+        
+        console.log(`Retrieved ${orders.length} total orders for user ID ${user.id}`);
+        
+        // Log all order IDs for debugging
+        console.log('All order IDs:', orders.map(order => order.id).join(', '));
+        
+        // No more deduplication - show all orders exactly as retrieved from Strapi
+        // This ensures each order in the database appears in the UI with correct ID
+        const uniqueOrders = orders;
         
         // Add website URL to the order for display purposes
         const enhancedOrders = await Promise.all(uniqueOrders.map(async (order) => {
@@ -427,14 +418,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         if (!publisherWebsites || publisherWebsites.length === 0) {
           // Even if they don't have publisher websites, we can still show orders they created as advertiser
-          orders = await strapi.db.query('api::order.order').findMany({
-            where: {
-              advertiser: user.id,
+          orders = await strapi.entityService.findMany('api::order.order', {
+            filters: {
+              advertiser: { id: user.id },
               orderStatus: 'pending',
               publisher: null // No publisher assigned yet
             },
             populate: ['website', 'advertiser'],
-            orderBy: { orderDate: 'desc' }
+            sort: { orderDate: 'desc' }
           });
 
           if (orders.length === 0) {
@@ -452,55 +443,40 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Find all pending orders:
         // 1. Orders for publisher's websites
         // 2. Orders created by this user as advertiser
-          orders = await strapi.db.query('api::order.order').findMany({
-          where: {
-            $or: [
-              {
-                website: { $in: websiteIds },
-                orderStatus: 'pending',
-                publisher: null // No publisher assigned yet
-              },
-              {
-                advertiser: user.id,
-                orderStatus: 'pending',
-                publisher: null // No publisher assigned yet
-              }
-            ]
-          },
-          populate: ['website', 'advertiser'],
-          orderBy: { orderDate: 'desc' }
-        });
+          // Get website orders
+          const websiteOrders = await strapi.entityService.findMany('api::order.order', {
+            filters: {
+              website: { id: { $in: websiteIds } },
+              orderStatus: 'pending',
+              publisher: null // No publisher assigned yet
+            },
+            populate: ['website', 'advertiser'],
+            sort: { orderDate: 'desc' }
+          });
+          
+          // Get advertiser orders
+          const advertiserOrders = await strapi.entityService.findMany('api::order.order', {
+            filters: {
+              advertiser: { id: user.id },
+              orderStatus: 'pending',
+              publisher: null // No publisher assigned yet
+            },
+            populate: ['website', 'advertiser'],
+            sort: { orderDate: 'desc' }
+          });
+          
+          // Combine both sets
+          orders = [...websiteOrders, ...advertiserOrders];
         }
 
-        // Remove duplicates both by ID and by content similarity (same as getMyOrders)
-        const uniqueOrders = [];
-        const seenIds = new Set();
-        const contentSignatures = new Set();
+        console.log(`Retrieved ${orders.length} total available orders for user ID ${user.id}`);
         
-        for (const order of orders) {
-          // Skip if we've already seen this exact ID
-          if (seenIds.has(order.id)) {
-            continue;
-          }
-          
-          // Create a content signature to detect duplicate content
-          // We use website + description + totalAmount as a fingerprint
-          const websiteId = order.website?.id || 'unknown';
-          const description = order.description || '';
-          const amount = order.totalAmount || 0;
-          const signature = `${websiteId}-${description}-${amount}`;
-          
-          // Skip if we've seen this content signature before
-          if (contentSignatures.has(signature)) {
-            console.log(`Filtering duplicate available order content: ${signature}, ID: ${order.id}`);
-            continue;
-          }
-          
-          // This is a unique order, add it
-          seenIds.add(order.id);
-          contentSignatures.add(signature);
-          uniqueOrders.push(order);
-        }
+        // Log all order IDs for debugging
+        console.log('All available order IDs:', orders.map(order => order.id).join(', '));
+        
+        // No more deduplication - show all available orders exactly as retrieved from Strapi
+        // This ensures each order in the database appears in the UI with correct ID
+        const uniqueOrders = orders;
 
         return {
           data: uniqueOrders,

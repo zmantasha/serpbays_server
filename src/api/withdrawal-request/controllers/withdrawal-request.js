@@ -84,7 +84,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           amount: requestAmount,
           method,
           details: formattedDetails,
-          status: 'pending'
+          withdrawal_status: 'pending'
         }
       });
       
@@ -201,11 +201,16 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.unauthorized('Authentication required');
       }
       
-      // Find all withdrawal requests for the current user
-      const withdrawalRequests = await strapi.db.query('api::withdrawal-request.withdrawal-request').findMany({
-        where: { publisher: ctx.state.user.id },
-        orderBy: { createdAt: 'desc' }
+      // Find all withdrawal requests for the current user using Strapi entity service
+      // This ensures we get the data directly from Strapi without filtering
+      const withdrawalRequests = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: { 
+          publisher: { id: ctx.state.user.id } 
+        },
+        sort: { createdAt: 'desc' }
       });
+      
+      console.log('Withdrawal requests retrieved:', withdrawalRequests.length);
       
       return {
         data: withdrawalRequests,
@@ -245,8 +250,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
       
       // Check if the withdrawal request is already processed
-      if (withdrawalRequest.status !== 'pending') {
-        return ctx.badRequest(`Withdrawal request is already ${withdrawalRequest.status}`);
+      if (withdrawalRequest.withdrawal_status !== 'pending') {
+        return ctx.badRequest(`Withdrawal request is already ${withdrawalRequest.withdrawal_status}`);
       }
       
       // Get publisher wallet
@@ -295,7 +300,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         // Update the withdrawal request
         const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
           data: {
-            status: 'paid'
+            withdrawal_status: 'paid'
           }
         });
         
@@ -365,8 +370,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
       
       // Check if the withdrawal request is already processed
-      if (withdrawalRequest.status !== 'pending') {
-        return ctx.badRequest(`Withdrawal request is already ${withdrawalRequest.status}`);
+      if (withdrawalRequest.withdrawal_status !== 'pending') {
+        return ctx.badRequest(`Withdrawal request is already ${withdrawalRequest.withdrawal_status}`);
       }
       
       // Get publisher wallet
@@ -384,7 +389,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Update the withdrawal request
       const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
         data: {
-          status: 'denied',
+          withdrawal_status: 'denied',
           denialReason: reason
         }
       });
@@ -434,26 +439,30 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       
       const userId = ctx.state.user.id;
       
-      // Get publisher wallet
-      const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { 
-          users_permissions_user: userId,
+      // Get publisher wallet using Strapi entity service
+      const publisherWallets = await strapi.entityService.findMany('api::user-wallet.user-wallet', {
+        filters: { 
+          users_permissions_user: { id: userId },
           type: 'publisher'
         }
       });
+      
+      const publisherWallet = publisherWallets?.[0]; // Get the first wallet if one exists
       
       if (!publisherWallet) {
         return ctx.badRequest('Publisher wallet not found');
       }
       
-      // Get total from completed orders (not yet withdrawn)
-      const completedOrdersTransactions = await strapi.db.query('api::transaction.transaction').findMany({
-        where: { 
-          user_wallet: publisherWallet.id,
+      // Get total from completed orders (not yet withdrawn) using entity service
+      const completedOrdersTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
+        filters: { 
+          user_wallet: { id: publisherWallet.id },
           type: 'escrow_release',
           transactionStatus: 'pending'
         }
       });
+      
+      console.log('Completed orders transactions found:', completedOrdersTransactions.length);
       
       // Calculate total from completed orders
       const completedOrdersAmount = completedOrdersTransactions.reduce((total, tx) => {

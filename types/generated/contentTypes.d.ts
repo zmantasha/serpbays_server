@@ -947,14 +947,14 @@ export interface ApiWithdrawalRequestWithdrawalRequest
       'manyToOne',
       'plugin::users-permissions.user'
     >;
-    status: Schema.Attribute.Enumeration<
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    withdrawal_status: Schema.Attribute.Enumeration<
       ['pending', 'approved', 'denied', 'paid']
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'pending'>;
-    updatedAt: Schema.Attribute.DateTime;
-    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
-      Schema.Attribute.Private;
   };
 }
 

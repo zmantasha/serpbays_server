@@ -30,7 +30,7 @@
       "type": "json",
       "required": true
     },
-    "status": {
+    "withdrawal_status": {
       "type": "enumeration",
       "enum": ["pending", "approved", "denied", "paid"],
       "default": "pending",
