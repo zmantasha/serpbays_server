@@ -447,9 +447,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           const websiteOrders = await strapi.entityService.findMany('api::order.order', {
             filters: {
               website: { id: { $in: websiteIds } },
-              orderStatus: 'pending',
-              publisher: null // No publisher assigned yet
-            },
+                orderStatus: 'pending',
+                publisher: null // No publisher assigned yet
+              },
             populate: ['website', 'advertiser'],
             sort: { orderDate: 'desc' }
           });
@@ -458,10 +458,10 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           const advertiserOrders = await strapi.entityService.findMany('api::order.order', {
             filters: {
               advertiser: { id: user.id },
-              orderStatus: 'pending',
-              publisher: null // No publisher assigned yet
-            },
-            populate: ['website', 'advertiser'],
+                orderStatus: 'pending',
+                publisher: null // No publisher assigned yet
+          },
+          populate: ['website', 'advertiser'],
             sort: { orderDate: 'desc' }
           });
           
