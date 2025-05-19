@@ -22,8 +22,11 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Get the request body
       const { amount, method, details } = ctx.request.body.data || ctx.request.body;
       
+      console.log('Received withdrawal request:', { amount, method, details: JSON.stringify(details) });
+      
       // Validate required fields
       if (!amount || !method || !details) {
+        console.log('Missing required fields:', { amount, method, details: !!details });
         return ctx.badRequest('Missing required fields: amount, method, and details are required');
       }
       
@@ -33,6 +36,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         try {
           formattedDetails = { value: details };
         } catch (e) {
+          console.error('Error formatting details:', e);
           return ctx.badRequest('Details must be a valid JSON object');
         }
       }
@@ -40,6 +44,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Validate amount is a positive number
       const requestAmount = parseFloat(amount);
       if (isNaN(requestAmount) || requestAmount <= 0) {
+        console.log('Invalid amount:', amount);
         return ctx.badRequest('Amount must be a positive number');
       }
       
@@ -52,30 +57,112 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
       
       if (!publisherWallet) {
+        console.log('Publisher wallet not found for user:', ctx.state.user.id);
         return ctx.badRequest('Publisher wallet not found');
       }
       
-      // Get completed orders available for withdrawal
-      const completedOrdersTransactions = await strapi.db.query('api::transaction.transaction').findMany({
-        where: { 
-          user_wallet: publisherWallet.id,
-          type: 'escrow_release',
-          transactionStatus: 'pending'
-        }
+      console.log('Found publisher wallet:', { 
+        id: publisherWallet.id, 
+        balance: publisherWallet.balance 
       });
       
-      // Calculate available amount from completed orders
-      const completedOrdersAmount = completedOrdersTransactions.reduce((total, tx) => {
-        return total + parseFloat(tx.amount || 0);
-      }, 0);
-      
-      // Total available balance (wallet + completed orders)
-      const totalAvailable = publisherWallet.balance + completedOrdersAmount;
-      
-      // Check if user has sufficient balance
-      if (totalAvailable < requestAmount) {
-        return ctx.badRequest(`Insufficient funds. Available balance: ${totalAvailable}`);
-      }
+      try {
+        // Get available balance using direct calculation rather than another controller method
+        // Get completed orders not already used in withdrawals
+        const completedOrders = await strapi.db.query('api::order.order').findMany({
+          where: {
+            publisher: ctx.state.user.id,
+            orderStatus: 'approved'
+          }
+        });
+        
+        console.log(`Found ${completedOrders.length} completed orders for publisher ${ctx.state.user.id}`);
+        
+        const completedOrderIds = new Set(completedOrders.map(order => order.id));
+        
+        // Get all transactions to identify those already processed for withdrawal
+        const allTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
+          filters: {
+            user_wallet: { id: publisherWallet.id },
+          },
+          populate: ['order'],
+          sort: { createdAt: 'desc' }
+        });
+        
+        // Identify orders that have already been processed for withdrawal
+        const processedOrderIds = new Set();
+        allTransactions.forEach(tx => {
+          if (tx.description && tx.description.includes('Included in withdrawal request') && tx.order) {
+            processedOrderIds.add(tx.order.id);
+          }
+        });
+        
+        console.log(`Found ${processedOrderIds.size} orders already processed for withdrawal`);
+        
+        // Filter for available transactions
+        const availableTransactions = allTransactions.filter(tx => {
+          // Keep only escrow_release transactions
+          if (tx.type !== 'escrow_release') return false;
+          
+          // Must have a valid order
+          if (!tx.order || !tx.order.id) return false;
+          
+          // Order must be in the completed orders list
+          if (!completedOrderIds.has(tx.order.id)) return false;
+          
+          // Order must not have been already processed for withdrawal
+          if (processedOrderIds.has(tx.order.id)) return false;
+          
+          // Ensure transaction status is valid
+          if (tx.transactionStatus !== 'pending' && tx.transactionStatus !== 'success') return false;
+          
+          return true;
+        });
+        
+        console.log(`Found ${availableTransactions.length} available transactions after filtering`);
+        
+        // Group transactions by order to avoid double-counting
+        const orderMap = new Map();
+        
+        availableTransactions.forEach(tx => {
+          const orderId = tx.order?.id;
+          if (!orderId) return;
+          
+          // Only keep the latest transaction for each order
+          if (!orderMap.has(orderId) || 
+              new Date(tx.createdAt) > new Date(orderMap.get(orderId).createdAt)) {
+            orderMap.set(orderId, tx);
+          }
+        });
+        
+        // Get the valid transactions (one per order)
+        const validTransactions = Array.from(orderMap.values());
+        
+        // Calculate the total from completed orders only
+        const completedOrdersAmount = validTransactions.reduce((total, tx) => {
+          return total + parseFloat(tx.amount || 0);
+        }, 0);
+        
+        // Get wallet balance separately
+        const walletBalance = parseFloat(publisherWallet.balance || 0);
+        
+        // Total available (combining wallet balance with completed orders)
+        const totalAvailable = walletBalance + completedOrdersAmount;
+        
+        console.log('Balance calculation:', {
+          walletBalance,
+          completedOrdersAmount,
+          totalAvailable,
+          validTransactionCount: validTransactions.length
+        });
+        
+        // Check if user has sufficient balance
+        if (totalAvailable < requestAmount) {
+          return ctx.badRequest(`Insufficient funds. Available balance: ${totalAvailable}`);
+        }
+        
+        // Continue with the withdrawal process...  
+        const completedOrdersTransactions = validTransactions;
       
       // Create the withdrawal request
       const withdrawalRequest = await strapi.entityService.create('api::withdrawal-request.withdrawal-request', {
@@ -88,79 +175,130 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         }
       });
       
-      // Track how much we've processed so far
-      let amountRemaining = requestAmount;
-      let amountFromWallet = 0;
-      let amountFromOrders = 0;
+      console.log('Created withdrawal request:', withdrawalRequest.id);
       
-      // First use wallet balance
+      // Process all funds as if they're from completed orders since we're combining the balances
+      let amountFromCompletedOrders = requestAmount;
+      
+      // Update wallet balance if needed
       if (publisherWallet.balance > 0) {
-        amountFromWallet = Math.min(publisherWallet.balance, amountRemaining);
-        amountRemaining -= amountFromWallet;
+        const amountFromWallet = Math.min(publisherWallet.balance, requestAmount);
         
-        // Update wallet balance
+        // Update wallet balance - reduce the wallet balance but add the same amount to escrow
         await strapi.db.query('api::user-wallet.user-wallet').update({
           where: { id: publisherWallet.id },
           data: {
             balance: publisherWallet.balance - amountFromWallet,
-            escrowBalance: publisherWallet.escrowBalance + amountFromWallet
+            escrowBalance: publisherWallet.escrowBalance + requestAmount
           }
         });
+        
+        console.log(`Updated wallet: reduced balance by ${amountFromWallet}, added ${requestAmount} to escrow`);
+        
+        // If the entire withdrawal amount comes from the wallet, we're done with transactions
+        if (amountFromWallet >= requestAmount) {
+          // Create a transaction record for the withdrawal request
+          await strapi.entityService.create('api::transaction.transaction', {
+            data: {
+              type: 'escrow_hold',
+              amount: requestAmount,
+              netAmount: requestAmount,
+              fee: 0,
+              transactionStatus: 'pending',
+              gateway: method,
+              gatewayTransactionId: `withdrawal_req_${withdrawalRequest.id}_${Date.now()}`,
+              description: `Withdrawal request via ${method} (from wallet)`,
+              user_wallet: publisherWallet.id
+            }
+          });
+          
+          return {
+            data: withdrawalRequest,
+            meta: {
+              message: 'Withdrawal request created successfully from wallet balance',
+            }
+          };
+        }
       }
       
-      // If we still need more funds, use completed orders
-      if (amountRemaining > 0 && completedOrdersTransactions.length > 0) {
+      // If we're here, we need to use completed orders transactions
+      if (completedOrdersTransactions.length > 0) {
         // Sort transactions by date (oldest first)
         completedOrdersTransactions.sort((a, b) => {
           return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
         });
         
+        // Keep track of orders we've processed to avoid double-counting
+        const processedOrderIds = new Set();
+        
+        // Track how much we still need to process
+        let amountRemaining = requestAmount;
+        
         // Process transactions until we've covered the required amount
         for (const tx of completedOrdersTransactions) {
           if (amountRemaining <= 0) break;
           
+          // Skip if no order or if this order has already been processed
+          if (!tx.order || !tx.order.id || processedOrderIds.has(tx.order.id)) continue;
+          
+          // Mark this order as processed
+          processedOrderIds.add(tx.order.id);
+          
           const txAmount = parseFloat(tx.amount);
           const amountToUse = Math.min(txAmount, amountRemaining);
           
-          // Update transaction status
+          console.log(`Processing transaction ${tx.id} from order ${tx.order.id} - amount: ${txAmount}, using: ${amountToUse}`);
+          
+          // Update transaction status and mark it as included in this withdrawal request
+          // Create a completely new description with a standardized format to ensure consistency
+          let baseDescription = tx.description || '';
+          // Remove any existing withdrawal request references to avoid duplicates
+          if (baseDescription.includes(' - Included in withdrawal request')) {
+            baseDescription = baseDescription.split(' - Included in withdrawal request')[0];
+          }
+          
+          // Apply the standardized format
           await strapi.entityService.update('api::transaction.transaction', tx.id, {
             data: {
-              transactionStatus: 'pending',
-              description: `${tx.description} - Included in withdrawal request #${withdrawalRequest.id}`
+              transactionStatus: 'success', // Mark as success to indicate it's been used
+              description: `${baseDescription} - Included in withdrawal request #${withdrawalRequest.id}`
             }
           });
           
-          // Add to order amount total
-          amountFromOrders += amountToUse;
           amountRemaining -= amountToUse;
           
-          // If we didn't use the full transaction amount, create a new transaction for the remainder
+          // If we didn't use the full transaction amount, update the existing transaction instead of creating a new one
           if (amountToUse < txAmount) {
+            console.log(`Updating transaction ${tx.id} - reducing amount from ${txAmount} to ${txAmount - amountToUse}`);
+            
+            // Update the existing transaction with the reduced amount
+            await strapi.entityService.update('api::transaction.transaction', tx.id, {
+              data: {
+                amount: txAmount - amountToUse,
+                netAmount: txAmount - amountToUse,
+                description: `Remaining balance (${txAmount - amountToUse}) from ${baseDescription.split(' - ')[0]}`,
+                transactionStatus: 'pending' // Reset transaction status for the remaining amount
+              }
+            });
+            
+            // Create a new transaction for the withdrawn amount
             await strapi.entityService.create('api::transaction.transaction', {
               data: {
                 type: 'escrow_release',
-                amount: txAmount - amountToUse,
-                netAmount: txAmount - amountToUse,
+                amount: amountToUse,
+                netAmount: amountToUse,
                 fee: 0,
-                transactionStatus: 'pending',
-                gateway: 'test',
-                gatewayTransactionId: `remainder_${tx.id}_${Date.now()}`,
-                description: `Remaining balance from order - ${tx.description}`,
+                transactionStatus: 'success', // Important: Mark as success to indicate it's been used
+                description: `${baseDescription.split(' - ')[0]} - Included in withdrawal request #${withdrawalRequest.id}`,
                 user_wallet: publisherWallet.id,
-                order: tx.order
+                order: tx.order.id
               }
             });
+            
+            console.log(`Transaction ${tx.id} updated with remaining balance of ${txAmount - amountToUse}`);
           }
         }
       }
-      
-      // Add to escrow balance
-      await strapi.db.query('api::user-wallet.user-wallet').update({
-        where: { id: publisherWallet.id },
-        data: {
-          escrowBalance: publisherWallet.escrowBalance + amountFromOrders
-        }
-      });
       
       // Create a transaction record for the withdrawal request
       await strapi.entityService.create('api::transaction.transaction', {
@@ -172,7 +310,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           transactionStatus: 'pending',
           gateway: method,
           gatewayTransactionId: `withdrawal_req_${withdrawalRequest.id}_${Date.now()}`,
-          description: `Withdrawal request via ${method} (${amountFromWallet} from wallet, ${amountFromOrders} from completed orders)`,
+          description: `Withdrawal request via ${method}`,
           user_wallet: publisherWallet.id
         }
       });
@@ -181,12 +319,15 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         data: withdrawalRequest,
         meta: {
           message: 'Withdrawal request created successfully',
-          details: {
-            amountFromWallet,
-            amountFromOrders
-          }
         }
       };
+      
+      } catch (balanceError) {
+        console.error('Error calculating available balance:', balanceError);
+        return ctx.badRequest('Failed to calculate available balance for withdrawal', { 
+          error: balanceError.message 
+        });
+      }
     } catch (error) {
       console.error('Error creating withdrawal request:', error);
       return ctx.badRequest('Failed to create withdrawal request', { error: error.message });
@@ -453,34 +594,149 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.badRequest('Publisher wallet not found');
       }
       
-      // Get total from completed orders (not yet withdrawn) using entity service
-      const completedOrdersTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
-        filters: { 
-          user_wallet: { id: publisherWallet.id },
-          type: 'escrow_release',
-          transactionStatus: 'pending'
+      // STEP 1: Get all completed orders with their total amount
+      // This will be our source of truth for available funds
+      const completedOrders = await strapi.db.query('api::order.order').findMany({
+        where: {
+          publisher: userId,
+          orderStatus: 'approved' // Only count approved orders
         }
       });
       
-      console.log('Completed orders transactions found:', completedOrdersTransactions.length);
+      console.log(`Found ${completedOrders.length} completed orders for publisher ${userId}`);
       
-      // Calculate total from completed orders
-      const completedOrdersAmount = completedOrdersTransactions.reduce((total, tx) => {
+      // Create a set of completed order IDs for later filtering
+      const completedOrderIds = new Set(completedOrders.map(order => order.id));
+      
+      // STEP 2: Get all withdrawal requests, including their related transactions
+      // to properly exclude funds that have already been withdrawn
+      const withdrawalRequests = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: {
+          publisher: { id: userId },
+          withdrawal_status: { $in: ['pending', 'approved', 'paid'] } // Include all non-denied withdrawals
+        },
+        sort: { createdAt: 'desc' }
+      });
+      
+      // Get all transactions in the system for this user
+      const allTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
+        filters: {
+          user_wallet: { id: publisherWallet.id },
+        },
+        populate: ['order'],
+        sort: { createdAt: 'desc' }
+      });
+      
+      console.log(`Found ${allTransactions.length} total transactions`);
+      
+      // Identify orders and transactions that have already been processed for withdrawal
+      const processedOrderIds = new Set();
+      const processedTransactionIds = new Set();
+      
+      // Mark transactions as processed if they contain withdrawal request references
+      allTransactions.forEach(tx => {
+        // If the transaction description mentions a withdrawal request, mark it as processed
+        if (tx.description && tx.description.includes('Included in withdrawal request')) {
+          if (tx.order && tx.order.id) {
+            processedOrderIds.add(tx.order.id);
+          }
+          processedTransactionIds.add(tx.id);
+        }
+        
+        // Also check transaction status - transactions marked as 'success' for escrow_release
+        // have been used in withdrawals
+        if (tx.type === 'escrow_release' && tx.transactionStatus === 'success') {
+          if (tx.order && tx.order.id) {
+            processedOrderIds.add(tx.order.id);
+          }
+          processedTransactionIds.add(tx.id);
+        }
+      });
+      
+      console.log(`Found ${processedOrderIds.size} orders already processed for withdrawal`);
+      console.log(`Found ${processedTransactionIds.size} transactions already used in withdrawals`);
+      
+      // STEP 3: Apply more stringent filtering to find truly available transactions
+      const availableTransactions = allTransactions.filter(tx => {
+        // Only consider escrow_release transactions
+        if (tx.type !== 'escrow_release') return false;
+        
+        // Skip transactions already marked as used
+        if (processedTransactionIds.has(tx.id)) return false;
+        
+        // Must have a valid order
+        if (!tx.order || !tx.order.id) return false;
+        
+        // Order must be in the completed orders list
+        if (!completedOrderIds.has(tx.order.id)) return false;
+        
+        // Order must not have been already processed for withdrawal
+        if (processedOrderIds.has(tx.order.id)) return false;
+        
+        // Ensure transaction status is valid (only pending ones are available)
+        if (tx.transactionStatus !== 'pending') return false;
+        
+        // The description should not contain any withdrawal references
+        if (tx.description && tx.description.includes('Included in withdrawal request')) return false;
+        
+        // This transaction is available for withdrawal
+        return true;
+      });
+      
+      console.log(`Found ${availableTransactions.length} available transactions after strict filtering`);
+      
+      // Log the available transactions for debugging
+      availableTransactions.forEach(tx => {
+        console.log(`Available tx: ID ${tx.id}, Order ${tx.order?.id}, Amount: ${tx.amount}, Status: ${tx.transactionStatus}`);
+      });
+      
+      // STEP 4: Group transactions by order to avoid double-counting
+      const orderMap = new Map();
+      
+      availableTransactions.forEach(tx => {
+        const orderId = tx.order?.id;
+        if (!orderId) return;
+        
+        // Only keep the latest transaction for each order
+        if (!orderMap.has(orderId) || 
+            new Date(tx.createdAt) > new Date(orderMap.get(orderId).createdAt)) {
+          orderMap.set(orderId, tx);
+        }
+      });
+      
+      // Get the valid transactions (one per order)
+      const validTransactions = Array.from(orderMap.values());
+      
+      console.log(`Found ${validTransactions.length} final valid transactions after deduplication`);
+      
+      // STEP 5: Calculate the final balances
+      // Calculate the total from completed orders only
+      const completedOrdersAmount = validTransactions.reduce((total, tx) => {
         return total + parseFloat(tx.amount || 0);
       }, 0);
       
-      // Get total from existing wallet balance
+      // Get wallet balance separately
       const walletBalance = parseFloat(publisherWallet.balance || 0);
       
-      // Calculate total available balance
+      // Total available (combining wallet balance with completed orders)
       const totalAvailable = walletBalance + completedOrdersAmount;
       
+      console.log('Final balance calculation:', {
+        walletBalance,
+        completedOrdersAmount,
+        totalAvailable,
+        validTransactionCount: validTransactions.length
+      });
+      
+      // STEP 6: Return balance data with proper separation of values
       return {
         data: {
-          walletBalance,
-          completedOrdersAmount,
-          totalAvailable,
-          completedOrders: completedOrdersTransactions
+          walletBalance, // Keep the actual wallet balance
+          completedOrdersAmount, // Keep this as just the completed orders amount
+          totalAvailable, // This is the sum of wallet + completed orders
+          completedOrders: validTransactions,
+          transactionCount: validTransactions.length,
+          totalEarnings: withdrawalRequests.reduce((sum, wr) => sum + parseFloat(wr.amount || 0), 0) + totalAvailable // Total lifetime earnings
         }
       };
     } catch (error) {
@@ -515,3 +771,5 @@ async function processPaypalPayout(withdrawalRequest) {
     message: 'PayPal payout successfully processed'
   };
 }
+
+

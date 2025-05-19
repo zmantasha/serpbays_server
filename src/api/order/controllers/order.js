@@ -44,7 +44,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         
         // Extract order data and content data from request body
         const { content, links, metaDescription, keywords, url, title, ...orderData } = ctx.request.body.data || ctx.request.body;
-        
+        console.log("orderdata",orderData)
         console.log('Creating order with data:', orderData);
         
         // Validate required fields
@@ -86,7 +86,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             description: orderData.description,
             // Check orders created in the last 5 minutes
             createdAt: {
-              $gt: new Date(Date.now() - 5 * 60 * 1000)
+              $gt: new Date(Date.now() -  1000)
             }
           },
           limit: 1
