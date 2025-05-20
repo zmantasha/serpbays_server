@@ -64,6 +64,15 @@
       "type": "datetime",
       "required": true
     },
+    "instructions": {
+      "type": "text",
+      "description": "Instructions for outsourced content creation"
+    },
+    "isOutsourced": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this order is for outsourced content"
+    },
     "website": {
       "type": "relation",
       "relation": "manyToOne",

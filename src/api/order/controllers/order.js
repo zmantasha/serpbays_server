@@ -43,9 +43,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const user = ctx.state.user;
         
         // Extract order data and content data from request body
-        const { content, links, metaDescription, keywords, url, title, ...orderData } = ctx.request.body.data || ctx.request.body;
+        const { content, links, metaDescription, keywords, url, title, instructions, ...orderData } = ctx.request.body.data || ctx.request.body;
         console.log("orderdata",orderData)
         console.log('Creating order with data:', orderData);
+        
+        // Check if this is an outsourced content order
+        const isOutsourced = !!instructions;
         
         // Validate required fields
         if (!orderData.totalAmount || !orderData.description || !orderData.website) {
@@ -63,7 +66,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { url: orderData.website }
           });
-          
+          console.log("merket",marketplace)
           if (!marketplace) {
             return ctx.badRequest(`Website with domain ${orderData.website} not found in marketplace`);
           }
@@ -112,7 +115,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const orderToCreate = {
           ...orderData,
           advertiser: user.id,
-          orderDate: new Date()
+          orderDate: new Date(),
+          isOutsourced: isOutsourced,
+          instructions: instructions || null
         };
 
         console.log('Creating order with data:', orderToCreate);
@@ -126,103 +131,106 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Define default title for content
         const defaultTitle = `Order for ${orderData.description}`;
         
-        try {
-          // Process order content if needed
-          let contentData = {
-            // Default required fields
-            content: orderData.description || '',
-            title: defaultTitle,
-            // Default to 1000 words if not specified
-            minWordCount: 1000,
-            // Important: establish the relationship with the order
-            order: order.id
-          };
-          
-          // If HTML content was provided
-          if (content) {
-            // If content is a string, treat it as content field
-            if (typeof content === 'string') {
-              contentData.content = content;
-            } 
-            // If content is an object, merge its properties
-            else if (typeof content === 'object') {
-              contentData = { 
-                ...contentData,
-                ...content,
-                // Ensure the order relation is preserved
-                order: order.id
-              };
-            }
-          }
-          
-          // Explicitly add each metadata field if they were provided in the request
-          
-          // Add links if they were provided - ensure it's stored as JSON
-          if (links && (Array.isArray(links) || typeof links === 'string')) {
-            // Use our formatLinks helper to ensure proper JSON storage
-            contentData.links = formatLinks(links);
-            console.log('Adding links to order content:', contentData.links);
-          } else if (ctx.request.body.links) {
-            // Try to get links directly from the request body
-            contentData.links = formatLinks(ctx.request.body.links);
-            console.log('Adding links from request body:', contentData.links);
-          }
-          
-          // Add metaDescription if provided in the request
-          if (metaDescription) {
-            contentData.metaDescription = metaDescription;
-          }
-          
-          // Add keywords if provided in the request
-          if (keywords) {
-            contentData.keywords = keywords;
-          }
-          
-          // Add URL if provided in the request
-          if (url) {
-            contentData.url = url;
-          } 
-          // If URL isn't provided but website is, try to use website URL
-          else if (!contentData.url && orderData.website) {
-            try {
-              // Get the website URL to use as the content URL
-              const website = await strapi.db.query('api::marketplace.marketplace').findOne({
-                where: { id: orderData.website }
-              });
-              
-              if (website && website.url) {
-                contentData.url = website.url;
+        // Only create content object for non-outsourced orders
+        if (!isOutsourced) {
+          try {
+            // Process order content if needed
+            let contentData = {
+              // Default required fields
+              content: orderData.description || '',
+              title: defaultTitle,
+              // Default to 1000 words if not specified
+              minWordCount: 1000,
+              // Important: establish the relationship with the order
+              order: order.id
+            };
+            
+            // If HTML content was provided
+            if (content) {
+              // If content is a string, treat it as content field
+              if (typeof content === 'string') {
+                contentData.content = content;
+              } 
+              // If content is an object, merge its properties
+              else if (typeof content === 'object') {
+                contentData = { 
+                  ...contentData,
+                  ...content,
+                  // Ensure the order relation is preserved
+                  order: order.id
+                };
               }
-            } catch (err) {
-              console.log('Error fetching website URL:', err);
-              // Continue even if this fails
             }
-          }
-          
-          // Add title if provided in the request
-          if (title) {
-            contentData.title = title;
-          }
-          
-          console.log('Creating order content with data:', contentData);
-          
-          // Create the order content
-          const newOrderContent = await strapi.entityService.create('api::order-content.order-content', {
-            data: contentData
-          });
-          
-          console.log('Order content created:', newOrderContent);
-          
-          // Update the order to ensure the relation is bidirectional
-          await strapi.entityService.update('api::order.order', order.id, {
-            data: {
-              orderContent: newOrderContent.id
+            
+            // Explicitly add each metadata field if they were provided in the request
+            
+            // Add links if they were provided - ensure it's stored as JSON
+            if (links && (Array.isArray(links) || typeof links === 'string')) {
+              // Use our formatLinks helper to ensure proper JSON storage
+              contentData.links = formatLinks(links);
+              console.log('Adding links to order content:', contentData.links);
+            } else if (ctx.request.body.links) {
+              // Try to get links directly from the request body
+              contentData.links = formatLinks(ctx.request.body.links);
+              console.log('Adding links from request body:', contentData.links);
             }
-          });
-          
-        } catch (contentError) {
-          console.error('Error creating order content:', contentError);
-          // We don't want to fail the whole operation if just the content creation fails
+            
+            // Add metaDescription if provided in the request
+            if (metaDescription) {
+              contentData.metaDescription = metaDescription;
+            }
+            
+            // Add keywords if provided in the request
+            if (keywords) {
+              contentData.keywords = keywords;
+            }
+            
+            // Add URL if provided in the request
+            if (url) {
+              contentData.url = url;
+            } 
+            // If URL isn't provided but website is, try to use website URL
+            else if (!contentData.url && orderData.website) {
+              try {
+                // Get the website URL to use as the content URL
+                const website = await strapi.db.query('api::marketplace.marketplace').findOne({
+                  where: { id: orderData.website }
+                });
+                
+                if (website && website.url) {
+                  contentData.url = website.url;
+                }
+              } catch (err) {
+                console.log('Error fetching website URL:', err);
+                // Continue even if this fails
+              }
+            }
+            
+            // Add title if provided in the request
+            if (title) {
+              contentData.title = title;
+            }
+            
+            console.log('Creating order content with data:', contentData);
+            
+            // Create the order content
+            const newOrderContent = await strapi.entityService.create('api::order-content.order-content', {
+              data: contentData
+            });
+            
+            console.log('Order content created:', newOrderContent);
+            
+            // Update the order to ensure the relation is bidirectional
+            await strapi.entityService.update('api::order.order', order.id, {
+              data: {
+                orderContent: newOrderContent.id
+              }
+            });
+            
+          } catch (contentError) {
+            console.error('Error creating order content:', contentError);
+            // We don't want to fail the whole operation if just the content creation fails
+          }
         }
         
         // Return the created order with populated relations
@@ -248,9 +256,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
         
-        // Log and return unexpected errors
-        console.error('Order creation error:', error);
-        return ctx.badRequest('Failed to create order', { error: error.message });
+        // Log and return any other errors
+        console.error('Error creating order:', error);
+        return ctx.badRequest(error.message || 'Error creating order');
       }
     },
 

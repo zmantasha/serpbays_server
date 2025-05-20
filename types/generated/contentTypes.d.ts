@@ -725,6 +725,8 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
         number
       > &
       Schema.Attribute.DefaultTo<0.1>;
+    instructions: Schema.Attribute.Text;
+    isOutsourced: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::order.order'> &
       Schema.Attribute.Private;
