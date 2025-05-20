@@ -699,15 +699,19 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     draftAndPublish: true;
   };
   attributes: {
+    acceptedDate: Schema.Attribute.DateTime;
     advertiser: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
     >;
+    completedDate: Schema.Attribute.DateTime;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    deliveredDate: Schema.Attribute.DateTime;
     deliveryProof: Schema.Attribute.String;
     description: Schema.Attribute.Text & Schema.Attribute.Required;
+    disputeDate: Schema.Attribute.DateTime;
     escrowHeld: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<

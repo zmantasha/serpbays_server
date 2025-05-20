@@ -64,6 +64,18 @@
       "type": "datetime",
       "required": true
     },
+    "acceptedDate": {
+      "type": "datetime"
+    },
+    "deliveredDate": {
+      "type": "datetime"
+    },
+    "completedDate": {
+      "type": "datetime"
+    },
+    "disputeDate": {
+      "type": "datetime"
+    },
     "instructions": {
       "type": "text",
       "description": "Instructions for outsourced content creation"
