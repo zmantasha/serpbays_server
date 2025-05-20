@@ -1,0 +1,30 @@
+{
+  "kind": "collectionType",
+  "collectionName": "outsourced_contents",
+  "info": {
+    "singularName": "outsourced-content",
+    "pluralName": "outsourced-contents",
+    "displayName": "Outsourced Content",
+    "description": "Details for outsourced content orders"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "projectName": {
+      "type": "string",
+      "required": true
+    },
+    "links": {
+      "type": "json",
+      "description": "JSON array of link objects with URL and anchor text"
+    },
+    "order": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::order.order",
+      "inversedBy": "outsourcedContent"
+    }
+  }
+} 

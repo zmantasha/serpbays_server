@@ -744,6 +744,10 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'pending'>;
+    outsourcedContent: Schema.Attribute.Relation<
+      'oneToOne',
+      'api::outsourced-content.outsourced-content'
+    >;
     platformFee: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<
@@ -776,6 +780,38 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'api::marketplace.marketplace'
     >;
+  };
+}
+
+export interface ApiOutsourcedContentOutsourcedContent
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'outsourced_contents';
+  info: {
+    description: 'Details for outsourced content orders';
+    displayName: 'Outsourced Content';
+    pluralName: 'outsourced-contents';
+    singularName: 'outsourced-content';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    links: Schema.Attribute.JSON;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::outsourced-content.outsourced-content'
+    > &
+      Schema.Attribute.Private;
+    order: Schema.Attribute.Relation<'oneToOne', 'api::order.order'>;
+    projectName: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
   };
 }
 
@@ -1495,6 +1531,7 @@ declare module '@strapi/strapi' {
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
       'api::order-content.order-content': ApiOrderContentOrderContent;
       'api::order.order': ApiOrderOrder;
+      'api::outsourced-content.outsourced-content': ApiOutsourcedContentOutsourcedContent;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
       'api::withdrawal-request.withdrawal-request': ApiWithdrawalRequestWithdrawalRequest;

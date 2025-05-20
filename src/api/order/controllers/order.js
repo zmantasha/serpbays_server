@@ -43,7 +43,18 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const user = ctx.state.user;
         
         // Extract order data and content data from request body
-        const { content, links, metaDescription, keywords, url, title, instructions, ...orderData } = ctx.request.body.data || ctx.request.body;
+        const { 
+          content, 
+          links, 
+          metaDescription, 
+          keywords, 
+          url, 
+          title, 
+          instructions, 
+          projectName, 
+          outsourceLinks, 
+          ...orderData 
+        } = ctx.request.body.data || ctx.request.body;
         console.log("orderdata",orderData)
         console.log('Creating order with data:1', orderData);
         
@@ -152,6 +163,40 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         
         if (!order || !order.id) {
           throw new Error('Failed to create order');
+        }
+        
+        // Handle outsourced content details if this is an outsourced order
+        if (isOutsourced) {
+          try {
+            console.log('Creating outsourced content details');
+            // Create outsourced content details
+            const outsourcedContentData = {
+              projectName: projectName || `Order for ${orderData.description}`,
+              links: outsourceLinks || links || [],
+              order: order.id,
+              publishedAt: new Date()
+            };
+            
+            // Format links properly
+            if (typeof outsourcedContentData.links !== 'string' && !Array.isArray(outsourcedContentData.links)) {
+              outsourcedContentData.links = [];
+            }
+            if (Array.isArray(outsourcedContentData.links)) {
+              outsourcedContentData.links = JSON.stringify(outsourcedContentData.links);
+            }
+            
+            console.log('Outsourced content data:', outsourcedContentData);
+            
+            // Create the outsourced content
+            const outsourcedContent = await strapi.entityService.create('api::outsourced-content.outsourced-content', {
+              data: outsourcedContentData
+            });
+            
+            console.log('Outsourced content created:', outsourcedContent);
+          } catch (error) {
+            console.error('Error creating outsourced content details:', error);
+            // Continue even if this fails - we don't want to roll back the order
+          }
         }
         
         // Define default title for content
@@ -377,7 +422,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           filters: {
             advertiser: { id: user.id }
           },
-          populate: ['website', 'advertiser', 'publisher', 'orderContent'],
+          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent'],
           sort: { orderDate: 'desc' }
         });
         
@@ -385,7 +430,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           filters: {
             publisher: { id: user.id }
           },
-          populate: ['website', 'advertiser', 'publisher', 'orderContent'],
+          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent'],
           sort: { orderDate: 'desc' }
         });
         

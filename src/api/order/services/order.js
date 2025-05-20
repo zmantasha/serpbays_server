@@ -93,7 +93,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
   // Get order with all related content
   async getCompleteOrder(id) {
     return await strapi.entityService.findOne('api::order.order', id, {
-      populate: ['advertiser', 'publisher', 'website', 'orderContent', 'transactions'],
+      populate: ['advertiser', 'publisher', 'website', 'orderContent', 'outsourcedContent', 'transactions'],
     });
   },
 
