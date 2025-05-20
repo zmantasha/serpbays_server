@@ -45,7 +45,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Extract order data and content data from request body
         const { content, links, metaDescription, keywords, url, title, instructions, ...orderData } = ctx.request.body.data || ctx.request.body;
         console.log("orderdata",orderData)
-        console.log('Creating order with data:', orderData);
+        console.log('Creating order with data:1', orderData);
         
         // Check if this is an outsourced content order
         const isOutsourced = !!instructions;
@@ -54,25 +54,51 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         if (!orderData.totalAmount || !orderData.description || !orderData.website) {
           return ctx.badRequest('Missing required fields: totalAmount, description and website are required');
         }
+
+        console.log(typeof orderData.website)
         
         // If website is passed as a string ID, convert it to the proper format
         if (typeof orderData.website === 'string' && !isNaN(parseInt(orderData.website))) {
-          orderData.website = parseInt(orderData.website);
-          console.log(`Converted string website ID to integer: ${orderData.website}`);
+          console.log(`Website appears to be a string ID: ${orderData.website}, looking up by ID`);
+          // Try to find the website by ID
+          const websiteId = parseInt(orderData.website);
+          const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: websiteId }
+          });
+          
+          if (!marketplace) {
+            return ctx.badRequest(`Website with ID ${websiteId} not found in marketplace`);
+          }
+          
+          console.log(`Found website ID ${marketplace.id} for domain ${marketplace.url}`);
+          orderData.website = marketplace.id;
         } 
-        // If it's a domain name, try to find the corresponding marketplace entry
+        // If it's a domain name (preferred approach), try to find the corresponding marketplace entry
         else if (typeof orderData.website === 'string') {
           console.log(`Looking up website by domain: ${orderData.website}`);
           const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { url: orderData.website }
           });
-          console.log("merket",marketplace)
+          console.log("market", marketplace)
           if (!marketplace) {
             return ctx.badRequest(`Website with domain ${orderData.website} not found in marketplace`);
           }
           
           console.log(`Found website ID ${marketplace.id} for domain ${orderData.website}`);
           orderData.website = marketplace.id;
+        }
+        // If website is already a number, verify it exists in marketplace
+        else if (typeof orderData.website === 'number') {
+          console.log(`Verifying website ID: ${orderData.website}`);
+          const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: orderData.website }
+          });
+          
+          if (!marketplace) {
+            return ctx.badRequest(`Website with ID ${orderData.website} not found in marketplace`);
+          }
+          
+          console.log(`Verified website ID ${orderData.website} exists`);
         }
         
         // Remove links from orderData if present to prevent conflicts
@@ -197,6 +223,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                   where: { id: orderData.website }
                 });
                 
+
                 if (website && website.url) {
                   contentData.url = website.url;
                 }
