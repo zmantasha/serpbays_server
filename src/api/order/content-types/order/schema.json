@@ -76,10 +76,6 @@
     "disputeDate": {
       "type": "datetime"
     },
-    "instructions": {
-      "type": "text",
-      "description": "Instructions for outsourced content creation"
-    },
     "isOutsourced": {
       "type": "boolean",
       "default": false,

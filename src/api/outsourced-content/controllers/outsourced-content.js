@@ -16,17 +16,20 @@ module.exports = createCoreController('api::outsourced-content.outsourced-conten
       }
       
       // Get data from request
-      const { order, projectName, links } = ctx.request.body.data || ctx.request.body;
+      const { order, projectName, links, instructions } = ctx.request.body.data || ctx.request.body;
       
       if (!order || !projectName) {
         return ctx.badRequest('Missing required fields: order and projectName are required');
       }
+      console.log("order",order)
+      console.log("projectName",projectName)
       
       // Create the outsourced content entry
       const outsourcedContent = await strapi.entityService.create('api::outsourced-content.outsourced-content', {
         data: {
           projectName,
           links: typeof links === 'string' ? links : JSON.stringify(links),
+          instructions,
           order,
           publishedAt: new Date()
         }

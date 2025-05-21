@@ -161,9 +161,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const order = await strapi.service('api::order.order').create(orderToCreate, user);
         console.log('Order created:', order);
         
-        if (!order || !order.id) {
+        if (!order || !order.documentId) {
           throw new Error('Failed to create order');
         }
+
+        console.log("orders",order)
         
         // Handle outsourced content details if this is an outsourced order
         if (isOutsourced) {
@@ -173,7 +175,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             const outsourcedContentData = {
               projectName: projectName || `Order for ${orderData.description}`,
               links: outsourceLinks || links || [],
-              order: order.id,
+              instructions: instructions || '',
+              order: order.documentId,
               publishedAt: new Date()
             };
             
@@ -213,7 +216,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               // Default to 1000 words if not specified
               minWordCount: 1000,
               // Important: establish the relationship with the order
-              order: order.id
+              order: order.documentId
             };
             
             // If HTML content was provided
@@ -228,7 +231,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                   ...contentData,
                   ...content,
                   // Ensure the order relation is preserved
-                  order: order.id
+                  order: order.documentId
                 };
               }
             }
@@ -706,7 +709,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Get the order - make sure we populate the publisher field
         const order = await strapi.db.query('api::order.order').findOne({
           where: { id },
-          populate: ['website', 'advertiser', 'publisher']
+          populate: ['website', 'advertiser', 'publisher', 'outsourcedContent']
         });
 
         if (!order) {
@@ -833,6 +836,61 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           order.orderStatus = 'accepted';
         } else if (order.orderStatus !== 'accepted') {
           return ctx.badRequest(`Order must be in "accepted" or "pending" status to be marked as delivered (current status: ${order.orderStatus})`);
+        }
+        
+        // For outsourced orders, check if we need to link outsourced content
+        if (order.isOutsourced) {
+          // Check if outsourced content exists for this order
+          const outsourcedContent = await strapi.db.query('api::outsourced-content.outsourced-content').findOne({
+            where: { order: id }
+          });
+          
+          // If outsourced content exists but is not linked to order, update the association
+          if (outsourcedContent && !order.outsourcedContent) {
+            console.log(`Found outsourced content (${outsourcedContent.id}) not linked to order. Linking now.`);
+            await strapi.db.query('api::order.order').update({
+              where: { id },
+              data: {
+                outsourcedContent: outsourcedContent.id
+              }
+            });
+          }
+          // If outsourced content doesn't exist, create it
+          else if (!outsourcedContent) {
+            console.log(`No outsourced content found for order ${id}. Creating now.`);
+            // Get website details for the project name
+            let projectName = `Order for ${order.description}`;
+            if (order.website && order.website.url) {
+              projectName = order.website.url;
+            }
+            
+            // Create new outsourced content
+            const newOutsourcedContent = await strapi.entityService.create('api::outsourced-content.outsourced-content', {
+              data: {
+                projectName,
+                instructions: instructions || 'No specific instructions provided',
+                order: id,
+                publishedAt: new Date()
+              }
+            });
+            
+            // Link the outsourced content to the order
+            await strapi.db.query('api::order.order').update({
+              where: { id },
+              data: {
+                outsourcedContent: newOutsourcedContent.id
+              }
+            });
+          }
+          // If outsourced content exists but doesn't have instructions, update it
+          else if (outsourcedContent && !outsourcedContent.instructions && order.instructions) {
+            console.log(`Updating instructions for outsourced content ${outsourcedContent.id}`);
+            await strapi.entityService.update('api::outsourced-content.outsourced-content', outsourcedContent.id, {
+              data: {
+                instructions: order.instructions
+              }
+            });
+          }
         }
         
         // Now mark as delivered
@@ -1068,6 +1126,100 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       } catch (error) {
         console.error('Error fixing relations:', error);
         return ctx.internalServerError('An error occurred while fixing relations');
+      }
+    },
+
+    // Migrate instructions from orders to outsourced content
+    async migrateInstructions(ctx) {
+      try {
+        const user = ctx.state.user;
+        
+        if (!user) {
+          return ctx.unauthorized('Authentication required');
+        }
+        
+        // Check if user is an admin
+        if (user.role && user.role.type !== 'admin') {
+          return ctx.forbidden('Only administrators can migrate instructions');
+        }
+        
+        let fixed = 0;
+        let created = 0;
+        let errors = 0;
+        
+        // Find outsourced orders with instructions
+        const outsourcedOrders = await strapi.db.query('api::order.order').findMany({
+          where: { isOutsourced: true },
+          populate: ['outsourcedContent']
+        });
+        
+        console.log(`Found ${outsourcedOrders.length} outsourced orders to process`);
+        
+        for (const order of outsourcedOrders) {
+          try {
+            // If order has instructions
+            if (order.instructions) {
+              // If order has linked outsourced content, update it
+              if (order.outsourcedContent) {
+                await strapi.entityService.update('api::outsourced-content.outsourced-content', order.outsourcedContent.id, {
+                  data: {
+                    instructions: order.instructions
+                  }
+                });
+                fixed++;
+                console.log(`Updated instructions for outsourced content ${order.outsourcedContent.id}`);
+              } 
+              // If order doesn't have linked outsourced content, create one
+              else {
+                // Get website details for the project name
+                let projectName = `Order for ${order.description}`;
+                if (order.website) {
+                  const website = await strapi.db.query('api::marketplace.marketplace').findOne({
+                    where: { id: order.website }
+                  });
+                  if (website && website.url) {
+                    projectName = website.url;
+                  }
+                }
+                
+                // Create new outsourced content
+                const newOutsourcedContent = await strapi.entityService.create('api::outsourced-content.outsourced-content', {
+                  data: {
+                    projectName,
+                    instructions: order.instructions,
+                    order: order.id,
+                    publishedAt: new Date()
+                  }
+                });
+                
+                // Link the outsourced content to the order
+                await strapi.entityService.update('api::order.order', order.id, {
+                  data: {
+                    outsourcedContent: newOutsourcedContent.id
+                  }
+                });
+                
+                created++;
+                console.log(`Created new outsourced content for order ${order.id}`);
+              }
+            }
+          } catch (err) {
+            console.error(`Error migrating instructions for order ${order.id}:`, err);
+            errors++;
+          }
+        }
+        
+        return {
+          data: {
+            fixed,
+            created,
+            errors,
+            message: `Updated ${fixed} existing outsourced content entries, created ${created} new entries, encountered ${errors} errors`
+          }
+        };
+      } catch (error) {
+        console.error('Error migrating instructions:', error);
+        return ctx.internalServerError('An error occurred while migrating instructions');
       }
     }
   };

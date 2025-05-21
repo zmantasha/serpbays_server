@@ -38,6 +38,19 @@ module.exports = {
         }
       },
     },
+    // Route to migrate instructions from orders to outsourced content
+    {
+      method: 'POST',
+      path: '/orders/migrate-instructions',
+      handler: 'order.migrateInstructions',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update']
+        }
+      },
+    },
     // Route to fix links in order content
     {
       method: 'POST',
