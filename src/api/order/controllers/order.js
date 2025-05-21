@@ -966,7 +966,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Get the order
         const order = await strapi.db.query('api::order.order').findOne({
-          where: { id }
+          where: { id },
+          populate: ['advertiser']
         });
 
         if (!order) {
@@ -974,7 +975,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         // Check if user is the advertiser for this order
-        if (order.advertiser !== user.id) {
+        // Handle the case where advertiser could be an object or just an ID
+        const advertiserId = typeof order.advertiser === 'object' && order.advertiser !== null
+          ? order.advertiser.id
+          : order.advertiser;
+
+        if (advertiserId !== user.id) {
           return ctx.forbidden('You do not have permission to dispute this order');
         }
 
