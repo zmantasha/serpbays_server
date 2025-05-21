@@ -410,7 +410,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       }
     },
 
-    // Get orders for the current user (both advertiser and publisher)
+    // Get current user's orders
     async getMyOrders(ctx) {
       try {
         const user = ctx.state.user;
@@ -419,63 +419,37 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
 
-        // Query orders using Strapi's entity service directly
-        // This ensures we're getting the raw data from Strapi without any filtering
-        const advertiserOrders = await strapi.entityService.findMany('api::order.order', {
-          filters: {
-            advertiser: { id: user.id }
-          },
+        const { type = 'all' } = ctx.query;
+        
+        // Build filters based on user type
+        const filters = {};
+        
+        if (type === 'advertiser' || type === 'all') {
+          // Include orders where user is advertiser
+          filters.$or = filters.$or || [];
+          filters.$or.push({ advertiser: user.id });
+        }
+        
+        if (type === 'publisher' || type === 'all') {
+          // Include orders where user is publisher
+          filters.$or = filters.$or || [];
+          filters.$or.push({ publisher: user.id });
+        }
+        
+        console.log(`Fetching orders for user ID ${user.id}, type: ${type}`);
+        console.log('Filters:', JSON.stringify(filters));
+        
+        // Get all orders for this user
+        const orders = await strapi.entityService.findMany('api::order.order', {
+          filters,
           populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent'],
-          sort: { orderDate: 'desc' }
+          sort: { orderDate: 'desc' },
         });
         
-        const publisherOrders = await strapi.entityService.findMany('api::order.order', {
-          filters: {
-            publisher: { id: user.id }
-          },
-          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent'],
-          sort: { orderDate: 'desc' }
-        });
+        console.log(`Found ${orders.length} orders for user ID ${user.id}`);
         
-        // Combine both sets of orders
-        const orders = [...advertiserOrders, ...publisherOrders];
-        
-        console.log(`Retrieved ${orders.length} total orders for user ID ${user.id}`);
-        
-        // Log all order IDs for debugging
-        console.log('All order IDs:', orders.map(order => order.id).join(', '));
-        
-        // No more deduplication - show all orders exactly as retrieved from Strapi
-        // This ensures each order in the database appears in the UI with correct ID
-        const uniqueOrders = orders;
-        
-        // Add website URL to the order for display purposes
-        const enhancedOrders = await Promise.all(uniqueOrders.map(async (order) => {
-          if (order.website && order.website.id) {
-            try {
-              const website = await strapi.db.query('api::marketplace.marketplace').findOne({
-                where: { id: order.website.id }
-              });
-              
-              if (website) {
-                // Add website URL to the order
-                return {
-                  ...order,
-                  websiteUrl: website.url
-                };
-              }
-            } catch (err) {
-              console.error(`Error fetching website for order ${order.id}:`, err);
-            }
-          }
-          return order;
-        }));
-
         return {
-          data: enhancedOrders,
-          meta: {
-            count: enhancedOrders.length
-          }
+          data: orders
         };
       } catch (error) {
         console.error('Error fetching user orders:', error);
@@ -507,7 +481,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               orderStatus: 'pending',
               publisher: null // No publisher assigned yet
             },
-            populate: ['website', 'advertiser'],
+            populate: ['website', 'advertiser', 'outsourcedContent'],
             sort: { orderDate: 'desc' }
           });
 
@@ -533,7 +507,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 orderStatus: 'pending',
                 publisher: null // No publisher assigned yet
               },
-            populate: ['website', 'advertiser'],
+            populate: ['website', 'advertiser', 'outsourcedContent'],
             sort: { orderDate: 'desc' }
           });
           
@@ -544,7 +518,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 orderStatus: 'pending',
                 publisher: null // No publisher assigned yet
           },
-          populate: ['website', 'advertiser'],
+          populate: ['website', 'advertiser', 'outsourcedContent'],
             sort: { orderDate: 'desc' }
           });
           
