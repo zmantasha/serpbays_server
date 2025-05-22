@@ -129,5 +129,57 @@ module.exports = {
         },
       },
     },
+    // Route for advertisers to request a revision
+    {
+      method: 'POST',
+      path: '/orders/:orderId/request-revision',
+      handler: 'order.requestRevision',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update'],
+        },
+      },
+    },
+    // Route for publishers to start working on a revision
+    {
+      method: 'POST',
+      path: '/orders/:orderId/start-revision',
+      handler: 'order.startRevision',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update'],
+        },
+      },
+    },
+    // Route for publishers to complete a revision
+    {
+      method: 'POST',
+      path: '/orders/:orderId/complete-revision',
+      handler: 'order.completeRevision',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update'],
+        },
+      },
+    },
+    // Route for advertisers to finalize/accept an order
+    {
+      method: 'POST',
+      path: '/orders/:orderId/accept',
+      handler: 'order.finalizeOrder',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update'],
+        },
+      },
+    },
   ],
 }; 

@@ -116,6 +116,12 @@
       "relation": "oneToOne",
       "target": "api::outsourced-content.outsourced-content",
       "mappedBy": "order"
+    },
+    "communications": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::communication.communication",
+      "mappedBy": "order"
     }
   }
 }

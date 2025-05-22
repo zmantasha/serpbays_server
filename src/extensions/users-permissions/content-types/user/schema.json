@@ -91,6 +91,12 @@
       "relation": "oneToMany",
       "target": "api::order.order",
       "mappedBy": "publisher"
+    },
+    "communications": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::communication.communication",
+      "mappedBy": "sender"
     }
   }
 }

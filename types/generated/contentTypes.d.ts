@@ -502,6 +502,45 @@ export interface ApiCategoryCategory extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiCommunicationCommunication
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'communications';
+  info: {
+    description: 'Communications between publishers and advertisers regarding orders';
+    displayName: 'Communication';
+    pluralName: 'communications';
+    singularName: 'communication';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    communicationStatus: Schema.Attribute.Enumeration<
+      ['requested', 'acceptance', 'in_progress']
+    > &
+      Schema.Attribute.DefaultTo<'requested'>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::communication.communication'
+    > &
+      Schema.Attribute.Private;
+    message: Schema.Attribute.Text & Schema.Attribute.Required;
+    order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
+    publishedAt: Schema.Attribute.DateTime;
+    sender: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiGlobalConfigGlobalConfig
   extends Struct.CollectionTypeSchema {
   collectionName: 'global_configs';
@@ -703,6 +742,10 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     advertiser: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
+    >;
+    communications: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::communication.communication'
     >;
     completedDate: Schema.Attribute.DateTime;
     createdAt: Schema.Attribute.DateTime;
@@ -1463,6 +1506,10 @@ export interface PluginUsersPermissionsUser
       'api::order.order'
     >;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    communications: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::communication.communication'
+    >;
     confirmationToken: Schema.Attribute.String & Schema.Attribute.Private;
     confirmed: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     createdAt: Schema.Attribute.DateTime;
@@ -1526,6 +1573,7 @@ declare module '@strapi/strapi' {
       'api::article.article': ApiArticleArticle;
       'api::author.author': ApiAuthorAuthor;
       'api::category.category': ApiCategoryCategory;
+      'api::communication.communication': ApiCommunicationCommunication;
       'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;

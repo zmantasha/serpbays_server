@@ -447,7 +447,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         });
         
         console.log(`Found ${orders.length} orders for user ID ${user.id}`);
-        
+
         return {
           data: orders
         };
@@ -1201,6 +1201,229 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         console.error('Error migrating instructions:', error);
         return ctx.internalServerError('An error occurred while migrating instructions');
       }
-    }
+    },
+
+    // Request a revision for an order
+    async requestRevision(ctx) {
+      const { orderId } = ctx.params;
+      const { message } = ctx.request.body;
+      
+      try {
+        // Get current user
+        const user = ctx.state.user;
+        if (!user) {
+          return ctx.unauthorized('You must be logged in to request a revision');
+        }
+        
+        // Check if the order exists
+        const order = await strapi.entityService.findOne('api::order.order', orderId, {
+          populate: ['advertiser', 'publisher'],
+        });
+        
+        if (!order) {
+          return ctx.notFound('Order not found');
+        }
+        
+        // Ensure user is the advertiser for this order
+        if (order.advertiser?.id !== user.id) {
+          return ctx.forbidden('Only the advertiser can request revisions');
+        }
+        
+        // Validate 5-day window for requesting revisions
+        if (order.deliveredDate) {
+          const deliveredDate = new Date(order.deliveredDate);
+          const currentDate = new Date();
+          const daysDifference = Math.floor((currentDate - deliveredDate) / (1000 * 60 * 60 * 24));
+          
+          if (daysDifference > 5) {
+            return ctx.badRequest('Revision can only be requested within 5 working days of delivery');
+          }
+        } else {
+          return ctx.badRequest('Order has not been delivered yet');
+        }
+        
+        // Update order status and set revision timestamps
+        const updated = await strapi.entityService.update('api::order.order', orderId, {
+          data: {
+            revisionRequestedAt: new Date(),
+            revisionDeadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
+            revisionStatus: 'requested',
+          }
+        });
+        
+        // Create a communication record for the revision request
+        await strapi.entityService.create('api::communication.communication', {
+          data: {
+            message: `Revision requested: ${message}`,
+            sender: user.id,
+            order: orderId,
+            communicationStatus: 'requested',
+          }
+        });
+        
+        return { 
+          success: true,
+          data: updated
+        };
+      } catch (error) {
+        console.error('Error requesting revision:', error);
+        return ctx.internalServerError('An error occurred while requesting revision');
+      }
+    },
+    
+    // Start working on a revision (for publishers)
+    async startRevision(ctx) {
+      const { orderId } = ctx.params;
+      
+      try {
+        // Get current user
+        const user = ctx.state.user;
+        if (!user) {
+          return ctx.unauthorized('You must be logged in to start a revision');
+        }
+        
+        // Check if the order exists
+        const order = await strapi.entityService.findOne('api::order.order', orderId, {
+          populate: ['publisher'],
+        });
+        
+        if (!order) {
+          return ctx.notFound('Order not found');
+        }
+        
+        // Ensure user is the publisher for this order
+        if (order.publisher?.id !== user.id) {
+          return ctx.forbidden('Only the publisher can start working on revisions');
+        }
+        
+        // Update order revision status
+        const updated = await strapi.entityService.update('api::order.order', orderId, {
+          data: { revisionStatus: 'in_progress' }
+        });
+        
+        // Create a communication record
+        await strapi.entityService.create('api::communication.communication', {
+          data: {
+            message: 'Working on revision',
+            sender: user.id,
+            order: orderId,
+            communicationStatus: 'in_progress',
+          }
+        });
+        
+        return { 
+          success: true,
+          data: updated
+        };
+      } catch (error) {
+        console.error('Error starting revision:', error);
+        return ctx.internalServerError('An error occurred while starting revision');
+      }
+    },
+    
+    // Mark a revision as completed (for publishers)
+    async completeRevision(ctx) {
+      const { orderId } = ctx.params;
+      const { message } = ctx.request.body;
+      
+      try {
+        // Get current user
+        const user = ctx.state.user;
+        if (!user) {
+          return ctx.unauthorized('You must be logged in to complete a revision');
+        }
+        
+        // Check if the order exists
+        const order = await strapi.entityService.findOne('api::order.order', orderId, {
+          populate: ['publisher'],
+        });
+        
+        if (!order) {
+          return ctx.notFound('Order not found');
+        }
+        
+        // Ensure user is the publisher for this order
+        if (order.publisher?.id !== user.id) {
+          return ctx.forbidden('Only the publisher can complete revisions');
+        }
+        
+        // Update order revision status
+        const updated = await strapi.entityService.update('api::order.order', orderId, {
+          data: { revisionStatus: 'completed' }
+        });
+        
+        // Create a communication record
+        await strapi.entityService.create('api::communication.communication', {
+          data: {
+            message: `Revision completed: ${message}`,
+            sender: user.id,
+            order: orderId,
+            communicationStatus: 'acceptance',
+          }
+        });
+        
+        return { 
+          success: true,
+          data: updated
+        };
+      } catch (error) {
+        console.error('Error completing revision:', error);
+        return ctx.internalServerError('An error occurred while completing revision');
+      }
+    },
+    
+    // Accept an order as complete (for advertisers)
+    async finalizeOrder(ctx) {
+      const { orderId } = ctx.params;
+      
+      try {
+        // Get current user
+        const user = ctx.state.user;
+        if (!user) {
+          return ctx.unauthorized('You must be logged in to accept an order');
+        }
+        
+        // Check if the order exists
+        const order = await strapi.entityService.findOne('api::order.order', orderId, {
+          populate: ['advertiser'],
+        });
+        
+        if (!order) {
+          return ctx.notFound('Order not found');
+        }
+        
+        // Ensure user is the advertiser for this order
+        if (order.advertiser?.id !== user.id) {
+          return ctx.forbidden('Only the advertiser can finalize the order');
+        }
+        
+        // Update order status
+        const updated = await strapi.entityService.update('api::order.order', orderId, {
+          data: { 
+            orderStatus: 'completed',
+            orderAccepted: true,
+            completedDate: new Date()
+          }
+        });
+        
+        // Create a final communication record
+        await strapi.entityService.create('api::communication.communication', {
+          data: {
+            message: 'Order accepted and completed',
+            sender: user.id,
+            order: orderId,
+            communicationStatus: 'acceptance',
+          }
+        });
+        
+        return { 
+          success: true,
+          data: updated
+        };
+      } catch (error) {
+        console.error('Error finalizing order:', error);
+        return ctx.internalServerError('An error occurred while finalizing the order');
+      }
+    },
   };
 });
