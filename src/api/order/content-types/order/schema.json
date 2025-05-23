@@ -25,6 +25,7 @@
         "accepted",
         "delivered",
         "approved",
+        "completed",
         "cancelled",
         "disputed"
       ],

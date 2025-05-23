@@ -6,6 +6,39 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// Helper function to ensure a publisher wallet exists
+async function ensurePublisherWallet(userId) {
+  try {
+    // Check if publisher wallet exists
+    const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+      where: { 
+        users_permissions_user: userId,
+        type: 'publisher'
+      }
+    });
+    
+    // If wallet doesn't exist, create one
+    if (!publisherWallet) {
+      console.log(`Creating publisher wallet for user ${userId}`);
+      const newWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+        data: {
+          users_permissions_user: userId,
+          type: 'publisher',
+          balance: 0,
+          escrowBalance: 0,
+          currency: 'USD',
+          status: 'active',
+          publishedAt: new Date()
+        }
+      });
+      
+      console.log(`Created new publisher wallet with ID: ${newWallet.id}`);
+    }
+  } catch (error) {
+    console.error('Error ensuring publisher wallet:', error);
+  }
+}
+
 module.exports = createCoreController('api::order.order', ({ strapi }) => {
   // Helper function to format links for storage
   const formatLinks = (links) => {
@@ -589,7 +622,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           });
 
           // Check if user has a publisher wallet, create if not exists
-          await this.ensurePublisherWallet(user.id);
+          await ensurePublisherWallet(user.id);
 
           return {
             data: updatedOrder,
@@ -619,7 +652,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         });
 
         // Check if user has a publisher wallet, create if not exists
-        await this.ensurePublisherWallet(user.id);
+        await ensurePublisherWallet(user.id);
 
         return {
           data: updatedOrder,
@@ -630,39 +663,6 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       } catch (error) {
         console.error('Error accepting order:', error);
         return ctx.internalServerError('An error occurred while accepting the order');
-      }
-    },
-
-    // Helper method to ensure a publisher wallet exists
-    async ensurePublisherWallet(userId) {
-      try {
-        // Check if publisher wallet exists
-        const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-          where: { 
-            users_permissions_user: userId,
-            type: 'publisher'
-          }
-        });
-        
-        // If wallet doesn't exist, create one
-        if (!publisherWallet) {
-          console.log(`Creating publisher wallet for user ${userId}`);
-          const newWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-            data: {
-              users_permissions_user: userId,
-              type: 'publisher',
-              balance: 0,
-              escrowBalance: 0,
-              currency: 'USD',
-              status: 'active',
-              publishedAt: new Date()
-            }
-          });
-          
-          console.log(`Created new publisher wallet with ID: ${newWallet.id}`);
-        }
-      } catch (error) {
-        console.error('Error ensuring publisher wallet:', error);
       }
     },
 
@@ -740,7 +740,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
           
           // Ensure publisher wallet exists
-          await this.ensurePublisherWallet(user.id);
+          await ensurePublisherWallet(user.id);
         }
 
         // Check for publisher mismatch (should only happen if publisherNeedsUpdate is false)
@@ -842,7 +842,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             const newOutsourcedContent = await strapi.entityService.create('api::outsourced-content.outsourced-content', {
               data: {
                 projectName,
-                instructions: instructions || 'No specific instructions provided',
+                instructions: order.instructions || 'No specific instructions provided',
                 order: id,
                 publishedAt: new Date()
               }
@@ -1385,7 +1385,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         
         // Check if the order exists
         const order = await strapi.entityService.findOne('api::order.order', orderId, {
-          populate: ['advertiser'],
+          populate: ['advertiser', 'publisher'],
         });
         
         if (!order) {
@@ -1397,29 +1397,42 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.forbidden('Only the advertiser can finalize the order');
         }
         
-        // Update order status
-        const updated = await strapi.entityService.update('api::order.order', orderId, {
-          data: { 
-            orderStatus: 'completed',
-            orderAccepted: true,
-            completedDate: new Date()
-          }
-        });
+        // Check if order is in a state that can be finalized
+        const validStates = ['delivered'];
+        if (!validStates.includes(order.orderStatus)) {
+          return ctx.badRequest(`Order must be in 'delivered' status to be finalized (current status: ${order.orderStatus})`);
+        }
         
-        // Create a final communication record
-        await strapi.entityService.create('api::communication.communication', {
-          data: {
-            message: 'Order accepted and completed',
-            sender: user.id,
-            order: orderId,
-            communicationStatus: 'acceptance',
-          }
-        });
+        // Check if revision was completed (if there was a revision)
+        if (order.revisionRequestedAt && order.revisionStatus && order.revisionStatus !== 'completed') {
+          return ctx.badRequest('Cannot finalize order - revision is not completed yet');
+        }
         
-        return { 
-          success: true,
-          data: updated
-        };
+        try {
+          // Use the order service to complete the order and handle payments
+          const completedOrder = await strapi.service('api::order.order').completeOrder(orderId, user);
+          
+          // Create a final communication record
+          await strapi.entityService.create('api::communication.communication', {
+            data: {
+              message: 'Order accepted and completed by advertiser',
+              sender: user.id,
+              order: orderId,
+              communicationStatus: 'acceptance',
+            }
+          });
+          
+          return { 
+            success: true,
+            data: completedOrder,
+            meta: {
+              message: 'Order finalized successfully and payment processed'
+            }
+          };
+        } catch (serviceError) {
+          console.error('Service error finalizing order:', serviceError);
+          return ctx.badRequest(serviceError.message || 'Error processing order finalization');
+        }
       } catch (error) {
         console.error('Error finalizing order:', error);
         return ctx.internalServerError('An error occurred while finalizing the order');

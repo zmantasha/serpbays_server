@@ -782,7 +782,15 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     >;
     orderDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
     orderStatus: Schema.Attribute.Enumeration<
-      ['pending', 'accepted', 'delivered', 'approved', 'cancelled', 'disputed']
+      [
+        'pending',
+        'accepted',
+        'delivered',
+        'approved',
+        'completed',
+        'cancelled',
+        'disputed',
+      ]
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'pending'>;

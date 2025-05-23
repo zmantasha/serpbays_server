@@ -216,18 +216,20 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
       
-      // Instead of adding directly to publisher's balance, create a pending transaction 
-      // that marks it as available for withdrawal
+      // DON'T add to publisher wallet balance directly - only create transaction record
+      // The getAvailableBalance method will calculate available funds from transactions
+      
+      // Create a transaction record for the payment (this is what shows in earnings)
       const paymentTransaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'escrow_release',
           amount: paymentAmount,
           netAmount: paymentAmount,
           fee: order.platformFee,
-          transactionStatus: 'pending', // Pending until withdrawal
+          transactionStatus: 'success', // Mark as success since funds are now available
           gateway: 'test',
           gatewayTransactionId: `completed_${order.id}_${Date.now()}`,
-          description: `Payment pending for order #${order.id} - available for withdrawal`,
+          description: `Payment for order #${order.id} - funds available for withdrawal`,
           user_wallet: publisherWallet.id,
           order: order.id
         }
@@ -257,8 +259,9 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       // Update the order
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
-          orderStatus: 'approved',
-          completedDate: new Date()
+          orderStatus: 'completed',
+          completedDate: new Date(),
+          orderAccepted: true
         }
       });
       

@@ -171,7 +171,7 @@ module.exports = {
     // Route for advertisers to finalize/accept an order
     {
       method: 'POST',
-      path: '/orders/:orderId/accept',
+      path: '/orders/:orderId/finalize',
       handler: 'order.finalizeOrder',
       config: {
         middlewares: [],
