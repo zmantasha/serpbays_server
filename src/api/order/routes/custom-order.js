@@ -90,6 +90,19 @@ module.exports = {
         },
       },
     },
+    // Route for publishers to reject an order
+    {
+      method: 'POST',
+      path: '/orders/:id/reject',
+      handler: 'order.rejectOrder',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update'],
+        },
+      },
+    },
     // Route for publishers to mark an order as delivered
     {
       method: 'POST',

@@ -785,6 +785,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       [
         'pending',
         'accepted',
+        'rejected',
         'delivered',
         'approved',
         'completed',
@@ -811,6 +812,8 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'plugin::users-permissions.user'
     >;
+    rejectedDate: Schema.Attribute.DateTime;
+    rejectionReason: Schema.Attribute.Text;
     totalAmount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<

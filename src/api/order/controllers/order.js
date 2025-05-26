@@ -467,6 +467,18 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Include orders where user is publisher
           filters.$or = filters.$or || [];
           filters.$or.push({ publisher: user.id });
+          
+          // Also include orders for websites owned by this publisher (including rejected ones)
+          const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
+            where: { publisher_email: user.email }
+          });
+          
+          if (publisherWebsites && publisherWebsites.length > 0) {
+            const websiteIds = publisherWebsites.map(website => website.id);
+            filters.$or.push({ 
+              website: { id: { $in: websiteIds } }
+            });
+          }
         }
         
         console.log(`Fetching orders for user ID ${user.id}, type: ${type}`);
@@ -663,6 +675,76 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       } catch (error) {
         console.error('Error accepting order:', error);
         return ctx.internalServerError('An error occurred while accepting the order');
+      }
+    },
+
+    // Reject an order (for publishers)
+    async rejectOrder(ctx) {
+      try {
+        const user = ctx.state.user;
+        
+        if (!user) {
+          return ctx.unauthorized('Authentication required');
+        }
+
+        const { id } = ctx.params;
+        const { body } = ctx.request;
+        
+        if (!body.reason || body.reason.trim().length === 0) {
+          return ctx.badRequest('Rejection reason is required');
+        }
+
+        // Get the order
+        const order = await strapi.db.query('api::order.order').findOne({
+          where: { id },
+          populate: ['website', 'advertiser']
+        });
+
+        if (!order) {
+          return ctx.notFound('Order not found');
+        }
+
+        // Check if order is in pending status
+        if (order.orderStatus !== 'pending') {
+          return ctx.badRequest('Only pending orders can be rejected');
+        }
+
+        // Verify the publisher owns this website (unless they are the advertiser)
+        if (order.advertiser !== user.id) {
+          const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: order.website.id, publisher_email: user.email }
+          });
+
+          if (!isWebsiteOwner) {
+            return ctx.forbidden('You do not have permission to reject this order');
+          }
+        }
+
+        // Use the order service to handle escrow refund before updating the order status
+        await strapi.service('api::order.order').rejectOrder(id, user);
+
+        // Update the order with rejection details
+        const updatedOrder = await strapi.db.query('api::order.order').update({
+          where: { id },
+            data: {
+            orderStatus: 'rejected',
+            rejectedDate: new Date(),
+            rejectionReason: body.reason.trim()
+          }
+        });
+
+        // TODO: Send notification to advertiser about the rejection
+        // This could be implemented with email service or notification system
+
+        return {
+          data: updatedOrder,
+          meta: {
+            message: 'Order rejected successfully'
+          }
+        };
+      } catch (error) {
+        console.error('Error rejecting order:', error);
+        return ctx.internalServerError('An error occurred while rejecting the order');
       }
     },
 

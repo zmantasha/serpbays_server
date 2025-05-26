@@ -268,5 +268,82 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.log(`Order ${id} completed successfully and marked available for withdrawal`);
       return updatedOrder;
     });
+  },
+
+  // When an order is rejected, refund escrow to advertiser
+  async rejectOrder(id, user) {
+    // Use transaction to ensure data consistency
+    return await strapi.db.transaction(async ({ trx }) => {
+      // Get the order with all relations
+      const order = await this.getCompleteOrder(id);
+      console.log("Processing order rejection:", { 
+        orderId: id, 
+        status: order.orderStatus, 
+        escrowHeld: order.escrowHeld 
+      });
+      
+      if (!order) {
+        throw new Error('Order not found');
+      }
+      
+      if (order.orderStatus !== 'pending') {
+        throw new Error('Only pending orders can be rejected');
+      }
+      
+      // Get advertiser ID (handling both object and direct ID references)
+      const advertiserId = order.advertiser.id || order.advertiser;
+      
+      console.log("Getting advertiser wallet for:", { advertiserId });
+      
+      // Get advertiser wallet
+      const advertiserWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { 
+          users_permissions_user: advertiserId,
+          type: 'advertiser'
+        }
+      });
+      
+      if (!advertiserWallet) {
+        throw new Error('Advertiser wallet not found');
+      }
+      
+      console.log("Refunding escrow:", {
+        escrowHeld: order.escrowHeld,
+        currentBalance: advertiserWallet.balance,
+        currentEscrow: advertiserWallet.escrowBalance
+      });
+      
+      // Refund escrow funds back to advertiser wallet balance
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: advertiserWallet.id },
+        data: {
+          balance: advertiserWallet.balance + order.escrowHeld,
+          escrowBalance: advertiserWallet.escrowBalance - order.escrowHeld
+        }
+      });
+      
+      // Create a transaction record for the refund
+      const refundTransaction = await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'refund',
+          amount: order.escrowHeld,
+          netAmount: order.escrowHeld,
+          fee: 0,
+          transactionStatus: 'success',
+          gateway: 'test',
+          gatewayTransactionId: `refund_${order.id}_${Date.now()}`,
+          description: `Refund for rejected order #${order.id}`,
+          user_wallet: advertiserWallet.id,
+          order: order.id
+        }
+      });
+      
+      console.log("Created refund transaction:", {
+        refundTransactionId: refundTransaction.id
+      });
+      
+      console.log(`Order ${id} rejected and escrow refunded successfully`);
+      return order;
+    });
   }
 }));
