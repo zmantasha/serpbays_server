@@ -163,13 +163,18 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         // Get wallet balance separately (this would be from manual deposits, not completed orders)
         const walletBalance = parseFloat(publisherWallet.balance || 0);
         
-        // Total available is just the completed orders amount (no double counting)
-        const totalAvailable = completedOrdersAmount;
+        // Get current escrow balance (funds that are pending withdrawal)
+        const escrowBalance = parseFloat(publisherWallet.escrowBalance || 0);
+        
+        // SIMPLE CALCULATION: Available = Completed Orders - Pending Withdrawals
+        // If completed orders = $450 and pending withdrawals = $10, then available = $440
+        const totalAvailable = Math.max(0, completedOrdersAmount - escrowBalance);
         
         console.log('Balance calculation:', {
           walletBalance,
           completedOrdersAmount,
-          totalAvailable,
+          escrowBalance,
+          totalAvailable: `${completedOrdersAmount} - ${escrowBalance} = ${totalAvailable}`,
           validTransactionCount: validTransactions.length
         });
         
@@ -252,6 +257,26 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           user_wallet: publisherWallet.id
         }
       });
+      
+      // IMPORTANT: Update the wallet balance immediately when withdrawal is requested
+      // This ensures the available balance reflects the pending withdrawal
+      console.log('Updating wallet balance after withdrawal request:', {
+        previousBalance: publisherWallet.balance,
+        previousEscrow: publisherWallet.escrowBalance,
+        withdrawalAmount: requestAmount
+      });
+      
+      // Move the withdrawal amount from available balance to escrow
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: publisherWallet.id },
+        data: {
+          // Don't change the main balance - the funds come from completed orders
+          // Instead, track this in escrow so it's not available for future withdrawals
+          escrowBalance: (publisherWallet.escrowBalance || 0) + requestAmount
+        }
+      });
+      
+      console.log('Wallet balance updated successfully after withdrawal request');
       
       return {
         data: withdrawalRequest,
@@ -657,13 +682,46 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Get wallet balance separately (this would be from manual deposits, not completed orders)
       const walletBalance = parseFloat(publisherWallet.balance || 0);
       
-      // Total available is just the completed orders amount (no double counting)
-      const totalAvailable = completedOrdersAmount;
+      // Get escrow balance (funds that are pending withdrawal)
+      // Instead of trusting the stored escrow balance, calculate it from actual pending withdrawals
+      const pendingWithdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: {
+          publisher: { id: userId },
+          withdrawal_status: 'pending' // Only pending withdrawals should be in escrow
+        }
+      });
       
-      console.log('Final balance calculation:', {
+      const actualEscrowBalance = pendingWithdrawals.reduce((total, wr) => {
+        return total + parseFloat(wr.amount || 0);
+      }, 0);
+      
+      // Update the wallet's escrow balance to match reality
+      if (Math.abs(actualEscrowBalance - parseFloat(publisherWallet.escrowBalance || 0)) > 0.01) {
+        console.log('Correcting escrow balance:', {
+          storedEscrow: publisherWallet.escrowBalance,
+          actualEscrow: actualEscrowBalance,
+          pendingWithdrawalsCount: pendingWithdrawals.length
+        });
+        
+        await strapi.db.query('api::user-wallet.user-wallet').update({
+          where: { id: publisherWallet.id },
+          data: {
+            escrowBalance: actualEscrowBalance
+          }
+        });
+      }
+      
+      const escrowBalance = actualEscrowBalance;
+      
+      // SIMPLE CALCULATION: Available = Completed Orders - Pending Withdrawals
+      // If completed orders = $450 and pending withdrawals = $10, then available = $440
+      const totalAvailable = Math.max(0, completedOrdersAmount - escrowBalance);
+      
+      console.log('Balance calculation:', {
         walletBalance,
         completedOrdersAmount,
-        totalAvailable,
+        escrowBalance,
+        totalAvailable: `${completedOrdersAmount} - ${escrowBalance} = ${totalAvailable}`,
         validTransactionCount: validTransactions.length
       });
       
@@ -672,7 +730,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         data: {
           walletBalance, // Keep the actual wallet balance
           completedOrdersAmount, // Keep this as just the completed orders amount
-          totalAvailable, // This is the sum of wallet + completed orders
+          escrowBalance, // Amount currently in escrow (pending withdrawals)
+          totalAvailable, // Available amount after subtracting escrow
           completedOrders: validTransactions,
           transactionCount: validTransactions.length,
           totalEarnings: withdrawalRequests.reduce((sum, wr) => sum + parseFloat(wr.amount || 0), 0) + totalAvailable // Total lifetime earnings
