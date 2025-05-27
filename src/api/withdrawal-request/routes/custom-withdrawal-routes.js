@@ -65,5 +65,18 @@ module.exports = {
         }
       },
     },
+    // Route for admins to mark a withdrawal request as paid
+    {
+      method: 'POST',
+      path: '/admin/withdrawal-requests/:id/mark-as-paid',
+      handler: 'withdrawal-request.markAsPaidWithdrawal',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['global::is-admin']
+        }
+      },
+    },
   ],
 }; 

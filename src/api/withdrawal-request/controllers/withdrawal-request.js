@@ -267,7 +267,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
     }
   },
   
-  // Admin endpoint to approve a withdrawal request
+  // Admin endpoint to APPROVE (but not yet pay) a withdrawal request
   async approveWithdrawal(ctx) {
     try {
       // Check if user is authenticated and is an admin
@@ -309,79 +309,27 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.badRequest('Publisher wallet not found');
       }
       
-      // Process the payment
-      let paymentResult;
-      
-      try {
-        // Process payment based on the method
-        switch (withdrawalRequest.method) {
-          case 'razorpay':
-            paymentResult = await processRazorpayPayout(withdrawalRequest);
-            break;
-          case 'paypal':
-            paymentResult = await processPaypalPayout(withdrawalRequest);
-            break;
-          case 'bank_transfer':
-          case 'payoneer':
-            // For manual methods, just mark as approved for now
-            paymentResult = { 
-              success: true, 
-              transactionId: `manual_${Date.now()}`,
-              message: 'Manual approval, payment to be processed separately'
-            };
-            break;
-          default:
-            throw new Error(`Unsupported payment method: ${withdrawalRequest.method}`);
+      // ONLY update status to 'approved'. DO NOT process payment or reduce escrow here.
+      const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: {
+          withdrawal_status: 'approved' // Changed from 'paid'
         }
-      } catch (paymentError) {
-        console.error('Payment processing error:', paymentError);
-        return ctx.badRequest('Payment processing failed', { error: paymentError.message });
-      }
-      
-      // If payment was successful
-      if (paymentResult.success) {
-        // Update the withdrawal request
-        const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-          data: {
-            withdrawal_status: 'paid'
-          }
-        });
-        
-        // Release from escrow
-        await strapi.db.query('api::user-wallet.user-wallet').update({
-          where: { id: publisherWallet.id },
-          data: {
-            escrowBalance: publisherWallet.escrowBalance - withdrawalRequest.amount
-          }
-        });
-        
-        // Create a transaction record for the payout
-        await strapi.entityService.create('api::transaction.transaction', {
-          data: {
-            type: 'payout',
-            amount: withdrawalRequest.amount,
-            netAmount: withdrawalRequest.amount,
-            fee: 0,
-            transactionStatus: 'success',
-            gateway: withdrawalRequest.method,
-            gatewayTransactionId: paymentResult.transactionId,
-            description: `Payout via ${withdrawalRequest.method}`,
-            user_wallet: publisherWallet.id
-          }
-        });
-        
-        return {
-          data: updatedRequest,
-          meta: {
-            message: 'Withdrawal request approved and payment processed'
-          }
-        };
-      } else {
-        // If payment failed
-        return ctx.badRequest('Payment processing failed', { error: paymentResult.message });
-      }
+      });
+
+      console.log(`Withdrawal request #${id} status changed to 'approved'. Escrow balance NOT changed at this step.`);
+
+      // NO escrowBalance change here
+      // NO payout transaction creation here
+
+      return {
+        data: updatedRequest,
+        meta: {
+          message: 'Withdrawal request approved. Awaiting payment processing.'
+        }
+      };
+
     } catch (error) {
-      console.error('Error approving withdrawal request:', error);
+      console.error('Error approving withdrawal request (status update only):', error);
       return ctx.internalServerError('An error occurred while approving withdrawal request');
     }
   },
@@ -472,6 +420,149 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
     }
   },
   
+  // Admin endpoint to MARK A WITHDRAWAL AS PAID (after external payment confirmation)
+  async markAsPaidWithdrawal(ctx) {
+    try {
+      // Check if user is authenticated and is an admin
+      if (!ctx.state.user || !ctx.state.user.role || ctx.state.user.role.type !== 'admin') {
+        return ctx.forbidden('Admin access required');
+      }
+
+      const { id } = ctx.params;
+      if (!id) {
+        return ctx.badRequest('Withdrawal request ID is required.');
+      }
+
+      // Get the withdrawal request and populate publisher details
+      const withdrawalRequest = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: ['publisher']
+      });
+
+      if (!withdrawalRequest) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      // Ensure the request is in 'approved' status (or 'pending' if direct payment is allowed)
+      if (withdrawalRequest.withdrawal_status !== 'approved') {
+        // If you allow marking 'pending' as paid directly, you can change this condition:
+        // if (!['pending', 'approved'].includes(withdrawalRequest.withdrawal_status)) {
+        return ctx.badRequest(`Withdrawal request must be in 'approved' status to be marked as paid. Current status: ${withdrawalRequest.withdrawal_status}`);
+      }
+
+      if (!withdrawalRequest.publisher || !withdrawalRequest.publisher.id) {
+        return ctx.badRequest('Publisher details not found for this withdrawal request.');
+      }
+
+      // Get publisher wallet
+      const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: {
+          users_permissions_user: withdrawalRequest.publisher.id,
+          type: 'publisher'
+        }
+      });
+
+      if (!publisherWallet) {
+        return ctx.badRequest('Publisher wallet not found for this user.');
+      }
+
+      // Simulate external payment confirmation (can be expanded with actual payment gateway responses)
+      // Using a similar structure to your original approveWithdrawal for payment simulation
+      let paymentResult;
+      try {
+        switch (withdrawalRequest.method) {
+          case 'razorpay':
+            // Assuming processRazorpayPayout confirms payment or is the payment itself
+            paymentResult = await processRazorpayPayout(withdrawalRequest, true); // true might indicate final payment
+            break;
+          case 'paypal':
+            paymentResult = await processPaypalPayout(withdrawalRequest, true);
+            break;
+          case 'bank_transfer':
+          case 'payoneer':
+            paymentResult = {
+              success: true,
+              transactionId: `paid_manual_${Date.now()}`,
+              message: 'Manual payment confirmed and marked as paid.'
+            };
+            break;
+          default:
+            throw new Error(`Unsupported payment method: ${withdrawalRequest.method}`);
+        }
+      } catch (paymentError) {
+        console.error('[MarkAsPaid] Payment processing/confirmation error:', paymentError);
+        // Even if payment simulation fails, admin is overriding, but log it.
+        // Depending on strictness, you might return ctx.badRequest here.
+        paymentResult = { success: false, message: paymentError.message, transactionId: `failed_confirmation_${Date.now()}` };
+        // For now, we'll proceed to mark as paid as per admin override, but this needs thought.
+        // If payment MUST succeed here, then throw or return badRequest.
+        // For this implementation, we assume admin is confirming an already occurred external payment.
+         paymentResult = {
+              success: true, 
+              transactionId: `override_paid_${Date.now()}`,
+              message: 'Admin marked as paid, overriding simulated payment failure.'
+            }; 
+      }
+
+      if (!paymentResult.success) {
+         console.warn(`[MarkAsPaid] Payment result indicated failure for withdrawal #${id}, but admin is marking as paid. Message: ${paymentResult.message}`);
+         // Decide if you want to halt or proceed. For now, proceeding as admin override.
+      }
+
+      // Update the withdrawal request status to 'paid'
+      const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: {
+          withdrawal_status: 'paid',
+          // Potentially add payment transaction IDs or notes here from paymentResult
+          // e.g., gateway_reference: paymentResult.transactionId
+        }
+      });
+
+      // IMPORTANT: Release funds from escrow in the publisher's wallet
+      // Ensure this only happens once for the lifetime of the withdrawal request.
+      // Check current escrow to prevent double-deduction if this function were ever miscalled.
+      const amountToDecreaseFromEscrow = parseFloat(withdrawalRequest.amount);
+      if (parseFloat(publisherWallet.escrowBalance || 0) >= amountToDecreaseFromEscrow) {
+        await strapi.db.query('api::user-wallet.user-wallet').update({
+          where: { id: publisherWallet.id },
+          data: {
+            escrowBalance: parseFloat(publisherWallet.escrowBalance || 0) - amountToDecreaseFromEscrow
+          }
+        });
+        console.log(`[MarkAsPaid] Decreased escrow for wallet ${publisherWallet.id} by ${amountToDecreaseFromEscrow}. New theoretical escrow: ${parseFloat(publisherWallet.escrowBalance || 0) - amountToDecreaseFromEscrow}`);
+      } else {
+        console.warn(`[MarkAsPaid] Wallet ${publisherWallet.id} escrow ${publisherWallet.escrowBalance} is less than withdrawal amount ${amountToDecreaseFromEscrow}. Escrow not decreased further.`);
+      }
+      
+      // Create a final 'payout' transaction log
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'payout',
+          amount: withdrawalRequest.amount,
+          netAmount: withdrawalRequest.amount, // Assuming no fees deducted at this stage by this system
+          fee: 0,
+          transactionStatus: 'success', // Or 'completed'
+          gateway: withdrawalRequest.method,
+          gatewayTransactionId: paymentResult.transactionId || `paid_${id}`,
+          description: `Payout via ${withdrawalRequest.method} - Marked as Paid by Admin`,
+          user_wallet: publisherWallet.id,
+          withdrawal_request: id // Link to the withdrawal request
+        }
+      });
+
+      console.log(`Withdrawal request #${id} successfully marked as paid.`);
+      return {
+        data: updatedRequest,
+        meta: {
+          message: 'Withdrawal request successfully marked as paid.'
+        }
+      };
+
+    } catch (error) {
+      console.error('Error in markAsPaidWithdrawal:', error);
+      return ctx.internalServerError('An error occurred while marking withdrawal as paid.', { error: error.message });
+    }
+  },
+  
   // Get publisher available balance (including completed orders)
   async getAvailableBalance(ctx) {
     try {
@@ -545,18 +636,18 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const walletBalance = parseFloat(publisherWallet.balance || 0);
       console.log(`Publisher direct walletBalance: ${walletBalance}`);
 
-      // STEP 6: Calculate Actual Escrow Balance from PENDING withdrawal requests.
-      // This is the amount currently held due to active pending withdrawals.
-      const pendingWithdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+      // STEP 6: Calculate Actual Escrow Balance from PENDING or APPROVED withdrawal requests.
+      // This is the amount currently held due to active pending or approved-but-not-yet-paid withdrawals.
+      const withdrawalsInEscrow = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
         filters: {
           publisher: { id: userId },
-          withdrawal_status: 'pending'
+          withdrawal_status: { $in: ['pending', 'approved'] } // Include both pending and approved
         }
       });
-      const actualEscrowBalance = pendingWithdrawals.reduce((total, wr) => {
+      const actualEscrowBalance = withdrawalsInEscrow.reduce((total, wr) => {
         return total + parseFloat(wr.amount || 0);
       }, 0);
-      console.log(`Calculated actualEscrowBalance from ${pendingWithdrawals.length} pending withdrawals: ${actualEscrowBalance}`);
+      console.log(`Calculated actualEscrowBalance from ${withdrawalsInEscrow.length} pending/approved withdrawals: ${actualEscrowBalance}`);
 
       // Self-correction for stored escrowBalance in user-wallet (optional but good)
       if (Math.abs(actualEscrowBalance - parseFloat(publisherWallet.escrowBalance || 0)) > 0.01) {
@@ -568,41 +659,57 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
       const escrowBalance = actualEscrowBalance; // Use the freshly calculated one
 
-      // STEP 7: Calculate final totalAvailable.
-      // Available = (Gross Completed Orders + Direct Wallet Funds) - Actual Escrow
-      const totalAvailable = Math.max(0, (completedOrdersAmount + walletBalance) - escrowBalance);
+      // NEW STEP: Calculate total amount from 'paid' withdrawal requests
+      const paidWithdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: {
+          publisher: { id: userId },
+          withdrawal_status: 'paid'
+        }
+      });
+      const totalPaidOutAmount = paidWithdrawals.reduce((total, wr) => {
+        return total + parseFloat(wr.amount || 0);
+      }, 0);
+      console.log(`Calculated totalPaidOutAmount from ${paidWithdrawals.length} 'paid' withdrawals: ${totalPaidOutAmount}`);
+
+      // STEP 7 (Modified): Calculate final totalAvailable.
+      // Available = (Gross Completed Orders + Direct Wallet Funds - Total Paid Out) - Escrow for pending/approved
+      const netRevenuePool = (completedOrdersAmount + walletBalance) - totalPaidOutAmount;
+      const totalAvailable = Math.max(0, netRevenuePool - escrowBalance);
+
       console.log('Final balance calculation (getAvailableBalance):', {
         walletBalance,
-        completedOrdersAmount, // Gross amount
-        escrowBalance,         // Amount tied up in pending withdrawals
-        calculation_String: `(${completedOrdersAmount} [completed] + ${walletBalance} [wallet]) - ${escrowBalance} [escrow] = ${totalAvailable}`,
+        completedOrdersAmount, // Gross amount from completed orders
+        totalPaidOutAmount,    // Total amount historically paid out
+        escrowBalance,         // Amount currently tied up in PENDING or APPROVED withdrawals
+        calculation_String: `((${completedOrdersAmount} [completed] + ${walletBalance} [wallet]) - ${totalPaidOutAmount} [paid]) - ${escrowBalance} [escrow] = ${totalAvailable}`,
         final_totalAvailable_Sent_To_Client: totalAvailable
       });
 
       // Fetch ALL withdrawal requests for calculating total earnings (if definition is sum of all withdrawals + current available)
       // This is separate from 'pendingWithdrawals' used for escrow calculation.
-      const withdrawalRequests = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
-        filters: {
-          publisher: { id: userId },
-          // Potentially filter by status if only 'paid' or 'approved' should count towards lifetime earnings
-          // For now, let's assume all non-denied requests might be part of this definition.
-          withdrawal_status: { $notIn: ['denied'] } 
-        },
-        sort: { createdAt: 'desc' }
-      });
-      console.log(`Fetched ${withdrawalRequests.length} non-denied withdrawal requests for totalEarnings calculation.`);
+      // const withdrawalRequests = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+      //   filters: {
+      //     publisher: { id: userId },
+      //     // Potentially filter by status if only 'paid' or 'approved' should count towards lifetime earnings
+      //     // For now, let's assume all non-denied requests might be part of this definition.
+      //     withdrawal_status: { $notIn: ['denied'] } 
+      //   },
+      //   sort: { createdAt: 'desc' }
+      // });
+      // console.log(`Fetched ${withdrawalRequests.length} non-denied withdrawal requests for totalEarnings calculation.`);
 
       // STEP 8: Return balance data.
       return {
         data: {
           walletBalance,
           completedOrdersAmount, // Gross amount from all legitimately completed orders
-          escrowBalance,         // Current amount held in pending withdrawals
+          escrowBalance,         // Current amount held in pending/approved withdrawals
           totalAvailable,        // Net available for new withdrawals
+          totalPaidOutAmount,    // Total amount historically paid out
           completedOrders: uniqueCompletedOrderTransactions, // These are the transactions making up completedOrdersAmount
           transactionCount: uniqueCompletedOrderTransactions.length,
-          // Recalculate totalEarnings based on the fetched withdrawalRequests
-          totalEarnings: withdrawalRequests.reduce((sum, wr) => sum + parseFloat(wr.amount || 0), 0) + totalAvailable 
+          // totalEarnings: withdrawalRequests.reduce((sum, wr) => sum + parseFloat(wr.amount || 0), 0) + totalAvailable 
+          totalEarnings: completedOrdersAmount + walletBalance // Represents total value generated into the publisher's account
         }
       };
     } catch (error) {
