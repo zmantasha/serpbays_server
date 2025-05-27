@@ -345,6 +345,38 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const populatedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
           populate: ['advertiser', 'publisher', 'website', 'orderContent'],
         });
+
+        // Create notification for publisher (website owner)
+        try {
+          // Get the website to find the publisher
+          const website = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: orderData.website }
+          });
+          
+          if (website && website.publisher_email) {
+            // Find the user by email
+            const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+              where: { email: website.publisher_email }
+            });
+            
+            if (publisherUser) {
+              console.log(`Creating new order notification for publisher ${publisherUser.id} (${website.publisher_email})`);
+              await strapi.service('api::notification.notification').createOrderNotification(
+                order.id,
+                publisherUser.id,
+                user.id,
+                'new_order'
+              );
+            } else {
+              console.log(`Publisher user not found for email: ${website.publisher_email}`);
+            }
+          } else {
+            console.log(`Website not found or missing publisher_email for website ID: ${orderData.website}`);
+          }
+        } catch (notificationError) {
+          console.error('Failed to create new order notification:', notificationError);
+          // Don't fail the order creation if notification fails
+        }
         
         return {
           data: populatedOrder,
@@ -666,6 +698,19 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Check if user has a publisher wallet, create if not exists
         await ensurePublisherWallet(user.id);
 
+        // Create notification for advertiser
+        try {
+          await strapi.service('api::notification.notification').createOrderNotification(
+            order.id,
+            user.id,
+            order.advertiser,
+            'order_accepted'
+          );
+        } catch (notificationError) {
+          console.error('Failed to create order accepted notification:', notificationError);
+          // Don't fail the order acceptance if notification fails
+        }
+
         return {
           data: updatedOrder,
           meta: {
@@ -733,8 +778,18 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         });
 
-        // TODO: Send notification to advertiser about the rejection
-        // This could be implemented with email service or notification system
+        // Create notification for advertiser about the rejection
+        try {
+          await strapi.service('api::notification.notification').createOrderNotification(
+            order.id,
+            user.id,
+            order.advertiser,
+            'order_rejected'
+          );
+        } catch (notificationError) {
+          console.error('Failed to create order rejected notification:', notificationError);
+          // Don't fail the order rejection if notification fails
+        }
 
         return {
           data: updatedOrder,
@@ -960,6 +1015,19 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         });
 
+        // Create notification for advertiser about delivery
+        try {
+          await strapi.service('api::notification.notification').createOrderNotification(
+            order.id,
+            user.id,
+            order.advertiser,
+            'order_delivered'
+          );
+        } catch (notificationError) {
+          console.error('Failed to create order delivered notification:', notificationError);
+          // Don't fail the order delivery if notification fails
+        }
+
         return {
           data: updatedOrder,
           meta: {
@@ -1013,6 +1081,31 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           console.log(`Processing completion of order ${id}`);
           // Complete the order and release escrow using the order service
           const completedOrder = await strapi.service('api::order.order').completeOrder(order.id, user);
+
+          // Create notification for publisher about completion
+          try {
+            await strapi.service('api::notification.notification').createOrderNotification(
+              order.id,
+              user.id,
+              order.publisher?.id || order.publisher,
+              'order_completed'
+            );
+          } catch (notificationError) {
+            console.error('Failed to create order completed notification:', notificationError);
+            // Don't fail the order completion if notification fails
+          }
+
+          // Create payment notification for publisher
+          try {
+            await strapi.service('api::notification.notification').createPaymentNotification(
+              order.publisher?.id || order.publisher,
+              'payment_received',
+              order.totalAmount
+            );
+          } catch (notificationError) {
+            console.error('Failed to create payment received notification:', notificationError);
+            // Don't fail the order completion if notification fails
+          }
 
           return {
             data: completedOrder,

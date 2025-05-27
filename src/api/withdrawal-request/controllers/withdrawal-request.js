@@ -61,28 +61,28 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.badRequest('Publisher wallet not found');
       }
       console.log('Found publisher wallet:', { id: publisherWallet.id, balance: publisherWallet.balance, escrow: publisherWallet.escrowBalance });
-
+      
       // Balance Check Logic (aligned with getAvailableBalance)
       // STEP 1: Get all completed/approved order IDs for this user.
       const allCompletedRawOrders = await strapi.db.query('api::order.order').findMany({
-        where: {
-          publisher: ctx.state.user.id,
+          where: {
+            publisher: ctx.state.user.id,
           orderStatus: { $in: ['approved', 'completed'] }
         }
       });
       const completedOrderIds = new Set(allCompletedRawOrders.map(order => order.id));
       console.log(`[Create] Found ${completedOrderIds.size} raw completed/approved order IDs for publisher ${ctx.state.user.id}`);
-
+        
       // STEP 2: Get ALL 'escrow_release' transactions for these completed orders.
       const allEscrowReleaseTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
-        filters: {
-          user_wallet: { id: publisherWallet.id },
+          filters: {
+            user_wallet: { id: publisherWallet.id },
           type: 'escrow_release',
           order: { id: { $in: Array.from(completedOrderIds) } }
-        },
-        populate: ['order'],
-        sort: { createdAt: 'desc' }
-      });
+          },
+          populate: ['order'],
+          sort: { createdAt: 'desc' }
+        });
       console.log(`[Create] Found ${allEscrowReleaseTransactions.length} total escrow_release transactions.`);
 
       // STEP 3: Deduplicate to get unique transactions per order.
@@ -97,13 +97,13 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
       const uniqueCompletedOrderTransactions = Array.from(orderTransactionMap.values());
       console.log(`[Create] Found ${uniqueCompletedOrderTransactions.length} unique transactions for completed orders amount.`);
-      
+        
       // STEP 4: Calculate GROSS completedOrdersAmount.
       const grossCompletedOrdersAmount = uniqueCompletedOrderTransactions.reduce((total, tx) => {
-        return total + parseFloat(tx.amount || 0);
-      }, 0);
+          return total + parseFloat(tx.amount || 0);
+        }, 0);
       console.log(`[Create] Calculated GROSS completedOrdersAmount: ${grossCompletedOrdersAmount}`);
-
+        
       // STEP 5: Get current direct wallet balance and escrow balance from the publisherWallet entity.
       const directWalletBalance = parseFloat(publisherWallet.balance || 0);
       const currentEscrowBalance = parseFloat(publisherWallet.escrowBalance || 0);
@@ -117,13 +117,13 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         currentEscrowBalance,
         calculation: `(${grossCompletedOrdersAmount} + ${directWalletBalance}) - ${currentEscrowBalance} = ${totalAvailableForWithdrawalCheck}`,
         requestAmount
-      });
-
+        });
+        
       // STEP 7: Check if user has sufficient balance.
       if (totalAvailableForWithdrawalCheck < requestAmount) {
         return ctx.badRequest(`Insufficient funds. Available balance for withdrawal check: ${totalAvailableForWithdrawalCheck}, Requested: ${requestAmount}`);
-      }
-
+        }
+        
       // The rest of the create method continues from here...
       // Note: `completedOrdersTransactions` used later for marking specific transactions
       // might need to be derived differently if it was based on the old `availableTransactions`
@@ -310,8 +310,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
       
       // ONLY update status to 'approved'. DO NOT process payment or reduce escrow here.
-      const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-        data: {
+        const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+          data: {
           withdrawal_status: 'approved' // Changed from 'paid'
         }
       });
@@ -321,12 +321,24 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // NO escrowBalance change here
       // NO payout transaction creation here
 
-      return {
-        data: updatedRequest,
-        meta: {
+      // Create notification for publisher about approval
+      try {
+        await strapi.service('api::notification.notification').createPaymentNotification(
+          withdrawalRequest.publisher.id,
+          'withdrawal_approved',
+          withdrawalRequest.amount
+        );
+      } catch (notificationError) {
+        console.error('Failed to create withdrawal approved notification:', notificationError);
+        // Don't fail the approval if notification fails
+      }
+        
+        return {
+          data: updatedRequest,
+          meta: {
           message: 'Withdrawal request approved. Awaiting payment processing.'
-        }
-      };
+          }
+        };
 
     } catch (error) {
       console.error('Error approving withdrawal request (status update only):', error);
@@ -407,6 +419,18 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           user_wallet: publisherWallet.id
         }
       });
+
+      // Create notification for publisher about denial
+      try {
+        await strapi.service('api::notification.notification').createPaymentNotification(
+          withdrawalRequest.publisher.id,
+          'withdrawal_denied',
+          withdrawalRequest.amount
+        );
+      } catch (notificationError) {
+        console.error('Failed to create withdrawal denied notification:', notificationError);
+        // Don't fail the denial if notification fails
+      }
       
       return {
         data: updatedRequest,
@@ -596,7 +620,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
       const completedOrderIds = new Set(allCompletedRawOrders.map(order => order.id));
       console.log(`Found ${completedOrderIds.size} raw completed/approved order IDs for publisher ${userId}`);
-
+      
       // STEP 2: Get ALL 'escrow_release' transactions for the user's wallet.
       // These represent all funds that *have been* released from escrow for completed orders.
       // We will not filter these by "description includes withdrawal" here.
@@ -610,7 +634,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         sort: { createdAt: 'desc' }
       });
       console.log(`Found ${allEscrowReleaseTransactions.length} total escrow_release transactions for completed/approved orders.`);
-
+      
       // STEP 3: Deduplicate these transactions to count each order's contribution only once (latest transaction).
       const orderTransactionMap = new Map();
       allEscrowReleaseTransactions.forEach(tx => {
@@ -624,7 +648,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
       const uniqueCompletedOrderTransactions = Array.from(orderTransactionMap.values());
       console.log(`Found ${uniqueCompletedOrderTransactions.length} unique transactions contributing to completed orders amount.`);
-
+      
       // STEP 4: Calculate completedOrdersAmount from these unique transactions.
       // This is the GROSS amount from all completed orders.
       const completedOrdersAmount = uniqueCompletedOrderTransactions.reduce((total, tx) => {
@@ -635,7 +659,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // STEP 5: Get Wallet Balance (direct funds, not from orders)
       const walletBalance = parseFloat(publisherWallet.balance || 0);
       console.log(`Publisher direct walletBalance: ${walletBalance}`);
-
+        
       // STEP 6: Calculate Actual Escrow Balance from PENDING or APPROVED withdrawal requests.
       // This is the amount currently held due to active pending or approved-but-not-yet-paid withdrawals.
       const withdrawalsInEscrow = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
@@ -675,7 +699,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Available = (Gross Completed Orders + Direct Wallet Funds - Total Paid Out) - Escrow for pending/approved
       const netRevenuePool = (completedOrdersAmount + walletBalance) - totalPaidOutAmount;
       const totalAvailable = Math.max(0, netRevenuePool - escrowBalance);
-
+      
       console.log('Final balance calculation (getAvailableBalance):', {
         walletBalance,
         completedOrdersAmount, // Gross amount from completed orders
@@ -684,7 +708,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         calculation_String: `((${completedOrdersAmount} [completed] + ${walletBalance} [wallet]) - ${totalPaidOutAmount} [paid]) - ${escrowBalance} [escrow] = ${totalAvailable}`,
         final_totalAvailable_Sent_To_Client: totalAvailable
       });
-
+      
       // Fetch ALL withdrawal requests for calculating total earnings (if definition is sum of all withdrawals + current available)
       // This is separate from 'pendingWithdrawals' used for escrow calculation.
       // const withdrawalRequests = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
