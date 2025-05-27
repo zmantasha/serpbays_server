@@ -1215,6 +1215,37 @@ export default {
       }) => {
         const dropdownRef = React.useRef(null);
         
+        // Add dark mode detection
+        const [isDarkMode, setIsDarkMode] = useState(false);
+        
+        useEffect(() => {
+          // Check for dark mode
+          const checkDarkMode = () => {
+            // Check if the Strapi admin interface has dark mode enabled
+            const isDark = document.documentElement.classList.contains('strapi--dark-mode') || 
+                          document.body.classList.contains('strapi--dark-mode') ||
+                          window.matchMedia('(prefers-color-scheme: dark)').matches;
+            setIsDarkMode(isDark);
+          };
+          
+          // Initial check
+          checkDarkMode();
+          
+          // Set up observer to detect theme changes in DOM
+          const observer = new MutationObserver(checkDarkMode);
+          observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+          
+          // Also listen for system preference changes
+          const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+          const handleChange = () => checkDarkMode();
+          mediaQuery.addEventListener('change', handleChange);
+          
+          return () => {
+            observer.disconnect();
+            mediaQuery.removeEventListener('change', handleChange);
+          };
+        }, []);
+        
         useEffect(() => {
           const handleClickOutside = (event) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -1261,7 +1292,8 @@ export default {
           justifyContent: 'space-between',
           cursor: 'pointer',
           userSelect: 'none',
-          background: colors.white,
+          background: isDarkMode ? '#333344' : colors.white,
+          color: isDarkMode ? colors.white : colors.text,
           overflow: 'hidden',
           whiteSpace: 'nowrap',
           textOverflow: 'ellipsis',
@@ -1273,8 +1305,8 @@ export default {
           top: '100%',
           left: 0,
           width: '100%',
-          background: colors.white,
-          border: `1px solid ${colors.border}`,
+          background: isDarkMode ? '#333344' : colors.white,
+          border: `1px solid ${isDarkMode ? '#444455' : colors.border}`,
           borderRadius: borderRadius.sm,
           boxShadow: boxShadow.medium,
           zIndex: 10,
@@ -1285,7 +1317,7 @@ export default {
         
         const optionStyle = {
           padding: '8px 12px',
-          borderBottom: `1px solid ${colors.border}`,
+          borderBottom: `1px solid ${isDarkMode ? '#444455' : colors.border}`,
           display: 'flex',
           alignItems: 'center',
           cursor: 'pointer',
@@ -1293,17 +1325,19 @@ export default {
           fontSize: '14px',
           transition: 'background-color 0.2s',
           '&:hover': {
-            backgroundColor: colors.secondary,
+            backgroundColor: isDarkMode ? '#444455' : colors.secondary,
           },
         };
         
         const searchInputStyle = {
           padding: '8px 12px',
-          borderBottom: `1px solid ${colors.border}`,
+          borderBottom: `1px solid ${isDarkMode ? '#444455' : colors.border}`,
           width: '100%',
           border: 'none',
           outline: 'none',
           fontSize: '14px',
+          background: isDarkMode ? '#333344' : colors.white,
+          color: isDarkMode ? colors.white : colors.text,
         };
         
         const checkboxStyle = {
@@ -1333,7 +1367,9 @@ export default {
                   overflow: 'hidden', 
                   textOverflow: 'ellipsis', 
                   whiteSpace: 'nowrap',
-                  color: selected.length > 0 ? colors.text : colors.textLight
+                  color: selected.length > 0 
+                    ? (isDarkMode ? colors.white : colors.text) 
+                    : (isDarkMode ? '#cccccc' : colors.textLight)
                 }}>
                   {selectedDisplay}
                 </span>
@@ -1367,7 +1403,8 @@ export default {
                   <div style={{
                     ...optionStyle,
                     fontWeight: 'bold',
-                    background: colors.secondary
+                    background: isDarkMode ? '#444455' : colors.secondary,
+                    color: isDarkMode ? colors.white : colors.text,
                   }}>
                     <input
                       type="checkbox"
@@ -1383,7 +1420,10 @@ export default {
                       key={index} 
                       style={{
                         ...optionStyle,
-                        backgroundColor: selected.includes(option) ? `${colors.primary}10` : colors.white,
+                        backgroundColor: selected.includes(option) 
+                          ? (isDarkMode ? `${colors.primary}40` : `${colors.primary}10`) 
+                          : (isDarkMode ? '#333344' : colors.white),
+                        color: isDarkMode ? colors.white : colors.text,
                       }}
                       onClick={() => handleOptionClick(option)}
                     >
@@ -1398,8 +1438,12 @@ export default {
                   ))}
                   
                   {filteredOptions.length === 0 && (
-                    <div style={{padding: '12px', color: colors.textLight, textAlign: 'center'}}>
-                      No matches found
+                    <div style={{
+                      padding: '12px', 
+                      color: isDarkMode ? '#cccccc' : colors.textLight, 
+                      textAlign: 'center'
+                    }}>
+                      No matching options
                     </div>
                   )}
                 </div>
