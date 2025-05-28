@@ -239,31 +239,82 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
   // Get my withdrawal requests
   async getMyWithdrawals(ctx) {
     try {
-      // Check if user is authenticated
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
+
+      const userId = ctx.state.user.id;
+      const { pagination, filters: queryFilters } = ctx.query;
+
+      console.log('[WithdrawalController|getMyWithdrawals] Received query:', JSON.stringify(ctx.query, null, 2));
+
+      // Base filters: always filter by the current user
+      const baseFilters = {
+        publisher: { id: userId },
+      };
+
+      // Merge base filters with filters from query string
+      let combinedFilters = { ...baseFilters };
+      if (queryFilters && typeof queryFilters === 'object') {
+        // Example: if queryFilters is { withdrawal_status: { '$eq': 'paid' } }
+        // it will be merged directly.
+        // Strapi's entityService expects filters in a nested structure.
+        // The frontend sends: filters[withdrawal_status][$eq]=paid
+        // Strapi's qs parser turns this into: { withdrawal_status: { '$eq': 'paid' } }
+        // So, we can merge queryFilters directly.
+        for (const key in queryFilters) {
+          if (Object.prototype.hasOwnProperty.call(queryFilters, key)) {
+            combinedFilters[key] = queryFilters[key];
+          }
+        }
+      }
       
-      // Find all withdrawal requests for the current user using Strapi entity service
-      // This ensures we get the data directly from Strapi without filtering
+      console.log('[WithdrawalController|getMyWithdrawals] Combined filters for query:', JSON.stringify(combinedFilters, null, 2));
+
+      // Default pagination if not provided
+      const start = parseInt(pagination?.start || '0', 10);
+      const limit = parseInt(pagination?.limit || '10', 10); // Default to 10 if not specified
+
+      console.log('[WithdrawalController|getMyWithdrawals] Pagination params:', { start, limit });
+
       const withdrawalRequests = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
-        filters: { 
-          publisher: { id: ctx.state.user.id } 
-        },
-        sort: { createdAt: 'desc' }
+        filters: combinedFilters,
+        sort: { createdAt: 'desc' },
+        start: start, // for offset
+        limit: limit, // for page size
       });
       
-      console.log('Withdrawal requests retrieved:', withdrawalRequests.length);
+      // For accurate hasMoreItems, we might need to query total count with filters but without pagination
+      // Or, rely on the frontend logic: if count returned is less than limit, no more items.
+      // The current frontend logic (historyData.length === WITHDRAWALS_PER_PAGE) works if the API returns a full page or less.
+
+      const totalCount = await strapi.entityService.count('api::withdrawal-request.withdrawal-request', {
+        filters: combinedFilters,
+      });
+
+
+      console.log(`[WithdrawalController|getMyWithdrawals] Retrieved ${withdrawalRequests.length} requests for user ${userId} with filters. Total matching: ${totalCount}`);
       
+      // Strapi's findMany typically returns just the array of entities if no 'meta' is requested via populate.
+      // The frontend expects { data: [...] }
+      // Let's ensure the response structure matches what the frontend service expects (data.data)
       return {
-        data: withdrawalRequests,
-        meta: {
-          count: withdrawalRequests.length
+        data: withdrawalRequests, // The array of entities
+        meta: { // Optional: Strapi like meta for pagination
+          pagination: {
+            start,
+            limit,
+            total: totalCount,
+            page: Math.floor(start / limit) + 1,
+            pageCount: Math.ceil(totalCount / limit),
+          }
         }
       };
     } catch (error) {
       console.error('Error fetching withdrawal requests:', error);
-      return ctx.internalServerError('An error occurred while fetching withdrawal requests');
+      // Log the actual error for better debugging
+      console.error('Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+      return ctx.internalServerError('An error occurred while fetching withdrawal requests', { error: error.message });
     }
   },
   

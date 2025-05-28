@@ -130,7 +130,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       throw error;
     }
   },
-
+  
   // Create payment-related notifications
   async createPaymentNotification(userId, action, amount, orderId = null, additionalData = {}) {
     try {
@@ -182,7 +182,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       throw error;
     }
   },
-
+  
   // Create communication-related notifications
   async createCommunicationNotification(recipientId, senderId, orderId, action = 'message_received') {
     try {
@@ -208,7 +208,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       throw error;
     }
   },
-
+  
   // Create system notifications
   async createSystemNotification(userId, title, message, action = 'system_update') {
     try {
