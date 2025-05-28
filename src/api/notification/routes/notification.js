@@ -75,6 +75,33 @@ const customRoutes = {
         middlewares: [],
       },
     },
+    {
+      method: 'POST',
+      path: '/notifications/test-all',
+      handler: 'notification.testAllNotifications',
+      config: {
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
+      method: 'POST',
+      path: '/notifications/test-basic',
+      handler: 'notification.testBasicNotification',
+      config: {
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
+      method: 'POST',
+      path: '/notifications/test-withdrawal',
+      handler: 'notification.testWithdrawalNotifications',
+      config: {
+        policies: [],
+        middlewares: [],
+      },
+    },
   ],
 };
 

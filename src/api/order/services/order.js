@@ -345,5 +345,161 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.log(`Order ${id} rejected and escrow refunded successfully`);
       return order;
     });
+  },
+
+  // When an order is accepted by a publisher
+  async acceptOrder(id, user) {
+    try {
+      // Get the order with all relations
+      const order = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
+      
+      if (!order) {
+        throw new Error('Order not found');
+      }
+
+      // Check if order is already accepted
+      if (order.orderStatus !== 'pending' || order.publisher) {
+        throw new Error('Order is already accepted or not available');
+      }
+
+      // Special case: If the user is the advertiser for this order, allow them to accept it themselves
+      if (order.advertiser?.id === user.id || order.advertiser === user.id) {
+        console.log('User is accepting their own order as both advertiser and publisher');
+        
+        // Update the order
+        await strapi.entityService.update('api::order.order', id, {
+          data: {
+            publisher: user.id,
+            orderStatus: 'accepted',
+            acceptedDate: new Date()
+          }
+        });
+
+        // Return the order with populated relations
+        const updatedOrder = await strapi.entityService.findOne('api::order.order', id, {
+          populate: ['advertiser', 'publisher', 'website'],
+        });
+        
+        return updatedOrder;
+      }
+
+      // Normal case: Verify the publisher owns this website
+      const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
+        where: { id: order.website.id, publisher_email: user.email }
+      });
+
+      if (!isWebsiteOwner) {
+        throw new Error('You do not have permission to accept this order');
+      }
+
+      // Update the order
+      await strapi.entityService.update('api::order.order', id, {
+        data: {
+          publisher: user.id,
+          orderStatus: 'accepted',
+          acceptedDate: new Date()
+        }
+      });
+
+      // Return the order with populated relations
+      const updatedOrder = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
+
+      console.log(`Order ${id} accepted successfully by publisher ${user.id}`);
+      console.log(`Returning order with advertiser:`, updatedOrder.advertiser);
+      return updatedOrder;
+    } catch (error) {
+      console.error('Order acceptance failed:', error);
+      throw error;
+    }
+  },
+
+  // When an order is delivered by a publisher
+  async deliverOrder(id, user, deliveryData = {}) {
+    try {
+      // Get the order with all relations
+      const order = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
+      
+      if (!order) {
+        throw new Error('Order not found');
+      }
+
+      // Check if order is in accepted status
+      if (order.orderStatus !== 'accepted') {
+        throw new Error('Only accepted orders can be marked as delivered');
+      }
+
+      // Check if the order has a publisher assigned
+      if (!order.publisher || !order.publisher.id) {
+        // If no publisher assigned, check if current user can be assigned
+        let canDeliver = false;
+        
+        // If the order is for a website owned by this user
+        if (order.website && order.website.id) {
+          const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: order.website.id, publisher_email: user.email }
+          });
+          
+          if (isWebsiteOwner) {
+            console.log('User owns this website. Assigning as publisher.');
+            canDeliver = true;
+          }
+        }
+        
+        // Or if they are the advertiser for their own order
+        if (order.advertiser && (order.advertiser.id === user.id || order.advertiser === user.id)) {
+          console.log('User is the advertiser for this order. Assigning as publisher too.');
+          canDeliver = true;
+        }
+        
+        if (!canDeliver) {
+          throw new Error('You do not have permission to deliver this order');
+        }
+        
+        // Update the order to set the user as the publisher
+        await strapi.entityService.update('api::order.order', id, {
+          data: {
+            publisher: user.id
+          }
+        });
+        
+        // Set the publisher value in our order object
+        order.publisher = { id: user.id };
+      } else {
+        // Check if current user is the assigned publisher
+        if (order.publisher.id !== user.id) {
+          throw new Error('You are not the assigned publisher for this order');
+        }
+      }
+
+      // Update with delivery proof if provided
+      const updateData = {
+        orderStatus: 'delivered',
+        deliveryProof: deliveryData.proof || order.deliveryProof,
+        deliveredDate: new Date()
+      };
+      
+      // Update the order
+      await strapi.entityService.update('api::order.order', id, {
+        data: updateData,
+      });
+
+      // Return the order with populated relations
+      const updatedOrder = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
+
+      console.log(`Order ${id} delivered successfully by publisher ${user.id}`);
+      console.log(`Returning order with advertiser:`, updatedOrder.advertiser);
+      return updatedOrder;
+    } catch (error) {
+      console.error('Order delivery failed:', error);
+      throw error;
+    }
   }
 }));

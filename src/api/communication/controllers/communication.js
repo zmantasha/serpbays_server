@@ -56,6 +56,36 @@ module.exports = createCoreController('api::communication.communication', ({ str
         populate: ['sender', 'order'],
       });
       
+      // Determine recipient for the notification
+      // If sender is advertiser, recipient is publisher, and vice-versa
+      let recipientId;
+      if (order.advertiser && order.publisher) {
+        if (user.id === order.advertiser.id) {
+          recipientId = order.publisher.id;
+        } else if (user.id === order.publisher.id) {
+          recipientId = order.advertiser.id;
+        }
+      }
+
+      // Create notification for the recipient
+      if (recipientId) {
+        try {
+          await strapi.service('api::notification.notification').createCommunicationNotification(
+            recipientId,
+            user.id, // senderId is the current user
+            order.id,
+            'message_received',
+            { communicationId: entity.id }
+          );
+          console.log(`Notification created for message ${entity.id} to recipient ${recipientId}`);
+        } catch (notificationError) {
+          console.error('Failed to create message_received notification:', notificationError);
+          // Don't fail the communication creation if notification fails
+        }
+      } else {
+        console.warn(`Could not determine recipient for message_received notification for order ${order.id}. Advertiser: ${order.advertiser?.id}, Publisher: ${order.publisher?.id}, Sender: ${user.id}`);
+      }
+
       return { data: populatedEntity };
     } catch (error) {
       console.error('Error creating communication:', error);

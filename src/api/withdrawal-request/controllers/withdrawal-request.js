@@ -323,11 +323,16 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Create notification for publisher about approval
       try {
+        console.log(`[WithdrawalController] About to create withdrawal_approved notification`);
+        console.log(`[WithdrawalController] Publisher ID: ${withdrawalRequest.publisher.id}, Amount: ${withdrawalRequest.amount}`);
+        
         await strapi.service('api::notification.notification').createPaymentNotification(
           withdrawalRequest.publisher.id,
           'withdrawal_approved',
           withdrawalRequest.amount
         );
+        
+        console.log(`[WithdrawalController] Withdrawal approved notification created successfully`);
       } catch (notificationError) {
         console.error('Failed to create withdrawal approved notification:', notificationError);
         // Don't fail the approval if notification fails
@@ -422,11 +427,16 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Create notification for publisher about denial
       try {
+        console.log(`[WithdrawalController] About to create withdrawal_denied notification`);
+        console.log(`[WithdrawalController] Publisher ID: ${withdrawalRequest.publisher.id}, Amount: ${withdrawalRequest.amount}`);
+        
         await strapi.service('api::notification.notification').createPaymentNotification(
           withdrawalRequest.publisher.id,
           'withdrawal_denied',
           withdrawalRequest.amount
         );
+        
+        console.log(`[WithdrawalController] Withdrawal denied notification created successfully`);
       } catch (notificationError) {
         console.error('Failed to create withdrawal denied notification:', notificationError);
         // Don't fail the denial if notification fails
@@ -574,6 +584,24 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
 
       console.log(`Withdrawal request #${id} successfully marked as paid.`);
+      
+      // Create notification for publisher about payment completion
+      try {
+        console.log(`[WithdrawalController] About to create withdrawal_paid notification`);
+        console.log(`[WithdrawalController] Publisher ID: ${withdrawalRequest.publisher.id}, Amount: ${withdrawalRequest.amount}`);
+        
+        await strapi.service('api::notification.notification').createPaymentNotification(
+          withdrawalRequest.publisher.id,
+          'withdrawal_paid',
+          withdrawalRequest.amount
+        );
+        
+        console.log(`[WithdrawalController] Withdrawal paid notification created successfully`);
+      } catch (notificationError) {
+        console.error('Failed to create withdrawal paid notification:', notificationError);
+        // Don't fail the payment marking if notification fails
+      }
+      
       return {
         data: updatedRequest,
         meta: {

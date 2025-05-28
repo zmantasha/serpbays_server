@@ -714,7 +714,9 @@ export interface ApiNotificationNotification
         'payment_received',
         'withdrawal_approved',
         'withdrawal_denied',
+        'withdrawal_paid',
         'message_received',
+        'delivery_accepted_by_advertiser',
         'system_update',
       ]
     > &

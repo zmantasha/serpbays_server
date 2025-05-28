@@ -289,6 +289,194 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       console.error('Error creating test order notification:', error);
       return ctx.internalServerError('An error occurred while creating test order notification');
     }
+  },
+
+  // Test all notification types
+  async testAllNotifications(ctx) {
+    try {
+      // Check if user is authenticated
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+      
+      const userId = ctx.state.user.id;
+      const testOrderId = 1; // Use a test order ID
+      const testAmount = 100;
+      
+      const results = [];
+      
+      // Test all order notification types
+      const orderActions = [
+        'new_order',
+        'order_accepted',
+        'order_rejected',
+        'order_delivered',
+        'order_completed',
+        'revision_requested',
+        'revision_completed',
+        'delivery_accepted_by_advertiser'
+      ];
+      
+      for (const action of orderActions) {
+        try {
+          const notification = await strapi.service('api::notification.notification').createOrderNotification(
+            testOrderId,
+            userId, // publisherId
+            userId, // advertiserId (same user for testing)
+            action
+          );
+          results.push({ action, status: 'success', notificationId: notification.id });
+        } catch (error) {
+          results.push({ action, status: 'error', error: error.message });
+        }
+      }
+      
+      // Test payment notification types
+      const paymentActions = ['payment_received', 'withdrawal_approved', 'withdrawal_denied', 'withdrawal_paid'];
+      
+      for (const action of paymentActions) {
+        try {
+          const notification = await strapi.service('api::notification.notification').createPaymentNotification(
+            userId,
+            action,
+            testAmount,
+            testOrderId
+          );
+          results.push({ action, status: 'success', notificationId: notification.id });
+        } catch (error) {
+          results.push({ action, status: 'error', error: error.message });
+        }
+      }
+      
+      // Test communication notification
+      try {
+        const notification = await strapi.service('api::notification.notification').createCommunicationNotification(
+          userId,
+          userId, // senderId (same user for testing)
+          testOrderId,
+          'message_received'
+        );
+        results.push({ action: 'message_received', status: 'success', notificationId: notification.id });
+      } catch (error) {
+        results.push({ action: 'message_received', status: 'error', error: error.message });
+      }
+      
+      // Test system notification
+      try {
+        const notification = await strapi.service('api::notification.notification').createSystemNotification(
+          userId,
+          'Test System Notification',
+          'This is a test system notification to verify the notification system is working.',
+          'system_update'
+        );
+        results.push({ action: 'system_update', status: 'success', notificationId: notification.id });
+      } catch (error) {
+        results.push({ action: 'system_update', status: 'error', error: error.message });
+      }
+      
+      console.log(`Test notifications created. Results:`, results);
+      
+      return {
+        data: results,
+        meta: {
+          message: 'All notification types tested',
+          totalTests: results.length,
+          successful: results.filter(r => r.status === 'success').length,
+          failed: results.filter(r => r.status === 'error').length
+        }
+      };
+    } catch (error) {
+      console.error('Error testing all notifications:', error);
+      return ctx.internalServerError('An error occurred while testing notifications');
+    }
+  },
+
+  // Test basic notification creation
+  async testBasicNotification(ctx) {
+    try {
+      // Check if user is authenticated
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+      
+      const userId = ctx.state.user.id;
+      console.log(`[NotificationController] Testing basic notification for user ${userId}`);
+      
+      // Test creating a simple notification directly
+      const notification = await strapi.entityService.create('api::notification.notification', {
+        data: {
+          title: 'Test Notification',
+          message: 'This is a test notification to verify the system is working.',
+          type: 'system',
+          action: 'system_update',
+          recipient: userId,
+          isRead: false
+        }
+      });
+      
+      console.log(`[NotificationController] Basic notification created: ${notification.id}`);
+      
+      return {
+        data: notification,
+        meta: {
+          message: 'Basic notification created successfully'
+        }
+      };
+    } catch (error) {
+      console.error('Error creating basic notification:', error);
+      return ctx.internalServerError('An error occurred while creating basic notification');
+    }
+  },
+
+  // Test withdrawal notifications specifically
+  async testWithdrawalNotifications(ctx) {
+    try {
+      // Check if user is authenticated
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+      
+      const userId = ctx.state.user.id;
+      const testAmount = 100;
+      
+      const results = [];
+      
+      // Test all withdrawal notification types
+      const withdrawalActions = ['withdrawal_approved', 'withdrawal_denied', 'withdrawal_paid'];
+      
+      for (const action of withdrawalActions) {
+        try {
+          console.log(`[NotificationController] Testing ${action} notification for user ${userId}`);
+          
+          const notification = await strapi.service('api::notification.notification').createPaymentNotification(
+            userId,
+            action,
+            testAmount
+          );
+          
+          results.push({ action, status: 'success', notificationId: notification.id });
+          console.log(`[NotificationController] Successfully created ${action} notification: ${notification.id}`);
+        } catch (error) {
+          console.error(`[NotificationController] Failed to create ${action} notification:`, error);
+          results.push({ action, status: 'error', error: error.message });
+        }
+      }
+      
+      console.log(`[NotificationController] Withdrawal notification test results:`, results);
+      
+      return {
+        data: results,
+        meta: {
+          message: 'Withdrawal notification tests completed',
+          totalTests: results.length,
+          successful: results.filter(r => r.status === 'success').length,
+          failed: results.filter(r => r.status === 'error').length
+        }
+      };
+    } catch (error) {
+      console.error('Error testing withdrawal notifications:', error);
+      return ctx.internalServerError('An error occurred while testing withdrawal notifications');
+    }
   }
 }));
 

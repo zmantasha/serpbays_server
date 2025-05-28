@@ -200,6 +200,30 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         console.log("orders",order)
         
+        // Get the website/marketplace info to find the publisher
+        const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+          where: { id: orderData.website },
+          populate: ['publisher']
+        });
+        
+        // Create notification for publisher about new order
+        if (marketplace && marketplace.publisher) {
+          try {
+            await strapi.service('api::notification.notification').createOrderNotification(
+              order.id,
+              marketplace.publisher.id,
+              user.id,
+              'new_order'
+            );
+            console.log(`New order notification created for publisher ${marketplace.publisher.id}`);
+          } catch (notificationError) {
+            console.error('Failed to create new order notification:', notificationError);
+            // Don't fail the order creation if notification fails
+          }
+        } else {
+          console.log('No publisher found for marketplace, skipping new order notification');
+        }
+        
         // Handle outsourced content details if this is an outsourced order
         if (isOutsourced) {
           try {
@@ -345,7 +369,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const populatedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
           populate: ['advertiser', 'publisher', 'website', 'orderContent'],
         });
-
+        
         // Create notification for publisher (website owner)
         try {
           // Get the website to find the publisher
@@ -636,76 +660,33 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         const { id } = ctx.params;
         
-        // Get the order
-        const order = await strapi.db.query('api::order.order').findOne({
-          where: { id },
-          populate: ['website']
-        });
-
-        if (!order) {
-          return ctx.notFound('Order not found');
-        }
-
-        // Check if order is already accepted
-        if (order.orderStatus !== 'pending' || order.publisher) {
-          return ctx.badRequest('Order is already accepted or not available');
-        }
-
-        // Special case: If the user is the advertiser for this order, allow them to accept it themselves
-        if (order.advertiser === user.id) {
-          console.log('User is accepting their own order as both advertiser and publisher');
-          
-          // Update the order
-          const updatedOrder = await strapi.db.query('api::order.order').update({
-            where: { id },
-            data: {
-              publisher: user.id,
-              orderStatus: 'accepted',
-              acceptedDate: new Date()
-            }
-          });
-
-          // Check if user has a publisher wallet, create if not exists
-          await ensurePublisherWallet(user.id);
-
-          return {
-            data: updatedOrder,
-            meta: {
-              message: 'Order accepted successfully (self-assignment)'
-            }
-          };
-        }
-
-        // Normal case: Verify the publisher owns this website
-        const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-          where: { id: order.website.id, publisher_email: user.email }
-        });
-
-        if (!isWebsiteOwner) {
-          return ctx.forbidden('You do not have permission to accept this order');
-        }
-
-        // Update the order
-        const updatedOrder = await strapi.db.query('api::order.order').update({
-          where: { id },
-          data: {
-            publisher: user.id,
-            orderStatus: 'accepted',
-            acceptedDate: new Date()
-          }
-        });
+        // Use the order service to handle order acceptance
+        const updatedOrder = await strapi.service('api::order.order').acceptOrder(id, user);
 
         // Check if user has a publisher wallet, create if not exists
         await ensurePublisherWallet(user.id);
 
         // Create notification for advertiser
         try {
+          console.log(`[OrderController] About to create order_accepted notification for order ${updatedOrder.id}`);
+          console.log(`[OrderController] Publisher (current user): ${user.id}, Advertiser: ${updatedOrder.advertiser?.id || updatedOrder.advertiser}`);
+          console.log(`[OrderController] Full updatedOrder.advertiser object:`, JSON.stringify(updatedOrder.advertiser, null, 2));
+          
+          const advertiserId = updatedOrder.advertiser?.id || updatedOrder.advertiser;
+          if (!advertiserId) {
+            console.error(`[OrderController] ERROR: No advertiser ID found in updatedOrder!`);
+            console.error(`[OrderController] updatedOrder:`, JSON.stringify(updatedOrder, null, 2));
+            throw new Error('No advertiser ID found in order');
+          }
+          
           await strapi.service('api::notification.notification').createOrderNotification(
-            order.id,
+            updatedOrder.id,
             user.id,
-            order.advertiser,
+            advertiserId,
             'order_accepted'
           );
+          
+          console.log(`[OrderController] Order accepted notification created successfully for advertiser ${advertiserId}`);
         } catch (notificationError) {
           console.error('Failed to create order accepted notification:', notificationError);
           // Don't fail the order acceptance if notification fails
@@ -719,6 +700,18 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         };
       } catch (error) {
         console.error('Error accepting order:', error);
+        
+        // Handle specific service errors
+        if (error.message === 'Order not found') {
+          return ctx.notFound('Order not found');
+        }
+        if (error.message === 'Order is already accepted or not available') {
+          return ctx.badRequest('Order is already accepted or not available');
+        }
+        if (error.message === 'You do not have permission to accept this order') {
+          return ctx.forbidden('You do not have permission to accept this order');
+        }
+        
         return ctx.internalServerError('An error occurred while accepting the order');
       }
     },
@@ -783,7 +776,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           await strapi.service('api::notification.notification').createOrderNotification(
             order.id,
             user.id,
-            order.advertiser,
+            order.advertiser?.id || order.advertiser,
             'order_rejected'
           );
         } catch (notificationError) {
@@ -1020,7 +1013,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           await strapi.service('api::notification.notification').createOrderNotification(
             order.id,
             user.id,
-            order.advertiser,
+            order.advertiser?.id || order.advertiser,
             'order_delivered'
           );
         } catch (notificationError) {
@@ -1086,8 +1079,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           try {
             await strapi.service('api::notification.notification').createOrderNotification(
               order.id,
-              user.id,
               order.publisher?.id || order.publisher,
+              user.id,
               'order_completed'
             );
           } catch (notificationError) {
@@ -1436,6 +1429,20 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         });
         
+        // Create notification for publisher about revision request
+        try {
+          await strapi.service('api::notification.notification').createOrderNotification(
+            orderId,
+            order.publisher?.id,
+            user.id,
+            'revision_requested',
+            { reason: message }
+          );
+        } catch (notificationError) {
+          console.error('Failed to create revision requested notification:', notificationError);
+          // Don't fail the revision request if notification fails
+        }
+        
         return { 
           success: true,
           data: updated
@@ -1510,7 +1517,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         
         // Check if the order exists
         const order = await strapi.entityService.findOne('api::order.order', orderId, {
-          populate: ['publisher'],
+          populate: ['publisher', 'advertiser'],
         });
         
         if (!order) {
@@ -1536,6 +1543,19 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             communicationStatus: 'acceptance',
           }
         });
+        
+        // Create notification for advertiser about revision completion
+        try {
+          await strapi.service('api::notification.notification').createOrderNotification(
+            orderId,
+            user.id,
+            order.advertiser?.id,
+            'revision_completed'
+          );
+        } catch (notificationError) {
+          console.error('Failed to create revision completed notification:', notificationError);
+          // Don't fail the revision completion if notification fails
+        }
         
         return { 
           success: true,
@@ -1596,6 +1616,19 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               communicationStatus: 'acceptance',
             }
           });
+          
+          // Create notification for publisher about delivery acceptance
+          try {
+            await strapi.service('api::notification.notification').createOrderNotification(
+              orderId,
+              order.publisher?.id,
+              user.id,
+              'delivery_accepted_by_advertiser'
+            );
+          } catch (notificationError) {
+            console.error('Failed to create delivery accepted notification:', notificationError);
+            // Don't fail the order finalization if notification fails
+          }
           
           return { 
             success: true,
