@@ -234,6 +234,65 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
                 await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
                   data: { user_wallet: wallet.id }
                 });
+
+                // Create invoice for successful deposit
+                if (existingTransaction.type === 'deposit') {
+                  console.log('Creating invoice for successful deposit...');
+                  try {
+                    // Generate invoice number (you might want to use a more sophisticated system)
+                    const invoiceNumber = `INV-${Date.now()}-${existingTransaction.id}`;
+                    
+                    // Log the transaction data for debugging
+                    console.log('Transaction data for invoice:', {
+                      amount: existingTransaction.amount,
+                      currency: existingTransaction.currency,
+                      userId: wallet.users_permissions_user.id
+                    });
+
+                    // Create the invoice with all required fields
+                    const invoice = await strapi.entityService.create('api::invoice.invoice', {
+                      data: {
+                        invoiceNumber,
+                        invoiceDate: new Date(),
+                        user: wallet.users_permissions_user.id,
+                        transactionId: existingTransaction.id.toString(),
+                        billingName: wallet.users_permissions_user.username || 'Customer',
+                        billingAddress: 'Address on file', // You should get this from user profile
+                        billingCity: 'City',
+                        billingCountry: 'Country',
+                        billingPincode: '000000', // Add default pincode
+                        lineItems: [{
+                          description: 'Wallet Deposit',
+                          amount: transactionAmount,
+                          quantity: 1
+                        }],
+                        subtotal: transactionAmount,
+                        taxAmount: 0,
+                        totalAmount: transactionAmount,
+                        currency: existingTransaction.currency || 'USD', // Ensure currency is set with fallback
+                        status: 'paid',
+                        pdfUrl: `/invoices/${invoiceNumber}.pdf`,
+                        notes: `Wallet deposit transaction ${existingTransaction.id}`,
+                        publishedAt: new Date()
+                      }
+                    });
+                    
+                    console.log(`✅ Invoice created successfully: ${invoice.id}`);
+                    
+                    // Link the invoice to the transaction
+                    await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
+                      data: {
+                        invoice: invoice.id
+                      }
+                    });
+                  } catch (invoiceError) {
+                    console.error('Error creating invoice:', invoiceError);
+                    // Log more details about the error
+                    if (invoiceError.details?.errors) {
+                      console.error('Validation errors:', invoiceError.details.errors);
+                    }
+                  }
+                }
               } catch (error) {
                 console.error(`Error updating wallet balance:`, error.message);
               }

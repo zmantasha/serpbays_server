@@ -9,7 +9,8 @@
     "displayName": "User"
   },
   "options": {
-    "draftAndPublish": false
+    "draftAndPublish": false,
+    "timestamps": true
   },
   "attributes": {
     "username": {
@@ -97,6 +98,52 @@
       "relation": "oneToMany",
       "target": "api::communication.communication",
       "mappedBy": "sender"
-    }
+    },
+    "firstName": {
+      "type": "string"
+    },
+    "lastName": {
+      "type": "string"
+    },
+    "businessName": {
+      "type": "string"
+    },
+    "billingAddress": {
+      "type": "text"
+    },
+    "city": {
+      "type": "string"
+    },
+    "country": {
+      "type": "string"
+    },
+    "pincode": {
+      "type": "string"
+    },
+    "vatGstNumber": {
+      "type": "string"
+    },
+    "phoneNumber": {
+      "type": "string"
+    },
+    "website": {
+      "type": "string"
+    },
+    "identityType": {
+      "type": "enumeration",
+      "enum": ["SEO", "Agency", "Other"]
+    },
+    "invoices": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::invoice.invoice",
+      "mappedBy": "user"
+    },
+    "transactions": {
+          "type": "relation",
+          "relation": "oneToMany",
+          "target": "api::transaction.transaction",
+          "mappedBy": "users_permissions_user"
+        }
   }
 }

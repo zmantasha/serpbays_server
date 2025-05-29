@@ -242,7 +242,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-
+      
       const userId = ctx.state.user.id;
       const { pagination, filters: queryFilters } = ctx.query;
 

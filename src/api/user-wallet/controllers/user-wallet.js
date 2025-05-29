@@ -72,10 +72,21 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       const transactions = await strapi.db.query('api::transaction.transaction').findMany({
         where: { user_wallet: wallet.id },
-        orderBy: { createdAt: 'DESC' }
+        orderBy: { createdAt: 'DESC' },
+        populate: ['invoice']
       });
 
-      return { data: transactions };
+      // Transform the data to include invoice information
+      const transformedTransactions = transactions.map(transaction => ({
+        ...transaction,
+        invoice: transaction.invoice ? {
+          id: transaction.invoice.id,
+          invoiceNumber: transaction.invoice.invoiceNumber,
+          pdfUrl: transaction.invoice.pdfUrl
+        } : null
+      }));
+
+      return { data: transformedTransactions };
     } catch (error) {
       return ctx.badRequest('Failed to get transactions');
     }

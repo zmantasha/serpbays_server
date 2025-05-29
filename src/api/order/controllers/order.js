@@ -663,8 +663,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Use the order service to handle order acceptance
         const updatedOrder = await strapi.service('api::order.order').acceptOrder(id, user);
 
-        // Check if user has a publisher wallet, create if not exists
-        await ensurePublisherWallet(user.id);
+          // Check if user has a publisher wallet, create if not exists
+          await ensurePublisherWallet(user.id);
 
         // Create notification for advertiser
         try {
