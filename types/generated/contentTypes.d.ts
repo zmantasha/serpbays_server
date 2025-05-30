@@ -1654,7 +1654,7 @@ export interface PluginUsersPermissionsUser
       'oneToMany',
       'api::order.order'
     >;
-    billingAddress: Schema.Attribute.Text;
+    billingAddress: Schema.Attribute.String;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     businessName: Schema.Attribute.String;
     city: Schema.Attribute.String;
@@ -1674,7 +1674,7 @@ export interface PluginUsersPermissionsUser
         minLength: 6;
       }>;
     firstName: Schema.Attribute.String;
-    identityType: Schema.Attribute.Enumeration<['SEO', 'Agency', 'Other']>;
+    identity: Schema.Attribute.Enumeration<['SEO', 'Agency', 'Other']>;
     invoices: Schema.Attribute.Relation<'oneToMany', 'api::invoice.invoice'>;
     lastName: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
@@ -1693,6 +1693,7 @@ export interface PluginUsersPermissionsUser
     provider: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
     publisherOrders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
+    registrationNumber: Schema.Attribute.String;
     resetPasswordToken: Schema.Attribute.String & Schema.Attribute.Private;
     role: Schema.Attribute.Relation<
       'manyToOne',

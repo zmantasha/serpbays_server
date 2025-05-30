@@ -109,10 +109,13 @@
       "type": "string"
     },
     "billingAddress": {
-      "type": "text"
-    },
-    "city": {
       "type": "string"
+    },
+    "registrationNumber":{
+      "type":"string"
+    },
+    "city":{
+      "type":"string"
     },
     "country": {
       "type": "string"
@@ -129,7 +132,7 @@
     "website": {
       "type": "string"
     },
-    "identityType": {
+    "identity": {
       "type": "enumeration",
       "enum": ["SEO", "Agency", "Other"]
     },
