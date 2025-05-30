@@ -1683,6 +1683,24 @@ export interface PluginUsersPermissionsUser
       'plugin::users-permissions.user'
     > &
       Schema.Attribute.Private;
+    notificationPreferences: Schema.Attribute.JSON &
+      Schema.Attribute.Configurable &
+      Schema.Attribute.DefaultTo<{
+        notifyMarketplaceNewItemApp: true;
+        notifyMarketplaceNewItemEmail: true;
+        notifyOrderMessagesApp: true;
+        notifyOrderMessagesEmail: true;
+        notifyOrderStatusChangeApp: true;
+        notifyOrderStatusChangeEmail: true;
+        notifyPlatformNewsApp: true;
+        notifyPlatformNewsEmail: false;
+        notifyPromotionsApp: false;
+        notifyPromotionsEmail: false;
+        notifySecurityAlertsApp: true;
+        notifySecurityAlertsEmail: true;
+        notifyWalletBillingUpdatesApp: true;
+        notifyWalletBillingUpdatesEmail: true;
+      }>;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{

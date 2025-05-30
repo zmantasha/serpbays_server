@@ -8,6 +8,38 @@ const { createCoreController } = require('@strapi/strapi').factories;
 
 module.exports = createCoreController('api::notification.notification', ({ strapi }) => ({
   
+  // Helper function to check if notification should be sent based on user preferences
+  async shouldSendNotification(userId, type, isEmail) {
+    try {
+      // Get user with notification preferences
+      const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId, {
+        populate: ['notificationPreferences']
+      });
+
+      if (!user || !user.notificationPreferences) {
+        return true; // Default to sending if no preferences set
+      }
+
+      const prefs = user.notificationPreferences;
+      
+      // Map notification type to preference key
+      const prefMap = {
+        'order': isEmail ? 'notifyOrderStatusChangeEmail' : 'notifyOrderStatusChangeApp',
+        'message': isEmail ? 'notifyOrderMessagesEmail' : 'notifyOrderMessagesApp',
+        'marketplace': isEmail ? 'notifyMarketplaceNewItemEmail' : 'notifyMarketplaceNewItemApp',
+        'payment': isEmail ? 'notifyWalletBillingUpdatesEmail' : 'notifyWalletBillingUpdatesApp',
+        'system': isEmail ? 'notifySecurityAlertsEmail' : 'notifySecurityAlertsApp',
+        'promotion': isEmail ? 'notifyPromotionsEmail' : 'notifyPromotionsApp'
+      };
+
+      const prefKey = prefMap[type];
+      return prefKey ? prefs[prefKey] : true;
+    } catch (error) {
+      console.error('Error checking notification preferences:', error);
+      return true; // Default to sending on error
+    }
+  },
+
   // Get notifications for the current user
   async getMyNotifications(ctx) {
     try {
@@ -477,12 +509,63 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       console.error('Error testing withdrawal notifications:', error);
       return ctx.internalServerError('An error occurred while testing withdrawal notifications');
     }
+  },
+
+  // Create a notification with preference check
+  async createNotification(ctx) {
+    try {
+      const { recipientId, title, message, type, action, relatedOrderId, relatedUserId, isEmail = false } = ctx.request.body;
+
+      // Check if notification should be sent based on user preferences
+      const shouldSend = await this.shouldSendNotification(recipientId, type, isEmail);
+      
+      if (!shouldSend) {
+        return {
+          data: null,
+          meta: {
+            message: 'Notification skipped due to user preferences'
+          }
+        };
+      }
+
+      const notification = await strapi.entityService.create('api::notification.notification', {
+        data: {
+          title,
+          message,
+          type,
+          action,
+          recipient: recipientId,
+          relatedOrderId,
+          relatedUserId,
+          isRead: false
+        }
+      });
+
+      return {
+        data: notification,
+        meta: {
+          message: 'Notification created successfully'
+        }
+      };
+    } catch (error) {
+      console.error('Error creating notification:', error);
+      return ctx.internalServerError('An error occurred while creating notification');
+    }
   }
 }));
 
 // Helper function to create notifications (can be used by other controllers)
 const createNotification = async (strapi, data) => {
   try {
+    // Check if notification should be sent based on user preferences
+    const controller = strapi.controller('api::notification.notification');
+    const shouldSend = await controller.shouldSendNotification(data.recipientId, data.type, data.isEmail);
+
+    if (!shouldSend) {
+      console.log(`Notification skipped for user ${data.recipientId} due to preferences`);
+      return null;
+    }
+
     const notification = await strapi.entityService.create('api::notification.notification', {
       data: {
         title: data.title,
@@ -492,7 +575,6 @@ const createNotification = async (strapi, data) => {
         recipient: data.recipientId,
         relatedOrderId: data.relatedOrderId,
         relatedUserId: data.relatedUserId,
-        data: data.additionalData,
         isRead: false
       }
     });

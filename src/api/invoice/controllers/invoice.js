@@ -49,9 +49,12 @@ module.exports = createCoreController('api::invoice.invoice', ({ strapi }) => ({
         return ctx.forbidden('You do not have permission to download this invoice');
       }
 
-      // Create PDF document
-      const doc = new PDFDocument();
-      
+      // Create PDF document with better page settings
+      const doc = new PDFDocument({
+        size: 'A4',
+        margin: 50
+      });
+
       // Set response status to 200 and headers
       ctx.status = 200;
       ctx.response.set({
@@ -72,93 +75,145 @@ module.exports = createCoreController('api::invoice.invoice', ({ strapi }) => ({
         doc.pipe(ctx.response.res);
 
         try {
-          // Add content to PDF
-          doc
-            .fontSize(20)
-            .text('INVOICE', { align: 'center' })
-            .moveDown()
-            .fontSize(12);
+          // Define colors
+          const primaryColor = '#1a237e';
+          const secondaryColor = '#534bae';
+          const textColor = '#424242';
 
-          // Add company info
-          doc
-            .text('Serpbays', { align: 'right' })
-            .text('Your Digital Marketing Partner', { align: 'right' })
+          // Helper function to format currency
+          const formatCurrency = (amount) => `$${Number(amount).toFixed(2)}`;
+
+          // Add company logo space (top-left)
+          doc.rect(50, 50, 150, 50).stroke();
+          doc.fontSize(10).text('Company Logo', 75, 65);
+
+          // Add company info (top-right)
+          doc.fontSize(20)
+            .fillColor(primaryColor)
+            .text('Serpbays', 350, 50, { align: 'right' })
+            .fontSize(12)
+            .fillColor(secondaryColor)
+            .text('Your Digital Marketing Partner', 350, 75, { align: 'right' })
             .moveDown();
 
-          // Add invoice details
-          doc
-            .text(`Invoice Number: ${invoice.invoiceNumber}`)
-            .text(`Date: ${new Date(invoice.invoiceDate).toLocaleDateString()}`)
-            .moveDown()
-            .text('Bill To:')
-            .text(invoice.billingName || '')
-            .text(invoice.billingAddress || '');
+          // Add divider line
+          doc.moveTo(50, 120)
+             .lineTo(550, 120)
+             .strokeColor(primaryColor)
+             .stroke();
 
-          if (invoice.billingCity || invoice.billingCountry) {
-            doc.text(`${invoice.billingCity || ''}, ${invoice.billingCountry || ''}`);
-          }
-          
-          if (invoice.billingPincode) {
-            doc.text(`Pincode: ${invoice.billingPincode}`);
-          }
-          
-          if (invoice.billingVatGst) {
-            doc.text(`VAT/GST: ${invoice.billingVatGst}`);
-          }
-          
-          doc.moveDown();
+          // Invoice title and details
+          doc.moveDown()
+             .fontSize(24)
+             .fillColor(primaryColor)
+             .text('INVOICE', 50, 140)
+             .fontSize(10)
+             .fillColor(textColor)
+             .text(`Invoice Number: ${invoice.invoiceNumber}`, 50, 170)
+             .text(`Date: ${new Date(invoice.invoiceDate).toLocaleDateString()}`, 50, 185);
 
-          // Add line items table header
-          const startX = 50;
-          let currentY = doc.y;
+          // Billing Information
+          doc.fontSize(14)
+             .fillColor(primaryColor)
+             .text('Bill To:', 50, 220)
+             .fontSize(10)
+             .fillColor(textColor);
+
+          // Client details with proper spacing
+          const clientDetails = [
+            invoice.billingName,
+            invoice.billingAddress,
+            `${invoice.billingCity || ''}, ${invoice.billingCountry || ''}`,
+            invoice.billingPincode ? `Pincode: ${invoice.billingPincode}` : '',
+            invoice.billingVatGst ? `VAT/GST: ${invoice.billingVatGst}` : ''
+          ].filter(Boolean);
+
+          clientDetails.forEach((detail, index) => {
+            doc.text(detail, 50, 245 + (index * 15));
+          });
+
+          // Line Items Table
+          doc.moveDown(4);
+          const tableTop = 350;
+          const tableHeaders = ['Description', 'Amount'];
           
-          doc
-            .text('Description', startX, currentY)
-            .text('Amount', 400, currentY)
-            .moveDown();
+          // Draw table header
+          doc.fontSize(10)
+             .fillColor(primaryColor);
+          
+          // Table header background
+          doc.rect(50, tableTop - 20, 500, 20)
+             .fillColor(primaryColor)
+             .fill();
+          
+          // Table header text
+          doc.fillColor('#FFFFFF')
+             .text('Description', 60, tableTop - 15)
+             .text('Amount', 450, tableTop - 15);
 
           // Add line items
+          let currentY = tableTop + 10;
           if (Array.isArray(invoice.lineItems)) {
-            invoice.lineItems.forEach(item => {
-              currentY = doc.y;
-              doc
-                .text(item.description || '', startX, currentY)
-                .text(`$${(item.amount || 0).toFixed(2)}`, 400, currentY)
-                .moveDown();
+            invoice.lineItems.forEach((item, index) => {
+              const isEven = index % 2 === 0;
+              
+              // Light background for alternate rows
+              if (isEven) {
+                doc.rect(50, currentY - 15, 500, 20)
+                   .fillColor('#f5f5f5')
+                   .fill();
+              }
+
+              doc.fillColor(textColor)
+                 .text(item.description || '', 60, currentY - 10)
+                 .text(formatCurrency(item.amount || 0), 450, currentY - 10);
+              
+              currentY += 25;
             });
           }
 
-          // Add totals
-          doc.moveDown();
-          const totalsX = 400;
-          currentY = doc.y;
-          
-          doc
-            .text('Subtotal:', 300, currentY)
-            .text(`$${(invoice.subtotal || 0).toFixed(2)}`, totalsX, currentY)
-            .moveDown();
-          
-          currentY = doc.y;
-          doc
-            .text('Tax:', 300, currentY)
-            .text(`$${(invoice.taxAmount || 0).toFixed(2)}`, totalsX, currentY)
-            .moveDown();
-          
-          currentY = doc.y;
-          doc
-            .text('Total:', 300, currentY)
-            .text(`$${(invoice.totalAmount || 0).toFixed(2)}`, totalsX, currentY)
-            .moveDown();
+          // Summary section
+          currentY += 20;
+          const summaryX = 350;
+          const summaryStartY = currentY;
 
-          // Add footer
-          doc
-            .moveDown(2)
-            .fontSize(10)
-            .text('Thank you for your business!', { align: 'center' })
-            .moveDown()
-            .text('For any questions about this invoice, please contact support@serpbays.com', { align: 'center' });
+          // Summary box
+          doc.rect(summaryX, summaryStartY, 200, 100)
+             .fillColor('#f8f9fa')
+             .fill()
+             .strokeColor(primaryColor)
+             .stroke();
 
-          console.log('Ending PDF document generation');
+          // Summary details
+          doc.fillColor(textColor)
+             .fontSize(10)
+             .text('Subtotal:', summaryX + 20, summaryStartY + 20)
+             .text(formatCurrency(invoice.subtotal || 0), summaryX + 120, summaryStartY + 20)
+             .text('Tax:', summaryX + 20, summaryStartY + 40)
+             .text(formatCurrency(invoice.taxAmount || 0), summaryX + 120, summaryStartY + 40);
+
+          // Total with highlighted background
+          doc.rect(summaryX, summaryStartY + 60, 200, 30)
+             .fillColor(primaryColor)
+             .fill()
+             .fillColor('#FFFFFF')
+             .fontSize(12)
+             .text('Total:', summaryX + 20, summaryStartY + 68)
+             .text(formatCurrency(invoice.totalAmount || 0), summaryX + 120, summaryStartY + 68);
+
+          // Footer
+          const footerY = doc.page.height - 100;
+          doc.moveTo(50, footerY)
+             .lineTo(550, footerY)
+             .strokeColor(primaryColor)
+             .stroke();
+
+          doc.fontSize(10)
+             .fillColor(textColor)
+             .text('Thank you for your business!', 50, footerY + 15, { align: 'center' })
+             .fontSize(8)
+             .text('For any questions about this invoice, please contact support@serpbays.com', 50, footerY + 35, { align: 'center' });
+
           // End the document
           doc.end();
           

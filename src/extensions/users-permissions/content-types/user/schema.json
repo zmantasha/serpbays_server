@@ -147,6 +147,27 @@
           "relation": "oneToMany",
           "target": "api::transaction.transaction",
           "mappedBy": "users_permissions_user"
-        }
+        },
+    "notificationPreferences": {
+      "type": "json",
+      "configurable": true,
+      "private": false,
+      "default": {
+        "notifyMarketplaceNewItemEmail": true,
+        "notifyMarketplaceNewItemApp": true,
+        "notifyOrderStatusChangeEmail": true,
+        "notifyOrderStatusChangeApp": true,
+        "notifyOrderMessagesEmail": true,
+        "notifyOrderMessagesApp": true,
+        "notifySecurityAlertsEmail": true,
+        "notifySecurityAlertsApp": true,
+        "notifyWalletBillingUpdatesEmail": true,
+        "notifyWalletBillingUpdatesApp": true,
+        "notifyPlatformNewsEmail": false,
+        "notifyPlatformNewsApp": true,
+        "notifyPromotionsEmail": false,
+        "notifyPromotionsApp": false
+      }
+    }
   }
 }
