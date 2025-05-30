@@ -1414,6 +1414,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Update order status and set revision timestamps
         const updated = await strapi.entityService.update('api::order.order', orderId, {
           data: {
+            orderStatus: 'accepted',
             revisionRequestedAt: new Date(),
             revisionDeadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
             revisionStatus: 'requested',
