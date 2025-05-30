@@ -52,7 +52,8 @@ module.exports = createCoreController('api::invoice.invoice', ({ strapi }) => ({
       // Create PDF document
       const doc = new PDFDocument();
       
-      // Set response headers
+      // Set response status to 200 and headers
+      ctx.status = 200;
       ctx.response.set({
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename=invoice-${invoice.invoiceNumber}.pdf`,
@@ -172,12 +173,11 @@ module.exports = createCoreController('api::invoice.invoice', ({ strapi }) => ({
         }
       }).catch(error => {
         console.error('Error in PDF generation promise:', error);
-        ctx.internalServerError('Error generating invoice PDF');
+        return ctx.internalServerError('Error generating invoice PDF');
       });
-
     } catch (error) {
       console.error('Error in download controller:', error);
       return ctx.internalServerError('Error generating invoice PDF');
     }
-  },
+  }
 }));

@@ -12,7 +12,9 @@ module.exports = {
       path: '/api/invoices',
       handler: 'api::invoice.invoice.find',
       config: {
-        auth: true,
+        auth: {
+          scope: ['api::invoice.invoice.find']
+        },
         policies: []
       }
     },
@@ -21,7 +23,9 @@ module.exports = {
       path: '/api/invoices/:id',
       handler: 'api::invoice.invoice.findOne',
       config: {
-        auth: true,
+        auth: {
+          scope: ['api::invoice.invoice.findOne']
+        },
         policies: []
       }
     },
@@ -30,7 +34,9 @@ module.exports = {
       path: '/api/invoices',
       handler: 'api::invoice.invoice.create',
       config: {
-        auth: true,
+        auth: {
+          scope: ['api::invoice.invoice.create']
+        },
         policies: []
       }
     },
@@ -39,7 +45,9 @@ module.exports = {
       path: '/api/invoices/:id',
       handler: 'api::invoice.invoice.update',
       config: {
-        auth: true,
+        auth: {
+          scope: ['api::invoice.invoice.update']
+        },
         policies: []
       }
     },
@@ -48,7 +56,9 @@ module.exports = {
       path: '/api/invoices/:id',
       handler: 'api::invoice.invoice.delete',
       config: {
-        auth: true,
+        auth: {
+          scope: ['api::invoice.invoice.delete']
+        },
         policies: []
       }
     },
@@ -58,7 +68,9 @@ module.exports = {
       path: '/api/invoices/:id/download',
       handler: 'api::invoice.invoice.download',
       config: {
-        auth: true,
+        auth: {
+          scope: ['api::invoice.invoice.find']
+        },
         policies: []
       }
     }
