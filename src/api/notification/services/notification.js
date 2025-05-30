@@ -62,7 +62,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
   },
 
   // Create order-related notifications
-  async createOrderNotification(orderId, publisherId, advertiserId, action) {
+  async createOrderNotification(orderId, publisherId, advertiserId, action, additionalData = {}) {
     try {
       // Determine notification type based on action
       const notificationType = 'order';
@@ -82,7 +82,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
         case 'order_rejected':
           recipientId = advertiserId;
           title = 'Order Rejected';
-          message = `Your order #${orderId} has been rejected by the publisher. ${additionalData.reason || ''}`;
+          message = `Your order #${orderId} has been rejected by the publisher.${additionalData.reason ? ` Reason: ${additionalData.reason}` : ''}`;
           break;
         case 'order_delivered':
           recipientId = advertiserId;
@@ -97,7 +97,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
         case 'revision_requested':
           recipientId = publisherId;
           title = 'Revision Requested';
-          message = `The advertiser has requested a revision for order #${orderId}. ${additionalData.reason || ''}`;
+          message = `The advertiser has requested a revision for order #${orderId}.${additionalData.reason ? ` Reason: ${additionalData.reason}` : ''}`;
           break;
         case 'revision_completed':
           recipientId = advertiserId;

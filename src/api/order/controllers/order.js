@@ -764,7 +764,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Update the order with rejection details
         const updatedOrder = await strapi.db.query('api::order.order').update({
           where: { id },
-            data: {
+          data: {
             orderStatus: 'rejected',
             rejectedDate: new Date(),
             rejectionReason: body.reason.trim()
@@ -777,7 +777,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             order.id,
             user.id,
             order.advertiser?.id || order.advertiser,
-            'order_rejected'
+            'order_rejected',
+            { reason: body.reason.trim() }
           );
         } catch (notificationError) {
           console.error('Failed to create order rejected notification:', notificationError);
