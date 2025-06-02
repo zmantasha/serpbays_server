@@ -502,6 +502,85 @@ export interface ApiCategoryCategory extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiCommunicationCommunication
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'communications';
+  info: {
+    description: 'Communications between publishers and advertisers regarding orders';
+    displayName: 'Communication';
+    pluralName: 'communications';
+    singularName: 'communication';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    communicationStatus: Schema.Attribute.Enumeration<
+      ['requested', 'acceptance', 'in_progress']
+    > &
+      Schema.Attribute.DefaultTo<'requested'>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::communication.communication'
+    > &
+      Schema.Attribute.Private;
+    message: Schema.Attribute.Text & Schema.Attribute.Required;
+    order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
+    publishedAt: Schema.Attribute.DateTime;
+    sender: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiGlobalConfigGlobalConfig
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'global_configs';
+  info: {
+    displayName: 'Global Config';
+    pluralName: 'global-configs';
+    singularName: 'global-config';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    autoApproveDays: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<5>;
+    autoReleaseDays: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<7>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::global-config.global-config'
+    > &
+      Schema.Attribute.Private;
+    minPayoutAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<10>;
+    publishedAt: Schema.Attribute.DateTime;
+    supportedCurrencies: Schema.Attribute.JSON &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<['USD']>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiGlobalGlobal extends Struct.SingleTypeSchema {
   collectionName: 'globals';
   info: {
@@ -531,6 +610,60 @@ export interface ApiGlobalGlobal extends Struct.SingleTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+  };
+}
+
+export interface ApiInvoiceInvoice extends Struct.CollectionTypeSchema {
+  collectionName: 'invoices';
+  info: {
+    description: 'Manages customer invoices for wallet transactions';
+    displayName: 'Invoice';
+    pluralName: 'invoices';
+    singularName: 'invoice';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    billingAddress: Schema.Attribute.Text & Schema.Attribute.Required;
+    billingCity: Schema.Attribute.String;
+    billingCountry: Schema.Attribute.String;
+    billingName: Schema.Attribute.String & Schema.Attribute.Required;
+    billingPincode: Schema.Attribute.String;
+    billingVatGst: Schema.Attribute.String;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    currency: Schema.Attribute.String & Schema.Attribute.Required;
+    invoice: Schema.Attribute.Relation<'oneToOne', 'api::invoice.invoice'>;
+    invoiceDate: Schema.Attribute.Date & Schema.Attribute.Required;
+    invoiceNumber: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    lineItems: Schema.Attribute.JSON & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::invoice.invoice'
+    > &
+      Schema.Attribute.Private;
+    notes: Schema.Attribute.Text;
+    pdfUrl: Schema.Attribute.String;
+    publishedAt: Schema.Attribute.DateTime;
+    status: Schema.Attribute.Enumeration<['draft', 'paid', 'void']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'paid'>;
+    subtotal: Schema.Attribute.Decimal & Schema.Attribute.Required;
+    taxAmount: Schema.Attribute.Decimal & Schema.Attribute.DefaultTo<0>;
+    totalAmount: Schema.Attribute.Decimal & Schema.Attribute.Required;
+    transactionId: Schema.Attribute.String & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    user: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
   };
 }
 
@@ -582,6 +715,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     min_word_count: Schema.Attribute.Integer & Schema.Attribute.Required;
     moz_da: Schema.Attribute.Integer;
     only_with_us: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    orders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
     other_category: Schema.Attribute.JSON;
     price: Schema.Attribute.Integer & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
@@ -606,6 +740,460 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     url: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique;
+  };
+}
+
+export interface ApiNotificationNotification
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'notifications';
+  info: {
+    description: 'User notifications for various system events';
+    displayName: 'Notification';
+    pluralName: 'notifications';
+    singularName: 'notification';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    action: Schema.Attribute.Enumeration<
+      [
+        'new_order',
+        'order_accepted',
+        'order_rejected',
+        'order_delivered',
+        'order_completed',
+        'revision_requested',
+        'revision_in_progress',
+        'revision_completed',
+        'payment_received',
+        'withdrawal_approved',
+        'withdrawal_denied',
+        'withdrawal_paid',
+        'message_received',
+        'delivery_accepted_by_advertiser',
+        'system_update',
+      ]
+    > &
+      Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    data: Schema.Attribute.JSON;
+    isRead: Schema.Attribute.Boolean &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<false>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::notification.notification'
+    > &
+      Schema.Attribute.Private;
+    message: Schema.Attribute.Text & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    recipient: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    relatedOrderId: Schema.Attribute.Integer;
+    relatedUserId: Schema.Attribute.Integer;
+    title: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    type: Schema.Attribute.Enumeration<
+      ['order', 'payment', 'system', 'communication']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'system'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiOrderContentOrderContent
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'order_contents';
+  info: {
+    description: 'Content details associated with orders';
+    displayName: 'OrderContent';
+    pluralName: 'order-contents';
+    singularName: 'order-content';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    content: Schema.Attribute.RichText & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    keywords: Schema.Attribute.Text;
+    links: Schema.Attribute.JSON;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::order-content.order-content'
+    > &
+      Schema.Attribute.Private;
+    metaDescription: Schema.Attribute.Text;
+    minWordCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<1000>;
+    order: Schema.Attribute.Relation<'oneToOne', 'api::order.order'>;
+    publishedAt: Schema.Attribute.DateTime;
+    title: Schema.Attribute.String & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    url: Schema.Attribute.String;
+  };
+}
+
+export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
+  collectionName: 'orders';
+  info: {
+    description: 'Link building orders between advertisers and publishers';
+    displayName: 'Order';
+    pluralName: 'orders';
+    singularName: 'order';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    acceptedDate: Schema.Attribute.DateTime;
+    advertiser: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    communications: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::communication.communication'
+    >;
+    completedDate: Schema.Attribute.DateTime;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    deliveredDate: Schema.Attribute.DateTime;
+    deliveryProof: Schema.Attribute.String;
+    description: Schema.Attribute.Text & Schema.Attribute.Required;
+    disputeDate: Schema.Attribute.DateTime;
+    escrowHeld: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    feeRate: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 1;
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0.1>;
+    isOutsourced: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::order.order'> &
+      Schema.Attribute.Private;
+    orderContent: Schema.Attribute.Relation<
+      'oneToOne',
+      'api::order-content.order-content'
+    >;
+    orderDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    orderStatus: Schema.Attribute.Enumeration<
+      [
+        'pending',
+        'accepted',
+        'rejected',
+        'delivered',
+        'approved',
+        'completed',
+        'cancelled',
+        'disputed',
+      ]
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
+    outsourcedContent: Schema.Attribute.Relation<
+      'oneToOne',
+      'api::outsourced-content.outsourced-content'
+    >;
+    platformFee: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publishedAt: Schema.Attribute.DateTime;
+    publisher: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    rejectedDate: Schema.Attribute.DateTime;
+    rejectionReason: Schema.Attribute.Text;
+    revisionDeadline: Schema.Attribute.DateTime;
+    revisionRequestedAt: Schema.Attribute.DateTime;
+    revisionStatus: Schema.Attribute.Enumeration<
+      ['requested', 'in_progress', 'completed']
+    >;
+    totalAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0.01;
+        },
+        number
+      >;
+    transactions: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::transaction.transaction'
+    >;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    website: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::marketplace.marketplace'
+    >;
+  };
+}
+
+export interface ApiOutsourcedContentOutsourcedContent
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'outsourced_contents';
+  info: {
+    description: 'Details for outsourced content orders';
+    displayName: 'Outsourced Content';
+    pluralName: 'outsourced-contents';
+    singularName: 'outsourced-content';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    instructions: Schema.Attribute.Text;
+    links: Schema.Attribute.JSON;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::outsourced-content.outsourced-content'
+    > &
+      Schema.Attribute.Private;
+    order: Schema.Attribute.Relation<'oneToOne', 'api::order.order'>;
+    projectName: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
+  collectionName: 'transactions';
+  info: {
+    description: 'Wallet transactions for deposits, withdrawals, and escrow';
+    displayName: 'Transaction';
+    pluralName: 'transactions';
+    singularName: 'transaction';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    amount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    fee: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    gateway: Schema.Attribute.Enumeration<
+      ['stripe', 'paypal', 'razorpay', 'test']
+    > &
+      Schema.Attribute.Required;
+    gatewayTransactionId: Schema.Attribute.String & Schema.Attribute.Required;
+    invoice: Schema.Attribute.Relation<'oneToOne', 'api::invoice.invoice'>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::transaction.transaction'
+    > &
+      Schema.Attribute.Private;
+    metadata: Schema.Attribute.JSON;
+    netAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
+    publishedAt: Schema.Attribute.DateTime;
+    transactionStatus: Schema.Attribute.Enumeration<
+      ['pending', 'success', 'failed', 'cancelled', 'refunded']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
+    type: Schema.Attribute.Enumeration<
+      [
+        'deposit',
+        'escrow_hold',
+        'escrow_release',
+        'payment',
+        'withdrawal',
+        'fee',
+        'refund',
+        'payout',
+      ]
+    > &
+      Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    user_wallet: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::user-wallet.user-wallet'
+    >;
+    users_permissions_user: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+  };
+}
+
+export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
+  collectionName: 'user_wallets';
+  info: {
+    description: 'Wallet system for advertisers and publishers';
+    displayName: 'User-Wallet';
+    pluralName: 'user-wallets';
+    singularName: 'user-wallet';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    balance: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    currency: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'USD'>;
+    escrowBalance: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::user-wallet.user-wallet'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    status: Schema.Attribute.Enumeration<['active', 'suspended', 'closed']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'active'>;
+    transactions: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::transaction.transaction'
+    >;
+    type: Schema.Attribute.Enumeration<['advertiser', 'publisher']> &
+      Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    users_permissions_user: Schema.Attribute.Relation<
+      'oneToOne',
+      'plugin::users-permissions.user'
+    >;
+  };
+}
+
+export interface ApiWithdrawalRequestWithdrawalRequest
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'withdrawal_requests';
+  info: {
+    displayName: 'Withdrawal Request';
+    pluralName: 'withdrawal-requests';
+    singularName: 'withdrawal-request';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    amount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    details: Schema.Attribute.JSON & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::withdrawal-request.withdrawal-request'
+    > &
+      Schema.Attribute.Private;
+    method: Schema.Attribute.Enumeration<
+      ['razorpay', 'paypal', 'bank_transfer', 'payoneer']
+    > &
+      Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    publisher: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    withdrawal_status: Schema.Attribute.Enumeration<
+      ['pending', 'approved', 'denied', 'paid']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
   };
 }
 
@@ -1064,12 +1652,25 @@ export interface PluginUsersPermissionsUser
   };
   options: {
     draftAndPublish: false;
+    timestamps: true;
   };
   attributes: {
     Advertiser: Schema.Attribute.Boolean;
+    advertiserOrders: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::order.order'
+    >;
+    billingAddress: Schema.Attribute.String;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    businessName: Schema.Attribute.String;
+    city: Schema.Attribute.String;
+    communications: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::communication.communication'
+    >;
     confirmationToken: Schema.Attribute.String & Schema.Attribute.Private;
     confirmed: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    country: Schema.Attribute.String;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -1078,33 +1679,73 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
+    firstName: Schema.Attribute.String;
+    identity: Schema.Attribute.Enumeration<['SEO', 'Agency', 'Other']>;
+    invoices: Schema.Attribute.Relation<'oneToMany', 'api::invoice.invoice'>;
+    lastName: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
       'plugin::users-permissions.user'
     > &
       Schema.Attribute.Private;
+    notificationPreferences: Schema.Attribute.JSON &
+      Schema.Attribute.Configurable &
+      Schema.Attribute.DefaultTo<{
+        notifyMarketplaceNewItemApp: true;
+        notifyMarketplaceNewItemEmail: true;
+        notifyOrderMessagesApp: true;
+        notifyOrderMessagesEmail: true;
+        notifyOrderStatusChangeApp: true;
+        notifyOrderStatusChangeEmail: true;
+        notifyPlatformNewsApp: true;
+        notifyPlatformNewsEmail: false;
+        notifyPromotionsApp: false;
+        notifyPromotionsEmail: false;
+        notifySecurityAlertsApp: true;
+        notifySecurityAlertsEmail: true;
+        notifyWalletBillingUpdatesApp: true;
+        notifyWalletBillingUpdatesEmail: true;
+      }>;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
+    phoneNumber: Schema.Attribute.String;
+    pincode: Schema.Attribute.String;
     provider: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
+    publisherOrders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
+    registrationNumber: Schema.Attribute.String;
     resetPasswordToken: Schema.Attribute.String & Schema.Attribute.Private;
     role: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.role'
     >;
+    transactions: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::transaction.transaction'
+    >;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    user_wallet: Schema.Attribute.Relation<
+      'oneToOne',
+      'api::user-wallet.user-wallet'
+    >;
     username: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique &
       Schema.Attribute.SetMinMaxLength<{
         minLength: 3;
       }>;
+    vatGstNumber: Schema.Attribute.String;
+    website: Schema.Attribute.String;
+    withdrawalRequests: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::withdrawal-request.withdrawal-request'
+    >;
   };
 }
 
@@ -1122,8 +1763,18 @@ declare module '@strapi/strapi' {
       'api::article.article': ApiArticleArticle;
       'api::author.author': ApiAuthorAuthor;
       'api::category.category': ApiCategoryCategory;
+      'api::communication.communication': ApiCommunicationCommunication;
+      'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;
+      'api::invoice.invoice': ApiInvoiceInvoice;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
+      'api::notification.notification': ApiNotificationNotification;
+      'api::order-content.order-content': ApiOrderContentOrderContent;
+      'api::order.order': ApiOrderOrder;
+      'api::outsourced-content.outsourced-content': ApiOutsourcedContentOutsourcedContent;
+      'api::transaction.transaction': ApiTransactionTransaction;
+      'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
+      'api::withdrawal-request.withdrawal-request': ApiWithdrawalRequestWithdrawalRequest;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
       'plugin::i18n.locale': PluginI18NLocale;

@@ -3,7 +3,7 @@ Content-Type: application/json
 
 {
   "identifier": "publisher@gmail.com",
-  "password": "publisher"
+  "password": "publisher@123"
 }
 
 ###
@@ -11,9 +11,10 @@ POST http://localhost:1337/api/auth/local/register
 Content-Type: application/json
 
 {
-  "username": "test3",
-  "email": "test3@gmail.com",
-  "password": "test12345"
+  "username": "test5",
+  "email": "test5@gmail.com",
+  "password": "test12345",
+  "Advertiser":true
 }
 ###
 PUT http://localhost:1337/api/users/11
@@ -26,7 +27,7 @@ Content-Type: application/json
 
 ###
 POST http://localhost:1337/api/user-profiles
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NDY0NDk1OCwiZXhwIjoxNzQ3MjM2OTU4fQ.fOlKlJE9La-5eSUerTFFObqfYpOAEyuy9VfX1LtJOm4
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzAyNzA2MywiZXhwIjoxNzQ3NjMxODYzfQ.h0hCqxgzbjpNnSZdwNN1mj9O_v2xTcdWfRaELDHxs_Q
 Content-Type: application/json
 
 {
@@ -40,4 +41,93 @@ Content-Type: application/json
 
 ###
 GET http://localhost:1337/api/marketplaces
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjUsImlhdCI6MTc0NDk3MjQ5MiwiZXhwIjoxNzQ3NTY0NDkyfQ.Kl1AkJiePmSSpNF9zbwzagznT7P0kGF1ZgQNJ-f7k1c
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiaWF0IjoxNzQ2NTMzODU4LCJleHAiOjE3NDcxMzg2NTh9.SYXakgTOQeLWLNWGCTAHLLt8LdXM9ThYcjaNfwgPnkM
+
+###
+GET http://localhost:1337/api/api/wallet/balance
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
+###
+GET http://localhost:1337/api/api/wallet/transactions
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
+###
+GET http://localhost:1337/api/api/user-wallets
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
+
+###
+POST http://localhost:1337/api/user-wallets
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NSwiaWF0IjoxNzQ2NjEyMDMxLCJleHAiOjE3NDcyMTY4MzF9.KsXbrLJ7Uk5iC0bYDFJZbSsBxapZtY5cMGXY8unLr8M
+Content-Type: application/json
+
+{
+  "balance": "0",
+  "escrowBalance": "0",
+  "currency": "USD"
+}
+###
+POST http://localhost:1337/api/api/wallet/create
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
+Content-Type: application/json
+
+{
+  "type": "advertiser",
+  "currency": "USD"
+}
+###
+POST http://localhost:1337/api/api/transactions/payment
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
+Content-Type: application/json
+
+{
+  "amount": 1,
+  "currency": "USD",
+  "gateway": "paypal"
+}
+
+###
+POST http://localhost:1337/api/api/transactions/webhook/stripe
+Content-Type: application/json
+
+{
+  "id": "pmc_1RLekuGfw70wnNOgIh74K4gy",
+  "type": "payment_intent.succeeded",
+  "data": {
+    "object": {
+      "id": "pi_3RM85oGfw70wnNOg1uSN9O78",
+      "amount": 1,
+      "currency": "usd",
+      "transactionStatus": "success"
+    }
+  }
+}
+
+
+###
+POST http://localhost:1337/api/orders
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzAyNzIyNCwiZXhwIjoxNzQ3NjMyMDI0fQ.s-gKcuZwEv_TMZks6JA65xk_6xynDVzA71CNU4tH_ng
+Content-Type: application/json
+
+{
+  "totalAmount": "1000",
+  "description": "description",
+  "website":"keymaker3.com"
+}
+###
+GET http://localhost:1337/api/orders/my-orders
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzAyNzIyNCwiZXhwIjoxNzQ3NjMyMDI0fQ.s-gKcuZwEv_TMZks6JA65xk_6xynDVzA71CNU4tH_ng
+
+
+###
+GET http://localhost:1337/api/orders/143
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzM3MTQ4MCwiZXhwIjoxNzQ3OTc2MjgwfQ.OyNxF6LEFZ2LIny2g1PmrHS5F9Vung81Z9ldU_Eqqq4
+###
+PUT http://localhost:1337/api/users/2
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MiwiaWF0IjoxNzQ4NTg3ODExLCJleHAiOjE3NDkxOTI2MTF9.BnX0Qr7RQy52I_a_Q8uV7VgLRB2Qn9FZM8eabs5OcGw
+Content-Type: application/json
+
+{
+  "businessName": "test",
+  "billingAddress": "USD",
+  "billingAddress": "paypal"
+}
+
+# > Done! The Stripe CLI is configured for New business sandbox with account id acct_1RLekMGfw70wnNOg

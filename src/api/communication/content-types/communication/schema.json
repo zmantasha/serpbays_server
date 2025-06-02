@@ -1,0 +1,41 @@
+{
+  "kind": "collectionType",
+  "collectionName": "communications",
+  "info": {
+    "singularName": "communication",
+    "pluralName": "communications",
+    "displayName": "Communication",
+    "description": "Communications between publishers and advertisers regarding orders"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "message": {
+      "type": "text",
+      "required": true
+    },
+    "sender": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "communications"
+    },
+    "order": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::order.order",
+      "inversedBy": "communications"
+    },
+    "communicationStatus": {
+      "type": "enumeration",
+      "enum": [
+        "requested",
+        "acceptance",
+        "in_progress"
+      ],
+      "default": "requested"
+    }
+  }
+} 

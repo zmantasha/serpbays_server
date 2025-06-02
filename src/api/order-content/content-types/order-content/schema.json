@@ -1,0 +1,48 @@
+{
+  "kind": "collectionType",
+  "collectionName": "order_contents",
+  "info": {
+    "singularName": "order-content",
+    "pluralName": "order-contents",
+    "displayName": "OrderContent",
+    "description": "Content details associated with orders"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "content": {
+      "type": "richtext",
+      "required": true
+    },
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "url": {
+      "type": "string"
+    },
+    "metaDescription": {
+      "type": "text"
+    },
+    "keywords": {
+      "type": "text",
+      "description": "Comma-separated keywords"
+    },
+    "links": {
+      "type": "json",
+      "description": "Array of links included in the content"
+    },
+    "minWordCount": {
+      "type": "integer",
+      "default": 1000
+    },
+    "order": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::order.order",
+      "inversedBy": "orderContent"
+    }
+  }
+}

@@ -9,7 +9,8 @@
     "displayName": "User"
   },
   "options": {
-    "draftAndPublish": false
+    "draftAndPublish": false,
+    "timestamps": true
   },
   "attributes": {
     "username": {
@@ -67,6 +68,106 @@
     },
     "Advertiser": {
       "type": "boolean"
+    },
+    "withdrawalRequests": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::withdrawal-request.withdrawal-request",
+      "mappedBy": "publisher"
+    },
+    "user_wallet": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::user-wallet.user-wallet",
+      "mappedBy": "users_permissions_user"
+    },
+    "advertiserOrders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "advertiser"
+    },
+    "publisherOrders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "publisher"
+    },
+    "communications": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::communication.communication",
+      "mappedBy": "sender"
+    },
+    "firstName": {
+      "type": "string"
+    },
+    "lastName": {
+      "type": "string"
+    },
+    "businessName": {
+      "type": "string"
+    },
+    "billingAddress": {
+      "type": "string"
+    },
+    "registrationNumber":{
+      "type":"string"
+    },
+    "city":{
+      "type":"string"
+    },
+    "country": {
+      "type": "string"
+    },
+    "pincode": {
+      "type": "string"
+    },
+    "vatGstNumber": {
+      "type": "string"
+    },
+    "phoneNumber": {
+      "type": "string"
+    },
+    "website": {
+      "type": "string"
+    },
+    "identity": {
+      "type": "enumeration",
+      "enum": ["SEO", "Agency", "Other"]
+    },
+    "invoices": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::invoice.invoice",
+      "mappedBy": "user"
+    },
+    "transactions": {
+          "type": "relation",
+          "relation": "oneToMany",
+          "target": "api::transaction.transaction",
+          "mappedBy": "users_permissions_user"
+        },
+    "notificationPreferences": {
+      "type": "json",
+      "configurable": true,
+      "private": false,
+      "default": {
+        "notifyMarketplaceNewItemEmail": true,
+        "notifyMarketplaceNewItemApp": true,
+        "notifyOrderStatusChangeEmail": true,
+        "notifyOrderStatusChangeApp": true,
+        "notifyOrderMessagesEmail": true,
+        "notifyOrderMessagesApp": true,
+        "notifySecurityAlertsEmail": true,
+        "notifySecurityAlertsApp": true,
+        "notifyWalletBillingUpdatesEmail": true,
+        "notifyWalletBillingUpdatesApp": true,
+        "notifyPlatformNewsEmail": false,
+        "notifyPlatformNewsApp": true,
+        "notifyPromotionsEmail": false,
+        "notifyPromotionsApp": false
+      }
     }
   }
 }

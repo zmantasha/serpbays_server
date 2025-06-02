@@ -17,6 +17,7 @@
     "upgrade:dry": "npx @strapi/upgrade latest --dry"
   },
   "dependencies": {
+    "@paypal/checkout-server-sdk": "^1.0.3",
     "@strapi/design-system": "^1.16.0",
     "@strapi/icons": "^1.16.0",
     "@strapi/plugin-cloud": "5.12.4",
@@ -27,17 +28,28 @@
     "fs-extra": "^10.0.0",
     "json2csv": "^6.0.0-alpha.2",
     "mime-types": "^2.1.27",
+    "pdfkit": "^0.13.0",
     "pg": "8.8.0",
-    "react": "^18.0.0",
-    "react-dom": "^18.0.0",
-    "react-router-dom": "^6.0.0",
+    "razorpay": "^2.9.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.4.0",
+    "stripe": "^14.18.0",
     "styled-components": "^6.0.0"
+  },
+  "resolutions": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.4.0"
   },
   "engines": {
     "node": ">=18.0.0 <=22.x.x",
     "npm": ">=6.0.0"
   },
   "strapi": {
-    "uuid": "b4c149bf-3c2a-43e7-9b88-c734b2f192b9"
+    "uuid": "b4c149bf-3c2a-43e7-9b88-c734b2f192b9",
+    "template": "src/templates",
+    "javascript": true,
+    "typescript": false
   }
 }

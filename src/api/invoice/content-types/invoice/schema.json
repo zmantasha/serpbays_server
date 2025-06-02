@@ -1,0 +1,62 @@
+    {
+      "kind": "collectionType",
+      "collectionName": "invoices",
+      "info": {
+        "singularName": "invoice",
+        "pluralName": "invoices",
+        "displayName": "Invoice",
+        "description": "Manages customer invoices for wallet transactions"
+      },
+      "options": {
+        "draftAndPublish": false
+      },
+      "pluginOptions": {},
+      "attributes": {
+        "invoiceNumber": {
+          "type": "string",
+          "required": true,
+          "unique": true
+        },
+        "invoiceDate": {
+          "type": "date",
+          "required": true
+        },
+        "user": {
+          "type": "relation",
+          "relation": "manyToOne",
+          "target": "plugin::users-permissions.user",
+          "inversedBy": "invoices" 
+        },
+        "transactionId": {
+          "type": "string",
+          "required": true
+        },
+        "billingName": { "type": "string", "required": true },
+        "billingAddress": { "type": "text", "required": true },
+        "billingCity": { "type": "string" },
+        "billingCountry": { "type": "string" },
+        "billingPincode": { "type": "string" },
+        "billingVatGst": { "type": "string" },
+        "lineItems": {
+          "type": "json",
+          "required": true
+        },
+        "subtotal": { "type": "decimal", "required": true },
+        "taxAmount": { "type": "decimal", "default": 0 },
+        "totalAmount": { "type": "decimal", "required": true },
+        "currency": { "type": "string", "required": true },
+        "status": {
+          "type": "enumeration",
+          "enum": ["draft", "paid", "void"],
+          "default": "paid",
+          "required": true
+        },
+        "pdfUrl": { "type": "string" },
+        "notes": { "type": "text" },
+        "invoice": {
+          "type": "relation",
+          "relation": "oneToOne",
+          "target": "api::invoice.invoice"
+        }
+      }
+    }

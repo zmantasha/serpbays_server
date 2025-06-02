@@ -1,0 +1,72 @@
+{
+  "kind": "collectionType",
+  "collectionName": "notifications",
+  "info": {
+    "singularName": "notification",
+    "pluralName": "notifications",
+    "displayName": "Notification",
+    "description": "User notifications for various system events"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true,
+      "maxLength": 255
+    },
+    "message": {
+      "type": "text",
+      "required": true
+    },
+    "type": {
+      "type": "enumeration",
+      "enum": ["order", "payment", "system", "communication"],
+      "required": true,
+      "default": "system"
+    },
+    "action": {
+      "type": "enumeration",
+      "enum": [
+        "new_order",
+        "order_accepted", 
+        "order_rejected",
+        "order_delivered",
+        "order_completed",
+        "revision_requested",
+        "revision_in_progress",
+        "revision_completed",
+        "payment_received",
+        "withdrawal_approved",
+        "withdrawal_denied",
+        "withdrawal_paid",
+        "message_received",
+        "delivery_accepted_by_advertiser",
+        "system_update"
+      ],
+      "required": true
+    },
+    "isRead": {
+      "type": "boolean",
+      "default": false,
+      "required": true
+    },
+    "relatedOrderId": {
+      "type": "integer"
+    },
+    "relatedUserId": {
+      "type": "integer"
+    },
+    "data": {
+      "type": "json",
+      "description": "Additional data related to the notification"
+    },
+    "recipient": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    }
+  }
+} 

@@ -1,0 +1,152 @@
+{
+  "kind": "collectionType",
+  "collectionName": "orders",
+  "info": {
+    "singularName": "order",
+    "pluralName": "orders",
+    "displayName": "Order",
+    "description": "Link building orders between advertisers and publishers"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "createdAt": {
+      "type": "timestamp"
+    },
+    "updatedAt": {
+      "type": "timestamp"
+    },
+    "orderStatus": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "accepted",
+        "rejected",
+        "delivered",
+        "approved",
+        "completed",
+        "cancelled",
+        "disputed"
+      ],
+      "default": "pending",
+      "required": true
+    },
+    "totalAmount": {
+      "type": "decimal",
+      "min": 0.01,
+      "required": true
+    },
+    "feeRate": {
+      "type": "decimal",
+      "min": 0,
+      "max": 1,
+      "default": 0.1
+    },
+    "platformFee": {
+      "type": "decimal",
+      "min": 0,
+      "required": true,
+      "description": "Calculated fee amount (totalAmount * feeRate)"
+    },
+    "escrowHeld": {
+      "type": "decimal",
+      "min": 0,
+      "required": true
+    },
+    "description": {
+      "type": "text",
+      "required": true
+    },
+    "deliveryProof": {
+      "type": "string"
+    },
+    "orderDate": {
+      "type": "datetime",
+      "required": true
+    },
+    "acceptedDate": {
+      "type": "datetime"
+    },
+    "rejectedDate": {
+      "type": "datetime"
+    },
+    "rejectionReason": {
+      "type": "text"
+    },
+    "deliveredDate": {
+      "type": "datetime"
+    },
+    "completedDate": {
+      "type": "datetime"
+    },
+    "disputeDate": {
+      "type": "datetime"
+    },
+    "isOutsourced": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this order is for outsourced content"
+    },
+    "website": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::marketplace.marketplace",
+      "inversedBy": "orders"
+    },
+    "advertiser": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "advertiserOrders"
+    },
+    "publisher": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "publisherOrders"
+    },
+    "transactions": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::transaction.transaction",
+      "mappedBy": "order"
+    },
+    "orderContent": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::order-content.order-content",
+      "mappedBy": "order"
+    },
+    "outsourcedContent": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::outsourced-content.outsourced-content",
+      "mappedBy": "order"
+    },
+    "communications": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::communication.communication",
+      "mappedBy": "order"
+    },
+    "revisionRequestedAt": {
+      "type": "datetime",
+      "description": "When the revision was requested"
+    },
+    "revisionDeadline": {
+      "type": "datetime",
+      "description": "Deadline for completing the revision"
+    },
+    "revisionStatus": {
+      "type": "enumeration",
+      "enum": [
+        "requested",
+        "in_progress",
+        "completed"
+      ],
+      "description": "Current status of the revision request"
+    }
+  }
+}

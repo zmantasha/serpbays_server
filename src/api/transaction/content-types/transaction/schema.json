@@ -1,0 +1,93 @@
+{
+  "kind": "collectionType",
+  "collectionName": "transactions",
+  "info": {
+    "singularName": "transaction",
+    "pluralName": "transactions",
+    "displayName": "Transaction",
+    "description": "Wallet transactions for deposits, withdrawals, and escrow"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "type": {
+      "type": "enumeration",
+      "enum": [
+        "deposit",
+        "escrow_hold",
+        "escrow_release",
+        "payment",
+        "withdrawal",
+        "fee",
+        "refund",
+        "payout"
+      ],
+      "required": true
+    },
+    "amount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "transactionStatus": {
+      "type": "enumeration",
+      "enum":  ["pending", "success", "failed", "cancelled", "refunded"],
+      "default": "pending",
+      "required": true
+    },
+    "gateway": {
+      "type": "enumeration",
+      "enum": [
+        "stripe",
+        "paypal",
+        "razorpay",
+        "test"
+      ],
+      "required": true
+    },
+    "gatewayTransactionId": {
+      "type": "string",
+      "required": true
+    },
+    "metadata": {
+      "type": "json"
+    },
+    "user_wallet": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::user-wallet.user-wallet",
+      "inversedBy": "transactions"
+    },
+    "description": {
+      "type": "text"
+    },
+    "users_permissions_user": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "transactions"
+    },
+    "fee": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0
+    },
+    "netAmount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "order": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::order.order",
+      "inversedBy": "transactions"
+    },
+    "invoice": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::invoice.invoice"
+    }
+  }
+}

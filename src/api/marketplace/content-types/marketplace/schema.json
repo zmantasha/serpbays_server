@@ -158,6 +158,12 @@
     "dofollow_link": {
       "type": "integer",
       "default": 1
+    },
+    "orders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "website"
     }
   }
 }
