@@ -1005,7 +1005,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           data: {
             orderStatus: 'delivered',
             deliveredDate: new Date(),
-            deliveryProof: body.proof || ''
+            deliveryProof: body.proof || '',
+            // Only update revision status if it was in progress
+            ...(order.revisionStatus === 'in_progress' && {
+              revisionStatus: 'completed'
+            })
           }
         });
 
@@ -1014,19 +1018,17 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           await strapi.service('api::notification.notification').createOrderNotification(
             order.id,
             user.id,
-            order.advertiser?.id || order.advertiser,
-            'order_delivered'
+            order.advertiser.id,
+            'order_delivered',
+            { orderId: order.id }
           );
-        } catch (notificationError) {
-          console.error('Failed to create order delivered notification:', notificationError);
-          // Don't fail the order delivery if notification fails
+        } catch (error) {
+          console.error('Failed to create delivery notification:', error);
         }
 
+        // Return the updated order
         return {
-          data: updatedOrder,
-          meta: {
-            message: 'Order marked as delivered'
-          }
+          data: updatedOrder
         };
       } catch (error) {
         console.error('Error delivering order:', error);
@@ -1468,7 +1470,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         
         // Check if the order exists
         const order = await strapi.entityService.findOne('api::order.order', orderId, {
-          populate: ['publisher'],
+          populate: ['publisher', 'advertiser'],
         });
         
         if (!order) {
@@ -1494,6 +1496,20 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             communicationStatus: 'in_progress',
           }
         });
+
+        // Create notification for advertiser about revision start
+        try {
+          await strapi.service('api::notification.notification').createOrderNotification(
+            orderId,
+            user.id,
+            order.advertiser?.id,
+            'revision_in_progress',
+            { message: 'Publisher has started working on the revision' }
+          );
+        } catch (notificationError) {
+          console.error('Failed to create revision in progress notification:', notificationError);
+          // Don't fail the revision start if notification fails
+        }
         
         return { 
           success: true,

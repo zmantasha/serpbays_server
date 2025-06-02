@@ -119,6 +119,15 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6M
 ###
 GET http://localhost:1337/api/orders/143
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzM3MTQ4MCwiZXhwIjoxNzQ3OTc2MjgwfQ.OyNxF6LEFZ2LIny2g1PmrHS5F9Vung81Z9ldU_Eqqq4
+###
+PUT http://localhost:1337/api/users/2
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MiwiaWF0IjoxNzQ4NTg3ODExLCJleHAiOjE3NDkxOTI2MTF9.BnX0Qr7RQy52I_a_Q8uV7VgLRB2Qn9FZM8eabs5OcGw
+Content-Type: application/json
 
+{
+  "businessName": "test",
+  "billingAddress": "USD",
+  "billingAddress": "paypal"
+}
 
 # > Done! The Stripe CLI is configured for New business sandbox with account id acct_1RLekMGfw70wnNOg

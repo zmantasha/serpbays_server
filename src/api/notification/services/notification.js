@@ -99,6 +99,11 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
           title = 'Revision Requested';
           message = `The advertiser has requested a revision for order #${orderId}.${additionalData.reason ? ` Reason: ${additionalData.reason}` : ''}`;
           break;
+        case 'revision_in_progress':
+          recipientId = advertiserId;
+          title = 'Revision Started';
+          message = `The publisher has started working on the revision for order #${orderId}.`;
+          break;
         case 'revision_completed':
           recipientId = advertiserId;
           title = 'Revision Completed';

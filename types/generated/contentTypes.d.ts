@@ -764,6 +764,7 @@ export interface ApiNotificationNotification
         'order_delivered',
         'order_completed',
         'revision_requested',
+        'revision_in_progress',
         'revision_completed',
         'payment_received',
         'withdrawal_approved',
@@ -937,6 +938,11 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     >;
     rejectedDate: Schema.Attribute.DateTime;
     rejectionReason: Schema.Attribute.Text;
+    revisionDeadline: Schema.Attribute.DateTime;
+    revisionRequestedAt: Schema.Attribute.DateTime;
+    revisionStatus: Schema.Attribute.Enumeration<
+      ['requested', 'in_progress', 'completed']
+    >;
     totalAmount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<

@@ -130,6 +130,23 @@
       "relation": "oneToMany",
       "target": "api::communication.communication",
       "mappedBy": "order"
+    },
+    "revisionRequestedAt": {
+      "type": "datetime",
+      "description": "When the revision was requested"
+    },
+    "revisionDeadline": {
+      "type": "datetime",
+      "description": "Deadline for completing the revision"
+    },
+    "revisionStatus": {
+      "type": "enumeration",
+      "enum": [
+        "requested",
+        "in_progress",
+        "completed"
+      ],
+      "description": "Current status of the revision request"
     }
   }
 }

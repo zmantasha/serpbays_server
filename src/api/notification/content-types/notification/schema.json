@@ -36,6 +36,7 @@
         "order_delivered",
         "order_completed",
         "revision_requested",
+        "revision_in_progress",
         "revision_completed",
         "payment_received",
         "withdrawal_approved",
