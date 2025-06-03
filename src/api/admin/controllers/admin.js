@@ -7,19 +7,43 @@ module.exports = {
         return ctx.unauthorized('You must be logged in');
       }
 
-      const usersCount = await strapi.query('plugin::users-permissions.user').count();
-      const contentCount = await strapi.query('api::content.content').count();
-      
-      // Add more statistics as needed
-      const stats = {
-        usersCount,
-        contentCount,
-        lastUpdated: new Date(),
-      };
+      // Get total users count (excluding super admin)
+      const usersCount = await strapi.query('plugin::users-permissions.user').count({
+        where: {
+          role: {
+            type: {
+              $ne: 'super-admin'
+            }
+          }
+        }
+      });
 
-      return { data: stats };
+      // Get content count from collections that actually exist
+      let contentCount = 0;
+      const contentTypes = strapi.contentTypes;
+      
+      // Only count content from API content types (skip admin, plugins, etc)
+      for (const key in contentTypes) {
+        if (key.startsWith('api::')) {
+          try {
+            const count = await strapi.db.query(key).count();
+            contentCount += count;
+          } catch (err) {
+            console.warn(`Could not count entries for ${key}:`, err.message);
+          }
+        }
+      }
+
+      return {
+        data: {
+          usersCount,
+          contentCount,
+          lastUpdated: new Date().toISOString()
+        }
+      };
     } catch (error) {
-      ctx.throw(500, error);
+      console.error('Dashboard stats error:', error);
+      return ctx.throw(500, error);
     }
   },
 
@@ -147,20 +171,61 @@ module.exports = {
 
       // Check if user already exists
       const existingUser = await strapi.query('plugin::users-permissions.user').findOne({
-        where: { email },
+        where: { 
+          $or: [
+            { email },
+            { username }
+          ]
+        },
       });
 
       if (existingUser) {
-        return ctx.badRequest('Email already exists');
+        return ctx.badRequest(
+          existingUser.email === email 
+            ? 'Email already exists' 
+            : 'Username already exists'
+        );
       }
 
-      // Get the admin role
-      const adminRole = await strapi.query('plugin::users-permissions.role').findOne({
+      // Get or create the admin role
+      let adminRole = await strapi.query('plugin::users-permissions.role').findOne({
         where: { type: 'admin' },
       });
 
       if (!adminRole) {
-        return ctx.badRequest('Admin role not found');
+        // Create the admin role if it doesn't exist
+        adminRole = await strapi.query('plugin::users-permissions.role').create({
+          data: {
+            name: 'Admin',
+            description: 'Administrator role with full access',
+            type: 'admin',
+          },
+        });
+
+        // Set up basic permissions for the admin role
+        const permissionsToCreate = [
+          { action: 'plugin::users-permissions.user.me' },
+          { action: 'plugin::users-permissions.auth.callback' },
+          { action: 'plugin::users-permissions.auth.connect' },
+          { action: 'plugin::users-permissions.auth.register' },
+          { action: 'api::admin.admin.signup' },
+          { action: 'api::admin.admin.login' },
+        ];
+
+        for (const permission of permissionsToCreate) {
+          await strapi.query('plugin::users-permissions.permission').create({
+            data: {
+              action: permission.action,
+              role: adminRole.id,
+            },
+          });
+        }
+
+        console.log('Created new admin role with permissions:', adminRole);
+      }
+
+      if (!adminRole || !adminRole.id) {
+        return ctx.badRequest('Failed to create or retrieve admin role');
       }
 
       // Create the admin user
@@ -171,6 +236,10 @@ module.exports = {
         role: adminRole.id,
         confirmed: true,
       });
+
+      if (!user) {
+        return ctx.badRequest('Failed to create user');
+      }
 
       // Generate JWT token
       const jwt = strapi.plugins['users-permissions'].services.jwt.issue({
@@ -187,7 +256,8 @@ module.exports = {
         jwt,
       };
     } catch (error) {
-      ctx.throw(500, error);
+      console.error('Signup error:', error);
+      return ctx.badRequest(error.message || 'An error occurred during signup');
     }
   },
 
@@ -196,7 +266,7 @@ module.exports = {
       const { identifier, password } = ctx.request.body;
 
       if (!identifier || !password) {
-        return ctx.badRequest('Please provide identifier and password');
+        return ctx.badRequest('Please provide email and password');
       }
 
       // Find the user
@@ -234,17 +304,55 @@ module.exports = {
         id: user.id,
       });
 
+      // Return sanitized user data
       return {
         user: {
           id: user.id,
           username: user.username,
           email: user.email,
-          role: 'admin',
+          role: user.role.type,
         },
         jwt,
       };
     } catch (error) {
-      ctx.throw(500, error);
+      console.error('Login error:', error);
+      return ctx.badRequest(error.message || 'An error occurred during login');
     }
   },
+
+  async me(ctx) {
+    try {
+      const { user } = ctx.state;
+
+      if (!user) {
+        return ctx.unauthorized('Not authenticated');
+      }
+
+      // Get fresh user data with role
+      const userData = await strapi.query('plugin::users-permissions.user').findOne({
+        where: { id: user.id },
+        populate: ['role'],
+      });
+
+      if (!userData) {
+        return ctx.notFound('User not found');
+      }
+
+      // Check if user is admin
+      if (!userData.role || userData.role.type !== 'admin') {
+        return ctx.unauthorized('Access denied. Admin only.');
+      }
+
+      // Return sanitized user data
+      return {
+        id: userData.id,
+        username: userData.username,
+        email: userData.email,
+        role: userData.role.type,
+      };
+    } catch (error) {
+      console.error('Error in me endpoint:', error);
+      return ctx.internalServerError('An error occurred while fetching user data');
+    }
+  }
 }; 

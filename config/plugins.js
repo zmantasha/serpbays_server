@@ -1,14 +1,24 @@
 module.exports = ({ env }) => ({
   'users-permissions': {
     config: {
-      register: {
-        allowedFields: ['Advertiser', 'Publisher'],
-      },
       jwt: {
         expiresIn: '7d',
       },
-      jwtSecret: env('JWT_SECRET', 'your-secret-key-here'),
-    }
+      jwtSecret: env('JWT_SECRET', 'your-secret-key'),
+      ratelimit: {
+        interval: 60000,
+        max: 100,
+      },
+      layout: {
+        user: {
+          actions: {
+            create: false,
+            update: false,
+            delete: false,
+          },
+        },
+      },
+    },
   },
   'upload': {
     config: {

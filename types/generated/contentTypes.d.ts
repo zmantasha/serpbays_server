@@ -541,6 +541,45 @@ export interface ApiCommunicationCommunication
   };
 }
 
+export interface ApiContentContent extends Struct.CollectionTypeSchema {
+  collectionName: 'contents';
+  info: {
+    description: 'Content management for the application';
+    displayName: 'Content';
+    pluralName: 'contents';
+    singularName: 'content';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::content.content'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    slug: Schema.Attribute.UID<'title'>;
+    status: Schema.Attribute.Enumeration<['draft', 'published', 'archived']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'draft'>;
+    title: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        minLength: 3;
+      }>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiGlobalConfigGlobalConfig
   extends Struct.CollectionTypeSchema {
   collectionName: 'global_configs';
@@ -1764,6 +1803,7 @@ declare module '@strapi/strapi' {
       'api::author.author': ApiAuthorAuthor;
       'api::category.category': ApiCategoryCategory;
       'api::communication.communication': ApiCommunicationCommunication;
+      'api::content.content': ApiContentContent;
       'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;
       'api::invoice.invoice': ApiInvoiceInvoice;
