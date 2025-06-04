@@ -17,7 +17,6 @@ module.exports = [
         'http://localhost:1337',
         'http://localhost:3800',
         'http://staging.serpbays.com',
-        'https://staging.serpbays.com',
         'https://cms.serpbays.com'
       ],
       credentials: true,
