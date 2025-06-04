@@ -452,23 +452,40 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
 
-        const { type = 'all' } = ctx.query;
-        
-        // Build filters based on user type
+        // Get pagination parameters from query
+        const {
+          page = 1,
+          pageSize = 10,
+          type = 'all',
+          status,
+          search
+        } = ctx.query;
+
+        // Build filters based on user type and query parameters
         const filters = {};
         
+        // Add status filter if provided
+        if (status && status !== 'all') {
+          if (status === 'active') {
+            filters.orderStatus = { $in: ['pending', 'accepted'] };
+          } else if (status === 'completed') {
+            filters.orderStatus = { $in: ['delivered', 'approved', 'completed'] };
+          } else {
+            filters.orderStatus = status;
+          }
+        }
+        
+        // Add user type filters
         if (type === 'advertiser' || type === 'all') {
-          // Include orders where user is advertiser
           filters.$or = filters.$or || [];
           filters.$or.push({ advertiser: user.id });
         }
         
         if (type === 'publisher' || type === 'all') {
-          // Include orders where user is publisher
           filters.$or = filters.$or || [];
           filters.$or.push({ publisher: user.id });
           
-          // Also include orders for websites owned by this publisher (including rejected ones)
+          // Also include orders for websites owned by this publisher
           const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
             where: { publisher_email: user.email }
           });
@@ -480,21 +497,39 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             });
           }
         }
+
+        // Add search filter if provided
+        if (search) {
+          filters.$or = filters.$or || [];
+          filters.$or.push(
+            { 'website.url': { $containsi: search } },
+            { 'website.domain': { $containsi: search } },
+            { 'orderContent.title': { $containsi: search } }
+          );
+        }
         
-        console.log(`Fetching orders for user ID ${user.id}, type: ${type}`);
-        console.log('Filters:', JSON.stringify(filters));
-        
-        // Get all orders for this user
-        const orders = await strapi.entityService.findMany('api::order.order', {
-          filters,
-          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent'],
-          sort: { orderDate: 'desc' },
-        });
-        
-        console.log(`Found ${orders.length} orders for user ID ${user.id}`);
+        // Get paginated orders
+        const [orders, total] = await Promise.all([
+          strapi.entityService.findMany('api::order.order', {
+            filters,
+            populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent'],
+            sort: { orderDate: 'desc' },
+            start: (page - 1) * pageSize,
+            limit: pageSize
+          }),
+          strapi.entityService.count('api::order.order', { filters })
+        ]);
 
         return {
-          data: orders
+          data: orders,
+          meta: {
+            pagination: {
+              page: parseInt(page),
+              pageSize: parseInt(pageSize),
+              pageCount: Math.ceil(total / pageSize),
+              total
+            }
+          }
         };
       } catch (error) {
         console.error('Error fetching user orders:', error);
