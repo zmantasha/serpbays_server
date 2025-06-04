@@ -10,22 +10,13 @@ module.exports = {
     // For development, handle requests without authentication
     if (!user && process.env.NODE_ENV !== 'production') {
       try {
-        // Find or create a demo wallet
+        // Find a demo wallet
         let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
           where: { type: 'advertiser' }
         });
 
-        // If demo wallet doesn't exist, create one
         if (!wallet) {
-          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-            data: {
-              type: 'advertiser',
-              balance: 0.0,
-              escrowBalance: 0.0,
-              currency: 'USD',
-              publishedAt: new Date()
-            },
-          });
+          return ctx.notFound('Wallet not found');
         }
 
         return {
@@ -49,18 +40,8 @@ module.exports = {
         populate: ['user']
       });
 
-      // If wallet doesn't exist, create one
       if (!wallet) {
-        wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-          data: {
-            user: user.id,
-            type: 'advertiser',
-            balance: 0,
-            escrowBalance: 0,
-            currency: 'USD',
-            publishedAt: new Date()
-          },
-        });
+        return ctx.notFound('Wallet not found');
       }
 
       return {
@@ -101,28 +82,15 @@ module.exports = {
       let wallet;
       
       if (!user && process.env.NODE_ENV !== 'production') {
-        console.log('Creating transaction for development (no user)');
+        console.log('Checking for development wallet');
         
         // Find an existing wallet
         wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
           where: { type: 'advertiser' }
         });
         
-        // If no wallet exists, create one
         if (!wallet) {
-          console.log('Creating a new advertiser wallet');
-          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-            data: {
-              type: 'advertiser',
-              balance: 0.0,
-              escrowBalance: 0.0,
-              currency: 'USD',
-              publishedAt: new Date()
-            },
-          });
-          console.log('Created new wallet with ID:', wallet.id);
-        } else {
-          console.log('Found existing wallet with ID:', wallet.id);
+          return ctx.notFound('Wallet not found');
         }
       } else if (!user) {
         return ctx.unauthorized('You must be logged in');
@@ -133,14 +101,14 @@ module.exports = {
         });
         
         if (!wallet) {
-          return ctx.badRequest('Wallet not found');
+          return ctx.notFound('Wallet not found');
         }
       }
 
       // Double check that we have a valid wallet
       if (!wallet || !wallet.id) {
         console.error('Invalid wallet object:', wallet);
-        return ctx.badRequest('Could not find or create a valid wallet');
+        return ctx.notFound('Wallet not found');
       }
 
       console.log('Creating transaction with data:', {
@@ -233,21 +201,13 @@ module.exports = {
     let wallet;
     
     if (!user && process.env.NODE_ENV !== 'production') {
-      // Find or create a demo wallet
+      // Find a demo wallet
       wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { type: 'advertiser' }
       });
       
       if (!wallet) {
-        wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-          data: {
-            type: 'advertiser',
-            balance: 1000,
-            escrowBalance: 200,
-            currency: 'USD',
-            publishedAt: new Date()
-          },
-        });
+        return ctx.notFound('Wallet not found');
       }
     } else if (!user) {
       return ctx.unauthorized('You must be logged in');

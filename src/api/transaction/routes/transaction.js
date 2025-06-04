@@ -60,6 +60,14 @@ module.exports = {
     },
     // Payment endpoints
     {
+      method: 'GET',
+      path: '/api/transactions/status/:id',
+      handler: 'transaction.getTransactionStatus',
+      config: {
+        auth: false // Allow public access to check status
+      }
+    },
+    {
       method: 'POST',
       path: '/api/transactions/payment',
       handler: 'transaction.createPayment',

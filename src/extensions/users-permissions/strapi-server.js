@@ -10,6 +10,41 @@ module.exports = (plugin) => {
     return sanitizedUser;
   };
 
+  // Add lifecycle hooks
+  plugin.contentTypes.user.lifecycles = {
+    async afterCreate(event) {
+      const { result } = event;
+      
+      try {
+        // Only create wallet for advertisers
+        if (result.Advertiser) {
+          // Check if wallet already exists
+          const existingWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { users_permissions_user: result.id }
+          });
+
+          if (!existingWallet) {
+            // Create a new wallet with numeric balance values
+            await strapi.entityService.create('api::user-wallet.user-wallet', {
+              data: {
+                users_permissions_user: result.id,
+                balance: 0,
+                escrowBalance: 0,
+                currency: "USD",
+                status: "active",
+                type: "advertiser",
+                publishedAt: new Date()
+              }
+            });
+            console.log(`Created wallet for new advertiser user ${result.id}`);
+          }
+        }
+      } catch (error) {
+        console.error('Error creating wallet for new user:', error);
+      }
+    }
+  };
+
   // Extend the users controller
   plugin.controllers.user.updateMe = async (ctx) => {
     try {
