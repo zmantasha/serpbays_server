@@ -1,9 +1,9 @@
-POST http://localhost:1337/api/auth/local
+POST http://localhost:1337/api/admin/login
 Content-Type: application/json
 
 {
-  "identifier": "publisher@gmail.com",
-  "password": "publisher@123"
+  "identifier": "admin@gmail.com",
+  "password": "admin@123"
 }
 
 ###
@@ -117,8 +117,8 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6M
 
 
 ###
-GET http://localhost:1337/api/orders/143
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzM3MTQ4MCwiZXhwIjoxNzQ3OTc2MjgwfQ.OyNxF6LEFZ2LIny2g1PmrHS5F9Vung81Z9ldU_Eqqq4
+GET http://localhost:1337/api/admin/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjEsImlhdCI6MTc0ODkzMTE5MiwiZXhwIjoxNzQ5NTM1OTkyfQ.kR6enUqwFdRjNEgvH3hd32u0IgbZt1RL4iGbgwB09t0
 ###
 PUT http://localhost:1337/api/users/2
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MiwiaWF0IjoxNzQ4NTg3ODExLCJleHAiOjE3NDkxOTI2MTF9.BnX0Qr7RQy52I_a_Q8uV7VgLRB2Qn9FZM8eabs5OcGw
