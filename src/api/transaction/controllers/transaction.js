@@ -11,78 +11,117 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   // Create payment intent
   async createPayment(ctx) {
     try {
-      const { amount, currency, gateway } = ctx.request.body;
+      const { amount, currency = 'USD', gateway } = ctx.request.body;
       const userId = ctx.state?.user?.id;
+      let wallet;
 
-      // Get user's wallet
-      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { users_permissions_user: userId }
-      });
+      // Validate required fields
+      if (!amount || !gateway) {
+        return ctx.badRequest('Amount and gateway are required');
+      }
 
-      if (!wallet) {
+      // Parse amount to float and validate
+      const parsedAmount = parseFloat(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return ctx.badRequest('Invalid amount');
+      }
+
+      // For development mode without authentication
+      if (!userId && process.env.NODE_ENV !== 'production') {
+        // Find an existing wallet
+        wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { type: 'advertiser' }
+        });
+        
+        if (!wallet) {
+          return ctx.notFound('Wallet not found');
+        }
+      } else if (!userId) {
+        return ctx.unauthorized('You must be logged in');
+      } else {
+        // Find user's wallet
+        wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { users_permissions_user: userId }
+        });
+        
+        if (!wallet) {
+          return ctx.notFound('Wallet not found');
+        }
+      }
+
+      // Double check that we have a valid wallet
+      if (!wallet || !wallet.id) {
         return ctx.notFound('Wallet not found');
       }
 
       let paymentData;
-      switch (gateway.toLowerCase()) {
-        case 'stripe':
-          paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(amount, currency);
-          // Store userId and walletId in metadata for the webhook to use
-          if (paymentData && paymentData.id) {
-            await stripe.paymentIntents.update(paymentData.id, {
-              metadata: { 
-                walletId: wallet.id.toString(),
-                userId: userId.toString()
-              }
-            });
-          }
-          break;
-        case 'razorpay':
-          paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(amount, currency);
-          break;
-        case 'paypal':
-          paymentData = await strapi.service('api::transaction.payment').createPayPalOrder(amount, currency);
-          break;
-        default:
-          return ctx.badRequest('Invalid payment gateway');
-      }
+      try {
+        switch (gateway.toLowerCase()) {
+          case 'stripe':
+            paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(parsedAmount, currency);
+            // Store userId and walletId in metadata for the webhook to use
+            if (paymentData && paymentData.id) {
+              await stripe.paymentIntents.update(paymentData.id, {
+                metadata: { 
+                  walletId: wallet.id.toString(),
+                  userId: userId ? userId.toString() : 'demo'
+                }
+              });
+            }
+            break;
+          case 'razorpay':
+            paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(parsedAmount, currency);
+            break;
+          case 'paypal':
+            paymentData = await strapi.service('api::transaction.payment').createPayPalOrder(parsedAmount, currency);
+            break;
+          default:
+            return ctx.badRequest('Invalid payment gateway');
+        }
 
-      // For Stripe and PayPal, don't create a transaction yet - just return payment intent
-      // We'll let the client create the transaction when the user submits their card details
-      console.log("wallet", wallet.id)
-      if (gateway.toLowerCase() === 'stripe' || gateway.toLowerCase() === 'paypal') {
-        return { data: { 
-          walletId: wallet.id,
-          paymentData: paymentData 
-        }};
-      }
-      
-      // For other payment methods like Razorpay where the flow is different,
-      // create a pending transaction immediately
-      const transaction = await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          type: 'deposit',
-          amount: amount,
-          netAmount: amount,
-          currency: currency,
-          gateway: gateway,
-          gatewayTransactionId: paymentData.id,
-          transactionStatus: 'pending',
-          user_wallet: wallet.id,
-          metadata: {
-            paymentData: paymentData,
-            walletId: wallet.id,  // Store the wallet ID in metadata
-            userId: userId        // Store the user ID in metadata
+        if (!paymentData) {
+          throw new Error('Failed to create payment data');
+        }
+
+        // For Stripe and PayPal, don't create a transaction yet
+        if (gateway.toLowerCase() === 'stripe' || gateway.toLowerCase() === 'paypal') {
+          return { 
+            data: { 
+              walletId: wallet.id,
+              paymentData: paymentData 
+            }
+          };
+        }
+        
+        // For other payment methods, create a pending transaction
+        const transaction = await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            type: 'deposit',
+            amount: parsedAmount,
+            netAmount: parsedAmount,
+            currency: currency,
+            gateway: gateway,
+            gatewayTransactionId: paymentData.id,
+            transactionStatus: 'pending',
+            user_wallet: wallet.id,
+            metadata: {
+              paymentData: paymentData,
+              walletId: wallet.id,
+              userId: userId
+            },
+            publishedAt: new Date()
           },
-          publishedAt: new Date()
-        },
-        populate: ['user_wallet']
-      });
+          populate: ['user_wallet']
+        });
 
-      return { data: { transaction, paymentData } };
+        return { data: { transaction, paymentData } };
+      } catch (error) {
+        console.error("Payment gateway error:", error);
+        return ctx.badRequest(error.message || 'Failed to process payment request');
+      }
     } catch (error) {
       console.error("Payment creation error:", error);
-      return ctx.badRequest(error.message);
+      return ctx.badRequest(error.message || 'Failed to create payment');
     }
   },
 
@@ -379,6 +418,64 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     } catch (error) {
       console.error("Error creating pending transaction:", error);
       return ctx.badRequest(error.message);
+    }
+  },
+
+  // Get transaction status
+  async getTransactionStatus(ctx) {
+    try {
+      const { id } = ctx.params;
+      
+      // First try to find by gateway transaction ID (payment intent ID)
+      let transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: id },
+        populate: ['user_wallet', 'invoice']
+      });
+
+      if (!transaction) {
+        // If not found, try to find by internal transaction ID
+        transaction = await strapi.db.query('api::transaction.transaction').findOne({
+          where: { id },
+          populate: ['user_wallet', 'invoice']
+        });
+      }
+
+      if (!transaction) {
+        // If still not found, check Stripe directly
+        try {
+          const paymentIntent = await stripe.paymentIntents.retrieve(id);
+          return {
+            data: {
+              transactionStatus: paymentIntent.status === 'succeeded' ? 'success' : 
+                                paymentIntent.status === 'processing' ? 'pending' : 'failed',
+              description: `Payment ${paymentIntent.status}`,
+              stripeStatus: paymentIntent.status
+            }
+          };
+        } catch (stripeError) {
+          console.error('Error checking Stripe payment intent:', stripeError);
+          return ctx.notFound('Transaction not found');
+        }
+      }
+
+      return {
+        data: {
+          id: transaction.id,
+          type: transaction.type,
+          amount: transaction.amount,
+          currency: transaction.currency,
+          transactionStatus: transaction.transactionStatus,
+          description: transaction.description,
+          invoice: transaction.invoice ? {
+            id: transaction.invoice.id,
+            invoiceNumber: transaction.invoice.invoiceNumber,
+            pdfUrl: transaction.invoice.pdfUrl
+          } : null
+        }
+      };
+    } catch (error) {
+      console.error('Error getting transaction status:', error);
+      return ctx.badRequest('Failed to get transaction status');
     }
   }
 }));

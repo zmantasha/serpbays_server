@@ -44,9 +44,9 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       return {
         data: {
-          balance: wallet.balance,
-          escrowBalance: wallet.escrowBalance,
-          currency: wallet.currency
+          balance: wallet.balance || "0",
+          escrowBalance: wallet.escrowBalance || "0",
+          currency: wallet.currency || "USD"
         }
       };
     } catch (error) {

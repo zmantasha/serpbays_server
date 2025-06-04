@@ -6,8 +6,8 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
-// Helper function to ensure a publisher wallet exists
-async function ensurePublisherWallet(userId) {
+// Helper function to check if publisher wallet exists
+async function checkPublisherWallet(userId) {
   try {
     // Check if publisher wallet exists
     const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
@@ -17,25 +17,10 @@ async function ensurePublisherWallet(userId) {
       }
     });
     
-    // If wallet doesn't exist, create one
-    if (!publisherWallet) {
-      console.log(`Creating publisher wallet for user ${userId}`);
-      const newWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-        data: {
-          users_permissions_user: userId,
-          type: 'publisher',
-          balance: 0,
-          escrowBalance: 0,
-          currency: 'USD',
-          status: 'active',
-          publishedAt: new Date()
-        }
-      });
-      
-      console.log(`Created new publisher wallet with ID: ${newWallet.id}`);
-    }
+    return publisherWallet !== null;
   } catch (error) {
-    console.error('Error ensuring publisher wallet:', error);
+    console.error('Error checking publisher wallet:', error);
+    return false;
   }
 }
 
@@ -664,7 +649,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const updatedOrder = await strapi.service('api::order.order').acceptOrder(id, user);
 
           // Check if user has a publisher wallet, create if not exists
-          await ensurePublisherWallet(user.id);
+          await checkPublisherWallet(user.id);
 
         // Create notification for advertiser
         try {
@@ -871,7 +856,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
           
           // Ensure publisher wallet exists
-          await ensurePublisherWallet(user.id);
+          await checkPublisherWallet(user.id);
         }
 
         // Check for publisher mismatch (should only happen if publisherNeedsUpdate is false)
