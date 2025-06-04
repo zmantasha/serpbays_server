@@ -1,31 +1,7 @@
 module.exports = [
   'strapi::errors',
-  
-      {
-    name: 'strapi::cors',
-    config: {
-      enabled: true,
-      headers: [
-        'Content-Type',
-        'Authorization',
-        'X-Frame-Options',
-        'Accept',
-        'Origin'
-      ],
-      origin: [
-        'http://localhost:3000',
-        'http://localhost:1337',
-        'http://localhost:3800',
-        'http://staging.serpbays.com',
-        'https://cms.serpbays.com'
-      ],
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
-      keepHeaderOnError: true,
-      maxAge: 86400
-    },
-  
-
+  'strapi::cors',
+  {
     name: 'strapi::security',
     config: {
       contentSecurityPolicy: {
@@ -37,9 +13,14 @@ module.exports = [
           upgradeInsecureRequests: null,
         },
       },
-      xssProtection: {/* ... */},
-      frameguard: {/* ... */},
-      cors: {/* ... */},
+      xssProtection: {
+        enabled: true,
+        mode: 'block'
+      },
+      frameguard: {
+        enabled: true,
+        action: 'sameorigin'
+      },
       csrf: {
         enabled: true,
         ignoredMethods: ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
@@ -47,8 +28,6 @@ module.exports = [
       }
     },
   },
-
-
   'strapi::poweredBy',
   'strapi::logger',
   'strapi::query',
