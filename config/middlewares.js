@@ -32,9 +32,20 @@ module.exports = [
         'authorization',
         'X-Frame-Options',
         'Accept',
-        'Origin'
+        'Origin',
+        'Access-Control-Allow-Origin',
+        'Access-Control-Allow-Credentials',
+        'Access-Control-Allow-Headers',
+        'Access-Control-Allow-Methods'
       ],
-      origin: ['http://localhost:3000', 'http://localhost:1337', 'http://localhost:3800'],
+      origin: [
+        'http://localhost:3000',
+        'http://localhost:1337',
+        'http://localhost:3800',
+        'http://staging.serpbays.com',
+        'https://staging.serpbays.com',
+        'https://cms.serpbays.com'
+      ],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
       keepHeaderOnError: true,
