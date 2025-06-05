@@ -14,11 +14,10 @@ module.exports = [
         'Access-Control-Allow-Headers'
       ],
       origin: [
-        'http://localhost:3000',
+        'https://staging.serpbays.com',
+        'http://localhost:3001',
         'http://localhost:1337',
         'http://localhost:3800',
-        'http://staging.serpbays.com',
-        'https://staging.serpbays.com',
         'https://cms.serpbays.com'
       ],
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
