@@ -131,6 +131,12 @@
       "target": "api::communication.communication",
       "mappedBy": "order"
     },
+    "project": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::project.project",
+      "inversedBy": "orders"
+    },
     "revisionRequestedAt": {
       "type": "datetime",
       "description": "When the revision was requested"

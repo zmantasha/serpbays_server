@@ -1,0 +1,50 @@
+{
+  "kind": "collectionType",
+  "collectionName": "projects",
+  "info": {
+    "singularName": "project",
+    "pluralName": "projects",
+    "displayName": "Project",
+    "description": "Organize and manage advertiser orders in projects"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "ProjectName": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "startDate": {
+      "type": "datetime",
+      "required": true
+    },
+    "owner": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "projects"
+    },
+    "team": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "plugin::users-permissions.user"
+    },
+    "orders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "project"
+    },
+    "projectUrl":{
+      "type":"string",
+      "required":true
+     },
+    "files": {
+      "type": "media",
+      "multiple": true,
+      "allowedTypes": ["images", "files", "videos", "audios"]
+    }
+  }
+}

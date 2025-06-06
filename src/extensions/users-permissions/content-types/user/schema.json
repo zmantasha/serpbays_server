@@ -93,6 +93,12 @@
       "target": "api::order.order",
       "mappedBy": "publisher"
     },
+    "projects": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::project.project",
+      "mappedBy": "owner"
+    },
     "communications": {
       "type": "relation",
       "relation": "oneToMany",
