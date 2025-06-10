@@ -69,11 +69,44 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           url, 
           title, 
           instructions, 
-          projectName, 
+          projectName,
+          projectId, 
           outsourceLinks, 
           ...orderData 
         } = ctx.request.body.data || ctx.request.body;
-        console.log("orderdata",orderData)
+
+        // If projectId is provided, verify it exists and belongs to the user
+        if (projectId) {
+          const project = await strapi.db.query('api::project.project').findOne({
+            where: { 
+              id: projectId,
+              owner: user.id
+            }
+          });
+          
+          if (!project) {
+            return ctx.badRequest(`Project with ID ${projectId} not found or does not belong to you`);
+          }
+          
+          // Add project to orderData
+          orderData.project = projectId;
+        }
+        // If projectName is provided but no projectId, create a new project
+        else if (projectName) {
+          const newProject = await strapi.entityService.create('api::project.project', {
+            data: {
+              ProjectName: projectName,
+              startDate: new Date(),
+              owner: user.id,
+              projectUrl: orderData.website // Use the website URL as project URL
+            }
+          });
+          
+          // Add the new project to orderData
+          orderData.project = newProject.id;
+        }
+
+        console.log("orderdata",orderData);
         console.log('Creating order with data:1', orderData);
         
         // Check if this is an outsourced content order
