@@ -13,8 +13,7 @@
   "attributes": {
     "ProjectName": {
       "type": "string",
-      "required": true,
-      "unique": true
+      "required": true
     },
     "startDate": {
       "type": "datetime",

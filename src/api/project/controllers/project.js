@@ -18,11 +18,28 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
       // Get the request body data
       const { data } = ctx.request.body;
 
+      if (!data || !data.ProjectName || !data.projectUrl) {
+        return ctx.badRequest('Project name and URL are required');
+      }
+
+      // Check if project name already exists for the current user
+      const existingProject = await strapi.db.query('api::project.project').findOne({
+        where: { 
+          ProjectName: data.ProjectName,
+          owner: user.id
+        }
+      });
+
+      if (existingProject) {
+        return ctx.badRequest('You already have a project with this name. Please choose a different name.');
+      }
+
       // Add the current user as owner and required fields
       const projectData = {
         ...data,
         owner: user.id,
         startDate: data.startDate || new Date().toISOString(),
+        publishedAt: data.publishedAt || new Date().toISOString()
       };
 
       // Create the project
@@ -86,16 +103,38 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
         ]
       };
 
+      // Get pagination parameters from query
+      const { pagination } = ctx.query;
+      const page = pagination?.page ? parseInt(pagination.page) : 1;
+      const pageSize = pagination?.pageSize ? parseInt(pagination.pageSize) : 25;
+      const start = (page - 1) * pageSize;
+
+      // Get total count first
+      const totalCount = await strapi.db.query('api::project.project').count({
+        where: filters
+      });
+
+      // Get paginated projects
       const projects = await strapi.entityService.findMany('api::project.project', {
         filters,
         populate: ['owner', 'team', 'orders', 'files'],
-        sort: { createdAt: 'desc' }
+        sort: { createdAt: 'desc' },
+        start,
+        limit: pageSize
       });
+
+      // Calculate pagination metadata
+      const pageCount = Math.ceil(totalCount / pageSize);
 
       return {
         data: projects,
         meta: {
-          count: projects.length
+          pagination: {
+            page,
+            pageSize,
+            pageCount,
+            total: totalCount
+          }
         }
       };
     } catch (error) {

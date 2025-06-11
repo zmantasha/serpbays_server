@@ -2,8 +2,8 @@ POST http://localhost:1337/api/auth/local
 Content-Type: application/json
 
 {
-  "identifier": "publisher@gmail.com",
-  "password": "publisher@123"
+  "identifier": "advertiser19@gmail.com",
+  "password": "mantasha@123"
 }
 
 ###
@@ -112,13 +112,15 @@ Content-Type: application/json
   "website":"keymaker3.com"
 }
 ###
-GET http://localhost:1337/api/orders/my-orders
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzAyNzIyNCwiZXhwIjoxNzQ3NjMyMDI0fQ.s-gKcuZwEv_TMZks6JA65xk_6xynDVzA71CNU4tH_ng
+GET http://localhost:1337/api/api/projects/22
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjksImlhdCI6MTc0OTE5NjgyNiwiZXhwIjoxNzQ5ODAxNjI2fQ.9lU26GUfJWBzjm-0FnQfEOU8b65EHxmWb3CTd5l7Sm0
 
 
 ###
-GET http://localhost:1337/api/orders/143
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTEsImlhdCI6MTc0NzM3MTQ4MCwiZXhwIjoxNzQ3OTc2MjgwfQ.OyNxF6LEFZ2LIny2g1PmrHS5F9Vung81Z9ldU_Eqqq4
+GET http://localhost:1337/api/api/projects/my/all
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjksImlhdCI6MTc0OTUzNDA1NywiZXhwIjoxNzUwMTM4ODU3fQ.pm7c_VZAaFhE4OSVqEPsfkokztXuzR4p4wpMWPiLEbA
+
+
 ###
 PUT http://localhost:1337/api/users/2
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MiwiaWF0IjoxNzQ4NTg3ODExLCJleHAiOjE3NDkxOTI2MTF9.BnX0Qr7RQy52I_a_Q8uV7VgLRB2Qn9FZM8eabs5OcGw
