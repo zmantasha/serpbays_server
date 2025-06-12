@@ -887,15 +887,6 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
         },
         number
       >;
-    feeRate: Schema.Attribute.Decimal &
-      Schema.Attribute.SetMinMax<
-        {
-          max: 1;
-          min: 0;
-        },
-        number
-      > &
-      Schema.Attribute.DefaultTo<0.1>;
     isOutsourced: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::order.order'> &
@@ -923,14 +914,6 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'oneToOne',
       'api::outsourced-content.outsourced-content'
     >;
-    platformFee: Schema.Attribute.Decimal &
-      Schema.Attribute.Required &
-      Schema.Attribute.SetMinMax<
-        {
-          min: 0;
-        },
-        number
-      >;
     project: Schema.Attribute.Relation<'manyToOne', 'api::project.project'>;
     publishedAt: Schema.Attribute.DateTime;
     publisher: Schema.Attribute.Relation<
@@ -1194,6 +1177,129 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
       'oneToOne',
       'plugin::users-permissions.user'
     >;
+  };
+}
+
+export interface ApiWebsiteRequestWebsiteRequest
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'website_requests';
+  info: {
+    description: 'Requests for specific websites or website criteria from advertisers';
+    displayName: 'Website Request';
+    pluralName: 'website-requests';
+    singularName: 'website-request';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    additionalRequirements: Schema.Attribute.Text;
+    assignedTo: Schema.Attribute.String;
+    budgetRange: Schema.Attribute.Enumeration<
+      [
+        'budget50-100',
+        'budget100-250',
+        'budget250-500',
+        'budget500-1000',
+        'budget1000+',
+        'negotiable',
+      ]
+    >;
+    category: Schema.Attribute.String;
+    contactPreference: Schema.Attribute.Enumeration<
+      ['email', 'phone', 'chat']
+    > &
+      Schema.Attribute.DefaultTo<'email'>;
+    contentType: Schema.Attribute.Enumeration<
+      [
+        'guest-post',
+        'sponsored-content',
+        'product-review',
+        'link-insertion',
+        'other',
+      ]
+    >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    currentFilters: Schema.Attribute.JSON;
+    estimatedCost: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::website-request.website-request'
+    > &
+      Schema.Attribute.Private;
+    maxDA: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    maxDR: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    maxTraffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    minDA: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    minDR: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    minTraffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    proposalSent: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    proposalSentAt: Schema.Attribute.DateTime;
+    publishedAt: Schema.Attribute.DateTime;
+    requestType: Schema.Attribute.Enumeration<['specific', 'criteria']> &
+      Schema.Attribute.Required;
+    responseNotes: Schema.Attribute.Text;
+    specificDomains: Schema.Attribute.Text;
+    status: Schema.Attribute.Enumeration<
+      ['pending', 'reviewing', 'in-progress', 'completed', 'cancelled']
+    > &
+      Schema.Attribute.DefaultTo<'pending'>;
+    timeline: Schema.Attribute.Enumeration<
+      ['asap', 'within1week', 'within2weeks', 'within1month', 'flexible']
+    >;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    userEmail: Schema.Attribute.Email & Schema.Attribute.Required;
   };
 }
 
@@ -1826,6 +1932,7 @@ declare module '@strapi/strapi' {
       'api::project.project': ApiProjectProject;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
+      'api::website-request.website-request': ApiWebsiteRequestWebsiteRequest;
       'api::withdrawal-request.withdrawal-request': ApiWithdrawalRequestWithdrawalRequest;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;

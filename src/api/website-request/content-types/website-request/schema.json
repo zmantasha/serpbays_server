@@ -1,0 +1,126 @@
+{
+  "kind": "collectionType",
+  "collectionName": "website_requests",
+  "info": {
+    "singularName": "website-request",
+    "pluralName": "website-requests",
+    "displayName": "Website Request",
+    "description": "Requests for specific websites or website criteria from advertisers"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "requestType": {
+      "type": "enumeration",
+      "enum": ["specific", "criteria"],
+      "required": true,
+      "description": "Type of request - specific domains or criteria-based"
+    },
+    "specificDomains": {
+      "type": "text",
+      "description": "Comma-separated list of specific domains requested"
+    },
+    "category": {
+      "type": "string",
+      "description": "Requested website category"
+    },
+    "minDR": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "description": "Minimum Domain Rating requirement"
+    },
+    "maxDR": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "description": "Maximum Domain Rating requirement"
+    },
+    "minDA": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "description": "Minimum Domain Authority requirement"
+    },
+    "maxDA": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "description": "Maximum Domain Authority requirement"
+    },
+    "minTraffic": {
+      "type": "integer",
+      "min": 0,
+      "description": "Minimum monthly traffic requirement"
+    },
+    "maxTraffic": {
+      "type": "integer",
+      "min": 0,
+      "description": "Maximum monthly traffic requirement"
+    },
+    "budgetRange": {
+      "type": "enumeration",
+      "enum": ["budget50-100", "budget100-250", "budget250-500", "budget500-1000", "budget1000+", "negotiable"],
+      "description": "Budget range per placement"
+    },
+    "timeline": {
+      "type": "enumeration",
+      "enum": ["asap", "within1week", "within2weeks", "within1month", "flexible"],
+      "description": "Timeline for request fulfillment"
+    },
+    "contentType": {
+      "type": "enumeration",
+      "enum": ["guest-post", "sponsored-content", "product-review", "link-insertion", "other"],
+      "description": "Type of content to be placed"
+    },
+    "additionalRequirements": {
+      "type": "text",
+      "description": "Additional requirements and notes"
+    },
+    "contactPreference": {
+      "type": "enumeration",
+      "enum": ["email", "phone", "chat"],
+      "default": "email",
+      "description": "Preferred contact method"
+    },
+    "userEmail": {
+      "type": "email",
+      "required": true,
+      "description": "Email of the requesting user"
+    },
+    "currentFilters": {
+      "type": "json",
+      "description": "Current marketplace filters when request was made"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["pending", "reviewing", "in-progress", "completed", "cancelled"],
+      "default": "pending",
+      "description": "Status of the request"
+    },
+    "assignedTo": {
+      "type": "string",
+      "description": "Team member assigned to handle this request"
+    },
+    "responseNotes": {
+      "type": "text",
+      "description": "Internal notes for team response"
+    },
+    "estimatedCost": {
+      "type": "decimal",
+      "min": 0,
+      "description": "Estimated cost for fulfilling the request"
+    },
+    "proposalSent": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether a proposal has been sent to the user"
+    },
+    "proposalSentAt": {
+      "type": "datetime",
+      "description": "When the proposal was sent"
+    }
+  }
+} 
