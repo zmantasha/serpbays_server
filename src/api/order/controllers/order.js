@@ -561,7 +561,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Get all orders for this user
         const orders = await strapi.entityService.findMany('api::order.order', {
           filters,
-          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent'],
+          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent', 'project'],
           sort: { orderDate: 'desc' },
         });
         
