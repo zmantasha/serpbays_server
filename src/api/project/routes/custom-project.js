@@ -55,6 +55,24 @@ module.exports = {
         policies: ['api::project.is-authenticated'],
         middlewares: [],
       }
+    },
+    {
+      method: 'PUT',
+      path: '/api/projects/:id/archive',
+      handler: 'api::project.project.archiveProject',
+      config: {
+        policies: ['api::project.is-authenticated'],
+        middlewares: [],
+      }
+    },
+    {
+      method: 'PUT',
+      path: '/api/projects/:id/unarchive',
+      handler: 'api::project.project.unarchiveProject',
+      config: {
+        policies: ['api::project.is-authenticated'],
+        middlewares: [],
+      }
     }
   ]
 }; 

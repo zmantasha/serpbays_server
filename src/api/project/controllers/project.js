@@ -103,6 +103,9 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
         ]
       };
 
+      // Temporarily disable server-side archived filtering to debug
+      // We'll handle filtering on the frontend for now
+
       // Get pagination parameters from query
       const { pagination } = ctx.query;
       const page = pagination?.page ? parseInt(pagination.page) : 1;
@@ -279,6 +282,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
   async updateMetrics(ctx) {
     const { id } = ctx.params;
     const { metrics } = ctx.request.body;
+    console.log(id)
 
     try {
       const project = await strapi.entityService.findOne('api::project.project', id);
@@ -301,6 +305,169 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
       };
     } catch (error) {
       return ctx.badRequest('Failed to update metrics', { error: error.message });
+    }
+  },
+
+  // Update a project (with access control)
+  async update(ctx) {
+    const { user } = ctx.state;
+    const { id } = ctx.params;
+
+    if (!user) {
+      return ctx.unauthorized('Authentication required');
+    }
+
+    try {
+      // Check if project exists and user has access
+      const project = await strapi.entityService.findOne('api::project.project', id, {
+        populate: ['owner', 'team']
+      });
+
+      if (!project) {
+        return ctx.notFound('Project not found');
+      }
+
+      // Check if user is the owner (only owners can update projects)
+      if (project.owner.id !== user.id) {
+        return ctx.forbidden('Only project owner can update this project');
+      }
+
+      // Update the project
+      const updatedProject = await strapi.entityService.update('api::project.project', id, {
+        data: ctx.request.body.data || ctx.request.body,
+        populate: ['owner', 'team', 'orders', 'files']
+      });
+
+      const sanitizedEntity = await this.sanitizeOutput(updatedProject, ctx);
+      return this.transformResponse(sanitizedEntity);
+    } catch (error) {
+      console.error('Update project error:', error);
+      return ctx.badRequest('Failed to update project', { error: error.message });
+    }
+  },
+
+  // Delete a project (with access control)
+  async delete(ctx) {
+    const { user } = ctx.state;
+    const { id } = ctx.params;
+
+    if (!user) {
+      return ctx.unauthorized('Authentication required');
+    }
+
+    try {
+      // Check if project exists and user has access
+      const project = await strapi.entityService.findOne('api::project.project', id, {
+        populate: ['owner', 'team']
+      });
+
+      if (!project) {
+        return ctx.notFound('Project not found');
+      }
+
+      // Check if user is the owner (only owners can delete projects)
+      if (project.owner.id !== user.id) {
+        return ctx.forbidden('Only project owner can delete this project');
+      }
+
+      // Delete the project
+      const deletedProject = await strapi.entityService.delete('api::project.project', id);
+
+      const sanitizedEntity = await this.sanitizeOutput(deletedProject, ctx);
+      return this.transformResponse(sanitizedEntity);
+    } catch (error) {
+      console.error('Delete project error:', error);
+      return ctx.badRequest('Failed to delete project', { error: error.message });
+    }
+  },
+
+  // Archive a project
+  async archiveProject(ctx) {
+    const { user } = ctx.state;
+    const { id } = ctx.params;
+
+    if (!user) {
+      return ctx.unauthorized('Authentication required');
+    }
+
+    try {
+      // Check if project exists and user has access
+      const project = await strapi.entityService.findOne('api::project.project', id, {
+        populate: ['owner', 'team']
+      });
+
+      if (!project) {
+        return ctx.notFound('Project not found');
+      }
+
+      // Check if user has access to this project
+      const hasAccess = 
+        project.owner.id === user.id || 
+        project.team?.some(member => member.id === user.id);
+
+      if (!hasAccess) {
+        return ctx.forbidden('You do not have access to this project');
+      }
+
+      // Archive the project
+      const archivedProject = await strapi.entityService.update('api::project.project', id, {
+        data: {
+          archived: true,
+          status: 'archived'
+        },
+        populate: ['owner', 'team', 'orders', 'files']
+      });
+
+      const sanitizedEntity = await this.sanitizeOutput(archivedProject, ctx);
+      return this.transformResponse(sanitizedEntity);
+    } catch (error) {
+      console.error('Archive project error:', error);
+      return ctx.badRequest('Failed to archive project', { error: error.message });
+    }
+  },
+
+  // Unarchive a project
+  async unarchiveProject(ctx) {
+    const { user } = ctx.state;
+    const { id } = ctx.params;
+
+    if (!user) {
+      return ctx.unauthorized('Authentication required');
+    }
+
+    try {
+      // Check if project exists and user has access
+      const project = await strapi.entityService.findOne('api::project.project', id, {
+        populate: ['owner', 'team']
+      });
+
+      if (!project) {
+        return ctx.notFound('Project not found');
+      }
+
+      // Check if user has access to this project
+      const hasAccess = 
+        project.owner.id === user.id || 
+        project.team?.some(member => member.id === user.id);
+
+      if (!hasAccess) {
+        return ctx.forbidden('You do not have access to this project');
+      }
+
+      // Unarchive the project
+      const unarchivedProject = await strapi.entityService.update('api::project.project', id, {
+        data: {
+          archived: false,
+          status: 'active'
+        },
+        populate: ['owner', 'team', 'orders', 'files']
+      });
+
+      const sanitizedEntity = await this.sanitizeOutput(unarchivedProject, ctx);
+      return this.transformResponse(sanitizedEntity);
+    } catch (error) {
+      console.error('Unarchive project error:', error);
+      return ctx.badRequest('Failed to unarchive project', { error: error.message });
     }
   }
 }));

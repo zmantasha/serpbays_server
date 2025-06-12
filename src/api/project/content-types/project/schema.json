@@ -44,6 +44,15 @@
       "type": "media",
       "multiple": true,
       "allowedTypes": ["images", "files", "videos", "audios"]
+    },
+    "archived": {
+      "type": "boolean",
+      "default": false
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["active", "paused", "completed", "archived"],
+      "default": "active"
     }
   }
 }

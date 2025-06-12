@@ -1011,6 +1011,7 @@ export interface ApiProjectProject extends Struct.CollectionTypeSchema {
     draftAndPublish: true;
   };
   attributes: {
+    archived: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -1033,6 +1034,10 @@ export interface ApiProjectProject extends Struct.CollectionTypeSchema {
     projectUrl: Schema.Attribute.String & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
     startDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    status: Schema.Attribute.Enumeration<
+      ['active', 'paused', 'completed', 'archived']
+    > &
+      Schema.Attribute.DefaultTo<'active'>;
     team: Schema.Attribute.Relation<
       'manyToMany',
       'plugin::users-permissions.user'
