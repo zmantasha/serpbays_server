@@ -29,10 +29,8 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       }
 
       // Calculate fee
-      const feeRate = data.feeRate || 0.1; // Default 10% if not specified
       const totalAmount = parseFloat(data.totalAmount);
-      const platformFee = parseFloat((totalAmount * feeRate).toFixed(2));
-      const escrowHeld = totalAmount + platformFee;
+      const escrowHeld = totalAmount ;
 
       // Check if user has sufficient balance
       if (wallet.balance < escrowHeld) {
@@ -43,8 +41,6 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       const orderData = {
         ...data,
         advertiser: user.id,
-        feeRate,
-        platformFee,
         escrowHeld,
         orderDate: new Date(),
         orderStatus: 'pending',
@@ -203,7 +199,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.log("Processing payment:", {
         paymentAmount,
         escrowHeld: order.escrowHeld,
-        platformFee: order.platformFee,
+        // platformFee: order.platformFee,
         advertiserWalletId: advertiserWallet.id,
         publisherWalletId: publisherWallet.id
       });
@@ -225,7 +221,6 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           type: 'escrow_release',
           amount: paymentAmount,
           netAmount: paymentAmount,
-          fee: order.platformFee,
           transactionStatus: 'success', // Mark as success since funds are now available
           gateway: 'test',
           gatewayTransactionId: `completed_${order.id}_${Date.now()}`,
@@ -239,15 +234,16 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       const feeTransaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'fee',
-          amount: order.platformFee,
-          netAmount: order.platformFee,
+          amount: 0, // Since fee is 0
+          netAmount: 0, // Since fee is 0
           fee: 0,
           transactionStatus: 'success',
           gateway: 'test',
           gatewayTransactionId: `fee_${order.id}_${Date.now()}`,
           description: `Platform fee for order #${order.id}`,
           // This would go to the platform wallet in a production system
-          order: order.id
+          order: order.id,
+          publishedAt: new Date()
         }
       });
       
