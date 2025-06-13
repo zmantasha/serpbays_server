@@ -819,6 +819,34 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       console.error('Error getting available balance:', error);
       return ctx.badRequest('Failed to get available balance', { error: error.message });
     }
+  },
+  
+  // Export all my withdrawals
+  async exportAllMyWithdrawals(ctx) {
+    try {
+      // Check if user is authenticated
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+      
+      const userId = ctx.state.user.id;
+
+      // Get all withdrawal requests for the user without pagination
+      const withdrawalRequests = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: {
+          publisher: { id: userId }
+        },
+        sort: { createdAt: 'desc' },
+        populate: ['publisher']
+      });
+
+      return {
+        data: withdrawalRequests
+      };
+    } catch (error) {
+      console.error('Error exporting withdrawal requests:', error);
+      return ctx.internalServerError('Failed to export withdrawal requests', { error: error.message });
+    }
   }
 }));
 
