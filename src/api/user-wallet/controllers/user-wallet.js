@@ -125,5 +125,102 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     } catch (error) {
       return ctx.badRequest('Failed to create wallet');
     }
+  },
+
+  // Redeem promo code
+  async redeemPromo(ctx) {
+    try {
+      const userId = ctx.state?.user?.id;
+      if (!userId) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      const { promoCode } = ctx.request.body;
+      if (!promoCode) {
+        return ctx.badRequest('Promo code is required');
+      }
+
+      // Find user's wallet
+      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { users_permissions_user: userId }
+      });
+
+      if (!wallet) {
+        return ctx.notFound('Wallet not found');
+      }
+
+      // Find the promo code in the database
+      const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
+        where: { 
+          code: promoCode,
+          promoStatus: 'active',
+          expiryDate: {
+            $gt: new Date()
+          }
+        }
+      });
+
+      if (!promo) {
+        return ctx.badRequest('Invalid or expired promo code');
+      }
+
+      // Check if user has already used this promo code
+      const existingRedemption = await strapi.db.query('api::promo-redemption.promo-redemption').findOne({
+        where: { 
+          promoCode: promo.id,
+          user: userId
+        }
+      });
+
+      if (existingRedemption) {
+        return ctx.badRequest('You have already used this promo code');
+      }
+
+      // Update wallet balance
+      const currentBalance = parseFloat(wallet.balance) || 0;
+      const promoAmount = parseFloat(promo.amount) || 0;
+      const newBalance = currentBalance + promoAmount;
+
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: wallet.id },
+        data: {
+          balance: newBalance.toString()
+        }
+      });
+
+      // Create transaction record
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'promo',
+          amount: promoAmount,
+          netAmount: promoAmount,
+          transactionStatus: 'success',
+          gateway: 'promo',
+          description: `Promo code redemption: ${promoCode}`,
+          user_wallet: wallet.id,
+          publishedAt: new Date()
+        }
+      });
+
+      // Record promo code redemption
+      await strapi.entityService.create('api::promo-redemption.promo-redemption', {
+        data: {
+          promoCode: promo.id,
+          user: userId,
+          redeemedAt: new Date(),
+          publishedAt: new Date()
+        }
+      });
+
+      return {
+        data: {
+          amount: promoAmount,
+          message: `Successfully redeemed promo code for $${promoAmount}`
+        }
+      };
+    } catch (error) {
+      console.error('Promo redemption error:', error);
+      return ctx.badRequest('Failed to redeem promo code');
+    }
   }
 }));

@@ -1,0 +1,55 @@
+{
+  "kind": "collectionType",
+  "collectionName": "promo_codes",
+  "info": {
+    "singularName": "promo-code",
+    "pluralName": "promo-codes",
+    "displayName": "Promo Code"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "code": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "amount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "promoStatus": {
+      "type": "enumeration",
+      "enum": [
+        "active",
+        "inactive"
+      ],
+      "default": "active",
+      "required": true
+    },
+    "expiryDate": {
+      "type": "datetime",
+      "required": true
+    },
+    "maxRedemptions": {
+      "type": "integer",
+      "min": 1,
+      "default": 1
+    },
+    "currentRedemptions": {
+      "type": "integer",
+      "default": 0
+    },
+    "description": {
+      "type": "text"
+    },
+    "redemptions": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::promo-redemption.promo-redemption",
+      "mappedBy": "promoCode"
+    }
+  }
+} 
