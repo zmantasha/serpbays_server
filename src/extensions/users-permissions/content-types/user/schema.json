@@ -66,6 +66,12 @@
       "inversedBy": "users",
       "configurable": false
     },
+    "cart": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::cart.cart",
+      "mappedBy": "user"
+    },
     "Advertiser": {
       "type": "boolean"
     },
