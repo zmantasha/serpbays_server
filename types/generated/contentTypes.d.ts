@@ -1158,7 +1158,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       > &
       Schema.Attribute.DefaultTo<0>;
     gateway: Schema.Attribute.Enumeration<
-      ['stripe', 'paypal', 'razorpay', 'test']
+      ['stripe', 'paypal', 'razorpay', 'test', 'promo']
     > &
       Schema.Attribute.Required;
     gatewayTransactionId: Schema.Attribute.String & Schema.Attribute.Required;
@@ -1188,6 +1188,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
     type: Schema.Attribute.Enumeration<
       [
         'deposit',
+        'promo',
         'escrow_hold',
         'escrow_release',
         'payment',

@@ -189,26 +189,38 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       // Create transaction record
-      await strapi.entityService.create('api::transaction.transaction', {
+      const transaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'promo',
           amount: promoAmount,
           netAmount: promoAmount,
+          currency: wallet.currency || 'USD',
           transactionStatus: 'success',
           gateway: 'promo',
+          gatewayTransactionId: `PROMO_${promoCode}_${Date.now()}`,
           description: `Promo code redemption: ${promoCode}`,
           user_wallet: wallet.id,
-          publishedAt: new Date()
+          users_permissions_user: userId,
+          fee: 0,
+          metadata: {
+            promoCode: promoCode,
+            promoId: promo.id
+          },
+          publishedAt: new Date(),
+          createdBy: null,
+          updatedBy: null
         }
       });
 
       // Record promo code redemption
-      await strapi.entityService.create('api::promo-redemption.promo-redemption', {
+      const redemption = await strapi.entityService.create('api::promo-redemption.promo-redemption', {
         data: {
           promoCode: promo.id,
           user: userId,
           redeemedAt: new Date(),
-          publishedAt: new Date()
+          publishedAt: new Date(),
+          createdBy: null,
+          updatedBy: null
         }
       });
 
@@ -220,7 +232,44 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       };
     } catch (error) {
       console.error('Promo redemption error:', error);
-      return ctx.badRequest('Failed to redeem promo code');
+      // Return more specific error message
+      return ctx.badRequest(error.message || 'Failed to redeem promo code');
+    }
+  },
+
+  // Check promo code validity
+  async checkPromoCode(ctx) {
+    try {
+      const { promoCode } = ctx.request.body;
+      if (!promoCode) {
+        return ctx.badRequest('Promo code is required');
+      }
+
+      // Find the promo code in the database
+      const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
+        where: { 
+          code: promoCode,
+          promoStatus: 'active',
+          expiryDate: {
+            $gt: new Date()
+          }
+        }
+      });
+
+      if (!promo) {
+        return ctx.badRequest('Invalid or expired promo code');
+      }
+
+      return {
+        data: {
+          valid: true,
+          amount: promo.amount,
+          expiryDate: promo.expiryDate
+        }
+      };
+    } catch (error) {
+      console.error('Promo code check error:', error);
+      return ctx.badRequest(error.message || 'Failed to check promo code');
     }
   }
 }));

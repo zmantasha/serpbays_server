@@ -15,6 +15,7 @@
       "type": "enumeration",
       "enum": [
         "deposit",
+        "promo",
         "escrow_hold",
         "escrow_release",
         "payment",
@@ -42,7 +43,8 @@
         "stripe",
         "paypal",
         "razorpay",
-        "test"
+        "test",
+        "promo"
       ],
       "required": true
     },

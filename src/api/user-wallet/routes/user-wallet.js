@@ -66,6 +66,43 @@ module.exports = {
         policies: [],
         middlewares: []
       }
+    },
+    // Custom routes
+    {
+      method: 'GET',
+      path: '/api/wallet/balance',
+      handler: 'user-wallet.getBalance',
+      config: {
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'GET',
+      path: '/api/wallet/transactions',
+      handler: 'user-wallet.getTransactions',
+      config: {
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/redeem-promo',
+      handler: 'user-wallet.redeemPromo',
+      config: {
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/check-promo',
+      handler: 'user-wallet.checkPromoCode',
+      config: {
+        policies: [],
+        middlewares: []
+      }
     }
   ]
 };
