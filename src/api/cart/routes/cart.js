@@ -1,5 +1,3 @@
-'use strict';
-
 module.exports = {
   routes: [
     {
@@ -8,17 +6,26 @@ module.exports = {
       handler: 'cart.getUserCart',
       config: {
         policies: [],
-        middlewares: []
-      }
+        middlewares: [],
+      },
     },
     {
       method: 'PUT',
       path: '/api/cart',
-      handler: 'cart.updateUserCart',
+      handler: 'cart.updateCart',
       config: {
         policies: [],
-        middlewares: []
-      }
-    }
-  ]
+        middlewares: [],
+      },
+    },
+    {
+      method: 'DELETE',
+      path: '/api/cart',
+      handler: 'cart.clearCart',
+      config: {
+        policies: [],
+        middlewares: [],
+      },
+    },
+  ],
 }; 

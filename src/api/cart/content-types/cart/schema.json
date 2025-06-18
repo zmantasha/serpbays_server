@@ -11,7 +11,6 @@
     "draftAndPublish": false,
     "comment": ""
   },
-  "pluginOptions": {},
   "attributes": {
     "items": {
       "type": "json",
@@ -22,14 +21,12 @@
       "required": true
     },
     "sourceProjectId": {
-      "type": "integer",
-      "default": null
+      "type": "integer"
     },
     "user": {
       "type": "relation",
       "relation": "oneToOne",
-      "target": "plugin::users-permissions.user",
-      "mappedBy": "cart"
+      "target": "plugin::users-permissions.user"
     }
   }
 } 

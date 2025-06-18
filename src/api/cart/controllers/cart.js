@@ -1,67 +1,84 @@
-'use strict';
+const { createCoreController } = require('@strapi/strapi').factories;
 
-module.exports = {
+module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
   async getUserCart(ctx) {
-    const { user } = ctx.state;
-    
     try {
-      // Find the user's cart or create a new one
-      let cart = await strapi.db.query('api::cart.cart').findOne({
-        where: { user: user.id },
-        populate: ['user']
+      const userId = ctx.state.user.id;
+      
+      // Find user's cart
+      const cart = await strapi.db.query('api::cart.cart').findOne({
+        where: { user: userId },
+        populate: ['user'],
       });
+      
+      return cart || { items: [], formData: {}, sourceProjectId: null };
+    } catch (error) {
+      ctx.throw(500, error);
+    }
+  },
 
-      if (!cart) {
-        cart = await strapi.entityService.create('api::cart.cart', {
+  async updateCart(ctx) {
+    try {
+      const userId = ctx.state.user.id;
+      const { items, formData, sourceProjectId } = ctx.request.body;
+      
+      // Find existing cart
+      let cart = await strapi.db.query('api::cart.cart').findOne({
+        where: { user: userId },
+      });
+      
+      if (cart) {
+        // Update existing cart
+        cart = await strapi.db.query('api::cart.cart').update({
+          where: { id: cart.id },
           data: {
-            items: [],
-            formData: {},
-            sourceProjectId: null,
-            user: user.id
-          }
+            items,
+            formData,
+            sourceProjectId,
+          },
+        });
+      } else {
+        // Create new cart
+        cart = await strapi.db.query('api::cart.cart').create({
+          data: {
+            items,
+            formData,
+            sourceProjectId,
+            user: userId,
+          },
         });
       }
-
+      
       return cart;
     } catch (error) {
       ctx.throw(500, error);
     }
   },
 
-  async updateUserCart(ctx) {
-    const { user } = ctx.state;
-    const { items, formData, sourceProjectId } = ctx.request.body;
-    
+  async clearCart(ctx) {
     try {
-      // Find the user's cart
-      let cart = await strapi.db.query('api::cart.cart').findOne({
-        where: { user: user.id }
+      const userId = ctx.state.user.id;
+      
+      // Find user's cart
+      const cart = await strapi.db.query('api::cart.cart').findOne({
+        where: { user: userId },
       });
-
-      // If cart doesn't exist, create it
-      if (!cart) {
-        cart = await strapi.entityService.create('api::cart.cart', {
+      
+      if (cart) {
+        // Update cart with empty data
+        await strapi.db.query('api::cart.cart').update({
+          where: { id: cart.id },
           data: {
-            items,
-            formData,
-            sourceProjectId,
-            user: user.id
-          }
-        });
-      } else {
-        // Update existing cart
-        cart = await strapi.entityService.update('api::cart.cart', cart.id, {
-          data: {
-            items,
-            formData,
-            sourceProjectId
-          }
+            items: [],
+            formData: {},
+            sourceProjectId: null,
+          },
         });
       }
-
-      return cart;
+      
+      return { items: [], formData: {}, sourceProjectId: null };
     } catch (error) {
       ctx.throw(500, error);
     }
-  }
-}; 
+  },
+})); 
