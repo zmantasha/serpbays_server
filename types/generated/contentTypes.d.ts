@@ -709,7 +709,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     singularName: 'marketplace';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     adv_casino_pricing: Schema.Attribute.Integer;
@@ -764,6 +764,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     sample_post: Schema.Attribute.Text;
     semrush_authority_score: Schema.Attribute.Integer;
     semrush_traffic: Schema.Attribute.Integer;
+    shortlists: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::shortlist.shortlist'
+    >;
     similarweb_traffic: Schema.Attribute.Integer;
     spam_score: Schema.Attribute.Integer;
     tat: Schema.Attribute.Integer;
@@ -1155,6 +1159,52 @@ export interface ApiPromoRedemptionPromoRedemption
       'manyToOne',
       'plugin::users-permissions.user'
     >;
+  };
+}
+
+export interface ApiShortlistShortlist extends Struct.CollectionTypeSchema {
+  collectionName: 'shortlists';
+  info: {
+    description: 'User-shortlisted marketplace items for projects';
+    displayName: 'Shortlist';
+    pluralName: 'shortlists';
+    singularName: 'shortlist';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::shortlist.shortlist'
+    > &
+      Schema.Attribute.Private;
+    marketplace: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::marketplace.marketplace'
+    >;
+    notes: Schema.Attribute.Text;
+    owner: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    project: Schema.Attribute.Relation<'manyToOne', 'api::project.project'>;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
   };
 }
 
@@ -1947,7 +1997,6 @@ export interface PluginUsersPermissionsUser
     billingAddress: Schema.Attribute.String;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     businessName: Schema.Attribute.String;
-    cart: Schema.Attribute.Relation<'oneToOne', 'api::cart.cart'>;
     city: Schema.Attribute.String;
     communications: Schema.Attribute.Relation<
       'oneToMany',
@@ -2062,6 +2111,7 @@ declare module '@strapi/strapi' {
       'api::project.project': ApiProjectProject;
       'api::promo-code.promo-code': ApiPromoCodePromoCode;
       'api::promo-redemption.promo-redemption': ApiPromoRedemptionPromoRedemption;
+      'api::shortlist.shortlist': ApiShortlistShortlist;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
       'api::website-request.website-request': ApiWebsiteRequestWebsiteRequest;
