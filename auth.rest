@@ -2,9 +2,14 @@ POST http://localhost:1337/api/auth/local
 Content-Type: application/json
 
 {
-  "identifier": "advertiser19@gmail.com",
+  "identifier": "advertiser10@gmail.com",
   "password": "mantasha@123"
 }
+
+###
+DELETE  http://localhost:1337/api/shortlists/25
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTcsImlhdCI6MTc1MDQwOTc4OSwiZXhwIjoxNzUxMDE0NTg5fQ.x1NskHqr903H8QzECTV1N2-CuD5J80AnSBd2UOfplQQ
+
 
 ###
 POST http://localhost:1337/api/auth/local/register

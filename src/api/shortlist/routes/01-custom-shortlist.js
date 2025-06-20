@@ -8,8 +8,9 @@ module.exports = {
   routes: [
     {
       method: 'DELETE',
-      path: '/shortlists/project/:projectId/marketplace/:marketplaceId',
-      handler: 'shortlist.deleteByProjectAndMarketplace',
+      path: '/shortlists/:id',
+      handler: 'shortlist.delete',
     },
   ],
 }; 
+ 

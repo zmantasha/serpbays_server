@@ -80,28 +80,32 @@ module.exports = createCoreController('api::shortlist.shortlist', ({ strapi }) =
     return this.transformResponse(sanitizedEntries);
   },
 
-  async deleteByProjectAndMarketplace(ctx) {
+  async delete(ctx) {
     const { user } = ctx.state;
-    const { projectId, marketplaceId } = ctx.params;
+    const { id } = ctx.params;
+    console.log("user",user)
+    console.log("id",id)
 
     if (!user) {
       return ctx.unauthorized('You must be logged in.');
     }
 
+    // Find the shortlist item and verify ownership
     const entity = await strapi.db.query('api::shortlist.shortlist').findOne({
       where: {
-        project: projectId,
-        marketplace: marketplaceId,
+        id: id,
         owner: user.id,
       },
     });
 
     if (!entity) {
-      return ctx.notFound("Shortlisted item not found.");
+      return ctx.notFound('Shortlist item not found or you do not have permission to delete it.');
     }
 
-    await strapi.service('api::shortlist.shortlist').delete(entity.id);
+    // Delete the item
+    await strapi.entityService.delete('api::shortlist.shortlist',entity.id);
 
     return { message: 'Item removed from shortlist successfully.' };
   }
 })); 
+ 
