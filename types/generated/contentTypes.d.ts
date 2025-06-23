@@ -1162,6 +1162,40 @@ export interface ApiPromoRedemptionPromoRedemption
   };
 }
 
+export interface ApiSavedFilterSavedFilter extends Struct.CollectionTypeSchema {
+  collectionName: 'saved_filters';
+  info: {
+    description: "Store user's saved marketplace filters";
+    displayName: 'Saved Filter';
+    pluralName: 'saved-filters';
+    singularName: 'saved-filter';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    filterConfig: Schema.Attribute.JSON & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::saved-filter.saved-filter'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    users_permissions_user: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+  };
+}
+
 export interface ApiShortlistShortlist extends Struct.CollectionTypeSchema {
   collectionName: 'shortlists';
   info: {
@@ -2058,6 +2092,10 @@ export interface PluginUsersPermissionsUser
       'manyToOne',
       'plugin::users-permissions.role'
     >;
+    saved_filters: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::saved-filter.saved-filter'
+    >;
     transactions: Schema.Attribute.Relation<
       'oneToMany',
       'api::transaction.transaction'
@@ -2111,6 +2149,7 @@ declare module '@strapi/strapi' {
       'api::project.project': ApiProjectProject;
       'api::promo-code.promo-code': ApiPromoCodePromoCode;
       'api::promo-redemption.promo-redemption': ApiPromoRedemptionPromoRedemption;
+      'api::saved-filter.saved-filter': ApiSavedFilterSavedFilter;
       'api::shortlist.shortlist': ApiShortlistShortlist;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;

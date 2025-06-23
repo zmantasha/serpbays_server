@@ -1,0 +1,37 @@
+{
+  "kind": "collectionType",
+  "collectionName": "saved_filters",
+  "info": {
+    "singularName": "saved-filter",
+    "pluralName": "saved-filters",
+    "displayName": "Saved Filter",
+    "description": "Store user's saved marketplace filters"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "createdAt": {
+      "type": "datetime"
+    },
+    "updatedAt": {
+      "type": "datetime"
+    },
+    "name": {
+      "type": "string",
+      "required": true,
+      "unique": false
+    },
+    "filterConfig": {
+      "type": "json",
+      "required": true
+    },
+    "users_permissions_user": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "saved_filters"
+    }
+  }
+}
