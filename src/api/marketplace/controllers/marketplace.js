@@ -84,6 +84,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Get authenticated user from context
     const user = ctx.state.user;
     console.log(user)
+    
     // Advertiser (user.Advertiser === true) can see all listings
     // Publisher (user.Advertiser === false) only sees their listings
     if (user && user.Advertiser === false) {
@@ -91,6 +92,35 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       if (!ctx.query.filters) ctx.query.filters = {};
       ctx.query.filters.publisher_email = user.email;
     }
+    
+    // Handle sorting - ensure proper field mapping and default sort
+    if (ctx.query.sort) {
+      // Map frontend sort fields to backend database fields if needed
+      const sortMapping = {
+        'url': 'url',
+        'category': 'category',
+        'ahrefs_traffic': 'ahrefs_traffic',
+        'moz_da': 'moz_da',
+        'ahrefs_dr': 'ahrefs_dr',
+        'price': 'price',
+        'createdAt': 'createdAt',
+        'updatedAt': 'updatedAt'
+      };
+      
+      // Parse sort parameter (e.g., "price:desc" or "url:asc")
+      const [field, direction] = ctx.query.sort.split(':');
+      const mappedField = sortMapping[field] || field;
+      
+      // Validate direction
+      const sortDirection = direction === 'asc' ? 'asc' : 'desc';
+      
+      // Set the properly formatted sort
+      ctx.query.sort = `${mappedField}:${sortDirection}`;
+    } else {
+      // Default sort if none provided
+      ctx.query.sort = 'updatedAt:desc';
+    }
+    
     // Call the default core action
     return await super.find(ctx);
   },
