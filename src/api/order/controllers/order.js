@@ -517,7 +517,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       }
     },
 
-    // Get current user's orders
+    // Get current user's orders with pagination and search
     async getMyOrders(ctx) {
       try {
         const user = ctx.state.user;
@@ -526,49 +526,166 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
 
-        const { type = 'all' } = ctx.query;
+        // Extract query parameters
+        const { 
+          type = 'all',
+          page = 1,
+          pageSize = 10,
+          search = '',
+          status = '',
+          sortBy = 'orderDate',
+          sortOrder = 'desc'
+        } = ctx.query;
+
+        // Convert page and pageSize to numbers
+        const currentPage = Math.max(1, parseInt(page));
+        const limit = Math.min(50, Math.max(1, parseInt(pageSize))); // Max 50 per page
+        const start = (currentPage - 1) * limit;
         
-        // Build filters based on user type
-        const filters = {};
+        // Build base filters for user access
+        const baseFilters = {};
         
         if (type === 'advertiser' || type === 'all') {
           // Include orders where user is advertiser
-          filters.$or = filters.$or || [];
-          filters.$or.push({ advertiser: user.id });
+          baseFilters.$or = baseFilters.$or || [];
+          baseFilters.$or.push({ advertiser: user.id });
         }
         
         if (type === 'publisher' || type === 'all') {
           // Include orders where user is publisher
-          filters.$or = filters.$or || [];
-          filters.$or.push({ publisher: user.id });
+          baseFilters.$or = baseFilters.$or || [];
+          baseFilters.$or.push({ publisher: user.id });
           
-          // Also include orders for websites owned by this publisher (including rejected ones)
+          // Also include orders for websites owned by this publisher
           const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
             where: { publisher_email: user.email }
           });
           
           if (publisherWebsites && publisherWebsites.length > 0) {
             const websiteIds = publisherWebsites.map(website => website.id);
-            filters.$or.push({ 
+            baseFilters.$or.push({ 
               website: { id: { $in: websiteIds } }
             });
           }
         }
+
+        // Add search filters
+        const searchFilters = {};
+        if (search && search.trim()) {
+          const searchTerm = search.trim();
+          searchFilters.$or = [];
+          
+          // Search by order ID (exact match if it's a number)
+          if (!isNaN(searchTerm)) {
+            searchFilters.$or.push({ id: parseInt(searchTerm) });
+          }
+          
+          // Search by description
+          searchFilters.$or.push({
+            description: { $containsi: searchTerm }
+          });
+          
+          // Search by website URL
+          searchFilters.$or.push({
+            website: {
+              url: { $containsi: searchTerm }
+            }
+          });
+          
+          // Search by project name
+          searchFilters.$or.push({
+            project: {
+              ProjectName: { $containsi: searchTerm }
+            }
+          });
+          
+          // Search by order content title
+          searchFilters.$or.push({
+            orderContent: {
+              title: { $containsi: searchTerm }
+            }
+          });
+        }
+
+        // Add status filter
+        const statusFilter = {};
+        if (status && status.trim()) {
+          // Handle multiple statuses (comma-separated)
+          const statuses = status.split(',').map(s => s.trim()).filter(s => s);
+          if (statuses.length === 1) {
+            statusFilter.orderStatus = statuses[0];
+          } else if (statuses.length > 1) {
+            statusFilter.orderStatus = { $in: statuses };
+          }
+        }
+
+        // Combine all filters
+        const combinedFilters = {
+          $and: [
+            baseFilters,
+            ...(Object.keys(searchFilters).length ? [searchFilters] : []),
+            ...(Object.keys(statusFilter).length ? [statusFilter] : [])
+          ]
+        };
+
+        // Build sort object
+        const sortOptions = {};
+        const validSortFields = ['orderDate', 'id', 'orderStatus', 'totalAmount', 'deliveredDate', 'acceptedDate'];
+        const validSortOrders = ['asc', 'desc'];
         
-        console.log(`Fetching orders for user ID ${user.id}, type: ${type}`);
-        console.log('Filters:', JSON.stringify(filters));
+        if (validSortFields.includes(sortBy) && validSortOrders.includes(sortOrder.toLowerCase())) {
+          sortOptions[sortBy] = sortOrder.toLowerCase();
+        } else {
+          // Default sort
+          sortOptions.orderDate = 'desc';
+        }
+
+        console.log(`Fetching orders for user ID ${user.id}, page: ${currentPage}, limit: ${limit}`);
+        console.log('Combined Filters:', JSON.stringify(combinedFilters, null, 2));
+        console.log('Sort Options:', sortOptions);
         
-        // Get all orders for this user
+        // Get total count for pagination
+        const totalCount = await strapi.entityService.count('api::order.order', {
+          filters: combinedFilters
+        });
+
+        // Get paginated orders
         const orders = await strapi.entityService.findMany('api::order.order', {
-          filters,
+          filters: combinedFilters,
           populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent', 'project'],
-          sort: { orderDate: 'desc' },
+          sort: sortOptions,
+          start,
+          limit
         });
         
-        console.log(`Found ${orders.length} orders for user ID ${user.id}`);
+        // Calculate pagination info
+        const totalPages = Math.ceil(totalCount / limit);
+        const hasNextPage = currentPage < totalPages;
+        const hasPrevPage = currentPage > 1;
+
+        console.log(`Found ${orders.length} orders out of ${totalCount} total for user ID ${user.id}`);
 
         return {
-          data: orders
+          data: orders,
+          meta: {
+            pagination: {
+              page: currentPage,
+              pageSize: limit,
+              pageCount: totalPages,
+              total: totalCount,
+              hasNextPage,
+              hasPrevPage
+            },
+            search: {
+              query: search,
+              status: status,
+              type: type
+            },
+            sort: {
+              field: sortBy,
+              order: sortOrder
+            }
+          }
         };
       } catch (error) {
         console.error('Error fetching user orders:', error);
