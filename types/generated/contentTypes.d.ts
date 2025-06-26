@@ -2023,7 +2023,7 @@ export interface PluginUsersPermissionsUser
     timestamps: true;
   };
   attributes: {
-    Advertiser: Schema.Attribute.Boolean;
+    Advertiser: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     advertiserOrders: Schema.Attribute.Relation<
       'oneToMany',
       'api::order.order'
@@ -2085,6 +2085,7 @@ export interface PluginUsersPermissionsUser
     projects: Schema.Attribute.Relation<'oneToMany', 'api::project.project'>;
     provider: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
+    Publisher: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
     publisherOrders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
     registrationNumber: Schema.Attribute.String;
     resetPasswordToken: Schema.Attribute.String & Schema.Attribute.Private;

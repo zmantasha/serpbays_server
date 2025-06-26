@@ -67,7 +67,12 @@
       "configurable": false
     },
     "Advertiser": {
-      "type": "boolean"
+      "type": "boolean",
+      "default": false
+    },
+    "Publisher": {
+      "type": "boolean",
+      "default": true
     },
     "withdrawalRequests": {
       "type": "relation",
