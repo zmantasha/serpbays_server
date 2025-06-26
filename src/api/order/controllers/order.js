@@ -581,9 +581,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
           
           // Search by description
-          searchFilters.$or.push({
-            description: { $containsi: searchTerm }
-          });
+          // searchFilters.$or.push({
+          //   description: { $containsi: searchTerm }
+          // });
           
           // Search by website URL
           searchFilters.$or.push({
@@ -600,11 +600,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           });
           
           // Search by order content title
-          searchFilters.$or.push({
-            orderContent: {
-              title: { $containsi: searchTerm }
-            }
-          });
+        //   searchFilters.$or.push({
+        //     orderContent: {
+        //       title: { $containsi: searchTerm }
+        //     }
+        //   });
         }
 
         // Add status filter
