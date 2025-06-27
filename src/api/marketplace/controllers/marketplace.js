@@ -87,11 +87,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     
     // Advertiser (user.Advertiser === true) can see all listings
     // Publisher (user.Advertiser === false) only sees their listings
-    if (user && user.Advertiser === false) {
-      if (!ctx.query) ctx.query = {};
-      if (!ctx.query.filters) ctx.query.filters = {};
-      ctx.query.filters.publisher_email = user.email;
-    }
+    // if (user && user.Advertiser === false && user.Publisher===true) {
+    //   if (!ctx.query) ctx.query = {};
+    //   if (!ctx.query.filters) ctx.query.filters = {};
+    //   ctx.query.filters.publisher_email = user.email;
+    // }
+    
     
     // Handle sorting - ensure proper field mapping and default sort
     if (ctx.query.sort) {
