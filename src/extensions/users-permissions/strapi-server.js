@@ -1,6 +1,38 @@
 'use strict';
 
 module.exports = (plugin) => {
+  // Password validation function
+  const validatePassword = (password) => {
+    const errors = [];
+    
+    if (!password) {
+      errors.push('Password is required');
+      return errors;
+    }
+    
+    if (password.length < 8) {
+      errors.push('Password must be at least 8 characters long');
+    }
+    
+    if (!/[a-z]/.test(password)) {
+      errors.push('Password must contain at least one lowercase letter');
+    }
+    
+    if (!/[A-Z]/.test(password)) {
+      errors.push('Password must contain at least one uppercase letter');
+    }
+    
+    if (!/\d/.test(password)) {
+      errors.push('Password must contain at least one number');
+    }
+    
+    if (!/[^a-zA-Z0-9]/.test(password)) {
+      errors.push('Password must contain at least one special character');
+    }
+    
+    return errors;
+  };
+
   // Get the original controller
   const sanitizeOutput = (user) => {
     const {
@@ -8,6 +40,73 @@ module.exports = (plugin) => {
       ...sanitizedUser
     } = user;
     return sanitizedUser;
+  };
+
+  // Override the register controller to add password validation
+  plugin.controllers.auth.register = async (ctx) => {
+    const { email, username, password, ...rest } = ctx.request.body;
+
+    // Validate password strength
+    const passwordErrors = validatePassword(password);
+    if (passwordErrors.length > 0) {
+      return ctx.badRequest('Password validation failed', {
+        details: passwordErrors
+      });
+    }
+
+    // Continue with original registration logic
+    try {
+      const pluginStore = strapi.store({ type: 'plugin', name: 'users-permissions' });
+      const settings = await pluginStore.get({ key: 'advanced' });
+
+      if (!settings.allow_register) {
+        throw new Error('Register action is currently disabled.');
+      }
+
+      const params = {
+        username,
+        email: email.toLowerCase(),
+        password,
+        provider: 'local',
+        confirmed: !settings.email_confirmation,
+        ...rest,
+      };
+
+      await strapi.plugin('users-permissions').service('user').validateRegisterBody(params);
+
+      const user = await strapi.plugin('users-permissions').service('user').add(params);
+
+      const jwt = strapi.plugin('users-permissions').service('jwt').issue({ id: user.id });
+
+      return ctx.send({
+        jwt,
+        user: sanitizeOutput(user),
+      });
+
+    } catch (error) {
+      if (error.message === 'Register action is currently disabled.') {
+        return ctx.badRequest(error.message);
+      }
+      
+      // Handle duplicate email/username errors
+      if (error.details && error.details.errors && error.details.errors.length > 0) {
+        const duplicateError = error.details.errors.find(err => 
+          err.path && (err.path.includes('email') || err.path.includes('username'))
+        );
+        
+        if (duplicateError) {
+          if (duplicateError.path.includes('email')) {
+            return ctx.badRequest('This email is already registered. Please use a different email or try logging in.');
+          } else if (duplicateError.path.includes('username')) {
+            return ctx.badRequest('This username is already taken. Please choose a different username.');
+          }
+        }
+      }
+      
+      // Generic error handling
+      console.error('Registration error:', error);
+      return ctx.badRequest('Registration failed. Please try again.');
+    }
   };
 
   // Helper function to ensure wallet exists for advertiser role

@@ -2078,7 +2078,7 @@ export interface PluginUsersPermissionsUser
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{
-        minLength: 6;
+        minLength: 8;
       }>;
     phoneNumber: Schema.Attribute.String;
     pincode: Schema.Attribute.String;
