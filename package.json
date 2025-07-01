@@ -14,7 +14,9 @@
     "start": "strapi start",
     "strapi": "strapi",
     "upgrade": "npx @strapi/upgrade latest",
-    "upgrade:dry": "npx @strapi/upgrade latest --dry"
+    "upgrade:dry": "npx @strapi/upgrade latest --dry",
+    "email:setup": "node ./scripts/quick-enable-email.js",
+    "email:test": "node ./scripts/test-email.js"
   },
   "dependencies": {
     "@paypal/checkout-server-sdk": "^1.0.3",
@@ -22,6 +24,7 @@
     "@strapi/icons": "^1.16.0",
     "@strapi/plugin-cloud": "5.12.4",
     "@strapi/plugin-users-permissions": "5.12.4",
+    "@strapi/provider-email-nodemailer": "^5.16.1",
     "@strapi/strapi": "5.12.4",
     "better-sqlite3": "^11.9.1",
     "csv-parse": "^5.6.0",

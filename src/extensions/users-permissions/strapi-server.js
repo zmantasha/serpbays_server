@@ -68,7 +68,7 @@ module.exports = (plugin) => {
         email: email.toLowerCase(),
         password,
         provider: 'local',
-        confirmed: !settings.email_confirmation,
+        confirmed: !settings.email_confirmation, // false if email confirmation is required
         ...rest,
       };
 
@@ -76,6 +76,23 @@ module.exports = (plugin) => {
 
       const user = await strapi.plugin('users-permissions').service('user').add(params);
 
+      // If email confirmation is enabled, send confirmation email and don't return JWT
+      if (settings.email_confirmation) {
+        try {
+          await strapi.plugin('users-permissions').service('auth').sendConfirmationEmail(user);
+          
+          return ctx.send({
+            message: 'Please check your email to confirm your account',
+            user: sanitizeOutput(user),
+            requiresEmailConfirmation: true
+          });
+        } catch (emailError) {
+          console.error('Failed to send confirmation email:', emailError);
+          return ctx.badRequest('Account created but failed to send confirmation email. Please contact support.');
+        }
+      }
+
+      // If email confirmation is disabled, proceed with normal login
       const jwt = strapi.plugin('users-permissions').service('jwt').issue({ id: user.id });
 
       return ctx.send({
@@ -240,6 +257,248 @@ module.exports = (plugin) => {
       console.error('Error switching user role:', error);
       return ctx.badRequest('Error switching user role', { error: error.message });
     }
+  };
+
+  // Override the forgot password controller
+  plugin.controllers.auth.forgotPassword = async (ctx) => {
+    const { email } = ctx.request.body;
+
+    if (!email) {
+      return ctx.badRequest('Email is required');
+    }
+
+    const pluginStore = strapi.store({ type: 'plugin', name: 'users-permissions' });
+    
+    try {
+      const emailSettings = await pluginStore.get({ key: 'email' });
+      
+      // Find user by email
+      const user = await strapi.query('plugin::users-permissions.user').findOne({
+        where: { email: email.toLowerCase() }
+      });
+
+      if (!user) {
+        // For security, don't reveal if email exists
+        return ctx.send({ ok: true });
+      }
+
+      // Generate reset token
+      const resetPasswordToken = strapi.plugin('users-permissions').service('jwt').issue({
+        id: user.id,
+      });
+
+      // Update user with reset token
+      await strapi.query('plugin::users-permissions.user').update({
+        where: { id: user.id },
+        data: {
+          resetPasswordToken,
+        }
+      });
+
+      // Send reset email
+      const resetUrl = `${process.env.CLIENT_URL || 'http://localhost:3000'}/reset-password?code=${resetPasswordToken}`;
+      
+      // Default email template if not configured
+      const defaultEmailTemplate = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; padding: 20px;">
+          <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="color: #3b82f6; margin: 0;">SerpBays</h1>
+              <p style="color: #6b7280; margin: 10px 0 0 0;">Reset Your Password</p>
+            </div>
+            
+            <h2 style="color: #374151; margin-bottom: 20px;">Hello ${user.username || user.email}!</h2>
+            
+            <p style="color: #6b7280; line-height: 1.6; margin-bottom: 25px;">
+              We received a request to reset your password for your SerpBays account. 
+              Click the button below to create a new password:
+            </p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${resetUrl}" 
+                 style="background: #3b82f6; color: white; padding: 12px 30px; 
+                        text-decoration: none; border-radius: 6px; font-weight: bold;
+                        display: inline-block;">
+                Reset My Password
+              </a>
+            </div>
+            
+            <p style="color: #6b7280; line-height: 1.6; margin-bottom: 20px;">
+              This link will expire in 1 hour for security reasons.
+            </p>
+            
+            <p style="color: #6b7280; line-height: 1.6; margin-bottom: 20px;">
+              If you didn't request this password reset, you can safely ignore this email.
+              Your password will remain unchanged.
+            </p>
+            
+            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
+            
+            <p style="color: #9ca3af; font-size: 14px; text-align: center;">
+              If the button doesn't work, copy and paste this link into your browser:<br>
+              <a href="${resetUrl}" style="color: #3b82f6;">${resetUrl}</a>
+            </p>
+          </div>
+        </div>
+      `;
+      
+      try {
+        await strapi.plugin('email').service('email').send({
+          to: user.email,
+          from: emailSettings?.reset_password?.from || process.env.EMAIL_FROM || 'noreply@serpbays.com',
+          replyTo: emailSettings?.reset_password?.response_email || process.env.EMAIL_REPLY_TO || 'support@serpbays.com',
+          subject: emailSettings?.reset_password?.object || 'Reset Your SerpBays Password',
+          html: emailSettings?.reset_password?.message 
+            ? emailSettings.reset_password.message
+                .replace(/USER/g, user.username || user.email)
+                .replace(/TOKEN/g, resetPasswordToken)
+                .replace(/URL/g, resetUrl)
+            : defaultEmailTemplate
+        });
+      } catch (emailError) {
+        console.error('Email sending failed:', emailError);
+        // For development, we'll log the reset URL
+        console.log(`Password reset URL for ${user.email}: ${resetUrl}`);
+      }
+
+      return ctx.send({ ok: true });
+
+    } catch (error) {
+      console.error('Forgot password error:', error);
+      return ctx.badRequest('Failed to send reset email');
+    }
+  };
+
+  // Override the reset password controller
+  plugin.controllers.auth.resetPassword = async (ctx) => {
+    const { code, password, passwordConfirmation } = ctx.request.body;
+
+    if (!code || !password || !passwordConfirmation) {
+      return ctx.badRequest('Code, password, and password confirmation are required');
+    }
+
+    if (password !== passwordConfirmation) {
+      return ctx.badRequest('Passwords do not match');
+    }
+
+    // Validate password strength
+    const passwordErrors = validatePassword(password);
+    if (passwordErrors.length > 0) {
+      return ctx.badRequest('Password validation failed', {
+        details: passwordErrors
+      });
+    }
+
+    try {
+      // Verify the reset token
+      const decoded = strapi.plugin('users-permissions').service('jwt').verify(code);
+      
+      // Find user by ID from token
+      const user = await strapi.query('plugin::users-permissions.user').findOne({
+        where: { 
+          id: decoded.id,
+          resetPasswordToken: code
+        }
+      });
+
+      if (!user) {
+        return ctx.badRequest('Invalid or expired reset token');
+      }
+
+      // Hash the new password
+      const hashedPassword = await strapi.plugin('users-permissions').service('user').hashPassword(password);
+
+      // Update user password and clear reset token
+      await strapi.query('plugin::users-permissions.user').update({
+        where: { id: user.id },
+        data: {
+          password: hashedPassword,
+          resetPasswordToken: null,
+        }
+      });
+
+      // Return success
+      return ctx.send({ 
+        message: 'Password has been reset successfully',
+        user: sanitizeOutput(user)
+      });
+
+    } catch (error) {
+      console.error('Reset password error:', error);
+      if (error.name === 'TokenExpiredError') {
+        return ctx.badRequest('Reset token has expired');
+      } else if (error.name === 'JsonWebTokenError') {
+        return ctx.badRequest('Invalid reset token');
+      }
+      return ctx.badRequest('Failed to reset password');
+    }
+  };
+
+  // Override the login controller to check email confirmation
+  plugin.controllers.auth.callback = async (ctx) => {
+    const provider = ctx.params.provider || 'local';
+    const params = ctx.request.body;
+
+    const store = strapi.store({ type: 'plugin', name: 'users-permissions' });
+    const grantSettings = await store.get({ key: 'grant' });
+
+    const grantProvider = provider === 'local' ? 'email' : provider;
+
+    if (!grantSettings[grantProvider].enabled) {
+      throw new Error('This provider is disabled.');
+    }
+
+    if (provider === 'local') {
+      await strapi.plugin('users-permissions').service('auth').validateCallbackBody(params);
+
+      const { identifier } = params;
+
+      // Check if provided identifier is an email
+      const isEmail = identifier.includes('@');
+
+      const query = isEmail ? { email: identifier.toLowerCase() } : { username: identifier };
+
+      const user = await strapi.query('plugin::users-permissions.user').findOne({
+        where: query,
+      });
+
+      if (!user) {
+        throw new Error('Invalid identifier or password');
+      }
+
+      if (!user.password) {
+        throw new Error('Invalid identifier or password');
+      }
+
+      const validPassword = await strapi.plugin('users-permissions').service('user').validatePassword(
+        params.password,
+        user.password
+      );
+
+      if (!validPassword) {
+        throw new Error('Invalid identifier or password');
+      }
+
+      if (user.blocked) {
+        throw new Error('Your account has been blocked by an administrator');
+      }
+
+      // Check if email confirmation is required and user is not confirmed
+      const pluginStore = strapi.store({ type: 'plugin', name: 'users-permissions' });
+      const settings = await pluginStore.get({ key: 'advanced' });
+      
+      if (settings.email_confirmation && !user.confirmed) {
+        return ctx.badRequest('Please confirm your email address before logging in. Check your email for a confirmation link.');
+      }
+
+      return ctx.send({
+        jwt: strapi.plugin('users-permissions').service('jwt').issue({ id: user.id }),
+        user: sanitizeOutput(user),
+      });
+    }
+
+    // Handle other providers (OAuth, etc.)
+    return strapi.plugin('users-permissions').service('providers').connect(provider, ctx.query);
   };
 
   // Add the custom routes
