@@ -141,6 +141,86 @@
         "completed"
       ],
       "description": "Current status of the revision request"
+    },
+    "websiteSnapshot": {
+      "type": "json",
+      "description": "Snapshot of marketplace/website data at the time of order creation to preserve historical state"
+    },
+    "websiteUrl": {
+      "type": "string",
+      "description": "Website URL at time of order (snapshot)"
+    },
+    "websitePrice": {
+      "type": "integer",
+      "description": "Website price at time of order (snapshot)"
+    },
+    "websiteLinkInsertionPrice": {
+      "type": "integer",
+      "description": "Link insertion price at time of order (snapshot)"
+    },
+    "websiteMinWordCount": {
+      "type": "integer",
+      "description": "Minimum word count at time of order (snapshot)"
+    },
+    "websiteGuidelines": {
+      "type": "text",
+      "description": "Guidelines at time of order (snapshot)"
+    },
+    "websiteBacklinkType": {
+      "type": "string",
+      "description": "Backlink type at time of order (snapshot)"
+    },
+    "websiteBacklinkValidity": {
+      "type": "string",
+      "description": "Backlink validity at time of order (snapshot)"
+    },
+    "websiteCategory": {
+      "type": "json",
+      "description": "Website categories at time of order (snapshot)"
+    },
+    "websitePublisherName": {
+      "type": "string",
+      "description": "Publisher name at time of order (snapshot)"
+    },
+    "websitePublisherEmail": {
+      "type": "string",
+      "description": "Publisher email at time of order (snapshot)"
+    },
+    "websitePublisherPrice": {
+      "type": "integer",
+      "description": "Publisher price at time of order (snapshot)"
+    },
+    "websiteTat": {
+      "type": "integer",
+      "description": "Turnaround time at time of order (snapshot)"
+    },
+    "websiteDofollowLink": {
+      "type": "integer",
+      "description": "Dofollow link count at time of order (snapshot)"
+    },
+    "websiteFastPlacement": {
+      "type": "boolean",
+      "description": "Fast placement status at time of order (snapshot)"
+    },
+    "websiteAhrefsDr": {
+      "type": "integer",
+      "description": "Ahrefs DR at time of order (snapshot)"
+    },
+    "websiteAhrefsTraffic": {
+      "type": "integer",
+      "description": "Ahrefs traffic at time of order (snapshot)"
+    },
+    "websiteMozDa": {
+      "type": "integer",
+      "description": "Moz DA at time of order (snapshot)"
+    },
+    "websiteLanguage": {
+      "type": "json",
+      "description": "Website languages at time of order (snapshot)"
+    },
+    "websiteCountries": {
+      "type": "json",
+      "description": "Website countries at time of order (snapshot)"
     }
   }
 }
