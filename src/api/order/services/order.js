@@ -16,7 +16,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       }
 
       // Get user wallet - ensure user ID is properly formatted
-      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+      let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
           users_permissions_user: user.id,
           type: 'advertiser'
@@ -24,8 +24,29 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         populate: ['users_permissions_user']
       });
 
+      // If no advertiser wallet exists, create one automatically
       if (!wallet) {
-        throw new Error('Advertiser wallet not found');
+        console.log(`No advertiser wallet found for user ${user.id}, creating one automatically`);
+        try {
+          // For development, add some initial balance
+          // const initialBalance = process.env.NODE_ENV === 'production' ? 0 : 200;
+          
+          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+            data: {
+              users_permissions_user: user.id,
+              type: 'advertiser',
+              balance: 0,
+              escrowBalance: 0,
+              currency: 'USD',
+              status: 'active',
+              publishedAt: new Date()
+            }
+          });
+          console.log(`Created advertiser wallet with ID: ${wallet.id} for user ${user.id} with initial balance: ${initialBalance}`);
+        } catch (walletError) {
+          console.error('Failed to create advertiser wallet:', walletError);
+          throw new Error('Failed to create advertiser wallet. Please contact support.');
+        }
       }
 
       // Calculate fee

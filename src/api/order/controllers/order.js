@@ -119,12 +119,16 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         console.log(typeof orderData.website)
         
+        // Variables to store marketplace data and snapshot
+        let marketplace = null;
+        let websiteSnapshot = null;
+        
         // If website is passed as a string ID, convert it to the proper format
         if (typeof orderData.website === 'string' && !isNaN(parseInt(orderData.website))) {
           console.log(`Website appears to be a string ID: ${orderData.website}, looking up by ID`);
           // Try to find the website by ID
           const websiteId = parseInt(orderData.website);
-          const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+          marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { id: websiteId }
           });
           
@@ -138,7 +142,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // If it's a domain name (preferred approach), try to find the corresponding marketplace entry
         else if (typeof orderData.website === 'string') {
           console.log(`Looking up website by domain: ${orderData.website}`);
-          const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+          marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { url: orderData.website }
           });
           console.log("market", marketplace)
@@ -152,7 +156,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // If website is already a number, verify it exists in marketplace
         else if (typeof orderData.website === 'number') {
           console.log(`Verifying website ID: ${orderData.website}`);
-          const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+          marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { id: orderData.website }
           });
           
@@ -161,6 +165,80 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
           
           console.log(`Verified website ID ${orderData.website} exists`);
+        }
+        
+        // Create marketplace snapshot to preserve historical data
+        if (marketplace) {
+          console.log('Creating marketplace snapshot for order');
+          websiteSnapshot = {
+            id: marketplace.id,
+            url: marketplace.url,
+            price: marketplace.price,
+            link_insertion_price: marketplace.link_insertion_price,
+            min_word_count: marketplace.min_word_count,
+            guidelines: marketplace.guidelines,
+            backlink_type: marketplace.backlink_type,
+            backlink_validity: marketplace.backlink_validity,
+            category: marketplace.category,
+            other_category: marketplace.other_category,
+            publisher_name: marketplace.publisher_name,
+            publisher_email: marketplace.publisher_email,
+            publisher_price: marketplace.publisher_price,
+            tat: marketplace.tat,
+            dofollow_link: marketplace.dofollow_link,
+            fast_placement_status: marketplace.fast_placement_status,
+            ahrefs_dr: marketplace.ahrefs_dr,
+            ahrefs_traffic: marketplace.ahrefs_traffic,
+            ahrefs_rank: marketplace.ahrefs_rank,
+            moz_da: marketplace.moz_da,
+            language: marketplace.language,
+            countries: marketplace.countries,
+            forbidden_gp_price: marketplace.forbidden_gp_price,
+            forbidden_li_price: marketplace.forbidden_li_price,
+            publisher_forbidden_gp_price: marketplace.publisher_forbidden_gp_price,
+            publisher_forbidden_li_price: marketplace.publisher_forbidden_li_price,
+            publisher_link_insertion_price: marketplace.publisher_link_insertion_price,
+            semrush_authority_score: marketplace.semrush_authority_score,
+            semrush_traffic: marketplace.semrush_traffic,
+            spam_score: marketplace.spam_score,
+            adv_crypto_pricing: marketplace.adv_crypto_pricing,
+            adv_casino_pricing: marketplace.adv_casino_pricing,
+            adv_cbd_pricing: marketplace.adv_cbd_pricing,
+            publisher_crypto_pricing: marketplace.publisher_crypto_pricing,
+            publisher_casino_pricing: marketplace.publisher_casino_pricing,
+            publisher_cbd_pricing: marketplace.publisher_cbd_pricing,
+            similarweb_traffic: marketplace.similarweb_traffic,
+            ahrefs_referring_domain: marketplace.ahrefs_referring_domain,
+            domain_zone: marketplace.domain_zone,
+            only_with_us: marketplace.only_with_us,
+            blacklist_status: marketplace.blacklist_status,
+            sample_post: marketplace.sample_post,
+            capturedAt: new Date().toISOString()
+          };
+          
+          // Add snapshot fields to order data
+          orderData.websiteSnapshot = websiteSnapshot;
+          orderData.websiteUrl = marketplace.url;
+          orderData.websitePrice = marketplace.price;
+          orderData.websiteLinkInsertionPrice = marketplace.link_insertion_price;
+          orderData.websiteMinWordCount = marketplace.min_word_count;
+          orderData.websiteGuidelines = marketplace.guidelines;
+          orderData.websiteBacklinkType = marketplace.backlink_type;
+          orderData.websiteBacklinkValidity = marketplace.backlink_validity;
+          orderData.websiteCategory = marketplace.category;
+          orderData.websitePublisherName = marketplace.publisher_name;
+          orderData.websitePublisherEmail = marketplace.publisher_email;
+          orderData.websitePublisherPrice = marketplace.publisher_price;
+          orderData.websiteTat = marketplace.tat;
+          orderData.websiteDofollowLink = marketplace.dofollow_link;
+          orderData.websiteFastPlacement = marketplace.fast_placement_status;
+          orderData.websiteAhrefsDr = marketplace.ahrefs_dr;
+          orderData.websiteAhrefsTraffic = marketplace.ahrefs_traffic;
+          orderData.websiteMozDa = marketplace.moz_da;
+          orderData.websiteLanguage = marketplace.language;
+          orderData.websiteCountries = marketplace.countries;
+          
+          console.log('Marketplace snapshot created and added to order data');
         }
         
         // Remove links from orderData if present to prevent conflicts
@@ -218,22 +296,26 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         console.log("orders",order)
         
-        // Get the website/marketplace info to find the publisher
-        const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
-          where: { id: orderData.website },
-          populate: ['publisher']
-        });
+        // Get the website/marketplace info to find the publisher (reuse existing marketplace data)
+        let marketplaceWithPublisher = marketplace;
+        if (!marketplace || !marketplace.publisher) {
+          // If we don't have publisher info, fetch it
+          marketplaceWithPublisher = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: orderData.website },
+            populate: ['publisher']
+          });
+        }
         
         // Create notification for publisher about new order
-        if (marketplace && marketplace.publisher) {
+        if (marketplaceWithPublisher && marketplaceWithPublisher.publisher) {
           try {
             await strapi.service('api::notification.notification').createOrderNotification(
               order.id,
-              marketplace.publisher.id,
+              marketplaceWithPublisher.publisher.id,
               user.id,
               'new_order'
             );
-            console.log(`New order notification created for publisher ${marketplace.publisher.id}`);
+            console.log(`New order notification created for publisher ${marketplaceWithPublisher.publisher.id}`);
           } catch (notificationError) {
             console.error('Failed to create new order notification:', notificationError);
             // Don't fail the order creation if notification fails
@@ -338,17 +420,21 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             if (url) {
               contentData.url = url;
             } 
-            // If URL isn't provided but website is, try to use website URL
+            // If URL isn't provided but website is, try to use website URL from snapshot
             else if (!contentData.url && orderData.website) {
               try {
-                // Get the website URL to use as the content URL
-                const website = await strapi.db.query('api::marketplace.marketplace').findOne({
-                  where: { id: orderData.website }
-                });
-                
-
-                if (website && website.url) {
-                  contentData.url = website.url;
+                // Use URL from marketplace snapshot if available
+                if (marketplace && marketplace.url) {
+                  contentData.url = marketplace.url;
+                } else {
+                  // Fallback: fetch the website URL 
+                  const websiteInfo = await strapi.db.query('api::marketplace.marketplace').findOne({
+                    where: { id: orderData.website }
+                  });
+                  
+                  if (websiteInfo && websiteInfo.url) {
+                    contentData.url = websiteInfo.url;
+                  }
                 }
               } catch (err) {
                 console.log('Error fetching website URL:', err);
@@ -388,21 +474,28 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           populate: ['advertiser', 'publisher', 'website', 'orderContent'],
         });
         
-        // Create notification for publisher (website owner)
+        // Create notification for publisher (website owner) using snapshot data
         try {
-          // Get the website to find the publisher
-          const website = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: { id: orderData.website }
-          });
+          // Use publisher email from marketplace snapshot if available
+          let publisherEmail = null;
+          if (marketplace && marketplace.publisher_email) {
+            publisherEmail = marketplace.publisher_email;
+          } else {
+            // Fallback: Get the website to find the publisher
+            const websiteForNotification = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: orderData.website }
+            });
+            publisherEmail = websiteForNotification?.publisher_email;
+          }
           
-          if (website && website.publisher_email) {
+          if (publisherEmail) {
             // Find the user by email
             const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
-              where: { email: website.publisher_email }
+              where: { email: publisherEmail }
             });
             
             if (publisherUser) {
-              console.log(`Creating new order notification for publisher ${publisherUser.id} (${website.publisher_email})`);
+              console.log(`Creating new order notification for publisher ${publisherUser.id} (${publisherEmail})`);
               await strapi.service('api::notification.notification').createOrderNotification(
                 order.id,
                 publisherUser.id,
@@ -410,7 +503,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 'new_order'
               );
             } else {
-              console.log(`Publisher user not found for email: ${website.publisher_email}`);
+              console.log(`Publisher user not found for email: ${publisherEmail}`);
             }
           } else {
             console.log(`Website not found or missing publisher_email for website ID: ${orderData.website}`);
@@ -1720,6 +1813,150 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       }
     },
     
+    // Migrate existing orders to populate marketplace snapshot data
+    async migrateSnapshots(ctx) {
+      try {
+        const user = ctx.state.user;
+        
+        if (!user) {
+          return ctx.unauthorized('Authentication required');
+        }
+        
+        // Check if user is an admin
+        if (user.role && user.role.type !== 'admin') {
+          return ctx.forbidden('Only administrators can migrate snapshots');
+        }
+        
+        let migrated = 0;
+        let errors = 0;
+        let skipped = 0;
+        
+        console.log('Starting marketplace snapshot migration for existing orders...');
+        
+        // Find orders that don't have snapshot data yet
+        const ordersToMigrate = await strapi.db.query('api::order.order').findMany({
+          where: {
+            websiteSnapshot: null
+          },
+          populate: ['website']
+        });
+        
+        console.log(`Found ${ordersToMigrate.length} orders to migrate`);
+        
+        for (const order of ordersToMigrate) {
+          try {
+            if (!order.website || !order.website.id) {
+              console.log(`Order ${order.id} has no website relation, skipping`);
+              skipped++;
+              continue;
+            }
+            
+            // Get the current marketplace data (this is the best we can do for historical data)
+            const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: order.website.id }
+            });
+            
+            if (!marketplace) {
+              console.log(`Marketplace not found for order ${order.id}, skipping`);
+              skipped++;
+              continue;
+            }
+            
+            // Create snapshot data
+            const websiteSnapshot = {
+              id: marketplace.id,
+              url: marketplace.url,
+              price: marketplace.price,
+              link_insertion_price: marketplace.link_insertion_price,
+              min_word_count: marketplace.min_word_count,
+              guidelines: marketplace.guidelines,
+              backlink_type: marketplace.backlink_type,
+              backlink_validity: marketplace.backlink_validity,
+              category: marketplace.category,
+              other_category: marketplace.other_category,
+              publisher_name: marketplace.publisher_name,
+              publisher_email: marketplace.publisher_email,
+              publisher_price: marketplace.publisher_price,
+              tat: marketplace.tat,
+              dofollow_link: marketplace.dofollow_link,
+              fast_placement_status: marketplace.fast_placement_status,
+              ahrefs_dr: marketplace.ahrefs_dr,
+              ahrefs_traffic: marketplace.ahrefs_traffic,
+              ahrefs_rank: marketplace.ahrefs_rank,
+              moz_da: marketplace.moz_da,
+              language: marketplace.language,
+              countries: marketplace.countries,
+              forbidden_gp_price: marketplace.forbidden_gp_price,
+              forbidden_li_price: marketplace.forbidden_li_price,
+              publisher_forbidden_gp_price: marketplace.publisher_forbidden_gp_price,
+              publisher_forbidden_li_price: marketplace.publisher_forbidden_li_price,
+              publisher_link_insertion_price: marketplace.publisher_link_insertion_price,
+              semrush_authority_score: marketplace.semrush_authority_score,
+              semrush_traffic: marketplace.semrush_traffic,
+              spam_score: marketplace.spam_score,
+              adv_crypto_pricing: marketplace.adv_crypto_pricing,
+              adv_casino_pricing: marketplace.adv_casino_pricing,
+              adv_cbd_pricing: marketplace.adv_cbd_pricing,
+              publisher_crypto_pricing: marketplace.publisher_crypto_pricing,
+              publisher_casino_pricing: marketplace.publisher_casino_pricing,
+              publisher_cbd_pricing: marketplace.publisher_cbd_pricing,
+              similarweb_traffic: marketplace.similarweb_traffic,
+              ahrefs_referring_domain: marketplace.ahrefs_referring_domain,
+              domain_zone: marketplace.domain_zone,
+              only_with_us: marketplace.only_with_us,
+              blacklist_status: marketplace.blacklist_status,
+              sample_post: marketplace.sample_post,
+              migratedAt: new Date().toISOString()
+            };
+            
+            // Update the order with snapshot data
+            await strapi.entityService.update('api::order.order', order.id, {
+              data: {
+                websiteSnapshot: websiteSnapshot,
+                websiteUrl: marketplace.url,
+                websitePrice: marketplace.price,
+                websiteLinkInsertionPrice: marketplace.link_insertion_price,
+                websiteMinWordCount: marketplace.min_word_count,
+                websiteGuidelines: marketplace.guidelines,
+                websiteBacklinkType: marketplace.backlink_type,
+                websiteBacklinkValidity: marketplace.backlink_validity,
+                websiteCategory: marketplace.category,
+                websitePublisherName: marketplace.publisher_name,
+                websitePublisherEmail: marketplace.publisher_email,
+                websitePublisherPrice: marketplace.publisher_price,
+                websiteTat: marketplace.tat,
+                websiteDofollowLink: marketplace.dofollow_link,
+                websiteFastPlacement: marketplace.fast_placement_status,
+                websiteAhrefsDr: marketplace.ahrefs_dr,
+                websiteAhrefsTraffic: marketplace.ahrefs_traffic,
+                websiteMozDa: marketplace.moz_da,
+                websiteLanguage: marketplace.language,
+                websiteCountries: marketplace.countries
+              }
+            });
+            
+            migrated++;
+            console.log(`Migrated snapshot data for order ${order.id}`);
+          } catch (err) {
+            console.error(`Error migrating snapshot for order ${order.id}:`, err);
+            errors++;
+          }
+        }
+        
+        return {
+          data: {
+            migrated,
+            skipped,
+            errors,
+            message: `Migration completed: ${migrated} orders migrated, ${skipped} skipped, ${errors} errors`
+          }
+        };
+      } catch (error) {
+        console.error('Error migrating snapshots:', error);
+        return ctx.internalServerError('An error occurred while migrating snapshots');
+      }
+    },
+
     // Accept an order as complete (for advertisers)
     async finalizeOrder(ctx) {
       const { orderId } = ctx.params;
