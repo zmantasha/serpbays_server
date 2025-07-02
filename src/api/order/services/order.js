@@ -247,6 +247,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           gatewayTransactionId: `completed_${order.id}_${Date.now()}`,
           description: `Payment for order #${order.id} - funds available for withdrawal`,
           user_wallet: publisherWallet.id,
+          users_permissions_user: publisherId,
           order: order.id
         }
       });
@@ -263,6 +264,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           gatewayTransactionId: `fee_${order.id}_${Date.now()}`,
           description: `Platform fee for order #${order.id}`,
           // This would go to the platform wallet in a production system
+          users_permissions_user: publisherId,
           order: order.id,
           publishedAt: new Date()
         }
@@ -351,6 +353,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           gatewayTransactionId: `refund_${order.id}_${Date.now()}`,
           description: `Refund for rejected order #${order.id}`,
           user_wallet: advertiserWallet.id,
+          users_permissions_user: advertiserId,
           order: order.id
         }
       });

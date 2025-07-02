@@ -128,6 +128,7 @@ module.exports = {
             transactionStatus: 'pending',
             gateway,
             user_wallet: wallet.id,
+            users_permissions_user: userId,
             publishedAt: new Date()
           },
         });
