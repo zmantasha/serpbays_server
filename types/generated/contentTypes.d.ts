@@ -983,6 +983,26 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'api::marketplace.marketplace'
     >;
+    websiteAhrefsDr: Schema.Attribute.Integer;
+    websiteAhrefsTraffic: Schema.Attribute.Integer;
+    websiteBacklinkType: Schema.Attribute.String;
+    websiteBacklinkValidity: Schema.Attribute.String;
+    websiteCategory: Schema.Attribute.JSON;
+    websiteCountries: Schema.Attribute.JSON;
+    websiteDofollowLink: Schema.Attribute.Integer;
+    websiteFastPlacement: Schema.Attribute.Boolean;
+    websiteGuidelines: Schema.Attribute.Text;
+    websiteLanguage: Schema.Attribute.JSON;
+    websiteLinkInsertionPrice: Schema.Attribute.Integer;
+    websiteMinWordCount: Schema.Attribute.Integer;
+    websiteMozDa: Schema.Attribute.Integer;
+    websitePrice: Schema.Attribute.Integer;
+    websitePublisherEmail: Schema.Attribute.String;
+    websitePublisherName: Schema.Attribute.String;
+    websitePublisherPrice: Schema.Attribute.Integer;
+    websiteSnapshot: Schema.Attribute.JSON;
+    websiteTat: Schema.Attribute.Integer;
+    websiteUrl: Schema.Attribute.String;
   };
 }
 
@@ -1341,6 +1361,14 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   options: {
     draftAndPublish: true;
   };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: true;
+    };
+  };
   attributes: {
     balance: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
@@ -1373,9 +1401,6 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
     > &
       Schema.Attribute.Private;
     publishedAt: Schema.Attribute.DateTime;
-    status: Schema.Attribute.Enumeration<['active', 'suspended', 'closed']> &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'active'>;
     transactions: Schema.Attribute.Relation<
       'oneToMany',
       'api::transaction.transaction'

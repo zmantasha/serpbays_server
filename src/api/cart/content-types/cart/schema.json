@@ -14,7 +14,8 @@
   "attributes": {
     "items": {
       "type": "json",
-      "required": true
+      "required": true,
+      "description": "Array of cart items with marketplace references: {id, marketplaceId, quantity, isSensitive, specialCategory}"
     },
     "formData": {
       "type": "json",
