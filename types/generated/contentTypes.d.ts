@@ -712,13 +712,56 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     draftAndPublish: false;
   };
   attributes: {
-    adv_casino_pricing: Schema.Attribute.Integer;
-    adv_cbd_pricing: Schema.Attribute.Integer;
-    adv_crypto_pricing: Schema.Attribute.Integer;
-    ahrefs_dr: Schema.Attribute.Integer;
-    ahrefs_rank: Schema.Attribute.Integer;
-    ahrefs_referring_domain: Schema.Attribute.Integer;
-    ahrefs_traffic: Schema.Attribute.Integer;
+    adv_casino_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    adv_cbd_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    adv_crypto_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_dr: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_rank: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_referring_domain: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_traffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     backlink_type: Schema.Attribute.Enumeration<['Do follow', 'No follow']> &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'Do follow'>;
@@ -730,46 +773,161 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    dofollow_link: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<1>;
+    dofollow_link: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<1>;
     domain_zone: Schema.Attribute.String;
     fast_placement_status: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
-    forbidden_gp_price: Schema.Attribute.Integer;
-    forbidden_li_price: Schema.Attribute.Integer;
+    forbidden_gp_price: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    forbidden_li_price: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     guidelines: Schema.Attribute.Text & Schema.Attribute.DefaultTo<'N/A'>;
     language: Schema.Attribute.JSON & Schema.Attribute.Required;
-    link_insertion_price: Schema.Attribute.Integer;
+    link_insertion_price: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
       'api::marketplace.marketplace'
     > &
       Schema.Attribute.Private;
-    min_word_count: Schema.Attribute.Integer & Schema.Attribute.Required;
-    moz_da: Schema.Attribute.Integer;
+    min_word_count: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    moz_da: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
     only_with_us: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     orders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
     other_category: Schema.Attribute.JSON;
-    price: Schema.Attribute.Integer & Schema.Attribute.Required;
+    price: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     publishedAt: Schema.Attribute.DateTime;
-    publisher_casino_pricing: Schema.Attribute.Integer;
-    publisher_cbd_pricing: Schema.Attribute.Integer;
-    publisher_crypto_pricing: Schema.Attribute.Integer;
+    publisher_casino_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_cbd_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_crypto_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     publisher_email: Schema.Attribute.Email & Schema.Attribute.Required;
-    publisher_forbidden_gp_price: Schema.Attribute.Integer;
-    publisher_forbidden_li_price: Schema.Attribute.Integer;
-    publisher_link_insertion_price: Schema.Attribute.Integer;
+    publisher_forbidden_gp_price: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_forbidden_li_price: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_link_insertion_price: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     publisher_name: Schema.Attribute.String & Schema.Attribute.Required;
-    publisher_price: Schema.Attribute.Integer & Schema.Attribute.Required;
+    publisher_price: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     sample_post: Schema.Attribute.Text;
-    semrush_authority_score: Schema.Attribute.Integer;
-    semrush_traffic: Schema.Attribute.Integer;
+    semrush_authority_score: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    semrush_traffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     shortlists: Schema.Attribute.Relation<
       'oneToMany',
       'api::shortlist.shortlist'
     >;
-    similarweb_traffic: Schema.Attribute.Integer;
-    spam_score: Schema.Attribute.Integer;
+    similarweb_traffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    spam_score: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
     tat: Schema.Attribute.Integer;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &

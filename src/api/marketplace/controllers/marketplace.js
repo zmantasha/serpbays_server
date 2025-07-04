@@ -22,7 +22,7 @@ const REQUIRED_FIELDS = [
 ];
 
 // Strict type validation
-const validateType = (value, type) => {
+const validateType = (value, type, fieldName, schema) => {
   if (value === null || value === undefined || value === '') {
     return { isValid: false, error: 'Value is empty' };
   }
@@ -35,6 +35,66 @@ const validateType = (value, type) => {
       if (!Number.isInteger(num) || isNaN(num)) {
         return { isValid: false, error: `Value '${value}' is not a valid integer` };
       }
+
+      // Apply schema-based min/max validation
+      const fieldSchema = schema[fieldName];
+      if (fieldSchema) {
+        // Check minimum value
+        if (fieldSchema.min !== undefined && num < fieldSchema.min) {
+          return { isValid: false, error: `Value ${num} is below minimum allowed value of ${fieldSchema.min}` };
+        }
+        
+        // Check maximum value
+        if (fieldSchema.max !== undefined && num > fieldSchema.max) {
+          return { isValid: false, error: `Value ${num} exceeds maximum allowed value of ${fieldSchema.max}` };
+        }
+      }
+
+      // Apply specific field validations based on our requirements
+      switch (fieldName) {
+        case 'moz_da':
+        case 'ahrefs_dr':
+          if (num < 0 || num > 100) {
+            return { isValid: false, error: `${fieldName} must be between 0 and 100, got ${num}` };
+          }
+          break;
+        case 'spam_score':
+        case 'semrush_authority_score':
+          if (num < 0 || num > 100) {
+            return { isValid: false, error: `${fieldName} must be between 0 and 100, got ${num}` };
+          }
+          break;
+        case 'price':
+        case 'publisher_price':
+        case 'adv_crypto_pricing':
+        case 'adv_casino_pricing':
+        case 'adv_cbd_pricing':
+        case 'publisher_crypto_pricing':
+        case 'publisher_casino_pricing':
+        case 'publisher_cbd_pricing':
+        case 'link_insertion_price':
+        case 'forbidden_gp_price':
+        case 'forbidden_li_price':
+        case 'publisher_forbidden_gp_price':
+        case 'publisher_forbidden_li_price':
+        case 'publisher_link_insertion_price':
+          if (num < 0) {
+            return { isValid: false, error: `${fieldName} cannot be negative, got ${num}` };
+          }
+          break;
+        case 'ahrefs_traffic':
+        case 'semrush_traffic':
+        case 'similarweb_traffic':
+        case 'ahrefs_rank':
+        case 'ahrefs_referring_domain':
+        case 'min_word_count':
+        case 'dofollow_link':
+          if (num < 0) {
+            return { isValid: false, error: `${fieldName} cannot be negative, got ${num}` };
+          }
+          break;
+      }
+
       return { isValid: true, value: num };
     }
     case 'string':
@@ -79,6 +139,82 @@ const validateType = (value, type) => {
 };
 
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
+  // Validation helper function
+  validateMarketplaceData(data) {
+    const schema = strapi.contentTypes['api::marketplace.marketplace'].attributes;
+    const errors = [];
+
+    for (const [field, value] of Object.entries(data)) {
+      if (schema[field] && value !== null && value !== undefined) {
+        const validation = validateType(value, schema[field].type, field, schema);
+        if (!validation.isValid) {
+          errors.push(`${field}: ${validation.error}`);
+        }
+      }
+    }
+
+    return errors;
+  },
+
+  // Enhanced create with validation
+  async create(ctx) {
+    const user = ctx.state.user;
+    
+    // Validate input data
+    const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
+    if (validationErrors.length > 0) {
+      return ctx.badRequest(`Validation failed: ${validationErrors.join(', ')}`);
+    }
+
+    // Publisher filtering: Publishers can only create listings with their own email
+    if (user && user.Advertiser === false) {
+      if (!ctx.request.body.data) ctx.request.body.data = {};
+      ctx.request.body.data.publisher_email = user.email;
+    }
+
+    return await super.create(ctx);
+  },
+
+  // Enhanced update with validation
+  async update(ctx) {
+    const user = ctx.state.user;
+    
+    // Validate input data
+    const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
+    if (validationErrors.length > 0) {
+      return ctx.badRequest(`Validation failed: ${validationErrors.join(', ')}`);
+    }
+
+    // Publisher filtering: Publishers can only update their own listings
+    if (user && user.Advertiser === false) {
+      const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
+        fields: ['publisher_email']
+      });
+      if (!entry || entry.publisher_email !== user.email) {
+        return ctx.unauthorized('You are not allowed to update this listing.');
+      }
+    }
+
+    return await super.update(ctx);
+  },
+
+  // Enhanced delete with authorization
+  async delete(ctx) {
+    const user = ctx.state.user;
+    
+    // Publisher filtering: Publishers can only delete their own listings
+    if (user && user.Advertiser === false) {
+      const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
+        fields: ['publisher_email']
+      });
+      if (!entry || entry.publisher_email !== user.email) {
+        return ctx.unauthorized('You are not allowed to delete this listing.');
+      }
+    }
+
+    return await super.delete(ctx);
+  },
+
   // Publisher filtering: Only allow publishers to see their own listings
   async find(ctx) {
     // Get authenticated user from context
@@ -220,7 +356,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
             // Check if field exists in schema
             if (schema[field]) {
-              const validation = validateType(value, schema[field].type);
+              const validation = validateType(value, schema[field].type, field, schema);
               if (!validation.isValid) {
                 rowErrors.push(`${field}: ${validation.error}`);
               } else {

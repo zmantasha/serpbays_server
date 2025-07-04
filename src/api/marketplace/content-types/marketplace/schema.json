@@ -18,23 +18,28 @@
     },
     "price": {
       "type": "integer",
-      "required": true
+      "required": true,
+      "min": 0
     },
     "link_insertion_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "tat": {
       "type": "integer"
     },
     "min_word_count": {
       "type": "integer",
-      "required": true
+      "required": true,
+      "min": 0
     },
     "forbidden_gp_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "forbidden_li_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "sample_post": {
       "type": "text"
@@ -64,16 +69,22 @@
       "required": true
     },
     "ahrefs_dr": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0,
+      "max": 100
     },
     "ahrefs_traffic": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "ahrefs_rank": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "moz_da": {
-      "type": "integer"
+      "type": "integer",
+      "max": 100,
+      "min": 0
     },
     "fast_placement_status": {
       "type": "boolean",
@@ -89,49 +100,66 @@
     },
     "publisher_price": {
       "type": "integer",
-      "required": true
+      "required": true,
+      "min": 0
     },
     "publisher_forbidden_gp_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_forbidden_li_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_link_insertion_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "semrush_authority_score": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0,
+      "max": 100
     },
     "semrush_traffic": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "spam_score": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0,
+      "max": 100
     },
     "adv_crypto_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "adv_casino_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "adv_cbd_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_crypto_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_casino_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_cbd_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "similarweb_traffic": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "ahrefs_referring_domain": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "domain_zone": {
       "type": "string"
@@ -157,7 +185,8 @@
     },
     "dofollow_link": {
       "type": "integer",
-      "default": 1
+      "default": 1,
+      "min": 0
     },
     "orders": {
       "type": "relation",
