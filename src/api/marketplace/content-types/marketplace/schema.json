@@ -28,6 +28,16 @@
     "tat": {
       "type": "integer"
     },
+    "placement_speed": {
+      "type": "enumeration",
+      "enum": [
+        "Ultra Fast",
+        "Fast", 
+        "Normal",
+        "Slow"
+      ],
+      "default": "Normal"
+    },
     "min_word_count": {
       "type": "integer",
       "required": true,

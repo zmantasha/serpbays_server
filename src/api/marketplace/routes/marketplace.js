@@ -4,37 +4,99 @@
  * marketplace router
  */
 
-const { createCoreRouter } = require('@strapi/strapi').factories;
-
-// module.exports = createCoreRouter('api::marketplace.marketplace');
-
-// Customizing the core router to add policies
-module.exports = createCoreRouter('api::marketplace.marketplace', {
-  config: {
-    find: { 
-      policies: [
-        {
-          name: 'global::simple-rate-limit', // Using the custom policy
-          config: { // Configuration for the policy
-            interval: 60000, // 1 minute
-            max: 100,        // Limit each IP to 100 requests per minute for this route
+module.exports = {
+  routes: [
+    // Default CRUD routes with custom policies
+    {
+      method: 'GET',
+      path: '/marketplaces',
+      handler: 'marketplace.find',
+      config: {
+        policies: [
+          {
+            name: 'global::simple-rate-limit',
+            config: {
+              interval: 60000,
+              max: 100,
+            },
           },
-        },
-      ],
-      middlewares: [], // Middlewares array can be empty or contain other route-specific middlewares
+        ],
+        middlewares: [],
+      },
     },
-    findOne: {
-      policies: [
-        {
-          name: 'global::simple-rate-limit',
-          config: {
-            interval: 60000, 
-            max: 100, 
+    {
+      method: 'GET',
+      path: '/marketplaces/:id',
+      handler: 'marketplace.findOne',
+      config: {
+        policies: [
+          {
+            name: 'global::simple-rate-limit',
+            config: {
+              interval: 60000,
+              max: 100,
+            },
           },
-        },
-      ], 
-      middlewares: [],
+        ],
+        middlewares: [],
+      },
     },
-    // You can customize other actions (create, update, delete) here as well
-  }
-});
+    {
+      method: 'POST',
+      path: '/marketplaces',
+      handler: 'marketplace.create',
+      config: {
+        policies: ['global::is-authenticated'],
+        middlewares: [],
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/marketplaces/:id',
+      handler: 'marketplace.update',
+      config: {
+        policies: ['global::is-authenticated'],
+        middlewares: [],
+      },
+    },
+    {
+      method: 'DELETE',
+      path: '/marketplaces/:id',
+      handler: 'marketplace.delete',
+      config: {
+        policies: ['global::is-authenticated'],
+        middlewares: [],
+      },
+    },
+    // Custom CSV upload route
+    {
+      method: 'POST',
+      path: '/marketplaces/upload-csv',
+      handler: 'marketplace.uploadCSV',
+      config: {
+        policies: ['global::is-authenticated'],
+        middlewares: [],
+      },
+    },
+    // TAT update route for specific website
+    {
+      method: 'PUT',
+      path: '/marketplaces/:id/update-tat',
+      handler: 'marketplace.updateTAT',
+      config: {
+        policies: ['global::is-authenticated'],
+        middlewares: [],
+      },
+    },
+    // Bulk TAT update route (admin only)
+    {
+      method: 'POST',
+      path: '/marketplaces/bulk-update-tat',
+      handler: 'marketplace.bulkUpdateTAT',
+      config: {
+        policies: ['global::is-authenticated'],
+        middlewares: [],
+      },
+    },
+  ],
+};

@@ -832,6 +832,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     only_with_us: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     orders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
     other_category: Schema.Attribute.JSON;
+    placement_speed: Schema.Attribute.Enumeration<
+      ['Ultra Fast', 'Fast', 'Normal', 'Slow']
+    > &
+      Schema.Attribute.DefaultTo<'Normal'>;
     price: Schema.Attribute.Integer &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<

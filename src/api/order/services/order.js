@@ -262,6 +262,34 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       });
       
       console.log(`Order ${id} completed successfully and marked available for withdrawal`);
+      
+      // Trigger TAT update for the website based on completed orders
+      try {
+        const websiteId = order.website?.id || order.website;
+        if (websiteId) {
+          // Don't await this to avoid blocking the order completion
+          // The TAT update will run in the background
+          strapi.service('api::marketplace.marketplace').updateTATFromCompletedOrders(websiteId, {
+              minOrderCount: 1, // Lower threshold for testing
+              lookbackDays: 365,
+              useWeightedAverage: true
+            })
+            .then(result => {
+              if (result) {
+                console.log(`TAT updated for website ${websiteId}: ${result.newTAT} days (${result.placementSpeed})`);
+              } else {
+                console.log(`TAT update skipped for website ${websiteId}: insufficient order history`);
+              }
+            })
+            .catch(error => {
+              console.error(`Failed to update TAT for website ${websiteId}:`, error);
+            });
+        }
+      } catch (error) {
+        console.error('Error triggering TAT update:', error);
+        // Don't fail the order completion if TAT update fails
+      }
+      
       return updatedOrder;
     });
   },

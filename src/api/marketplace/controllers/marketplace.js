@@ -139,6 +139,19 @@ const validateType = (value, type, fieldName, schema) => {
 };
 
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
+  // Helper function to calculate placement speed based on TAT
+  calculatePlacementSpeed(tat) {
+    if (!tat || tat < 0) return 'Normal';
+    
+    if (tat >= 0 && tat <= 2) return 'Ultra Fast';
+    if (tat >= 3 && tat <= 5) return 'Fast';
+    if (tat >= 6 && tat <= 8) return 'Normal';
+    if (tat >= 9 && tat <= 20) return 'Slow';
+    
+    // For TAT > 20 days, consider it Slow
+    return 'Slow';
+  },
+
   // Validation helper function
   validateMarketplaceData(data) {
     const schema = strapi.contentTypes['api::marketplace.marketplace'].attributes;
@@ -160,6 +173,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   async create(ctx) {
     const user = ctx.state.user;
     
+    // Calculate placement speed if TAT is provided
+    if (ctx.request.body.data && ctx.request.body.data.tat !== undefined) {
+      ctx.request.body.data.placement_speed = this.calculatePlacementSpeed(ctx.request.body.data.tat);
+    }
+    
     // Validate input data
     const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
     if (validationErrors.length > 0) {
@@ -178,6 +196,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced update with validation
   async update(ctx) {
     const user = ctx.state.user;
+    
+    // Calculate placement speed if TAT is provided
+    if (ctx.request.body.data && ctx.request.body.data.tat !== undefined) {
+      ctx.request.body.data.placement_speed = this.calculatePlacementSpeed(ctx.request.body.data.tat);
+    }
     
     // Validate input data
     const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
@@ -376,6 +399,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             convertedData.countries = [];
           }
 
+          // Calculate placement speed based on TAT if TAT is provided
+          if (convertedData.tat !== undefined) {
+            convertedData.placement_speed = this.calculatePlacementSpeed(convertedData.tat);
+          }
+
           if (rowErrors.length > 0) {
             throw new Error(rowErrors.join(', '));
           }
@@ -470,6 +498,109 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       };
     } catch (error) {
       console.error('CSV Upload Error:', error);
+      return ctx.badRequest(error.message);
+    }
+  },
+
+  /**
+   * Update TAT for a specific website based on completed orders
+   */
+  async updateTAT(ctx) {
+    try {
+      const user = ctx.state.user;
+      const { id } = ctx.params;
+      const { minOrderCount, lookbackDays, useWeightedAverage } = ctx.query;
+
+      // Check authentication
+      if (!user) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      // Publishers can only update TAT for their own websites
+      if (user.Advertiser === false) {
+        const website = await strapi.entityService.findOne('api::marketplace.marketplace', id, {
+          fields: ['publisher_email']
+        });
+        
+        if (!website || website.publisher_email !== user.email) {
+          return ctx.unauthorized('You are not allowed to update TAT for this website.');
+        }
+      }
+
+      // Validate website exists
+      const website = await strapi.entityService.findOne('api::marketplace.marketplace', id);
+      if (!website) {
+        return ctx.notFound('Website not found');
+      }
+
+      // Prepare options
+      const options = {};
+      if (minOrderCount) options.minOrderCount = parseInt(minOrderCount);
+      if (lookbackDays) options.lookbackDays = parseInt(lookbackDays);
+      if (useWeightedAverage !== undefined) options.useWeightedAverage = useWeightedAverage === 'true';
+
+      // Update TAT
+      const result = await strapi.service('api::marketplace.marketplace').updateTATFromCompletedOrders(id, options);
+
+      if (!result) {
+        return {
+          message: 'Insufficient order history to calculate TAT',
+          websiteId: id,
+          url: website.url
+        };
+      }
+
+      return {
+        message: 'TAT updated successfully',
+        websiteId: id,
+        url: website.url,
+        ...result
+      };
+
+    } catch (error) {
+      console.error('Error updating TAT:', error);
+      return ctx.badRequest(error.message);
+    }
+  },
+
+  /**
+   * Bulk update TAT for all websites (admin only)
+   */
+  async bulkUpdateTAT(ctx) {
+    try {
+      const user = ctx.state.user;
+
+      // Check authentication and admin privileges
+      if (!user || !user.role || user.role.type !== 'admin') {
+        return ctx.forbidden('Only administrators can perform bulk TAT updates');
+      }
+
+      const { 
+        batchSize, 
+        minOrderCount, 
+        lookbackDays, 
+        useWeightedAverage,
+        delayBetweenBatches 
+      } = ctx.query;
+
+      // Prepare options
+      const options = {};
+      if (batchSize) options.batchSize = parseInt(batchSize);
+      if (minOrderCount) options.minOrderCount = parseInt(minOrderCount);
+      if (lookbackDays) options.lookbackDays = parseInt(lookbackDays);
+      if (useWeightedAverage !== undefined) options.useWeightedAverage = useWeightedAverage === 'true';
+      if (delayBetweenBatches) options.delayBetweenBatches = parseInt(delayBetweenBatches);
+
+      // Perform bulk update
+      const result = await strapi.service('api::marketplace.marketplace').bulkUpdateTAT(options);
+
+      return {
+        message: 'Bulk TAT update completed',
+        ...result
+      };
+
+    } catch (error) {
+      console.error('Error in bulk TAT update:', error);
       return ctx.badRequest(error.message);
     }
   }
