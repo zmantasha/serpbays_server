@@ -193,6 +193,14 @@
       ],
       "default": "active"
     },
+    "sponsored": {
+      "type": "boolean",
+      "default": false
+    },
+    "ugc": {
+      "type": "boolean",
+      "default": false
+    },
     "dofollow_link": {
       "type": "integer",
       "default": 1,

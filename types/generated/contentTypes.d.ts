@@ -932,7 +932,9 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    sponsored: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     tat: Schema.Attribute.Integer;
+    ugc: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
