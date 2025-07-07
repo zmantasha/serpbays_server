@@ -54,6 +54,9 @@
     "sample_post": {
       "type": "text"
     },
+    "sample_links": {
+      "type": "text"
+    },
     "backlink_type": {
       "type": "enumeration",
       "enum": [
