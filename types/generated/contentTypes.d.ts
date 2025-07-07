@@ -897,6 +897,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    sample_links: Schema.Attribute.Text;
     sample_post: Schema.Attribute.Text;
     semrush_authority_score: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
