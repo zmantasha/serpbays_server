@@ -119,6 +119,12 @@
       "target": "api::communication.communication",
       "mappedBy": "order"
     },
+    "chatroom": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::chatroom.chatroom",
+      "inversedBy": "order"
+    },
     "project": {
       "type": "relation",
       "relation": "manyToOne",

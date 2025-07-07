@@ -535,6 +535,50 @@ export interface ApiCategoryCategory extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiChatroomChatroom extends Struct.CollectionTypeSchema {
+  collectionName: 'chatrooms';
+  info: {
+    description: 'Chat rooms for order-based conversations between advertisers and publishers';
+    displayName: 'Chatroom';
+    pluralName: 'chatrooms';
+    singularName: 'chatroom';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    advertiser: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    communications: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::communication.communication'
+    >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    lastActivity: Schema.Attribute.DateTime;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::chatroom.chatroom'
+    > &
+      Schema.Attribute.Private;
+    order: Schema.Attribute.Relation<'oneToOne', 'api::order.order'>;
+    publishedAt: Schema.Attribute.DateTime;
+    publisher: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    status: Schema.Attribute.Enumeration<['active', 'closed', 'archived']> &
+      Schema.Attribute.DefaultTo<'active'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiCommunicationCommunication
   extends Struct.CollectionTypeSchema {
   collectionName: 'communications';
@@ -548,6 +592,7 @@ export interface ApiCommunicationCommunication
     draftAndPublish: false;
   };
   attributes: {
+    chatroom: Schema.Attribute.Relation<'manyToOne', 'api::chatroom.chatroom'>;
     communicationStatus: Schema.Attribute.Enumeration<
       ['requested', 'acceptance', 'in_progress']
     > &
@@ -904,6 +949,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'plugin::users-permissions.user'
     >;
+    chatroom: Schema.Attribute.Relation<'oneToOne', 'api::chatroom.chatroom'>;
     communications: Schema.Attribute.Relation<
       'oneToMany',
       'api::communication.communication'
@@ -2163,6 +2209,7 @@ declare module '@strapi/strapi' {
       'api::author.author': ApiAuthorAuthor;
       'api::cart.cart': ApiCartCart;
       'api::category.category': ApiCategoryCategory;
+      'api::chatroom.chatroom': ApiChatroomChatroom;
       'api::communication.communication': ApiCommunicationCommunication;
       'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;
