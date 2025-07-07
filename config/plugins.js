@@ -2,7 +2,8 @@ module.exports = ({ env }) => ({
   'users-permissions': {
     config: {
       register: {
-        allowedFields: ['Advertiser', 'Publisher'],
+        allowedFields: ['Advertiser', 'Publisher', 'firstName','lastName'],
+        
       },
       jwt: {
         expiresIn: '7d',
