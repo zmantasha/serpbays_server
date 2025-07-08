@@ -253,7 +253,7 @@ module.exports = createCoreController('api::communication.communication', ({ str
           
           conversations.push({
             orderId: order.id,
-            orderTitle: `Order #${order.id}`,
+            orderTitle: `Order #${order.websiteUrl}`,
             otherParty: {
               id: otherParty?.id,
               username: otherParty?.username,

@@ -21,6 +21,16 @@ module.exports = {
       },
     },
     {
+      method: 'POST',
+      path: '/chatrooms/order/:orderId/mark-read',
+      handler: 'chatroom.markMessagesAsRead',
+      config: {
+        auth: {
+          scope: ['api::chatroom.chatroom.markMessagesAsRead']
+        },
+      },
+    },
+    {
       method: 'PUT',
       path: '/chatrooms/:id/status',
       handler: 'chatroom.updateStatus',

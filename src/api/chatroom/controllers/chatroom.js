@@ -99,7 +99,9 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
           return {
             chatroomId: chatroom.id,
             orderId: chatroom.order?.id,
-            orderTitle: `Order #${chatroom.order?.id}`,
+            orderTitle: chatroom.order?.websiteUrl ? 
+              `Order #${chatroom.order.id} • ${chatroom.order.websiteUrl}` : 
+              `Order #${chatroom.order?.id}`,
             otherParty: {
               id: otherParty?.id,
               username: otherParty?.username,
@@ -121,21 +123,18 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         
         const latestMessage = sortedComms[0];
         
-        // Count unread messages (messages from other party that are newer than user's last message)
-        const userMessages = sortedComms.filter(comm => comm.sender?.id === user.id);
-        const otherMessages = sortedComms.filter(comm => comm.sender?.id !== user.id);
-        
-        const lastUserMessageTime = userMessages.length > 0 ? 
-          new Date(userMessages[0].createdAt).getTime() : 0;
-        
-        const unreadCount = otherMessages.filter(comm => 
-          new Date(comm.createdAt).getTime() > lastUserMessageTime
+        // Count unread messages (messages from other party that are marked as unread)
+        const unreadCount = communications.filter(comm => 
+          comm.sender?.id !== user.id && 
+          comm.isUnread === true
         ).length;
         
         return {
           chatroomId: chatroom.id,
           orderId: chatroom.order?.id,
-          orderTitle: `Order #${chatroom.order?.id}`,
+          orderTitle: chatroom.order?.websiteUrl ? 
+            `Order #${chatroom.order.id} • ${chatroom.order.websiteUrl}` : 
+            `Order #${chatroom.order?.id}`,
           otherParty: {
             id: otherParty?.id,
             username: otherParty?.username,
@@ -146,7 +145,8 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
             message: latestMessage.message,
             sender: latestMessage.sender,
             createdAt: latestMessage.createdAt,
-            communicationStatus: latestMessage.communicationStatus
+            communicationStatus: latestMessage.communicationStatus,
+            isUnread: latestMessage.isUnread
           },
           unreadCount,
           totalMessages: communications.length,
@@ -997,6 +997,127 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
     } catch (error) {
       console.error('Error generating admin dashboard:', error);
       return ctx.internalServerError('An error occurred while generating the admin dashboard');
+    }
+  },
+  
+  // Mark messages as read
+  async markMessagesAsRead(ctx) {
+    const { orderId } = ctx.params;
+    
+    try {
+      // Get current user
+      const user = ctx.state.user;
+      if (!user) {
+        return ctx.unauthorized('You must be logged in to mark messages as read');
+      }
+      
+      // Find the chatroom for this order
+      const chatroom = await strapi.entityService.findMany('api::chatroom.chatroom', {
+        filters: {
+          order: orderId
+        },
+        populate: ['communications', 'communications.sender', 'advertiser', 'publisher'],
+      });
+
+      if (!chatroom || chatroom.length === 0) {
+        return ctx.notFound('Chatroom not found');
+      }
+
+      const chatroomData = chatroom[0];
+      
+      // Check if user is associated with the chatroom
+      if (chatroomData.advertiser?.id !== user.id && chatroomData.publisher?.id !== user.id) {
+        return ctx.forbidden('You are not authorized to access this chatroom');
+      }
+      
+      // Get all communications from other party that are unread
+      const communications = chatroomData.communications || [];
+      const unreadMessages = communications.filter(comm => 
+        comm.sender?.id !== user.id && 
+        comm.isUnread === true
+      );
+      console.log("unreadmessage",unreadMessages)
+      
+      // Mark all messages as read
+      for (const message of unreadMessages) {
+        await strapi.entityService.update('api::communication.communication', message.id, {
+          data: {
+            isUnread: false
+          }
+        });
+      }
+
+      // Update chatroom's lastActivity
+      await strapi.entityService.update('api::chatroom.chatroom', chatroomData.id, {
+        data: {
+          lastActivity: new Date()
+        }
+      });
+      
+      return { 
+        data: { 
+          success: true,
+          markedAsRead: unreadMessages.length
+        } 
+      };
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
+      return ctx.internalServerError('An error occurred while marking messages as read');
+    }
+  },
+  
+  // Add this after message is created
+  async afterCreate(event) {
+    const { result } = event;
+    
+    try {
+      // Get the full message data with populated relations
+      const message = await strapi.entityService.findOne('api::communication.communication', result.id, {
+        populate: ['sender', 'chatroom', 'chatroom.advertiser', 'chatroom.publisher', 'order']
+      });
+      
+      if (!message || !message.chatroom) return;
+
+      const chatroom = message.chatroom;
+      
+      // Emit to both advertiser and publisher
+      if (chatroom.advertiser?.id) {
+        strapi.io.emit(`user_${chatroom.advertiser.id}_message`, {
+          type: 'new_message',
+          chatroomId: chatroom.id,
+          orderId: message.order?.id,
+          message: {
+            id: message.id,
+            content: message.message,
+            sender: {
+              id: message.sender?.id,
+              username: message.sender?.username
+            },
+            createdAt: message.createdAt,
+            isUnread: true
+          }
+        });
+      }
+      
+      if (chatroom.publisher?.id) {
+        strapi.io.emit(`user_${chatroom.publisher.id}_message`, {
+          type: 'new_message',
+          chatroomId: chatroom.id,
+          orderId: message.order?.id,
+          message: {
+            id: message.id,
+            content: message.message,
+            sender: {
+              id: message.sender?.id,
+              username: message.sender?.username
+            },
+            createdAt: message.createdAt,
+            isUnread: true
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error sending WebSocket notification:', error);
     }
   }
 })); 
