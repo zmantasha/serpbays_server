@@ -76,5 +76,13 @@ module.exports = {
         auth: false,  // Make accessible for quick admin access
       },
     },
+    {
+      method: 'GET',
+      path: '/chatrooms/debug/websocket',
+      handler: 'chatroom.debugWebSocket',
+      config: {
+        auth: false,  // Debug endpoint
+      },
+    },
   ],
 }; 

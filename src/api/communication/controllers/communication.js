@@ -106,6 +106,50 @@ module.exports = createCoreController('api::communication.communication', ({ str
         console.warn(`Could not determine recipient for message_received notification for order ${order.id}. Advertiser: ${order.advertiser?.id}, Publisher: ${order.publisher?.id}, Sender: ${user.id}`);
       }
 
+      // Send WebSocket notification to both participants
+      try {
+        const notificationData = {
+          type: 'new_message',
+          chatroomId: chatroom.id,
+          orderId: order.id,
+          message: {
+            id: entity.id,
+            content: data.message,
+            sender: {
+              id: user.id,
+              username: user.username
+            },
+            createdAt: populatedEntity.createdAt,
+            isUnread: true
+          }
+        };
+
+        // Send to advertiser
+        if (order.advertiser?.id) {
+          const event = `user_${order.advertiser.id}_message`;
+          console.log(`Sending WebSocket event ${event} to advertiser ${order.advertiser.id}`);
+          if (strapi.io && strapi.io.emitToUser) {
+            strapi.io.emitToUser(order.advertiser.id, event, notificationData);
+          } else {
+            console.error('WebSocket not available - strapi.io or emitToUser not found');
+          }
+        }
+
+        // Send to publisher
+        if (order.publisher?.id) {
+          const event = `user_${order.publisher.id}_message`;
+          console.log(`Sending WebSocket event ${event} to publisher ${order.publisher.id}`);
+          if (strapi.io && strapi.io.emitToUser) {
+            strapi.io.emitToUser(order.publisher.id, event, notificationData);
+          } else {
+            console.error('WebSocket not available - strapi.io or emitToUser not found');
+          }
+        }
+      } catch (websocketError) {
+        console.error('Error sending WebSocket notification:', websocketError);
+        // Don't fail the communication creation if WebSocket fails
+      }
+
       return { data: populatedEntity };
     } catch (error) {
       console.error('Error creating communication:', error);

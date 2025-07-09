@@ -1119,5 +1119,90 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
     } catch (error) {
       console.error('Error sending WebSocket notification:', error);
     }
+  },
+
+  async sendMessage(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { message } = ctx.request.body;
+      const user = ctx.state.user;
+
+      // Get chatroom with participants
+      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', id, {
+        populate: ['advertiser', 'publisher', 'order']
+      });
+
+      if (!chatroom) {
+        return ctx.notFound('Chatroom not found');
+      }
+
+      // Create message
+      const newMessage = await strapi.entityService.create('api::communication.communication', {
+        data: {
+          message,
+          sender: user.id,
+          chatroom: id,
+          communicationStatus: 'sent'
+        },
+        populate: ['sender']
+      });
+
+      // Prepare notification data
+      const notificationData = {
+        type: 'new_message',
+        chatroomId: chatroom.id,
+        orderId: chatroom.order?.id,
+        message: {
+          id: newMessage.id,
+          content: newMessage.message,
+          sender: {
+            id: newMessage.sender.id,
+            username: newMessage.sender.username
+          },
+          createdAt: newMessage.createdAt,
+          isUnread: true
+        }
+      };
+
+      // Send to advertiser
+      if (chatroom.advertiser?.id) {
+        const event = `user_${chatroom.advertiser.id}_message`;
+        strapi.io.emitToUser(chatroom.advertiser.id, event, notificationData);
+      }
+
+      // Send to publisher
+      if (chatroom.publisher?.id) {
+        const event = `user_${chatroom.publisher.id}_message`;
+        strapi.io.emitToUser(chatroom.publisher.id, event, notificationData);
+      }
+
+      return {
+        success: true,
+        message: newMessage
+      };
+
+    } catch (error) {
+      console.error('Error sending message:', error);
+      return ctx.badRequest('Failed to send message');
+    }
+  },
+
+  // Debug WebSocket connections
+  async debugWebSocket(ctx) {
+    try {
+      const connectedUsers = strapi.io ? strapi.io.getConnectedUsers() : [];
+      
+      return {
+        websocketEnabled: !!strapi.io,
+        connectedUsers: connectedUsers,
+        totalConnections: connectedUsers.length,
+        socketIoAvailable: !!strapi.io,
+        emitToUserAvailable: !!(strapi.io && strapi.io.emitToUser),
+        serverTime: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('Error in WebSocket debug:', error);
+      return ctx.internalServerError('Debug error');
+    }
   }
 })); 

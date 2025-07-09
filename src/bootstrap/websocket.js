@@ -1,134 +1,113 @@
-const { Server } = require('socket.io');
+'use strict';
 
-module.exports = async ({ strapi }) => {
-  if (!strapi.server.httpServer) {
-    strapi.log.warn('HTTP server not available, skipping WebSocket initialization');
-    return;
-  }
-
-  // Initialize Socket.IO server
-  const io = new Server(strapi.server.httpServer, {
+module.exports = ({ strapi }) => {
+  // Initialize Socket.IO
+  const io = require('socket.io')(strapi.server.httpServer, {
     cors: {
       origin: process.env.CLIENT_URL || 'http://localhost:3000',
       methods: ['GET', 'POST'],
       allowedHeaders: ['Authorization'],
       credentials: true
     },
-    transports: ['websocket'],
-    pingTimeout: 60000,
+    transports: ['websocket']
   });
 
-  // Debug middleware
-  io.use((socket, next) => {
-    strapi.log.debug('New socket connection attempt:', socket.id);
-    next();
-  });
+  // Store connected users
+  const connectedUsers = new Map();
 
-  // Authentication middleware
-  io.use(async (socket, next) => {
+  // Verify JWT token
+  const verifyToken = async (token) => {
     try {
-      const { token } = socket.handshake.auth;
-      
-      if (!token) {
-        strapi.log.debug('No auth token provided for socket:', socket.id);
-        return next(new Error('Authentication token not provided'));
-      }
-
-      // Verify JWT token
-      const { id } = await strapi.plugins['users-permissions'].services.jwt.verify(token);
-      
-      // Attach user to socket
-      socket.user = { id };
-      strapi.log.debug('Socket authenticated for user:', id);
-      next();
-    } catch (error) {
-      strapi.log.error('Socket authentication failed:', error);
-      next(new Error('Authentication failed'));
-    }
-  });
-
-  // Handle connections
-  io.on('connection', (socket) => {
-    strapi.log.info('New WebSocket connection:', socket.id, 'User:', socket.user?.id);
-
-    // Join user's room
-    if (socket.user?.id) {
-      socket.join(`user_${socket.user.id}`);
-      strapi.log.debug('User joined room:', `user_${socket.user.id}`);
-    }
-
-    socket.on('disconnect', (reason) => {
-      strapi.log.info('Client disconnected:', socket.id, 'Reason:', reason);
-      if (socket.user?.id) {
-        socket.leave(`user_${socket.user.id}`);
-      }
-    });
-
-    socket.on('error', (error) => {
-      strapi.log.error('Socket error:', error);
-    });
-  });
-
-  // Add lifecycle hooks for communication events
-  const { afterCreate } = strapi.db.lifecycles;
-  strapi.db.lifecycles.afterCreate = async (event) => {
-    // Call original afterCreate if exists
-    if (afterCreate) {
-      await afterCreate(event);
-    }
-
-    // Handle new communications
-    if (event.model.tableName === 'communications') {
-      try {
-        const { result } = event;
-        
-        // Get the full message data with populated relations
-        const message = await strapi.entityService.findOne('api::communication.communication', result.id, {
-          populate: ['sender', 'chatroom', 'chatroom.advertiser', 'chatroom.publisher', 'chatroom.order']
-        });
-        
-        if (!message || !message.chatroom) {
-          strapi.log.warn('Invalid message or chatroom for WebSocket notification');
-          return;
-        }
-
-        const chatroom = message.chatroom;
-        strapi.log.debug('Sending message notification for chatroom:', chatroom.id);
-        
-        // Emit to both advertiser and publisher
-        const notificationData = {
-          type: 'new_message',
-          chatroomId: chatroom.id,
-          orderId: chatroom.order?.id,
-          message: {
-            id: message.id,
-            content: message.message,
-            sender: {
-              id: message.sender?.id,
-              username: message.sender?.username
-            },
-            createdAt: message.createdAt,
-            isUnread: true
-          }
-        };
-
-        if (chatroom.advertiser?.id) {
-          strapi.log.debug('Emitting to advertiser:', chatroom.advertiser.id);
-          io.to(`user_${chatroom.advertiser.id}`).emit(`user_${chatroom.advertiser.id}_message`, notificationData);
-        }
-        
-        if (chatroom.publisher?.id) {
-          strapi.log.debug('Emitting to publisher:', chatroom.publisher.id);
-          io.to(`user_${chatroom.publisher.id}`).emit(`user_${chatroom.publisher.id}_message`, notificationData);
-        }
-      } catch (error) {
-        strapi.log.error('Error sending WebSocket notification:', error);
-      }
+      const decoded = await strapi.plugins['users-permissions'].services.jwt.verify(token);
+      return decoded;
+    } catch (err) {
+      console.error('WebSocket JWT verification failed:', err);
+      return null;
     }
   };
 
-  // Make io instance available globally
+  // Handle socket connection
+  io.on('connection', async (socket) => {
+    console.log('New WebSocket connection attempt');
+
+    try {
+      // Get token from handshake
+      const token = socket.handshake.auth.token;
+      if (!token) {
+        console.error('No token provided');
+        socket.disconnect();
+        return;
+      }
+
+      // Verify token
+      const decoded = await verifyToken(token);
+      if (!decoded) {
+        console.error('Invalid token');
+        socket.disconnect();
+        return;
+      }
+
+      const userId = socket.handshake.query.userId;
+      if (!userId) {
+        console.error('No userId provided');
+        socket.disconnect();
+        return;
+      }
+
+      console.log(`User ${userId} connected via WebSocket`);
+
+      // Store socket connection
+      connectedUsers.set(parseInt(userId), socket);
+
+      // Join user's room
+      socket.join(`user_${userId}`);
+      console.log(`User ${userId} joined room: user_${userId}`);
+
+      // Handle disconnection
+      socket.on('disconnect', () => {
+        console.log(`User ${userId} disconnected`);
+        connectedUsers.delete(parseInt(userId));
+      });
+
+      // Handle errors
+      socket.on('error', (error) => {
+        console.error(`Socket error for user ${userId}:`, error);
+      });
+
+      // Send initial connection success
+      socket.emit('connected', { 
+        status: 'success', 
+        userId,
+        socketId: socket.id
+      });
+
+    } catch (error) {
+      console.error('Error handling socket connection:', error);
+      socket.disconnect();
+    }
+  });
+
+  // Store io instance in strapi
   strapi.io = io;
 
-  strapi.log.info('WebSocket server initialized successfully');
+  // Add helper methods
+  strapi.io.emitToUser = (userId, event, data) => {
+    const userSocket = connectedUsers.get(parseInt(userId));
+    if (userSocket) {
+      console.log(`✅ Emitting ${event} to user ${userId} with data:`, JSON.stringify(data, null, 2));
+      userSocket.emit(event, data);
+      return true;
+    } else {
+      console.log(`❌ User ${userId} not connected. Currently connected users:`, Array.from(connectedUsers.keys()));
+      return false;
+    }
+  };
+
+  // Add method to check connected users
+  strapi.io.getConnectedUsers = () => {
+    return Array.from(connectedUsers.keys());
+  };
+
+  // Log setup completion
+  console.log('WebSocket server initialized successfully');
 }; 
