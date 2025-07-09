@@ -124,27 +124,37 @@ module.exports = createCoreController('api::communication.communication', ({ str
           }
         };
 
-        // Send to advertiser
-        if (order.advertiser?.id) {
-          const event = `user_${order.advertiser.id}_message`;
-          console.log(`Sending WebSocket event ${event} to advertiser ${order.advertiser.id}`);
-          if (strapi.io && strapi.io.emitToUser) {
-            strapi.io.emitToUser(order.advertiser.id, event, notificationData);
-          } else {
-            console.error('WebSocket not available - strapi.io or emitToUser not found');
-          }
+        // Send WebSocket notification to participants (avoid sending to sender)
+        const participantIds = [];
+        
+        if (order.advertiser?.id && order.advertiser.id !== user.id) {
+          participantIds.push({
+            id: order.advertiser.id,
+            role: 'advertiser'
+          });
+        }
+        
+        if (order.publisher?.id && order.publisher.id !== user.id) {
+          participantIds.push({
+            id: order.publisher.id,
+            role: 'publisher'
+          });
         }
 
-        // Send to publisher
-        if (order.publisher?.id) {
-          const event = `user_${order.publisher.id}_message`;
-          console.log(`Sending WebSocket event ${event} to publisher ${order.publisher.id}`);
+        // Send to each participant
+        participantIds.forEach(participant => {
+          const event = `user_${participant.id}_message`;
+          console.log(`📤 Sending WebSocket event ${event} to ${participant.role} ${participant.id}`);
+          
           if (strapi.io && strapi.io.emitToUser) {
-            strapi.io.emitToUser(order.publisher.id, event, notificationData);
+            const success = strapi.io.emitToUser(participant.id, event, notificationData);
+            if (!success) {
+              console.log(`⚠️ User ${participant.id} (${participant.role}) not connected`);
+            }
           } else {
-            console.error('WebSocket not available - strapi.io or emitToUser not found');
+            console.error('❌ WebSocket not available - strapi.io or emitToUser not found');
           }
-        }
+        });
       } catch (websocketError) {
         console.error('Error sending WebSocket notification:', websocketError);
         // Don't fail the communication creation if WebSocket fails
