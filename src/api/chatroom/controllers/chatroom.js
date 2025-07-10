@@ -100,7 +100,7 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
             chatroomId: chatroom.id,
             orderId: chatroom.order?.id,
             orderTitle: chatroom.order?.websiteUrl ? 
-              `Order #${chatroom.order.id} • ${chatroom.order.websiteUrl}` : 
+              `• ${chatroom.order.websiteUrl}` : 
               `Order #${chatroom.order?.id}`,
             otherParty: {
               id: otherParty?.id,
@@ -133,7 +133,7 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
           chatroomId: chatroom.id,
           orderId: chatroom.order?.id,
           orderTitle: chatroom.order?.websiteUrl ? 
-            `Order #${chatroom.order.id} • ${chatroom.order.websiteUrl}` : 
+            `• ${chatroom.order.websiteUrl}` : 
             `Order #${chatroom.order?.id}`,
           otherParty: {
             id: otherParty?.id,
