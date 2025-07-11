@@ -199,7 +199,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           gateway: method,
           gatewayTransactionId: `withdrawal_req_${withdrawalRequest.id}_${Date.now()}`,
           description: `Withdrawal request via ${method}`,
-          user_wallet: publisherWallet.id
+          user_wallet: publisherWallet.id,
+          users_permissions_user: userId
         }
       });
       

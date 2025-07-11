@@ -16,7 +16,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       }
 
       // Get user wallet - ensure user ID is properly formatted
-      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+      let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
           users_permissions_user: user.id,
           type: 'advertiser'
@@ -24,8 +24,29 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         populate: ['users_permissions_user']
       });
 
+      // If no advertiser wallet exists, create one automatically
       if (!wallet) {
-        throw new Error('Advertiser wallet not found');
+        console.log(`No advertiser wallet found for user ${user.id}, creating one automatically`);
+        try {
+          // For development, add some initial balance
+          // const initialBalance = process.env.NODE_ENV === 'production' ? 0 : 200;
+          
+          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+            data: {
+              users_permissions_user: user.id,
+              type: 'advertiser',
+              balance: 0,
+              escrowBalance: 0,
+              currency: 'USD',
+              status: 'active',
+              publishedAt: new Date()
+            }
+          });
+          console.log(`Created advertiser wallet with ID: ${wallet.id} for user ${user.id} with initial balance: ${initialBalance}`);
+        } catch (walletError) {
+          console.error('Failed to create advertiser wallet:', walletError);
+          throw new Error('Failed to create advertiser wallet. Please contact support.');
+        }
       }
 
       // Calculate fee
@@ -226,6 +247,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           gatewayTransactionId: `completed_${order.id}_${Date.now()}`,
           description: `Payment for order #${order.id} - funds available for withdrawal`,
           user_wallet: publisherWallet.id,
+          users_permissions_user: publisherId,
           order: order.id
         }
       });
@@ -242,6 +264,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           gatewayTransactionId: `fee_${order.id}_${Date.now()}`,
           description: `Platform fee for order #${order.id}`,
           // This would go to the platform wallet in a production system
+          users_permissions_user: publisherId,
           order: order.id,
           publishedAt: new Date()
         }
@@ -257,7 +280,8 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         data: {
           orderStatus: 'completed',
           completedDate: new Date(),
-          orderAccepted: true
+          orderAccepted: true,
+          revisionStatus: null // Clear revision status when order is completed
         }
       });
       
@@ -358,6 +382,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           gatewayTransactionId: `refund_${order.id}_${Date.now()}`,
           description: `Refund for rejected order #${order.id}`,
           user_wallet: advertiserWallet.id,
+          users_permissions_user: advertiserId,
           order: order.id
         }
       });

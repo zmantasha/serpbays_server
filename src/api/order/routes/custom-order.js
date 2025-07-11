@@ -51,6 +51,19 @@ module.exports = {
         }
       },
     },
+    // Route to migrate marketplace snapshots to existing orders
+    {
+      method: 'POST',
+      path: '/orders/migrate-snapshots',
+      handler: 'order.migrateSnapshots',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update']
+        }
+      },
+    },
     // Route to fix links in order content
     {
       method: 'POST',

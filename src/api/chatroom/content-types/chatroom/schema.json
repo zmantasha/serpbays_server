@@ -1,0 +1,50 @@
+{
+  "kind": "collectionType",
+  "collectionName": "chatrooms",
+  "info": {
+    "singularName": "chatroom",
+    "pluralName": "chatrooms",
+    "displayName": "Chatroom",
+    "description": "Chat rooms for order-based conversations between advertisers and publishers"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "order": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::order.order",
+      "inversedBy": "chatroom"
+    },
+    "advertiser": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "publisher": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "active",
+        "closed",
+        "archived"
+      ],
+      "default": "active"
+    },
+    "lastActivity": {
+      "type": "datetime"
+    },
+    "communications": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::communication.communication",
+      "mappedBy": "chatroom"
+    }
+  }
+} 

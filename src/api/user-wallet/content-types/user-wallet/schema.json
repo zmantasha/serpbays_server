@@ -10,7 +10,14 @@
   "options": {
     "draftAndPublish": true
   },
-  "pluginOptions": {},
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": true
+    }
+  },
   "attributes": {
     "type": {
       "type": "enumeration",
@@ -37,16 +44,6 @@
       "default": 0,
       "required": true,
       "min": 0
-    },
-    "status": {
-      "type": "enumeration",
-      "enum": [
-        "active",
-        "suspended",
-        "closed"
-      ],
-      "default": "active",
-      "required": true
     },
     "users_permissions_user": {
       "type": "relation",

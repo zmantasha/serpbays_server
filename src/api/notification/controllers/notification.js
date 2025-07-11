@@ -125,6 +125,24 @@ module.exports = createCoreController('api::notification.notification', ({ strap
         }
       });
       
+      // Get updated unread count
+      const unreadCount = await strapi.db.query('api::notification.notification').count({
+        where: {
+          recipient: userId,
+          isRead: false
+        }
+      });
+
+      // Emit updated unread count via WebSocket
+      if (userId && strapi.io && strapi.io.emitToUser) {
+        const userChannel = `user_${userId}_notification`;
+        console.log(`📤 Emitting unread count update to ${userChannel}: ${unreadCount}`);
+        strapi.io.emitToUser(userId, userChannel, {
+          type: 'notification_count',
+          data: { unreadCount }
+        });
+      }
+      
       console.log(`Notification ${id} marked as read by user ${userId}`);
       
       return {
@@ -165,6 +183,16 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       );
       
       await Promise.all(updatePromises);
+      
+      // Emit zero unread count via WebSocket
+      if (userId && strapi.io && strapi.io.emitToUser) {
+        const userChannel = `user_${userId}_notification`;
+        console.log(`📤 Emitting unread count update to ${userChannel}: 0`);
+        strapi.io.emitToUser(userId, userChannel, {
+          type: 'notification_count',
+          data: { unreadCount: 0 }
+        });
+      }
       
       console.log(`Marked ${unreadNotifications.length} notifications as read for user ${userId}`);
       

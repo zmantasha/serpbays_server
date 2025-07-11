@@ -110,12 +110,17 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.badRequest('Wallet already exists');
       }
 
+      // Get user information for display name
+      // const user = await strapi.db.query('plugin::users-permissions.user').findOne({
+      //   where: { id: userId }
+      // });
+
       const data = ctx.request.body;
       data.users_permissions_user = userId;
       data.balance = "0";
       data.escrowBalance = "0";
       data.currency = data.currency || 'USD';
-      data.status = 'active';
+      // data.displayName = `${user.username || user.email || `User ${userId}`} (${data.type || 'advertiser'})`;
 
       const wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
         data

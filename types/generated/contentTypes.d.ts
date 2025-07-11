@@ -535,6 +535,50 @@ export interface ApiCategoryCategory extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiChatroomChatroom extends Struct.CollectionTypeSchema {
+  collectionName: 'chatrooms';
+  info: {
+    description: 'Chat rooms for order-based conversations between advertisers and publishers';
+    displayName: 'Chatroom';
+    pluralName: 'chatrooms';
+    singularName: 'chatroom';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    advertiser: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    communications: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::communication.communication'
+    >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    lastActivity: Schema.Attribute.DateTime;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::chatroom.chatroom'
+    > &
+      Schema.Attribute.Private;
+    order: Schema.Attribute.Relation<'oneToOne', 'api::order.order'>;
+    publishedAt: Schema.Attribute.DateTime;
+    publisher: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    status: Schema.Attribute.Enumeration<['active', 'closed', 'archived']> &
+      Schema.Attribute.DefaultTo<'active'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiCommunicationCommunication
   extends Struct.CollectionTypeSchema {
   collectionName: 'communications';
@@ -548,6 +592,7 @@ export interface ApiCommunicationCommunication
     draftAndPublish: false;
   };
   attributes: {
+    chatroom: Schema.Attribute.Relation<'manyToOne', 'api::chatroom.chatroom'>;
     communicationStatus: Schema.Attribute.Enumeration<
       ['requested', 'acceptance', 'in_progress']
     > &
@@ -555,6 +600,7 @@ export interface ApiCommunicationCommunication
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    isUnread: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -1069,6 +1115,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'plugin::users-permissions.user'
     >;
+    chatroom: Schema.Attribute.Relation<'oneToOne', 'api::chatroom.chatroom'>;
     communications: Schema.Attribute.Relation<
       'oneToMany',
       'api::communication.communication'
@@ -1148,6 +1195,26 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'api::marketplace.marketplace'
     >;
+    websiteAhrefsDr: Schema.Attribute.Integer;
+    websiteAhrefsTraffic: Schema.Attribute.Integer;
+    websiteBacklinkType: Schema.Attribute.String;
+    websiteBacklinkValidity: Schema.Attribute.String;
+    websiteCategory: Schema.Attribute.JSON;
+    websiteCountries: Schema.Attribute.JSON;
+    websiteDofollowLink: Schema.Attribute.Integer;
+    websiteFastPlacement: Schema.Attribute.Boolean;
+    websiteGuidelines: Schema.Attribute.Text;
+    websiteLanguage: Schema.Attribute.JSON;
+    websiteLinkInsertionPrice: Schema.Attribute.Integer;
+    websiteMinWordCount: Schema.Attribute.Integer;
+    websiteMozDa: Schema.Attribute.Integer;
+    websitePrice: Schema.Attribute.Integer;
+    websitePublisherEmail: Schema.Attribute.String;
+    websitePublisherName: Schema.Attribute.String;
+    websitePublisherPrice: Schema.Attribute.Integer;
+    websiteSnapshot: Schema.Attribute.JSON;
+    websiteTat: Schema.Attribute.Integer;
+    websiteUrl: Schema.Attribute.String;
   };
 }
 
@@ -1506,6 +1573,14 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   options: {
     draftAndPublish: true;
   };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: true;
+    };
+  };
   attributes: {
     balance: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
@@ -1538,9 +1613,6 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
     > &
       Schema.Attribute.Private;
     publishedAt: Schema.Attribute.DateTime;
-    status: Schema.Attribute.Enumeration<['active', 'suspended', 'closed']> &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'active'>;
     transactions: Schema.Attribute.Relation<
       'oneToMany',
       'api::transaction.transaction'
@@ -2188,7 +2260,7 @@ export interface PluginUsersPermissionsUser
     timestamps: true;
   };
   attributes: {
-    Advertiser: Schema.Attribute.Boolean;
+    Advertiser: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     advertiserOrders: Schema.Attribute.Relation<
       'oneToMany',
       'api::order.order'
@@ -2243,13 +2315,14 @@ export interface PluginUsersPermissionsUser
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{
-        minLength: 6;
+        minLength: 8;
       }>;
     phoneNumber: Schema.Attribute.String;
     pincode: Schema.Attribute.String;
     projects: Schema.Attribute.Relation<'oneToMany', 'api::project.project'>;
     provider: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
+    Publisher: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
     publisherOrders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
     registrationNumber: Schema.Attribute.String;
     resetPasswordToken: Schema.Attribute.String & Schema.Attribute.Private;
@@ -2302,6 +2375,7 @@ declare module '@strapi/strapi' {
       'api::author.author': ApiAuthorAuthor;
       'api::cart.cart': ApiCartCart;
       'api::category.category': ApiCategoryCategory;
+      'api::chatroom.chatroom': ApiChatroomChatroom;
       'api::communication.communication': ApiCommunicationCommunication;
       'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;

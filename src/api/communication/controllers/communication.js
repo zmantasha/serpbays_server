@@ -26,7 +26,7 @@ module.exports = createCoreController('api::communication.communication', ({ str
       
       // Check if the order exists
       const order = await strapi.entityService.findOne('api::order.order', data.order, {
-        populate: ['advertiser', 'publisher'],
+        populate: ['advertiser', 'publisher', 'chatroom'],
       });
       
       if (!order) {
@@ -41,19 +41,39 @@ module.exports = createCoreController('api::communication.communication', ({ str
         return ctx.forbidden('You are not authorized to add communications to this order');
       }
       
+      // Get or create chatroom for this order
+      let chatroom = order.chatroom;
+      if (!chatroom) {
+        chatroom = await strapi.entityService.create('api::chatroom.chatroom', {
+          data: {
+            order: data.order,
+            advertiser: order.advertiser?.id,
+            publisher: order.publisher?.id,
+            status: 'active',
+            lastActivity: new Date(),
+          },
+        });
+      } else {
+        // Update last activity
+        await strapi.entityService.update('api::chatroom.chatroom', chatroom.id, {
+          data: { lastActivity: new Date() },
+        });
+      }
+      
       // Create the communication with the current user as sender
       const entity = await strapi.entityService.create('api::communication.communication', {
         data: {
           message: data.message,
           sender: user.id,
           order: data.order,
+          chatroom: chatroom.id,
           communicationStatus: data.communicationStatus || 'requested',
         },
       });
       
       // Get the created entity with populated relations
       const populatedEntity = await strapi.entityService.findOne('api::communication.communication', entity.id, {
-        populate: ['sender', 'order'],
+        populate: ['sender', 'order', 'chatroom'],
       });
       
       // Determine recipient for the notification
@@ -84,6 +104,60 @@ module.exports = createCoreController('api::communication.communication', ({ str
         }
       } else {
         console.warn(`Could not determine recipient for message_received notification for order ${order.id}. Advertiser: ${order.advertiser?.id}, Publisher: ${order.publisher?.id}, Sender: ${user.id}`);
+      }
+
+      // Send WebSocket notification to both participants
+      try {
+        const notificationData = {
+          type: 'new_message',
+          chatroomId: chatroom.id,
+          orderId: order.id,
+          message: {
+            id: entity.id,
+            content: data.message,
+            sender: {
+              id: user.id,
+              username: user.username
+            },
+            createdAt: populatedEntity.createdAt,
+            isUnread: true
+          }
+        };
+
+        // Send WebSocket notification to participants (avoid sending to sender)
+        const participantIds = [];
+        
+        if (order.advertiser?.id && order.advertiser.id !== user.id) {
+          participantIds.push({
+            id: order.advertiser.id,
+            role: 'advertiser'
+          });
+        }
+        
+        if (order.publisher?.id && order.publisher.id !== user.id) {
+          participantIds.push({
+            id: order.publisher.id,
+            role: 'publisher'
+          });
+        }
+
+        // Send to each participant
+        participantIds.forEach(participant => {
+          const event = `user_${participant.id}_message`;
+          console.log(`📤 Sending WebSocket event ${event} to ${participant.role} ${participant.id}`);
+          
+          if (strapi.io && strapi.io.emitToUser) {
+            const success = strapi.io.emitToUser(participant.id, event, notificationData);
+            if (!success) {
+              console.log(`⚠️ User ${participant.id} (${participant.role}) not connected`);
+            }
+          } else {
+            console.error('❌ WebSocket not available - strapi.io or emitToUser not found');
+          }
+        });
+      } catch (websocketError) {
+        console.error('Error sending WebSocket notification:', websocketError);
+        // Don't fail the communication creation if WebSocket fails
       }
 
       return { data: populatedEntity };
@@ -183,6 +257,92 @@ module.exports = createCoreController('api::communication.communication', ({ str
     } catch (error) {
       console.error('Error updating communication status:', error);
       return ctx.internalServerError('An error occurred while updating the communication status');
+    }
+  },
+  
+  // Get all conversations for current user
+  async getUserConversations(ctx) {
+    try {
+      // Get current user
+      const user = ctx.state.user;
+      if (!user) {
+        return ctx.unauthorized('You must be logged in to view conversations');
+      }
+      
+      // Find all orders where user is either advertiser or publisher
+      const orders = await strapi.entityService.findMany('api::order.order', {
+        filters: {
+          $or: [
+            { advertiser: user.id },
+            { publisher: user.id }
+          ]
+        },
+        populate: ['advertiser', 'publisher', 'communications', 'communications.sender'],
+        sort: { updatedAt: 'desc' }
+      });
+      
+      // Group communications by order and get latest message for each conversation
+      const conversations = [];
+      
+      for (const order of orders) {
+        if (order.communications && order.communications.length > 0) {
+          // Sort communications by creation date (latest first)
+          const sortedComms = order.communications.sort((a, b) => 
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+          
+          const latestMessage = sortedComms[0];
+          const otherParty = order.advertiser?.id === user.id ? order.publisher : order.advertiser;
+          
+          // Count unread messages (messages from other party that are newer than user's last message)
+          const userMessages = sortedComms.filter(comm => comm.sender?.id === user.id);
+          const otherMessages = sortedComms.filter(comm => comm.sender?.id !== user.id);
+          
+          const lastUserMessageTime = userMessages.length > 0 ? 
+            new Date(userMessages[0].createdAt).getTime() : 0;
+          
+          const unreadCount = otherMessages.filter(comm => 
+            new Date(comm.createdAt).getTime() > lastUserMessageTime
+          ).length;
+          
+          conversations.push({
+            orderId: order.id,
+            orderTitle: `Order #${order.websiteUrl}`,
+            otherParty: {
+              id: otherParty?.id,
+              username: otherParty?.username,
+              email: otherParty?.email
+            },
+            latestMessage: {
+              id: latestMessage.id,
+              message: latestMessage.message,
+              sender: latestMessage.sender,
+              createdAt: latestMessage.createdAt,
+              communicationStatus: latestMessage.communicationStatus
+            },
+            unreadCount,
+            totalMessages: order.communications.length,
+            orderStatus: order.orderStatus,
+            updatedAt: order.updatedAt
+          });
+        }
+      }
+      
+      // Sort conversations by latest activity
+      conversations.sort((a, b) => 
+        new Date(b.latestMessage.createdAt).getTime() - new Date(a.latestMessage.createdAt).getTime()
+      );
+      
+      return { 
+        data: conversations,
+        meta: {
+          totalConversations: conversations.length,
+          totalUnreadMessages: conversations.reduce((sum, conv) => sum + conv.unreadCount, 0)
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching user conversations:', error);
+      return ctx.internalServerError('An error occurred while fetching conversations');
     }
   },
   

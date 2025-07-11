@@ -1,5 +1,7 @@
 'use strict';
 
+const websocketBootstrap = require('./bootstrap/websocket');
+
 module.exports = {
   /**
    * An asynchronous register function that runs before
@@ -17,6 +19,9 @@ module.exports = {
    * run jobs, or perform some special logic.
    */
   async bootstrap({ strapi }) {
+    // Initialize WebSocket after Strapi is ready
+    await websocketBootstrap({ strapi });
+
     // Add request debugging middleware
     strapi.server.use(async (ctx, next) => {
       // Log the request details for debugging

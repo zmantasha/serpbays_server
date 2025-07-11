@@ -104,6 +104,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             gatewayTransactionId: paymentData.id,
             transactionStatus: 'pending',
             user_wallet: wallet.id,
+            users_permissions_user: userId || wallet.users_permissions_user,
             metadata: {
               paymentData: paymentData,
               walletId: wallet.id,
@@ -404,6 +405,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           gatewayTransactionId: gatewayTransactionId,
           transactionStatus: 'pending',
           user_wallet: walletId,
+          users_permissions_user: userId || wallet.users_permissions_user,
           metadata: {
             walletId: walletId,  // Store the wallet ID in metadata
             userId: userId       // Store the user ID in metadata
