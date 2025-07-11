@@ -723,14 +723,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Build sort object
         const sortOptions = {};
-        const validSortFields = ['orderDate', 'id', 'orderStatus', 'totalAmount', 'deliveredDate', 'acceptedDate'];
+        const validSortFields = ['orderDate', 'id', 'orderStatus', 'totalAmount', 'deliveredDate', 'acceptedDate', 'updatedAt'];
         const validSortOrders = ['asc', 'desc'];
         
         if (validSortFields.includes(sortBy) && validSortOrders.includes(sortOrder.toLowerCase())) {
           sortOptions[sortBy] = sortOrder.toLowerCase();
         } else {
-          // Default sort
-          sortOptions.orderDate = 'desc';
+          // Default sort by most recent activity (updatedAt)
+          sortOptions.updatedAt = 'desc';
         }
 
         console.log(`Fetching orders for user ID ${user.id}, page: ${currentPage}, limit: ${limit}`);
