@@ -280,7 +280,8 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         data: {
           orderStatus: 'completed',
           completedDate: new Date(),
-          orderAccepted: true
+          orderAccepted: true,
+          revisionStatus: null // Clear revision status when order is completed
         }
       });
       

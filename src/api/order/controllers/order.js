@@ -1775,9 +1775,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.forbidden('Only the publisher can complete revisions');
         }
         
-        // Update order revision status
+        // Update order revision status and order status
         const updated = await strapi.entityService.update('api::order.order', orderId, {
-          data: { revisionStatus: 'completed' }
+          data: { 
+            revisionStatus: 'completed',
+            orderStatus: 'delivered',
+            deliveredDate: new Date()
+          }
         });
         
         // Create a communication record
