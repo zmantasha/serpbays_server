@@ -4,7 +4,12 @@ module.exports = ({ strapi }) => {
   // Initialize Socket.IO
   const io = require('socket.io')(strapi.server.httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL || 'http://localhost:3000',
+      origin: [
+        process.env.CLIENT_URL || 'http://localhost:3000',
+        'https://staging.serpbays.com',
+        'https://serpbays.com',
+        'https://cms.serpbays.com'
+      ],
       methods: ['GET', 'POST'],
       allowedHeaders: ['Authorization'],
       credentials: true
