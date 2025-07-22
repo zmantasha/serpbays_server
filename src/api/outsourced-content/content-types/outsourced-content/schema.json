@@ -8,7 +8,7 @@
     "description": "Details for outsourced content orders"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "pluginOptions": {},
   "attributes": {
@@ -31,4 +31,4 @@
       "inversedBy": "outsourcedContent"
     }
   }
-} 
+}

@@ -122,11 +122,11 @@
     "billingAddress": {
       "type": "string"
     },
-    "registrationNumber":{
-      "type":"string"
+    "registrationNumber": {
+      "type": "string"
     },
-    "city":{
-      "type":"string"
+    "city": {
+      "type": "string"
     },
     "country": {
       "type": "string"
@@ -145,7 +145,11 @@
     },
     "identity": {
       "type": "enumeration",
-      "enum": ["SEO", "Agency", "Other"]
+      "enum": [
+        "SEO",
+        "Agency",
+        "Other"
+      ]
     },
     "invoices": {
       "type": "relation",
@@ -154,11 +158,11 @@
       "mappedBy": "user"
     },
     "transactions": {
-          "type": "relation",
-          "relation": "oneToMany",
-          "target": "api::transaction.transaction",
-          "mappedBy": "users_permissions_user"
-        },
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::transaction.transaction",
+      "mappedBy": "users_permissions_user"
+    },
     "notificationPreferences": {
       "type": "json",
       "configurable": true,

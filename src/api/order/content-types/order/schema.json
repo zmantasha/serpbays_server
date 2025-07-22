@@ -8,7 +8,7 @@
     "description": "Link building orders between advertisers and publishers"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "pluginOptions": {},
   "attributes": {

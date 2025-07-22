@@ -36,14 +36,19 @@
       "target": "api::order.order",
       "mappedBy": "project"
     },
-    "projectUrl":{
-      "type":"string",
-      "required":true
-     },
+    "projectUrl": {
+      "type": "string",
+      "required": true
+    },
     "files": {
       "type": "media",
       "multiple": true,
-      "allowedTypes": ["images", "files", "videos", "audios"]
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
     },
     "archived": {
       "type": "boolean",
@@ -51,7 +56,12 @@
     },
     "status": {
       "type": "enumeration",
-      "enum": ["active", "paused", "completed", "archived"],
+      "enum": [
+        "active",
+        "paused",
+        "completed",
+        "archived"
+      ],
       "default": "active"
     }
   }

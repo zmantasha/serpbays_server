@@ -638,15 +638,33 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Build base filters for user access
         const baseFilters = {};
         
-        if (type === 'advertiser' || type === 'all') {
-          // Include orders where user is advertiser
-          baseFilters.$or = baseFilters.$or || [];
+        if (type === 'advertiser') {
+          // Include only orders where user is advertiser
+          baseFilters.advertiser = user.id;
+        } else if (type === 'publisher') {
+          // Include only orders where user is publisher OR for websites they own
+          // but exclude orders they placed as advertiser
+          baseFilters.$or = [];
+          baseFilters.$or.push({ publisher: user.id });
+          
+          // Also include orders for websites owned by this publisher
+          const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
+            where: { publisher_email: user.email }
+          });
+          
+          if (publisherWebsites && publisherWebsites.length > 0) {
+            const websiteIds = publisherWebsites.map(website => website.id);
+            baseFilters.$or.push({ 
+              website: { id: { $in: websiteIds } }
+            });
+          }
+          
+          // Exclude orders where user is the advertiser (to prevent self-acceptance)
+          baseFilters.advertiser = { $ne: user.id };
+        } else if (type === 'all') {
+          // Include orders where user is advertiser OR publisher
+          baseFilters.$or = [];
           baseFilters.$or.push({ advertiser: user.id });
-        }
-        
-        if (type === 'publisher' || type === 'all') {
-          // Include orders where user is publisher
-          baseFilters.$or = baseFilters.$or || [];
           baseFilters.$or.push({ publisher: user.id });
           
           // Also include orders for websites owned by this publisher
@@ -803,72 +821,40 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         let orders = [];
 
         if (!publisherWebsites || publisherWebsites.length === 0) {
-          // Even if they don't have publisher websites, we can still show orders they created as advertiser
-          orders = await strapi.entityService.findMany('api::order.order', {
-            filters: {
-              advertiser: { id: user.id },
-              orderStatus: 'pending',
-              publisher: null // No publisher assigned yet
-            },
-            populate: ['website', 'advertiser', 'outsourcedContent'],
-            sort: { orderDate: 'desc' }
-          });
-
-          if (orders.length === 0) {
+          // If user has no publisher websites, they cannot see any available orders
           return {
             data: [],
             meta: {
-              message: 'No websites found for this publisher and no orders created as advertiser'
+              message: 'No websites found for this publisher'
             }
           };
         }
-        } else {
+
         // Get website IDs
         const websiteIds = publisherWebsites.map(website => website.id);
 
-        // Find all pending orders:
-        // 1. Orders for publisher's websites
-        // 2. Orders created by this user as advertiser
-          // Get website orders
-          const websiteOrders = await strapi.entityService.findMany('api::order.order', {
-            filters: {
-              website: { id: { $in: websiteIds } },
-                orderStatus: 'pending',
-                publisher: null // No publisher assigned yet
-              },
-            populate: ['website', 'advertiser', 'outsourcedContent'],
-            sort: { orderDate: 'desc' }
-          });
-          
-          // Get advertiser orders
-          const advertiserOrders = await strapi.entityService.findMany('api::order.order', {
-            filters: {
-              advertiser: { id: user.id },
-                orderStatus: 'pending',
-                publisher: null // No publisher assigned yet
+        // Find pending orders only for publisher's websites
+        // Publishers should not see orders they placed as advertisers
+        orders = await strapi.entityService.findMany('api::order.order', {
+          filters: {
+            website: { id: { $in: websiteIds } },
+            orderStatus: 'pending',
+            publisher: null, // No publisher assigned yet
+            advertiser: { id: { $ne: user.id } } // Exclude orders placed by this user as advertiser
           },
           populate: ['website', 'advertiser', 'outsourcedContent'],
-            sort: { orderDate: 'desc' }
-          });
-          
-          // Combine both sets
-          orders = [...websiteOrders, ...advertiserOrders];
-        }
+          sort: { orderDate: 'desc' }
+        });
 
-        console.log(`Retrieved ${orders.length} total available orders for user ID ${user.id}`);
+        console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (excluding own orders)`);
         
         // Log all order IDs for debugging
-        console.log('All available order IDs:', orders.map(order => order.id).join(', '));
-        
-        // No more deduplication - show all available orders exactly as retrieved from Strapi
-        // This ensures each order in the database appears in the UI with correct ID
-        const uniqueOrders = orders;
+        console.log('Available order IDs:', orders.map(order => order.id).join(', '));
 
         return {
-          data: uniqueOrders,
+          data: orders,
           meta: {
-            count: uniqueOrders.length,
-            note: publisherWebsites.length === 0 ? 'Showing orders you created as an advertiser' : undefined
+            count: orders.length
           }
         };
       } catch (error) {

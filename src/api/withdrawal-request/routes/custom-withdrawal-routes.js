@@ -39,6 +39,32 @@ module.exports = {
         }
       },
     },
+    // Debug route for checking transaction details
+    {
+      method: 'GET',
+      path: '/withdrawal-requests/debug-transactions',
+      handler: 'withdrawal-request.debugTransactions',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::withdrawal-request.withdrawal-request.find']
+        }
+      },
+    },
+    // Migration route for fixing missing transactions
+    {
+      method: 'POST',
+      path: '/withdrawal-requests/fix-missing-transactions',
+      handler: 'withdrawal-request.fixMissingTransactions',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::withdrawal-request.withdrawal-request.update']
+        }
+      },
+    },
     // Route for exporting all my withdrawals
     {
       method: 'GET',

@@ -844,7 +844,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
-    guidelines: Schema.Attribute.Text & Schema.Attribute.DefaultTo<'N/A'>;
+    guidelines: Schema.Attribute.Text;
     language: Schema.Attribute.JSON & Schema.Attribute.Required;
     link_insertion_price: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -937,6 +937,13 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     publisher_name: Schema.Attribute.String & Schema.Attribute.Required;
     publisher_price: Schema.Attribute.Integer &
       Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_writing_price: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
           min: 0;
@@ -1107,7 +1114,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     singularName: 'order';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     acceptedDate: Schema.Attribute.DateTime;
@@ -1228,7 +1235,7 @@ export interface ApiOutsourcedContentOutsourcedContent
     singularName: 'outsourced-content';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     createdAt: Schema.Attribute.DateTime;

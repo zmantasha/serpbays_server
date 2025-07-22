@@ -32,7 +32,7 @@
       "type": "enumeration",
       "enum": [
         "Ultra Fast",
-        "Fast", 
+        "Fast",
         "Normal",
         "Slow"
       ],
@@ -126,6 +126,11 @@
     "publisher_link_insertion_price": {
       "type": "integer",
       "min": 0
+    },
+    "publisher_writing_price": {
+      "type": "integer",
+      "min": 0,
+      "description": "The price the publisher charges for writing content (outsourced content orders)"
     },
     "semrush_authority_score": {
       "type": "integer",

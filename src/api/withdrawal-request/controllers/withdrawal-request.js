@@ -848,6 +848,178 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       console.error('Error exporting withdrawal requests:', error);
       return ctx.internalServerError('Failed to export withdrawal requests', { error: error.message });
     }
+  },
+
+  // Debug endpoint to check transaction details for a user
+  async debugTransactions(ctx) {
+    try {
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+      
+      const userId = ctx.state.user.id;
+      
+      // Get publisher wallet
+      const publisherWallets = await strapi.entityService.findMany('api::user-wallet.user-wallet', {
+        filters: { 
+          users_permissions_user: { id: userId },
+          type: 'publisher'
+        }
+      });
+      
+      const publisherWallet = publisherWallets?.[0];
+      
+      if (!publisherWallet) {
+        return { message: 'No publisher wallet found', userId };
+      }
+      
+      // Get all completed orders
+      const completedOrders = await strapi.db.query('api::order.order').findMany({
+        where: {
+          publisher: userId,
+          orderStatus: { $in: ['approved', 'completed'] }
+        }
+      });
+      
+      // Get all transactions for this wallet
+      const allTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
+        filters: {
+          user_wallet: { id: publisherWallet.id }
+        },
+        populate: ['order'],
+        sort: { createdAt: 'desc' }
+      });
+      
+      // Get escrow_release transactions specifically
+      const escrowReleaseTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
+        filters: {
+          user_wallet: { id: publisherWallet.id },
+          type: 'escrow_release'
+        },
+        populate: ['order'],
+        sort: { createdAt: 'desc' }
+      });
+      
+      return {
+        data: {
+          userId,
+          publisherWallet: {
+            id: publisherWallet.id,
+            balance: publisherWallet.balance,
+            escrowBalance: publisherWallet.escrowBalance
+          },
+          completedOrders: completedOrders.map(o => ({
+            id: o.id,
+            status: o.orderStatus,
+            amount: o.totalAmount,
+            completedDate: o.completedDate
+          })),
+          allTransactionsCount: allTransactions.length,
+          escrowReleaseTransactionsCount: escrowReleaseTransactions.length,
+          escrowReleaseTransactions: escrowReleaseTransactions.map(t => ({
+            id: t.id,
+            type: t.type,
+            amount: t.amount,
+            orderId: t.order?.id,
+            description: t.description,
+            createdAt: t.createdAt,
+            publishedAt: t.publishedAt
+          }))
+        }
+      };
+    } catch (error) {
+      console.error('Debug transactions error:', error);
+      return ctx.badRequest('Debug failed', { error: error.message });
+    }
+  },
+
+  // Migration endpoint to create missing escrow_release transactions for completed orders
+  async fixMissingTransactions(ctx) {
+    try {
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      const userId = ctx.state.user.id;
+
+      // Get publisher wallet
+      const publisherWallets = await strapi.entityService.findMany('api::user-wallet.user-wallet', {
+        filters: { 
+          users_permissions_user: { id: userId },
+          type: 'publisher'
+        }
+      });
+      
+      const publisherWallet = publisherWallets?.[0];
+      
+      if (!publisherWallet) {
+        return { message: 'No publisher wallet found', userId };
+      }
+
+      // Get all completed orders for this publisher
+      const completedOrders = await strapi.db.query('api::order.order').findMany({
+        where: {
+          publisher: userId,
+          orderStatus: { $in: ['approved', 'completed'] }
+        }
+      });
+
+      console.log(`Found ${completedOrders.length} completed orders for publisher ${userId}`);
+
+      let createdTransactions = 0;
+      let skippedTransactions = 0;
+
+      for (const order of completedOrders) {
+        // Check if escrow_release transaction already exists for this order
+        const existingTransaction = await strapi.entityService.findMany('api::transaction.transaction', {
+          filters: {
+            user_wallet: { id: publisherWallet.id },
+            type: 'escrow_release',
+            order: { id: order.id }
+          }
+        });
+
+        if (existingTransaction.length > 0) {
+          console.log(`Transaction already exists for order ${order.id}, skipping`);
+          skippedTransactions++;
+          continue;
+        }
+
+        // Create missing escrow_release transaction
+        const paymentTransaction = await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            type: 'escrow_release',
+            amount: order.totalAmount,
+            netAmount: order.totalAmount,
+            transactionStatus: 'success',
+            gateway: 'migration',
+            gatewayTransactionId: `migration_${order.id}_${Date.now()}`,
+            description: `Payment for order #${order.id} - funds available for withdrawal (migrated)`,
+            user_wallet: publisherWallet.id,
+            users_permissions_user: userId,
+            order: order.id,
+            publishedAt: new Date()
+          }
+        });
+
+        console.log(`Created missing transaction for order ${order.id}: transaction ID ${paymentTransaction.id}`);
+        createdTransactions++;
+      }
+
+      return {
+        data: {
+          userId,
+          publisherWalletId: publisherWallet.id,
+          completedOrdersCount: completedOrders.length,
+          createdTransactions,
+          skippedTransactions,
+          message: `Migration completed. Created ${createdTransactions} missing transactions, skipped ${skippedTransactions} existing ones.`
+        }
+      };
+    } catch (error) {
+      console.error('Fix missing transactions error:', error);
+      return ctx.badRequest('Migration failed', { error: error.message });
+    }
   }
 }));
 

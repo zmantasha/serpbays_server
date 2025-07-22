@@ -33,7 +33,13 @@
     },
     "transactionStatus": {
       "type": "enumeration",
-      "enum":  ["pending", "success", "failed", "cancelled", "refunded"],
+      "enum": [
+        "pending",
+        "success",
+        "failed",
+        "cancelled",
+        "refunded"
+      ],
       "default": "pending",
       "required": true
     },

@@ -248,7 +248,8 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           description: `Payment for order #${order.id} - funds available for withdrawal`,
           user_wallet: publisherWallet.id,
           users_permissions_user: publisherId,
-          order: order.id
+          order: order.id,
+          publishedAt: new Date() // Required for visibility in queries
         }
       });
       
