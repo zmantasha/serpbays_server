@@ -51,8 +51,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Get publisher wallet
       const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: ctx.state.user.id,
-          type: 'publisher'
+          users_permissions_user: ctx.state.user.id
         }
       });
       
@@ -200,29 +199,27 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           gatewayTransactionId: `withdrawal_req_${withdrawalRequest.id}_${Date.now()}`,
           description: `Withdrawal request via ${method}`,
           user_wallet: publisherWallet.id,
-          users_permissions_user: userId
+          users_permissions_user: ctx.state.user.id
         }
       });
       
-      // IMPORTANT: Update the wallet balance immediately when withdrawal is requested
-      // This ensures the available balance reflects the pending withdrawal
+      // Update the wallet balance when withdrawal is requested
       console.log('Updating wallet balance after withdrawal request:', {
         previousBalance: publisherWallet.balance,
         previousEscrow: publisherWallet.escrowBalance,
         withdrawalAmount: requestAmount
       });
       
-      // Move the withdrawal amount from available balance to escrow
+      // Subtract the withdrawal amount from wallet balance and add to escrow
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
         data: {
-          // Don't change the main balance - the funds come from completed orders
-          // Instead, track this in escrow so it's not available for future withdrawals
-          escrowBalance: (publisherWallet.escrowBalance || 0) + requestAmount
+          balance: (parseFloat(publisherWallet.balance) || 0) - requestAmount,
+          escrowBalance: (parseFloat(publisherWallet.escrowBalance) || 0) + requestAmount
         }
       });
       
-      console.log('Wallet balance updated successfully after withdrawal request');
+      console.log(`Subtracted $${requestAmount} from wallet balance. New balance: ${(parseFloat(publisherWallet.balance) || 0) - requestAmount}`);
       
       return {
         data: withdrawalRequest,
@@ -352,8 +349,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Get publisher wallet
       const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: withdrawalRequest.publisher.id,
-          type: 'publisher'
+          users_permissions_user: withdrawalRequest.publisher.id
         }
       });
       
@@ -437,8 +433,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Get publisher wallet
       const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: withdrawalRequest.publisher.id,
-          type: 'publisher'
+          users_permissions_user: withdrawalRequest.publisher.id
         }
       });
       
@@ -542,8 +537,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Get publisher wallet
       const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: {
-          users_permissions_user: withdrawalRequest.publisher.id,
-          type: 'publisher'
+          users_permissions_user: withdrawalRequest.publisher.id
         }
       });
 
@@ -680,8 +674,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Get publisher wallet using Strapi entity service
       const publisherWallets = await strapi.entityService.findMany('api::user-wallet.user-wallet', {
         filters: { 
-          users_permissions_user: { id: userId },
-          type: 'publisher'
+          users_permissions_user: { id: userId }
         }
       });
       

@@ -79,6 +79,24 @@ module.exports = {
     },
     {
       method: 'GET',
+      path: '/api/api/wallet/balance',
+      handler: 'user-wallet.getBalance',
+      config: {
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'GET',
+      path: '/api/wallet/available-balance',
+      handler: 'user-wallet.getAvailableBalance',
+      config: {
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'GET',
       path: '/api/wallet/transactions',
       handler: 'user-wallet.getTransactions',
       config: {
@@ -87,9 +105,9 @@ module.exports = {
       }
     },
     {
-      method: 'POST',
-      path: '/api/wallet/redeem-promo',
-      handler: 'user-wallet.redeemPromo',
+      method: 'GET',
+      path: '/api/api/wallet/transactions',
+      handler: 'user-wallet.getTransactions',
       config: {
         policies: [],
         middlewares: []
@@ -100,6 +118,17 @@ module.exports = {
       path: '/api/wallet/check-promo',
       handler: 'user-wallet.checkPromoCode',
       config: {
+        auth: {},
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/api/wallet/check-promo',
+      handler: 'user-wallet.checkPromoCode',
+      config: {
+        auth: {},
         policies: [],
         middlewares: []
       }

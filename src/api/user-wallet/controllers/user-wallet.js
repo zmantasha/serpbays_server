@@ -34,6 +34,75 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.unauthorized('Authentication required');
       }
 
+      let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { users_permissions_user: userId }
+      });
+
+      // If no wallet exists, create one automatically
+      if (!wallet) {
+        console.log(`No wallet found for user ${userId}, creating one automatically`);
+        try {
+          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+            data: {
+              users_permissions_user: userId,
+              type: 'unified',
+              balance: 0,
+              escrowBalance: 0,
+              currency: 'USD',
+              publishedAt: new Date()
+            }
+          });
+          console.log(`Created unified wallet with ID: ${wallet.id} for user ${userId}`);
+        } catch (walletError) {
+          console.error('Failed to create wallet:', walletError);
+          return ctx.badRequest('Failed to create wallet. Please contact support.');
+        }
+      }
+
+      // Calculate correct escrow balance (only pending/approved withdrawals)
+      const pendingWithdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: {
+          publisher: { id: userId },
+          withdrawal_status: { $in: ['pending', 'approved'] }
+        }
+      });
+      
+      const correctEscrowBalance = pendingWithdrawals.reduce((total, wr) => {
+        return total + parseFloat(wr.amount || 0);
+      }, 0);
+      
+      console.log(`[getBalance] Calculated correct escrow balance: ${correctEscrowBalance} (from ${pendingWithdrawals.length} pending/approved withdrawals)`);
+      
+      // Update the stored escrow balance if it's different
+      if (Math.abs(correctEscrowBalance - parseFloat(wallet.escrowBalance || 0)) > 0.01) {
+        console.log(`[getBalance] Updating stored escrow balance from ${wallet.escrowBalance} to ${correctEscrowBalance}`);
+        await strapi.db.query('api::user-wallet.user-wallet').update({
+          where: { id: wallet.id },
+          data: { escrowBalance: correctEscrowBalance }
+        });
+      }
+
+      return {
+        data: {
+          balance: wallet.balance || "0",
+          escrowBalance: correctEscrowBalance.toString(),
+          currency: wallet.currency || "USD"
+        }
+      };
+    } catch (error) {
+      return ctx.badRequest('Failed to get balance');
+    }
+  },
+
+  // Get unified available balance (for both advertisers and publishers)
+  async getAvailableBalance(ctx) {
+    try {
+      const userId = ctx.state?.user?.id;
+      if (!userId) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      // Get user's wallet (one wallet per user, regardless of role)
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { users_permissions_user: userId }
       });
@@ -42,15 +111,129 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.notFound('Wallet not found');
       }
 
+      console.log(`[Unified] Getting available balance for user ${userId}, wallet type: ${wallet.type || 'unified'}`);
+
+      // Base wallet balance (from direct top-ups, etc.)
+      const walletBalance = parseFloat(wallet.balance || 0);
+      const storedEscrowBalance = parseFloat(wallet.escrowBalance || 0);
+
+      // Calculate earnings from completed orders (for publishers)
+      let completedOrdersAmount = 0;
+      let completedOrders = [];
+      let transactionCount = 0;
+
+      // Get all completed/approved orders where this user was the publisher
+      const allCompletedRawOrders = await strapi.db.query('api::order.order').findMany({
+        where: {
+          publisher: userId,
+          orderStatus: { $in: ['approved', 'completed'] }
+        }
+      });
+      const completedOrderIds = new Set(allCompletedRawOrders.map(order => order.id));
+      console.log(`[Unified] Found ${completedOrderIds.size} completed orders where user ${userId} was publisher`);
+
+      if (completedOrderIds.size > 0) {
+        // Get 'escrow_release' transactions for completed orders
+        const allEscrowReleaseTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
+          filters: {
+            user_wallet: { id: wallet.id },
+            type: 'escrow_release',
+            order: { id: { $in: Array.from(completedOrderIds) } }
+          },
+          populate: ['order'],
+          sort: { createdAt: 'desc' }
+        });
+
+        // Deduplicate to get unique transactions per order (latest transaction per order)
+        const orderTransactionMap = new Map();
+        allEscrowReleaseTransactions.forEach(tx => {
+          const orderId = tx.order?.id;
+          if (orderId && completedOrderIds.has(orderId)) {
+            if (!orderTransactionMap.has(orderId) || new Date(tx.createdAt) > new Date(orderTransactionMap.get(orderId).createdAt)) {
+              orderTransactionMap.set(orderId, tx);
+            }
+          }
+        });
+
+        completedOrders = Array.from(orderTransactionMap.values());
+        transactionCount = completedOrders.length;
+
+        // Calculate total amount from completed orders
+        completedOrdersAmount = completedOrders.reduce((total, tx) => {
+          return total + parseFloat(tx.amount || 0);
+        }, 0);
+      }
+
+      // Calculate actual escrow balance from pending/approved withdrawals (for publisher role)
+      let withdrawalEscrowBalance = 0;
+      const withdrawalsInEscrow = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: {
+          publisher: { id: userId },
+          withdrawal_status: { $in: ['pending', 'approved'] }
+        }
+      });
+      withdrawalEscrowBalance = withdrawalsInEscrow.reduce((total, wr) => {
+        return total + parseFloat(wr.amount || 0);
+      }, 0);
+
+      // Calculate total paid out amount (for publisher role)
+      let totalPaidOutAmount = 0;
+      const paidWithdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: {
+          publisher: { id: userId },
+          withdrawal_status: 'paid'
+        }
+      });
+      totalPaidOutAmount = paidWithdrawals.reduce((total, wr) => {
+        return total + parseFloat(wr.amount || 0);
+      }, 0);
+
+      // Calculate total available balance
+      // Available = (Wallet Balance + Completed Orders - Paid Withdrawals) - Max(Stored Escrow, Withdrawal Escrow)
+      const totalEarnings = walletBalance + completedOrdersAmount;
+      const netRevenue = totalEarnings - totalPaidOutAmount;
+      const actualEscrowBalance = Math.max(storedEscrowBalance, withdrawalEscrowBalance);
+      const totalAvailable = Math.max(0, netRevenue - actualEscrowBalance);
+
+      console.log(`[Unified] Balance calculation for user ${userId}:`, {
+        walletBalance,
+        completedOrdersAmount,
+        totalPaidOutAmount,
+        storedEscrowBalance,
+        withdrawalEscrowBalance,
+        actualEscrowBalance,
+        totalAvailable,
+        calculation: `(${walletBalance} + ${completedOrdersAmount} - ${totalPaidOutAmount}) - ${actualEscrowBalance} = ${totalAvailable}`
+      });
+
+      // Update stored escrow balance if it's significantly different (optional correction)
+      if (Math.abs(actualEscrowBalance - storedEscrowBalance) > 0.01) {
+        console.log(`[Unified] Correcting stored escrow balance. Was: ${storedEscrowBalance}, Now: ${actualEscrowBalance}`);
+        await strapi.db.query('api::user-wallet.user-wallet').update({
+          where: { id: wallet.id },
+          data: { escrowBalance: actualEscrowBalance }
+        });
+      }
+
+      // Return unified response
       return {
         data: {
-          balance: wallet.balance || "0",
-          escrowBalance: wallet.escrowBalance || "0",
-          currency: wallet.currency || "USD"
+          balance: totalAvailable, // This is the main "available balance" everyone should use
+          walletBalance, // Direct wallet balance (from top-ups)
+          completedOrdersAmount, // Earnings from orders (publishers only)
+          escrowBalance: actualEscrowBalance, // Amount in escrow
+          totalPaidOutAmount, // Total withdrawn (publishers only)
+          totalAvailable, // Same as balance, for clarity
+          completedOrders, // Transaction details (publishers only)
+          transactionCount, // Number of completed order transactions
+          currency: wallet.currency || "USD",
+          userType: wallet.type || 'unified', // wallet type or unified
+          totalEarnings // Total lifetime earnings
         }
       };
     } catch (error) {
-      return ctx.badRequest('Failed to get balance');
+      console.error('Error getting available balance:', error);
+      return ctx.badRequest('Failed to get available balance');
     }
   },
 

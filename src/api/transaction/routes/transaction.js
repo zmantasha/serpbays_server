@@ -68,6 +68,14 @@ module.exports = {
       }
     },
     {
+      method: 'GET',
+      path: '/api/api/transactions/status/:id',
+      handler: 'transaction.getTransactionStatus',
+      config: {
+        auth: false // Allow public access to check status
+      }
+    },
+    {
       method: 'POST',
       path: '/api/transactions/payment',
       handler: 'transaction.createPayment',
@@ -79,7 +87,25 @@ module.exports = {
     },
     {
       method: 'POST',
+      path: '/api/api/transactions/payment',
+      handler: 'transaction.createPayment',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.create']
+        }
+      }
+    },
+    {
+      method: 'POST',
       path: '/api/transactions/webhook/:gateway',
+      handler: 'transaction.handleWebhook',
+      config: {
+        auth: false // Webhooks must be public
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/api/transactions/webhook/:gateway',
       handler: 'transaction.handleWebhook',
       config: {
         auth: false // Webhooks must be public

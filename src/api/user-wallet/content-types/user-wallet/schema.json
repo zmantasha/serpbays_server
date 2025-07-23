@@ -23,7 +23,8 @@
       "type": "enumeration",
       "enum": [
         "advertiser",
-        "publisher"
+        "publisher",
+        "unified"
       ],
       "required": true,
       "unique": false

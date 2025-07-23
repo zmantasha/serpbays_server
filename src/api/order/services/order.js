@@ -18,34 +18,29 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       // Get user wallet - ensure user ID is properly formatted
       let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: user.id,
-          type: 'advertiser'
+          users_permissions_user: user.id
         },
         populate: ['users_permissions_user']
       });
 
-      // If no advertiser wallet exists, create one automatically
+      // If no wallet exists, create one automatically
       if (!wallet) {
-        console.log(`No advertiser wallet found for user ${user.id}, creating one automatically`);
+        console.log(`No wallet found for user ${user.id}, creating one automatically`);
         try {
-          // For development, add some initial balance
-          // const initialBalance = process.env.NODE_ENV === 'production' ? 0 : 200;
-          
           wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
             data: {
               users_permissions_user: user.id,
-              type: 'advertiser',
+              type: 'unified', // Single wallet for both advertiser and publisher activities
               balance: 0,
               escrowBalance: 0,
               currency: 'USD',
-              status: 'active',
               publishedAt: new Date()
             }
           });
-          console.log(`Created advertiser wallet with ID: ${wallet.id} for user ${user.id} with initial balance: ${initialBalance}`);
+          console.log(`Created unified wallet with ID: ${wallet.id} for user ${user.id}`);
         } catch (walletError) {
-          console.error('Failed to create advertiser wallet:', walletError);
-          throw new Error('Failed to create advertiser wallet. Please contact support.');
+          console.error('Failed to create wallet:', walletError);
+          throw new Error('Failed to create wallet. Please contact support.');
         }
       }
 
@@ -177,15 +172,13 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       // Get advertiser and publisher wallets
       const advertiserWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: advertiserId,
-          type: 'advertiser'
+          users_permissions_user: advertiserId
         }
       });
       
       let publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: publisherId,
-          type: 'publisher'
+          users_permissions_user: publisherId
         }
       });
       
@@ -199,11 +192,10 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         publisherWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
           data: {
             users_permissions_user: publisherId,
-            type: 'publisher',
+            type: 'unified',
             balance: 0,
             escrowBalance: 0,
             currency: 'USD',
-            status: 'active',
             publishedAt: new Date()
           },
         });
@@ -211,7 +203,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         if (!publisherWallet) {
           throw new Error('Failed to create publisher wallet');
         }
-        console.log(`Created new publisher wallet with ID: ${publisherWallet.id}`);
+        console.log(`Created new unified wallet with ID: ${publisherWallet.id}`);
       }
       
       // Calculate payment amount (without platform fee)
@@ -233,8 +225,15 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
       
-      // DON'T add to publisher wallet balance directly - only create transaction record
-      // The getAvailableBalance method will calculate available funds from transactions
+      // ADD the earnings to publisher wallet balance
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: publisherWallet.id },
+        data: {
+          balance: (parseFloat(publisherWallet.balance) || 0) + paymentAmount
+        }
+      });
+      
+      console.log(`Added $${paymentAmount} to publisher wallet. New balance: ${(parseFloat(publisherWallet.balance) || 0) + paymentAmount}`);
       
       // Create a transaction record for the payment (this is what shows in earnings)
       const paymentTransaction = await strapi.entityService.create('api::transaction.transaction', {
@@ -245,7 +244,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           transactionStatus: 'success', // Mark as success since funds are now available
           gateway: 'test',
           gatewayTransactionId: `completed_${order.id}_${Date.now()}`,
-          description: `Payment for order #${order.id} - funds available for withdrawal`,
+          description: `Payment for order #${order.id} - earnings added to wallet`,
           user_wallet: publisherWallet.id,
           users_permissions_user: publisherId,
           order: order.id,
@@ -347,8 +346,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       // Get advertiser wallet
       const advertiserWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: advertiserId,
-          type: 'advertiser'
+          users_permissions_user: advertiserId
         }
       });
       

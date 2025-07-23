@@ -1624,7 +1624,7 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
       'oneToMany',
       'api::transaction.transaction'
     >;
-    type: Schema.Attribute.Enumeration<['advertiser', 'publisher']> &
+    type: Schema.Attribute.Enumeration<['advertiser', 'publisher', 'unified']> &
       Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
