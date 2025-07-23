@@ -836,16 +836,16 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Find pending orders only for publisher's websites
         // Publishers should not see orders they placed as advertisers
         orders = await strapi.entityService.findMany('api::order.order', {
-          filters: {
-            website: { id: { $in: websiteIds } },
-            orderStatus: 'pending',
+            filters: {
+              website: { id: { $in: websiteIds } },
+                orderStatus: 'pending',
             publisher: null, // No publisher assigned yet
             advertiser: { id: { $ne: user.id } } // Exclude orders placed by this user as advertiser
-          },
-          populate: ['website', 'advertiser', 'outsourcedContent'],
-          sort: { orderDate: 'desc' }
-        });
-
+              },
+            populate: ['website', 'advertiser', 'outsourcedContent'],
+            sort: { orderDate: 'desc' }
+          });
+          
         console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (excluding own orders)`);
         
         // Log all order IDs for debugging

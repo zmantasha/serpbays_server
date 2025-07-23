@@ -51,7 +51,8 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
                   dofollowLinks: marketplace.dofollow_link?.toString(),
                   description: marketplace.description || '',
                   category: marketplace.category,
-                  traffic: marketplace.ahrefs_traffic
+                  traffic: marketplace.ahrefs_traffic,
+                  publisher_writing_price:marketplace.publisher_writing_price
                 }
               };
               itemsWithLiveData.push(updatedItem);
