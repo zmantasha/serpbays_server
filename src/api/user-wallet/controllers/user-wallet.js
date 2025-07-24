@@ -459,5 +459,130 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       console.error('Promo code check error:', error);
       return ctx.badRequest(error.message || 'Failed to check promo code');
     }
+  },
+
+  // Migration method to fix existing completed orders
+  async fixCompletedOrderEarnings(ctx) {
+    try {
+      console.log('Starting migration to fix completed order earnings...');
+      
+      // Get all completed orders
+      const completedOrders = await strapi.db.query('api::order.order').findMany({
+        where: {
+          orderStatus: { $in: ['approved', 'completed'] }
+        },
+        populate: ['publisher', 'advertiser']
+      });
+
+      console.log(`Found ${completedOrders.length} completed orders to process`);
+      
+      let processedCount = 0;
+      let errorCount = 0;
+
+      for (const order of completedOrders) {
+        try {
+          if (!order.publisher?.id) {
+            console.log(`Skipping order ${order.id} - no publisher`);
+            continue;
+          }
+
+          // Find publisher wallet
+          let publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { users_permissions_user: order.publisher.id }
+          });
+
+          if (!publisherWallet) {
+            console.log(`Creating wallet for publisher ${order.publisher.id}`);
+            publisherWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+              data: {
+                users_permissions_user: order.publisher.id,
+                type: 'unified',
+                balance: 0,
+                escrowBalance: 0,
+                currency: 'USD',
+                status: 'active',
+                publishedAt: new Date()
+              },
+            });
+          }
+
+          // Check if earnings already credited for this order
+          const existingTransaction = await strapi.entityService.findMany('api::transaction.transaction', {
+            filters: {
+              user_wallet: { id: publisherWallet.id },
+              type: 'escrow_release',
+              order: { id: order.id },
+              publishedAt: { $notNull: true }
+            }
+          });
+
+          if (existingTransaction.length > 0) {
+            console.log(`Order ${order.id} already has credited earnings, checking wallet balance...`);
+            
+            // Calculate total earnings that should be in wallet from this order
+            const totalEarnings = existingTransaction.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+            
+            // Add to wallet if not already there (idempotent)
+            await strapi.db.query('api::user-wallet.user-wallet').update({
+              where: { id: publisherWallet.id },
+              data: {
+                balance: publisherWallet.balance + totalEarnings
+              }
+            });
+            
+            console.log(`Added ${totalEarnings} to publisher ${order.publisher.id} wallet for order ${order.id}`);
+            processedCount++;
+            continue;
+          }
+
+          // Credit the earnings
+          const paymentAmount = order.totalAmount || 0;
+          
+          if (paymentAmount > 0) {
+            // Add to wallet balance
+            await strapi.db.query('api::user-wallet.user-wallet').update({
+              where: { id: publisherWallet.id },
+              data: {
+                balance: publisherWallet.balance + paymentAmount
+              }
+            });
+
+            // Create transaction record
+            await strapi.entityService.create('api::transaction.transaction', {
+              data: {
+                type: 'escrow_release',
+                amount: paymentAmount,
+                netAmount: paymentAmount,
+                transactionStatus: 'success',
+                gateway: 'test',
+                gatewayTransactionId: `migration_${order.id}_${Date.now()}`,
+                description: `Migration: Payment for order #${order.id}`,
+                user_wallet: publisherWallet.id,
+                users_permissions_user: order.publisher.id,
+                order: order.id,
+                publishedAt: new Date()
+              }
+            });
+
+            console.log(`Credited ${paymentAmount} to publisher ${order.publisher.id} for order ${order.id}`);
+            processedCount++;
+          }
+        } catch (error) {
+          console.error(`Error processing order ${order.id}:`, error);
+          errorCount++;
+        }
+      }
+
+      return ctx.send({
+        success: true,
+        message: `Migration completed. Processed: ${processedCount}, Errors: ${errorCount}`,
+        processed: processedCount,
+        errors: errorCount
+      });
+
+    } catch (error) {
+      console.error('Migration error:', error);
+      return ctx.badRequest('Migration failed');
+    }
   }
 }));

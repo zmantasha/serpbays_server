@@ -232,10 +232,17 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           escrowBalance: advertiserWallet.escrowBalance - order.escrowHeld
         }
       });
-      
-      // DON'T add to publisher wallet balance directly - only create transaction record
-      // The getAvailableBalance method will calculate available funds from transactions
-      
+
+      // Add earnings to publisher wallet balance (unified wallet system)
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: publisherWallet.id },
+        data: {
+          balance: publisherWallet.balance + paymentAmount
+        }
+      });
+
+      console.log(`Added ${paymentAmount} to publisher wallet. New balance: ${publisherWallet.balance + paymentAmount}`);
+
       // Create a transaction record for the payment (this is what shows in earnings)
       const paymentTransaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {

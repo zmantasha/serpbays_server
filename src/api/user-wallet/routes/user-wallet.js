@@ -141,6 +141,16 @@ module.exports = {
         policies: [],
         middlewares: []
       }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/fix-earnings',
+      handler: 'user-wallet.fixCompletedOrderEarnings',
+      config: {
+        auth: {},
+        policies: [],
+        middlewares: []
+      }
     }
   ]
 };
