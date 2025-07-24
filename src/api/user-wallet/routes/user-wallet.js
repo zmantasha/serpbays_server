@@ -6,73 +6,14 @@
 
 module.exports = {
   routes: [
-    // Core CRUD routes
-    {
-      method: 'GET',
-      path: '/api/user-wallets',
-      handler: 'user-wallet.find',
-      config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.find']
-        },
-        policies: [],
-        middlewares: []
-      }
-    },
-    {
-      method: 'GET',
-      path: '/api/user-wallets/:id',
-      handler: 'user-wallet.findOne',
-      config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.findOne']
-        },
-        policies: [],
-        middlewares: []
-      }
-    },
-    {
-      method: 'POST',
-      path: '/api/user-wallets',
-      handler: 'user-wallet.create',
-      config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.create']
-        },
-        policies: [],
-        middlewares: []
-      }
-    },
-    {
-      method: 'PUT',
-      path: '/api/user-wallets/:id',
-      handler: 'user-wallet.update',
-      config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.update']
-        },
-        policies: [],
-        middlewares: []
-      }
-    },
-    {
-      method: 'DELETE',
-      path: '/api/user-wallets/:id',
-      handler: 'user-wallet.delete',
-      config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.delete']
-        },
-        policies: [],
-        middlewares: []
-      }
-    },
-    // Custom routes
     {
       method: 'GET',
       path: '/api/wallet/balance',
       handler: 'user-wallet.getBalance',
       config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getBalance']
+        },
         policies: [],
         middlewares: []
       }
@@ -82,6 +23,9 @@ module.exports = {
       path: '/api/api/wallet/balance',
       handler: 'user-wallet.getBalance',
       config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getBalance']
+        },
         policies: [],
         middlewares: []
       }
@@ -91,6 +35,21 @@ module.exports = {
       path: '/api/wallet/available-balance',
       handler: 'user-wallet.getAvailableBalance',
       config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getAvailableBalance']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'GET',
+      path: '/api/api/wallet/available-balance',
+      handler: 'user-wallet.getAvailableBalance',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getAvailableBalance']
+        },
         policies: [],
         middlewares: []
       }
@@ -100,6 +59,9 @@ module.exports = {
       path: '/api/wallet/transactions',
       handler: 'user-wallet.getTransactions',
       config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getTransactions']
+        },
         policies: [],
         middlewares: []
       }
@@ -109,6 +71,31 @@ module.exports = {
       path: '/api/api/wallet/transactions',
       handler: 'user-wallet.getTransactions',
       config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getTransactions']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/wallet/create',
+      handler: 'user-wallet.createWallet',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.createWallet']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/wallet/check-promo',
+      handler: 'user-wallet.checkPromoCode',
+      config: {
+        auth: {},
         policies: [],
         middlewares: []
       }
@@ -125,8 +112,30 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/api/wallet/check-promo',
-      handler: 'user-wallet.checkPromoCode',
+      path: '/wallet/test-post',
+      handler: async (ctx) => {
+        ctx.body = { message: 'POST route works' };
+      },
+      config: {
+        auth: false,
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/wallet/redeem-promo',
+      handler: 'user-wallet.redeemPromo',
+      config: {
+        auth: {},
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/redeem-promo',
+      handler: 'user-wallet.redeemPromo',
       config: {
         auth: {},
         policies: [],
