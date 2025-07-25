@@ -174,18 +174,16 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       
       console.log("Getting wallets for:", { publisherId, advertiserId });
       
-      // Get advertiser and publisher wallets
+      // Get advertiser and publisher wallets (unified system - one wallet per user)
       const advertiserWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: advertiserId,
-          type: 'advertiser'
+          users_permissions_user: advertiserId
         }
       });
       
       let publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: publisherId,
-          type: 'publisher'
+          users_permissions_user: publisherId
         }
       });
       
@@ -193,13 +191,13 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         throw new Error('Advertiser wallet not found');
       }
       
-      // Create publisher wallet if it doesn't exist
+      // Create publisher wallet if it doesn't exist (unified wallet)
       if (!publisherWallet) {
-        console.log(`Publisher wallet not found, creating one for user ${publisherId}`);
+        console.log(`Publisher wallet not found, creating unified wallet for user ${publisherId}`);
         publisherWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
           data: {
             users_permissions_user: publisherId,
-            type: 'publisher',
+            type: 'unified',
             balance: 0,
             escrowBalance: 0,
             currency: 'USD',
@@ -211,7 +209,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         if (!publisherWallet) {
           throw new Error('Failed to create publisher wallet');
         }
-        console.log(`Created new publisher wallet with ID: ${publisherWallet.id}`);
+        console.log(`Created new unified publisher wallet with ID: ${publisherWallet.id}`);
       }
       
       // Calculate payment amount (without platform fee)
