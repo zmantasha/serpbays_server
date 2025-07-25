@@ -102,8 +102,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.unauthorized('Authentication required');
       }
 
-             // Get user's wallet (handle both unified and legacy wallet types)
-       // First try to find a unified wallet, then fall back to publisher/advertiser wallets
+             // Get ALL user's wallets and sum their balances (unified approach)
+       // First try to find a unified wallet
        let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
          where: { 
            users_permissions_user: userId,
@@ -111,29 +111,35 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
          }
        });
 
-       // If no unified wallet found, look for publisher or advertiser wallet
+       let totalWalletBalance = 0;
+       let totalEscrowBalance = 0;
+       let primaryWallet = null;
+
        if (!wallet) {
-         const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-           where: { 
-             users_permissions_user: userId,
-             type: 'publisher'
-           }
-         });
-         
-         const advertiserWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-           where: { 
-             users_permissions_user: userId,
-             type: 'advertiser'
-           }
+         // No unified wallet, so get ALL wallets for this user and sum them
+         const allUserWallets = await strapi.db.query('api::user-wallet.user-wallet').findMany({
+           where: { users_permissions_user: userId }
          });
 
-         // Use publisher wallet if it exists and has balance, otherwise advertiser wallet
-         if (publisherWallet && (parseFloat(publisherWallet.balance) > 0 || parseFloat(publisherWallet.escrowBalance) > 0)) {
-           wallet = publisherWallet;
-         } else if (advertiserWallet) {
-           wallet = advertiserWallet;
-         } else if (publisherWallet) {
-           wallet = publisherWallet;
+         console.log(`[Unified] Found ${allUserWallets.length} wallets for user ${userId}:`, 
+           allUserWallets.map(w => ({ id: w.id, type: w.type, balance: w.balance })));
+
+         if (allUserWallets.length > 0) {
+           // Sum all wallet balances
+           totalWalletBalance = allUserWallets.reduce((sum, w) => sum + parseFloat(w.balance || 0), 0);
+           totalEscrowBalance = allUserWallets.reduce((sum, w) => sum + parseFloat(w.escrowBalance || 0), 0);
+           
+           // Use the first wallet as the primary wallet for other operations
+           primaryWallet = allUserWallets[0];
+           
+           // Create a virtual unified wallet object
+           wallet = {
+             id: primaryWallet.id, // Use primary wallet ID for transactions
+             type: 'virtual_unified',
+             balance: totalWalletBalance,
+             escrowBalance: totalEscrowBalance,
+             currency: primaryWallet.currency || 'USD'
+           };
          }
        }
 
@@ -153,11 +159,11 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
          });
        }
 
-      console.log(`[Unified] Getting available balance for user ${userId}, wallet type: ${wallet.type || 'unified'}`);
+             console.log(`[Unified] Getting available balance for user ${userId}, wallet ID: ${wallet.id}, wallet type: ${wallet.type || 'unified'}, balance: ${wallet.balance}`);
 
-      // Base wallet balance (from direct top-ups, etc.)
-      const walletBalance = parseFloat(wallet.balance || 0);
-      const storedEscrowBalance = parseFloat(wallet.escrowBalance || 0);
+       // Base wallet balance (from direct top-ups, etc.)
+       const walletBalance = parseFloat(wallet.balance || 0);
+       const storedEscrowBalance = parseFloat(wallet.escrowBalance || 0);
 
       // Calculate earnings from completed orders (for publishers)
       let completedOrdersAmount = 0;
