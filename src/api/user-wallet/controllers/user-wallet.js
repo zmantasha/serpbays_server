@@ -125,12 +125,15 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
            allUserWallets.map(w => ({ id: w.id, type: w.type, balance: w.balance })));
 
          if (allUserWallets.length > 0) {
-           // Sum all wallet balances
-           totalWalletBalance = allUserWallets.reduce((sum, w) => sum + parseFloat(w.balance || 0), 0);
-           totalEscrowBalance = allUserWallets.reduce((sum, w) => sum + parseFloat(w.escrowBalance || 0), 0);
+           // Use the wallet with the most recent update (highest balance should be the active one)
+           primaryWallet = allUserWallets.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))[0];
+           console.log('primarywallet',primaryWallet)
            
-           // Use the first wallet as the primary wallet for other operations
-           primaryWallet = allUserWallets[0];
+           // Use only the primary wallet balance (don't sum duplicates)
+           totalWalletBalance = parseFloat(primaryWallet.balance || 0);
+           totalEscrowBalance = parseFloat(primaryWallet.escrowBalance || 0);
+           
+           console.log(`[Unified] Using wallet ID: ${primaryWallet.id} (published: ${!!primaryWallet.publishedAt}), balance: ${totalWalletBalance}`);
            
            // Create a virtual unified wallet object
            wallet = {

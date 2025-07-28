@@ -108,13 +108,13 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const currentEscrowBalance = parseFloat(publisherWallet.escrowBalance || 0);
       console.log(`[Create] Publisher directWalletBalance: ${directWalletBalance}, currentEscrowBalance: ${currentEscrowBalance}`);
 
-      // STEP 6: Calculate totalAvailable for the pre-check.
-      const totalAvailableForWithdrawalCheck = Math.max(0, (grossCompletedOrdersAmount + directWalletBalance) - currentEscrowBalance);
+      // STEP 6: Calculate totalAvailable for the pre-check (using simple wallet balance calculation).
+      const totalAvailableForWithdrawalCheck = Math.max(0, directWalletBalance - currentEscrowBalance);
       console.log('[Create] Pre-withdrawal Balance Check:', {
-        grossCompletedOrdersAmount,
+        grossCompletedOrdersAmount, // For reference only
         directWalletBalance,
         currentEscrowBalance,
-        calculation: `(${grossCompletedOrdersAmount} + ${directWalletBalance}) - ${currentEscrowBalance} = ${totalAvailableForWithdrawalCheck}`,
+        calculation: `${directWalletBalance} [wallet] - ${currentEscrowBalance} [escrow] = ${totalAvailableForWithdrawalCheck}`,
         requestAmount
         });
         
@@ -769,16 +769,15 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       console.log(`Calculated totalPaidOutAmount from ${paidWithdrawals.length} 'paid' withdrawals: ${totalPaidOutAmount}`);
 
       // STEP 7 (Modified): Calculate final totalAvailable.
-      // Available = (Gross Completed Orders + Direct Wallet Funds - Total Paid Out) - Escrow for pending/approved
-      const netRevenuePool = (completedOrdersAmount + walletBalance) - totalPaidOutAmount;
-      const totalAvailable = Math.max(0, netRevenuePool - escrowBalance);
+      // Available Balance = Wallet Balance - Escrow (simple and direct)
+      const totalAvailable = Math.max(0, walletBalance - escrowBalance);
       
       console.log('Final balance calculation (getAvailableBalance):', {
         walletBalance,
-        completedOrdersAmount, // Gross amount from completed orders
-        totalPaidOutAmount,    // Total amount historically paid out
+        completedOrdersAmount, // Gross amount from completed orders (for reference)
+        totalPaidOutAmount,    // Total amount historically paid out (for reference)
         escrowBalance,         // Amount currently tied up in PENDING or APPROVED withdrawals
-        calculation_String: `((${completedOrdersAmount} [completed] + ${walletBalance} [wallet]) - ${totalPaidOutAmount} [paid]) - ${escrowBalance} [escrow] = ${totalAvailable}`,
+        calculation_String: `${walletBalance} [wallet] - ${escrowBalance} [escrow] = ${totalAvailable}`,
         final_totalAvailable_Sent_To_Client: totalAvailable
       });
       
