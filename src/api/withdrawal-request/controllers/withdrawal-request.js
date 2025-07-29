@@ -47,6 +47,32 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.log('Invalid amount:', amount);
         return ctx.badRequest('Amount must be a positive number');
       }
+
+      // 🛡️ ENHANCED DUPLICATE PREVENTION: Check with shorter window and add request ID uniqueness
+      const oneMinuteAgo = new Date(Date.now() - 1 * 60 * 1000); // Reduced from 5 to 1 minute
+      const recentDuplicate = await strapi.db.query('api::withdrawal-request.withdrawal-request').findOne({
+        where: {
+          publisher: ctx.state.user.id,
+          amount: requestAmount,
+          method: method,
+          createdAt: {
+            $gte: oneMinuteAgo
+          }
+        }
+      });
+
+      if (recentDuplicate) {
+        console.log(`[DUPLICATE PREVENTION] Blocking duplicate withdrawal request for user ${ctx.state.user.id}:`, {
+          existingRequest: recentDuplicate.id,
+          amount: requestAmount,
+          method: method
+        });
+        return ctx.badRequest('Duplicate withdrawal request detected. Please wait before making another request with the same amount and method.');
+      }
+
+      // 🔒 ADD REQUEST UNIQUENESS: Create unique gateway transaction ID early
+      const uniqueRequestId = `${ctx.state.user.id}_${requestAmount}_${method}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      console.log(`[DUPLICATE PREVENTION] Generated unique request ID: ${uniqueRequestId}`);
       
       // Get publisher wallet
       const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
@@ -187,8 +213,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         }
       }
       
-      // Create a transaction record for the withdrawal request
-      await strapi.entityService.create('api::transaction.transaction', {
+      // Create a transaction record for the withdrawal request with unique ID
+      const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'escrow_hold',
           amount: requestAmount,
@@ -196,12 +222,14 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           fee: 0,
           transactionStatus: 'pending',
           gateway: method,
-          gatewayTransactionId: `withdrawal_req_${withdrawalRequest.id}_${Date.now()}`,
-          description: `Withdrawal request via ${method}`,
+          gatewayTransactionId: uniqueRequestId, // 🔒 Use unique ID to prevent duplicates
+          description: `Withdrawal request #${withdrawalRequest.id} via ${method} for $${requestAmount}`,
           user_wallet: publisherWallet.id,
           users_permissions_user: ctx.state.user.id
         }
       });
+      
+      console.log(`[DUPLICATE PREVENTION] Created unique transaction ${transactionRecord.id} with gateway ID: ${uniqueRequestId}`);
       
       // Update the wallet balance when withdrawal is requested
       console.log('Updating wallet balance after withdrawal request:', {
@@ -449,6 +477,30 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         }
       });
       
+      // 🔧 Update the corresponding withdrawal request transaction to 'failed' since withdrawal was denied
+      console.log(`[DenyWithdrawal] Updating withdrawal request transaction for withdrawal #${id}`);
+      
+      const escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: {
+          users_permissions_user: withdrawalRequest.publisher.id,
+          type: 'escrow_hold',
+          transactionStatus: 'pending',
+          description: { $contains: 'Withdrawal request' }
+        }
+      });
+      
+      if (escrowHoldTransaction) {
+        await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
+          data: {
+            transactionStatus: 'failed',
+            description: `${escrowHoldTransaction.description} - Withdrawal denied: ${reason || 'No reason provided'}`
+          }
+        });
+        console.log(`[DenyWithdrawal] Updated withdrawal request transaction ${escrowHoldTransaction.id} to failed`);
+      } else {
+        console.log(`[DenyWithdrawal] No matching withdrawal request transaction found for withdrawal #${id}`);
+      }
+      
       // Return the funds to the publisher's balance
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
@@ -596,6 +648,30 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           // e.g., gateway_reference: paymentResult.transactionId
         }
       });
+
+      // 🔧 Update the corresponding withdrawal request transaction to 'success' since withdrawal is now paid
+      console.log(`[MarkAsPaid] Updating withdrawal request transaction for withdrawal #${id}`);
+      
+      const escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: {
+          users_permissions_user: withdrawalRequest.publisher.id,
+          type: 'escrow_hold',
+          transactionStatus: 'pending',
+          description: { $contains: 'Withdrawal request' }
+        }
+      });
+      
+      if (escrowHoldTransaction) {
+        await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
+          data: {
+            transactionStatus: 'success',
+            description: `${escrowHoldTransaction.description} - Payment completed`
+          }
+        });
+        console.log(`[MarkAsPaid] Updated withdrawal request transaction ${escrowHoldTransaction.id} to success`);
+      } else {
+        console.log(`[MarkAsPaid] No matching withdrawal request transaction found for withdrawal #${id}`);
+      }
 
       // IMPORTANT: Release funds from pending withdrawal balance in the publisher's wallet
       // Ensure this only happens once for the lifetime of the withdrawal request.
@@ -1028,5 +1104,3 @@ async function processPaypalPayout(withdrawalRequest) {
     message: 'PayPal payout successfully processed'
   };
 }
-
-
