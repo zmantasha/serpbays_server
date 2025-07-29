@@ -7,14 +7,135 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 
 module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi }) => ({
+  
+  // Centralized wallet creation - USE THIS EVERYWHERE
+  async getOrCreateWallet(userId) {
+    try {
+      // First, ensure no duplicates exist
+      await this.ensureSingleWallet(userId);
+      
+      // Try to find existing wallet
+      let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { users_permissions_user: userId }
+      });
+
+      // If wallet exists, return it
+      if (wallet) {
+        console.log(`[GetOrCreate] Found existing wallet ${wallet.id} for user ${userId}`);
+        return wallet;
+      }
+
+      // Create new wallet if none exists
+      console.log(`[GetOrCreate] Creating new wallet for user ${userId}`);
+      wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+        data: {
+          users_permissions_user: userId,
+          type: 'unified',
+          balance: 0,
+          escrowBalance: 0,
+          pendingWithdrawalBalance: 0,
+          currency: 'USD',
+          publishedAt: new Date()
+        }
+      });
+
+      // Fix bidirectional relation for Strapi admin visibility
+      try {
+        await strapi.db.query('plugin::users-permissions.user').update({
+          where: { id: userId },
+          data: { user_wallet: wallet.id }
+        });
+        console.log(`[GetOrCreate] Fixed bidirectional relation for user ${userId}`);
+      } catch (relationError) {
+        console.error(`[GetOrCreate] Failed to fix relation for user ${userId}:`, relationError.message);
+      }
+
+      console.log(`[GetOrCreate] Created wallet ${wallet.id} for user ${userId}`);
+      return wallet;
+    } catch (error) {
+      console.error('[GetOrCreate] Error getting/creating wallet:', error);
+      throw error;
+    }
+  },
+
+  // Ensure user has only one wallet (cleanup duplicates)
+  async ensureSingleWallet(userId) {
+    try {
+      // Find all wallets for this user
+      const allWallets = await strapi.db.query('api::user-wallet.user-wallet').findMany({
+        where: { users_permissions_user: userId }
+      });
+
+      if (allWallets.length <= 1) {
+        console.log(`[Cleanup] User ${userId} has ${allWallets.length} wallet(s) - no consolidation needed, preserving existing balances`);
+        return; // 🎯 CRITICAL: Skip ALL processing to preserve escrow balance
+      }
+
+      console.log(`[Cleanup] ⚠️  Found ${allWallets.length} wallets for user ${userId}, consolidating...`);
+      
+      // Log current wallet states before consolidation
+      allWallets.forEach((w, i) => {
+        console.log(`[Cleanup] Wallet ${i + 1} (ID: ${w.id}): Balance $${w.balance}, Escrow $${w.escrowBalance}, Pending $${w.pendingWithdrawalBalance}`);
+      });
+
+      // Find the best wallet to keep (most recent or highest balance)
+      const primaryWallet = allWallets.sort((a, b) => {
+        // Prefer published wallets, then by update time, then by balance
+        if (a.publishedAt && !b.publishedAt) return -1;
+        if (!a.publishedAt && b.publishedAt) return 1;
+        if (new Date(b.updatedAt) !== new Date(a.updatedAt)) {
+          return new Date(b.updatedAt) - new Date(a.updatedAt);
+        }
+        return parseFloat(b.balance || 0) - parseFloat(a.balance || 0);
+      })[0];
+
+      console.log(`[Cleanup] Selected primary wallet: ID ${primaryWallet.id}`);
+
+      // Sum up balances from all wallets
+      const totalBalance = allWallets.reduce((sum, w) => sum + parseFloat(w.balance || 0), 0);
+      const totalEscrow = allWallets.reduce((sum, w) => sum + parseFloat(w.escrowBalance || 0), 0);
+      const totalPending = allWallets.reduce((sum, w) => sum + parseFloat(w.pendingWithdrawalBalance || 0), 0);
+
+      console.log(`[Cleanup] Consolidating: Balance $${totalBalance}, Escrow $${totalEscrow}, Pending $${totalPending}`);
+
+      // Update the primary wallet with consolidated amounts
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: primaryWallet.id },
+        data: {
+          balance: totalBalance,
+          escrowBalance: totalEscrow,
+          pendingWithdrawalBalance: totalPending
+        }
+      });
+
+      console.log(`[Cleanup] ✅ Primary wallet ${primaryWallet.id} updated with consolidated amounts`);
+
+      // DELETE all other wallets completely (clean database)
+      const otherWalletIds = allWallets.filter(w => w.id !== primaryWallet.id).map(w => w.id);
+      if (otherWalletIds.length > 0) {
+        await strapi.db.query('api::user-wallet.user-wallet').deleteMany({
+          where: { id: { $in: otherWalletIds } }
+        });
+        console.log(`[Cleanup] 🗑️  DELETED ${otherWalletIds.length} duplicate wallets: ${otherWalletIds.join(', ')}`);
+      }
+
+      console.log(`[Cleanup] ✅ Consolidated and DELETED ${allWallets.length - 1} duplicate wallets. Kept wallet ${primaryWallet.id} with consolidated balances`);
+    } catch (error) {
+      console.error('[Cleanup] ❌ Error consolidating wallets:', error);
+    }
+  },
+
   // Override the default find method
   async find(ctx) {
     try {
       const userId = ctx.state?.user?.id;
-      console.log("stx",ctx.state)
       if (!userId) {
         return ctx.unauthorized('Authentication required');
       }
+
+      // REMOVED: ensureSingleWallet call from find method
+      // This was causing escrow balance to be reset after order creation
+      // Wallet consolidation should only happen during creation, not during reads
 
       const wallets = await strapi.db.query('api::user-wallet.user-wallet').findMany({
         where: { users_permissions_user: userId }
@@ -34,58 +155,19 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.unauthorized('Authentication required');
       }
 
-      let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { users_permissions_user: userId }
-      });
+      // Use centralized wallet creation
+      let wallet = await this.getOrCreateWallet(userId);
 
-      // If no wallet exists, create one automatically
-      if (!wallet) {
-        console.log(`No wallet found for user ${userId}, creating one automatically`);
-        try {
-          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-            data: {
-              users_permissions_user: userId,
-              type: 'unified',
-              balance: 0,
-              escrowBalance: 0,
-              currency: 'USD',
-              publishedAt: new Date()
-            }
-          });
-          console.log(`Created unified wallet with ID: ${wallet.id} for user ${userId}`);
-        } catch (walletError) {
-          console.error('Failed to create wallet:', walletError);
-          return ctx.badRequest('Failed to create wallet. Please contact support.');
-        }
-      }
-
-             // Calculate correct escrow balance (only pending/approved withdrawals)
-       const pendingWithdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
-         filters: {
-           publisher: { id: userId },
-           withdrawal_status: { $in: ['pending', 'approved'] }
-         }
-       });
-       
-       const correctEscrowBalance = pendingWithdrawals.reduce((total, wr) => {
-         return total + parseFloat(wr.amount || 0);
-       }, 0);
+      // 🎯 FIXED: Don't recalculate escrow balance in getBalance!
+      // Escrow balance should only be managed by order creation/completion logic
+      // This method was incorrectly calculating escrow from withdrawals instead of orders
       
-      console.log(`[getBalance] Calculated correct escrow balance: ${correctEscrowBalance} (from ${pendingWithdrawals.length} pending/approved withdrawals)`);
-      
-      // Update the stored escrow balance if it's different
-      if (Math.abs(correctEscrowBalance - parseFloat(wallet.escrowBalance || 0)) > 0.01) {
-        console.log(`[getBalance] Updating stored escrow balance from ${wallet.escrowBalance} to ${correctEscrowBalance}`);
-        await strapi.db.query('api::user-wallet.user-wallet').update({
-          where: { id: wallet.id },
-          data: { escrowBalance: correctEscrowBalance }
-        });
-      }
+      console.log(`[getBalance] Current escrow balance: ${wallet.escrowBalance} (preserved from order logic)`);
 
       return {
         data: {
           balance: wallet.balance || "0",
-          escrowBalance: correctEscrowBalance.toString(),
+          escrowBalance: wallet.escrowBalance.toString(), // ✅ Use actual escrow balance
           currency: wallet.currency || "USD"
         }
       };
@@ -102,71 +184,15 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.unauthorized('Authentication required');
       }
 
-             // Get ALL user's wallets and sum their balances (unified approach)
-       // First try to find a unified wallet
-       let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-         where: { 
-           users_permissions_user: userId,
-           type: 'unified'
-         }
-       });
+      // Use centralized wallet creation
+      let wallet = await this.getOrCreateWallet(userId);
 
-       let totalWalletBalance = 0;
-       let totalEscrowBalance = 0;
-       let primaryWallet = null;
+       console.log(`[Simple] Getting balance for user ${userId}, wallet ID: ${wallet.id}, balance: ${wallet.balance}`);
 
-       if (!wallet) {
-         // No unified wallet, so get ALL wallets for this user and sum them
-         const allUserWallets = await strapi.db.query('api::user-wallet.user-wallet').findMany({
-           where: { users_permissions_user: userId }
-         });
-
-         console.log(`[Unified] Found ${allUserWallets.length} wallets for user ${userId}:`, 
-           allUserWallets.map(w => ({ id: w.id, type: w.type, balance: w.balance })));
-
-         if (allUserWallets.length > 0) {
-           // Use the wallet with the most recent update (highest balance should be the active one)
-           primaryWallet = allUserWallets.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))[0];
-           console.log('primarywallet',primaryWallet)
-           
-           // Use only the primary wallet balance (don't sum duplicates)
-           totalWalletBalance = parseFloat(primaryWallet.balance || 0);
-           totalEscrowBalance = parseFloat(primaryWallet.escrowBalance || 0);
-           
-           console.log(`[Unified] Using wallet ID: ${primaryWallet.id} (published: ${!!primaryWallet.publishedAt}), balance: ${totalWalletBalance}`);
-           
-           // Create a virtual unified wallet object
-           wallet = {
-             id: primaryWallet.id, // Use primary wallet ID for transactions
-             type: 'virtual_unified',
-             balance: totalWalletBalance,
-             escrowBalance: totalEscrowBalance,
-             currency: primaryWallet.currency || 'USD'
-           };
-         }
-       }
-
-       if (!wallet) {
-         // Create a unified wallet if none exists
-         console.log(`No wallet found for user ${userId}, creating unified wallet`);
-         wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-           data: {
-             users_permissions_user: userId,
-             type: 'unified',
-             balance: 0,
-             escrowBalance: 0,
-             currency: 'USD',
-             status: 'active',
-             publishedAt: new Date()
-           }
-         });
-       }
-
-             console.log(`[Unified] Getting available balance for user ${userId}, wallet ID: ${wallet.id}, wallet type: ${wallet.type || 'unified'}, balance: ${wallet.balance}`);
-
-       // Base wallet balance (from direct top-ups, etc.)
+       // Use simple wallet balances directly (no complex calculations)
        const walletBalance = parseFloat(wallet.balance || 0);
        const storedEscrowBalance = parseFloat(wallet.escrowBalance || 0);
+       const pendingWithdrawalBalance = parseFloat(wallet.pendingWithdrawalBalance || 0);
 
       // Calculate earnings from completed orders (for publishers)
       let completedOrdersAmount = 0;
@@ -215,17 +241,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }, 0);
       }
 
-             // Calculate actual escrow balance from pending/approved withdrawals (for publisher role)
-       let withdrawalEscrowBalance = 0;
-       const withdrawalsInEscrow = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
-         filters: {
-           publisher: { id: userId },
-           withdrawal_status: { $in: ['pending', 'approved'] }
-         }
-       });
-       withdrawalEscrowBalance = withdrawalsInEscrow.reduce((total, wr) => {
-         return total + parseFloat(wr.amount || 0);
-       }, 0);
+               // Note: pendingWithdrawalBalance already declared above
 
        // Calculate total paid out amount (for publisher role)
        let totalPaidOutAmount = 0;
@@ -239,49 +255,32 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
          return total + parseFloat(wr.amount || 0);
        }, 0);
 
-      // Calculate total available balance
-      // In unified system, wallet balance already includes completed order earnings
-      // So we don't add completedOrdersAmount to avoid double counting
-      const totalEarnings = walletBalance; // Wallet balance already includes all earnings
-      const netRevenue = totalEarnings - totalPaidOutAmount;
-      const actualEscrowBalance = Math.max(storedEscrowBalance, withdrawalEscrowBalance);
-      const totalAvailable = Math.max(0, netRevenue - actualEscrowBalance);
+      // Calculate total available balance (simplified)
+      // Available = wallet balance minus pending withdrawals
+      const totalAvailable = Math.max(0, walletBalance - pendingWithdrawalBalance);
 
-      console.log(`[Unified] Balance calculation for user ${userId}:`, {
+      console.log(`[Simple] Balance calculation for user ${userId}:`, {
         walletBalance,
-        completedOrdersAmount,
-        totalPaidOutAmount,
         storedEscrowBalance,
-        withdrawalEscrowBalance,
-        actualEscrowBalance,
+        pendingWithdrawalBalance,
         totalAvailable,
-        calculation: `${walletBalance} - ${totalPaidOutAmount} - ${actualEscrowBalance} = ${totalAvailable}`,
-        note: 'Wallet balance already includes completed order earnings'
+        calculation: `${walletBalance} - ${pendingWithdrawalBalance} = ${totalAvailable}`,
+        note: 'Simple wallet balance calculation - no complex transaction aggregation'
       });
 
-      // Update stored escrow balance if it's significantly different (optional correction)
-      if (Math.abs(actualEscrowBalance - storedEscrowBalance) > 0.01) {
-        console.log(`[Unified] Correcting stored escrow balance. Was: ${storedEscrowBalance}, Now: ${actualEscrowBalance}`);
-        await strapi.db.query('api::user-wallet.user-wallet').update({
-          where: { id: wallet.id },
-          data: { escrowBalance: actualEscrowBalance }
-        });
-      }
+      // Note: escrowBalance is kept separate for order processing, 
+      // pendingWithdrawalBalance is managed directly by withdrawal operations
 
-      // Return unified response
+      // Return simplified response
       return {
         data: {
-          balance: totalAvailable, // This is the main "available balance" everyone should use
-          walletBalance, // Direct wallet balance (from top-ups)
-          completedOrdersAmount, // Earnings from orders (publishers only)
-          escrowBalance: actualEscrowBalance, // Amount in escrow
-          totalPaidOutAmount, // Total withdrawn (publishers only)
+          balance: totalAvailable, // Available for spending/withdrawal
+          walletBalance, // Total wallet balance
+          escrowBalance: storedEscrowBalance, // Amount held in escrow for active orders
+          pendingWithdrawalBalance, // Amount pending withdrawal
           totalAvailable, // Same as balance, for clarity
-          completedOrders, // Transaction details (publishers only)
-          transactionCount, // Number of completed order transactions
           currency: wallet.currency || "USD",
-          userType: wallet.type || 'unified', // wallet type or unified
-          totalEarnings: walletBalance // Total lifetime earnings (same as wallet balance in unified system)
+          userType: wallet.type || 'unified'
         }
       };
     } catch (error) {
@@ -337,30 +336,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.unauthorized('Authentication required');
       }
 
-      // Check if wallet already exists
-      const existingWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { users_permissions_user: userId }
-      });
-
-      if (existingWallet) {
-        return ctx.badRequest('Wallet already exists');
-      }
-
-      // Get user information for display name
-      // const user = await strapi.db.query('plugin::users-permissions.user').findOne({
-      //   where: { id: userId }
-      // });
-
-      const data = ctx.request.body;
-      data.users_permissions_user = userId;
-      data.balance = "0";
-      data.escrowBalance = "0";
-      data.currency = data.currency || 'USD';
-      // data.displayName = `${user.username || user.email || `User ${userId}`} (${data.type || 'advertiser'})`;
-
-      const wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-        data
-      });
+      // Use centralized wallet creation (will check for existing wallet)
+      const wallet = await this.getOrCreateWallet(userId);
 
       return { data: wallet };
     } catch (error) {
@@ -381,14 +358,9 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.badRequest('Promo code is required');
       }
 
-      // Find user's wallet
-      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { users_permissions_user: userId }
-      });
-
-      if (!wallet) {
-        return ctx.notFound('Wallet not found');
-      }
+      // Use centralized wallet creation - create wallet if it doesn't exist
+      const wallet = await this.getOrCreateWallet(userId);
+      console.log(`[PROMO REDEMPTION] Got/created wallet ${wallet.id} for user ${userId}`);
 
       // Find the promo code in the database
       const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
@@ -422,12 +394,16 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       const promoAmount = parseFloat(promo.amount) || 0;
       const newBalance = currentBalance + promoAmount;
 
+      console.log(`[PROMO] Updating balance for user ${userId}: ${currentBalance} + ${promoAmount} = ${newBalance}`);
+
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: wallet.id },
         data: {
-          balance: newBalance.toString()
+          balance: newBalance  // ✅ Store as number, not string
         }
       });
+
+      console.log(`[PROMO] Balance updated successfully for wallet ${wallet.id}`);
 
       // Create transaction record
       const transaction = await strapi.entityService.create('api::transaction.transaction', {
@@ -539,25 +515,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
             continue;
           }
 
-          // Find publisher wallet
-          let publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-            where: { users_permissions_user: order.publisher.id }
-          });
-
-          if (!publisherWallet) {
-            console.log(`Creating wallet for publisher ${order.publisher.id}`);
-            publisherWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-              data: {
-                users_permissions_user: order.publisher.id,
-                type: 'unified',
-                balance: 0,
-                escrowBalance: 0,
-                currency: 'USD',
-                status: 'active',
-                publishedAt: new Date()
-              },
-            });
-          }
+          // Use centralized wallet creation for publisher
+          let publisherWallet = await this.getOrCreateWallet(order.publisher.id);
 
           // Check if earnings already credited for this order
           const existingTransaction = await strapi.entityService.findMany('api::transaction.transaction', {

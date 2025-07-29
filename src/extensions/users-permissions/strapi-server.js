@@ -13,31 +13,9 @@ module.exports = (plugin) => {
   // Helper function to ensure wallet exists for advertiser role
   const ensureAdvertiserWallet = async (userId) => {
     try {
-      const existingWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { users_permissions_user: userId }
-      });
-
-      if (!existingWallet) {
-        // Get user information for display name
-        // const user = await strapi.db.query('plugin::users-permissions.user').findOne({
-        //   where: { id: userId }
-        // });
-
-        await strapi.entityService.create('api::user-wallet.user-wallet', {
-          data: {
-            users_permissions_user: userId,
-            balance: 0,  // Updated to match your preference
-            escrowBalance: 0,  // Updated to match your preference
-            // displayName: `${user.username || user.email || `User ${userId}`} (advertiser)`,
-            currency: "USD",
-            status: "active",
-            type: "advertiser",
-           
-            publishedAt: new Date()
-          }
-        });
-        // console.log(`Created wallet for advertiser user ${userId} with initial balance: 1000`);
-      }
+      // Use centralized wallet creation
+      await strapi.controller('api::user-wallet.user-wallet').getOrCreateWallet(userId);
+      console.log(`Ensured wallet exists for user ${userId}`);
     } catch (error) {
       console.error('Error creating wallet for advertiser:', error);
     }
@@ -49,10 +27,9 @@ module.exports = (plugin) => {
       const { result } = event;
       
       try {
-        // Only create wallet for advertisers
-        if (result.Advertiser) {
-          await ensureAdvertiserWallet(result.id);
-        }
+        // Create unified wallet for ALL users (both advertisers and publishers)
+        await ensureAdvertiserWallet(result.id);
+        console.log(`[USER REGISTRATION] Created wallet for new user ${result.id}`);
         
         // Ensure Publisher field is set if not explicitly provided during registration
         if (result.Publisher === undefined && !result.Advertiser) {

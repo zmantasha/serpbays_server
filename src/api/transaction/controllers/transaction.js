@@ -28,10 +28,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // For development mode without authentication
       if (!userId && process.env.NODE_ENV !== 'production') {
-        // Find an existing wallet
-        wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-          where: { type: 'advertiser' }
-        });
+        // Find an existing wallet - any wallet works since they're unified
+        wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({});
         
         if (!wallet) {
           return ctx.notFound('Wallet not found');

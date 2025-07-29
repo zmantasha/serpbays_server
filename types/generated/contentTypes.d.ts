@@ -1578,7 +1578,7 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
     singularName: 'user-wallet';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   pluginOptions: {
     'content-manager': {
@@ -1619,6 +1619,15 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
       'api::user-wallet.user-wallet'
     > &
       Schema.Attribute.Private;
+    pendingWithdrawalBalance: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
     publishedAt: Schema.Attribute.DateTime;
     transactions: Schema.Attribute.Relation<
       'oneToMany',

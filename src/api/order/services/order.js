@@ -15,37 +15,23 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         throw new Error('Authentication required');
       }
 
-      // Get user wallet - ensure user ID is properly formatted
+      // Get user wallet - unified wallet works for both advertiser and publisher
       let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: user.id,
-          type: 'advertiser'
+          users_permissions_user: user.id
         },
         populate: ['users_permissions_user']
       });
 
-      // If no advertiser wallet exists, create one automatically
+      // Use centralized wallet creation
       if (!wallet) {
         console.log(`No advertiser wallet found for user ${user.id}, creating one automatically`);
         try {
-          // For development, add some initial balance
-          // const initialBalance = process.env.NODE_ENV === 'production' ? 0 : 200;
-          
-          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-            data: {
-              users_permissions_user: user.id,
-              type: 'advertiser',
-              balance: 0,
-              escrowBalance: 0,
-              currency: 'USD',
-              status: 'active',
-              publishedAt: new Date()
-            }
-          });
-          console.log(`Created advertiser wallet with ID: ${wallet.id} for user ${user.id} with initial balance: ${initialBalance}`);
+          wallet = await strapi.controller('api::user-wallet.user-wallet').getOrCreateWallet(user.id);
+          console.log(`Got/created advertiser wallet with ID: ${wallet.id} for user ${user.id}`);
         } catch (walletError) {
-          console.error('Failed to create advertiser wallet:', walletError);
-          throw new Error('Failed to create advertiser wallet. Please contact support.');
+          console.error('Failed to get/create advertiser wallet:', walletError);
+          throw new Error('Failed to get/create advertiser wallet. Please contact support.');
         }
       }
 
@@ -53,8 +39,13 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       const totalAmount = parseFloat(data.totalAmount);
       const escrowHeld = totalAmount ;
 
+      // Refresh wallet balance to check current funds
+      const freshWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { id: wallet.id }
+      });
+      
       // Check if user has sufficient balance
-      if (wallet.balance < escrowHeld) {
+      if (!freshWallet || freshWallet.balance < escrowHeld) {
         throw new Error('Insufficient funds');
       }
 
@@ -83,15 +74,43 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
 
         console.log('Order created:', order);
-
-        // Update wallet balances - subtract from balance, add to escrow
+    
+        // Refresh wallet data to ensure current balances before money transfer
+        const currentWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { id: wallet.id }
+        });
+        
+        if (!currentWallet) {
+          throw new Error('Wallet not found during money transfer');
+        }
+    
+        // MONEY FLOW: Advertiser Balance → Advertiser Escrow
+        const newBalance = currentWallet.balance - escrowHeld;
+        const newEscrowBalance = currentWallet.escrowBalance + escrowHeld;
+        console.log('currentWallet',currentWallet.escrowBalance+escrowHeld)
+        console.log('newEcsro',newEscrowBalance)
+        
+        console.log(`[ORDER CREATE] Money Flow for User ${user.id}:`);
+        console.log(`  - Wallet ID: ${currentWallet.id} (original: ${wallet.id})`);
+        console.log(`  - Deducting ${escrowHeld} from balance: ${currentWallet.balance} → ${newBalance}`);
+        console.log(`  - Adding ${escrowHeld} to escrow: ${currentWallet.escrowBalance} → ${newEscrowBalance}`);
+        
         await strapi.db.query('api::user-wallet.user-wallet').update({
-          where: { id: wallet.id },
+          where: { id: currentWallet.id },  // ✅ Use currentWallet.id, not wallet.id
           data: {
-            balance: wallet.balance - escrowHeld,
-            escrowBalance: wallet.escrowBalance + escrowHeld
+            balance: newBalance,
+            escrowBalance: newEscrowBalance
           }
         });
+        
+        console.log("current",currentWallet)
+        // Verify the update worked
+        const verifyWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { id: currentWallet.id }
+        });
+        
+        console.log(`[ORDER CREATE] ✅ Wallet updated successfully for order ${order.id}`);
+        console.log(`[ORDER CREATE] ✅ Verified - Balance: ${verifyWallet.balance}, Escrow: ${verifyWallet.escrowBalance}`);
 
         return order;
       });
@@ -181,63 +200,43 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
       
-      let publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { 
-          users_permissions_user: publisherId
-        }
-      });
-      
       if (!advertiserWallet) {
         throw new Error('Advertiser wallet not found');
       }
       
-      // Create publisher wallet if it doesn't exist (unified wallet)
-      if (!publisherWallet) {
-        console.log(`Publisher wallet not found, creating unified wallet for user ${publisherId}`);
-        publisherWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-          data: {
-            users_permissions_user: publisherId,
-            type: 'unified',
-            balance: 0,
-            escrowBalance: 0,
-            currency: 'USD',
-            status: 'active',
-            publishedAt: new Date()
-          },
-        });
-        
-        if (!publisherWallet) {
-          throw new Error('Failed to create publisher wallet');
-        }
-        console.log(`Created new unified publisher wallet with ID: ${publisherWallet.id}`);
-      }
+      // Use centralized wallet creation for publisher
+      let publisherWallet = await strapi.controller('api::user-wallet.user-wallet').getOrCreateWallet(publisherId);
+      console.log(`Got/created publisher wallet with ID: ${publisherWallet.id}`);
       
       // Calculate payment amount (without platform fee)
       const paymentAmount = order.totalAmount;
       
-      console.log("Processing payment:", {
-        paymentAmount,
-        escrowHeld: order.escrowHeld,
-        // platformFee: order.platformFee,
-        advertiserWalletId: advertiserWallet.id,
-        publisherWalletId: publisherWallet.id
-      });
+      // MONEY FLOW: Advertiser Escrow → Publisher Balance
+      const newAdvertiserEscrow = advertiserWallet.escrowBalance - order.escrowHeld;
+      const newPublisherBalance = publisherWallet.balance + paymentAmount;
       
-      // Release escrow funds from advertiser wallet - this is the approval step
+      console.log(`[ORDER COMPLETE] Money Flow for Order ${order.id}:`);
+      console.log(`  - Advertiser ${order.advertiser.id}: Escrow ${advertiserWallet.escrowBalance} → ${newAdvertiserEscrow}`);
+      console.log(`  - Publisher ${publisherId}: Balance ${publisherWallet.balance} → ${newPublisherBalance}`);
+      console.log(`  - Amount transferred: ${paymentAmount}`);
+      
+      // Release escrow funds from advertiser wallet 
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: advertiserWallet.id },
         data: {
-          escrowBalance: advertiserWallet.escrowBalance - order.escrowHeld
+          escrowBalance: newAdvertiserEscrow
         }
       });
 
-      // Add earnings to publisher wallet balance (unified wallet system)
+      // Add earnings to publisher wallet balance
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
         data: {
-          balance: publisherWallet.balance + paymentAmount
+          balance: newPublisherBalance
         }
       });
+      
+      console.log(`[ORDER COMPLETE] ✅ Money transfer completed successfully`);
 
       console.log(`Added ${paymentAmount} to publisher wallet. New balance: ${publisherWallet.balance + paymentAmount}`);
 
@@ -349,11 +348,10 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       
       console.log("Getting advertiser wallet for:", { advertiserId });
       
-      // Get advertiser wallet
+      // Get advertiser wallet - unified wallet works for both roles
       const advertiserWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { 
-          users_permissions_user: advertiserId,
-          type: 'advertiser'
+          users_permissions_user: advertiserId
         }
       });
       

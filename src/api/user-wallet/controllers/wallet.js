@@ -10,10 +10,8 @@ module.exports = {
     // For development, handle requests without authentication
     if (!user && process.env.NODE_ENV !== 'production') {
       try {
-        // Find a demo wallet
-        let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-          where: { type: 'advertiser' }
-        });
+        // Find a demo wallet - any wallet will work since they're unified
+        let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({});
 
         if (!wallet) {
           return ctx.notFound('Wallet not found');
@@ -84,10 +82,8 @@ module.exports = {
       if (!user && process.env.NODE_ENV !== 'production') {
         console.log('Checking for development wallet');
         
-        // Find an existing wallet
-        wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-          where: { type: 'advertiser' }
-        });
+        // Find an existing wallet - any wallet works since they're unified
+        wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({});
         
         if (!wallet) {
           return ctx.notFound('Wallet not found');
@@ -202,10 +198,8 @@ module.exports = {
     let wallet;
     
     if (!user && process.env.NODE_ENV !== 'production') {
-      // Find a demo wallet
-      wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { type: 'advertiser' }
-      });
+      // Find a demo wallet - any wallet works since they're unified
+      wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({});
       
       if (!wallet) {
         return ctx.notFound('Wallet not found');
