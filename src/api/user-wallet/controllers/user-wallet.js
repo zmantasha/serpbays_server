@@ -166,8 +166,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       return {
         data: {
-          balance: wallet.balance || "0",
-          escrowBalance: wallet.escrowBalance.toString(), // ✅ Use actual escrow balance
+          balance: parseFloat(wallet.balance || 0),
+          escrowBalance: parseFloat(wallet.escrowBalance || 0), // ✅ Return as number, not string
           currency: wallet.currency || "USD"
         }
       };
