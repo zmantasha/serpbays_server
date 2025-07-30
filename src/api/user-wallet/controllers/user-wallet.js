@@ -598,3 +598,4 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     }
   }
 }));
+
