@@ -49,6 +49,11 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         throw new Error('Insufficient funds');
       }
 
+      // Check if user is trying to order from their own website
+      if (data.website && data.website.publisher_email === user.email) {
+        throw new Error('You cannot order from your own website. This is not allowed to prevent self-ordering issues.');
+      }
+
       // Create the order with current date
       const orderData = {
         ...data,
