@@ -8,7 +8,7 @@
     "description": "Wallet transactions for deposits, withdrawals, and escrow"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "attributes": {
     "type": {

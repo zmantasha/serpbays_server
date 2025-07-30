@@ -255,17 +255,17 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
          return total + parseFloat(wr.amount || 0);
        }, 0);
 
-      // Calculate total available balance (simplified)
-      // Available = wallet balance minus pending withdrawals
-      const totalAvailable = Math.max(0, walletBalance - pendingWithdrawalBalance);
+      // Calculate total available balance (Available Balance = Wallet Balance)
+      // Pending withdrawals are already deducted from wallet balance when withdrawal request is created
+      const totalAvailable = walletBalance;
 
       console.log(`[Simple] Balance calculation for user ${userId}:`, {
         walletBalance,
         storedEscrowBalance,
         pendingWithdrawalBalance,
         totalAvailable,
-        calculation: `${walletBalance} - ${pendingWithdrawalBalance} = ${totalAvailable}`,
-        note: 'Simple wallet balance calculation - no complex transaction aggregation'
+        calculation: `Available Balance = Wallet Balance = ${totalAvailable}`,
+        note: 'Available balance equals wallet balance (pending withdrawals already deducted)'
       });
 
       // Note: escrowBalance is kept separate for order processing, 

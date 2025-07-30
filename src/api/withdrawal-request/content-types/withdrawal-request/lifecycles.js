@@ -1,87 +1,81 @@
 'use strict';
 
 module.exports = {
+  // Lifecycle hook that runs after a withdrawal request is updated
   async afterUpdate(event) {
     const { result, params } = event;
-    // 'result' is the state of the entity AFTER the update.
-    // 'params.data' is the data that was sent to the update operation.
-
-    console.log('[LifecycleHook] afterUpdate for withdrawal-request triggered.');
-    console.log('[LifecycleHook] Result (entity after update):', JSON.stringify(result, null, 2));
-    console.log('[LifecycleHook] Params.data (update payload):', JSON.stringify(params.data, null, 2));
-
-    // We only want to send a notification if the withdrawal_status was part of the fields being updated.
-    if (!params.data || typeof params.data.withdrawal_status === 'undefined') {
-      console.log('[LifecycleHook] withdrawal_status was not in the update payload (params.data). No status change notification will be sent from lifecycle hook.');
-      return;
-    }
-
-    const newStatus = result.withdrawal_status;
-    console.log(`[LifecycleHook] New status from result: ${newStatus}`);
-
-    if (!result.publisher || !result.amount) {
-      console.error('[LifecycleHook] Missing publisher or amount in the updated result. Cannot send notification.', result);
-      return;
-    }
-
-    let publisherId;
-    if (typeof result.publisher === 'object' && result.publisher !== null && result.publisher.id) {
-      publisherId = result.publisher.id;
-    } else if (typeof result.publisher === 'number' || typeof result.publisher === 'string') {
-      publisherId = result.publisher; // Assuming it's the ID directly
-    } else {
-        // Attempt to fetch the full withdrawal request to get the populated publisher
-        try {
-            const fullRequest = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', result.id, {
-                populate: ['publisher']
-            });
-            if (fullRequest && fullRequest.publisher && fullRequest.publisher.id) {
-                publisherId = fullRequest.publisher.id;
-                console.log('[LifecycleHook] Fetched full request to get publisher ID:', publisherId);
-            } else {
-                console.error('[LifecycleHook] Could not determine publisher ID even after fetching full request. Publisher data:', fullRequest ? fullRequest.publisher : 'N/A');
-                return;
-            }
-        } catch (fetchError) {
-            console.error('[LifecycleHook] Error fetching full withdrawal request to populate publisher:', fetchError);
-            return;
-        }
-    }
-
-    if (!publisherId) {
-        console.error('[LifecycleHook] Final publisherId is undefined. Cannot send notification.');
-        return;
-    }
-
-    const amount = result.amount;
-    let action = null;
-    let additionalData = {};
-
-    if (newStatus === 'approved') {
-      action = 'withdrawal_approved';
-    } else if (newStatus === 'denied') {
-      action = 'withdrawal_denied';
-      additionalData.reason = result.denialReason || 'Withdrawal was denied by admin.';
-    } else if (newStatus === 'paid') {
-      action = 'withdrawal_paid';
-    }
-
-    if (action) {
-      console.log(`[LifecycleHook] Action determined: ${action}. Publisher ID: ${publisherId}, Amount: ${amount}`);
+    
+    // Only proceed if withdrawal_status was changed to 'paid'
+    if (result.withdrawal_status === 'paid') {
+      console.log(`[Lifecycle] Withdrawal request ${result.id} marked as paid - updating pendingWithdrawalBalance`);
+      
       try {
-        await strapi.service('api::notification.notification').createPaymentNotification(
-          publisherId,
-          action,
-          amount,
-          null, // orderId
-          additionalData
-        );
-        console.log(`[LifecycleHook] Notification sent successfully for action: ${action} to publisher ${publisherId}.`);
+        // Get the withdrawal request with publisher details
+        const withdrawalRequest = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', result.id, {
+          populate: ['publisher']
+        });
+
+        if (!withdrawalRequest || !withdrawalRequest.publisher) {
+          console.error(`[Lifecycle] Publisher not found for withdrawal request ${result.id}`);
+          return;
+        }
+
+        // Get publisher wallet
+        const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: {
+            users_permissions_user: withdrawalRequest.publisher.id
+          }
+        });
+
+        if (!publisherWallet) {
+          console.error(`[Lifecycle] Publisher wallet not found for user ${withdrawalRequest.publisher.id}`);
+          return;
+        }
+
+        // Check if this withdrawal amount should be deducted from pendingWithdrawalBalance
+        const amountToDeduct = parseFloat(withdrawalRequest.amount);
+        const currentPendingBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
+        
+        if (currentPendingBalance >= amountToDeduct) {
+          // Update pendingWithdrawalBalance
+          const newPendingBalance = Math.max(0, currentPendingBalance - amountToDeduct);
+          
+          await strapi.db.query('api::user-wallet.user-wallet').update({
+            where: { id: publisherWallet.id },
+            data: {
+              pendingWithdrawalBalance: newPendingBalance
+            }
+          });
+          
+          console.log(`[Lifecycle] ✅ Updated pendingWithdrawalBalance for withdrawal ${result.id}: ${currentPendingBalance} → ${newPendingBalance}`);
+          
+          // Also update the corresponding transaction status
+          const escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawalRequest.publisher.id,
+              type: 'escrow_hold',
+              transactionStatus: 'pending',
+              description: { $contains: `Withdrawal request #${result.id}` }
+            }
+          });
+          
+          if (escrowHoldTransaction) {
+            await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
+              data: {
+                transactionStatus: 'success',
+                description: `${escrowHoldTransaction.description} - Payment completed`
+              }
+            });
+            console.log(`[Lifecycle] ✅ Updated transaction ${escrowHoldTransaction.id} to success`);
+          }
+          
+        } else {
+          console.warn(`[Lifecycle] ⚠️ Cannot deduct ${amountToDeduct} from pendingWithdrawalBalance ${currentPendingBalance} for withdrawal ${result.id}`);
+        }
+        
       } catch (error) {
-        console.error(`[LifecycleHook] Error sending notification for action ${action} to publisher ${publisherId}:`, error);
+        console.error(`[Lifecycle] Error updating pendingWithdrawalBalance for withdrawal ${result.id}:`, error);
       }
-    } else {
-      console.log(`[LifecycleHook] No action determined for status: ${newStatus}. No notification sent.`);
     }
   },
 }; 

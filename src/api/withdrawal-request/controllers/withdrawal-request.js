@@ -85,7 +85,13 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.log('Publisher wallet not found for user:', ctx.state.user.id);
         return ctx.badRequest('Publisher wallet not found');
       }
-      console.log('Found publisher wallet:', { id: publisherWallet.id, balance: publisherWallet.balance, escrow: publisherWallet.escrowBalance });
+      console.log('Found publisher wallet:', { 
+        id: publisherWallet.id, 
+        balance: publisherWallet.balance, 
+        escrow: publisherWallet.escrowBalance,
+        pendingWithdrawalBalance: publisherWallet.pendingWithdrawalBalance,
+        fullWalletObject: publisherWallet
+      });
       
       // Balance Check Logic (aligned with getAvailableBalance)
       // STEP 1: Get all completed/approved order IDs for this user.
@@ -129,24 +135,20 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         }, 0);
       console.log(`[Create] Calculated GROSS completedOrdersAmount: ${grossCompletedOrdersAmount}`);
         
-      // STEP 5: Get current direct wallet balance and pending withdrawal balance from the publisherWallet entity.
-      const directWalletBalance = parseFloat(publisherWallet.balance || 0);
-      const currentPendingWithdrawalBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
-      console.log(`[Create] Publisher directWalletBalance: ${directWalletBalance}, currentPendingWithdrawalBalance: ${currentPendingWithdrawalBalance}`);
-
-      // STEP 6: Calculate totalAvailable for the pre-check (using simple wallet balance calculation).
-      const totalAvailableForWithdrawalCheck = Math.max(0, directWalletBalance - currentPendingWithdrawalBalance);
+      // STEP 5: Check available balance (Available Balance = Wallet Balance)
+      const walletBalance = parseFloat(publisherWallet.balance || 0);
+      const pendingWithdrawalBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
+      
       console.log('[Create] Pre-withdrawal Balance Check:', {
-        grossCompletedOrdersAmount, // For reference only
-        directWalletBalance,
-        currentPendingWithdrawalBalance,
-        calculation: `${directWalletBalance} [wallet] - ${currentPendingWithdrawalBalance} [pending] = ${totalAvailableForWithdrawalCheck}`,
-        requestAmount
+        walletBalance,
+        pendingWithdrawalBalance,
+        requestAmount,
+        note: 'Available balance equals wallet balance'
         });
         
-      // STEP 7: Check if user has sufficient balance.
-      if (totalAvailableForWithdrawalCheck < requestAmount) {
-        return ctx.badRequest(`Insufficient funds. Available balance for withdrawal check: ${totalAvailableForWithdrawalCheck}, Requested: ${requestAmount}`);
+      // STEP 6: Check if user has sufficient wallet balance for withdrawal.
+      if (walletBalance < requestAmount) {
+        return ctx.badRequest(`Insufficient funds. Available balance: ${walletBalance}, Requested: ${requestAmount}`);
         }
         
       // The rest of the create method continues from here...

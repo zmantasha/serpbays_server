@@ -1490,7 +1490,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
     singularName: 'transaction';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     amount: Schema.Attribute.Decimal &
