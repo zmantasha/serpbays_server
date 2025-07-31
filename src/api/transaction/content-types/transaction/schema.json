@@ -38,7 +38,9 @@
         "success",
         "failed",
         "cancelled",
-        "refunded"
+        "refunded",
+        "denied",
+        "paid"
       ],
       "default": "pending",
       "required": true
@@ -50,7 +52,8 @@
         "paypal",
         "razorpay",
         "test",
-        "promo"
+        "promo",
+        "system"
       ],
       "required": true
     },
@@ -96,6 +99,19 @@
       "type": "relation",
       "relation": "oneToOne",
       "target": "api::invoice.invoice"
+    },
+    "external_transaction_id": {
+      "type": "string",
+      "maxLength": 255,
+      "description": "External payment transaction ID (PayPal, Bank, etc.)"
+    },
+    "payment_notes": {
+      "type": "text",
+      "description": "Payment notes from withdrawal request"
+    },
+    "denial_reason": {
+      "type": "text",
+      "description": "Reason for denying withdrawal request"
     }
   }
 }

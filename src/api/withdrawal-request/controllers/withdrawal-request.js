@@ -494,7 +494,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (escrowHoldTransaction) {
         await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
           data: {
-            transactionStatus: 'failed',
+            transactionStatus: 'denied',
             description: `${escrowHoldTransaction.description} - Withdrawal denied: ${reason || 'No reason provided'}`
           }
         });
@@ -519,7 +519,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           amount: withdrawalRequest.amount,
           netAmount: withdrawalRequest.amount,
           fee: 0,
-          transactionStatus: 'failed',
+          transactionStatus: 'denied',
           gateway: 'internal',
           description: `Withdrawal request denied: ${reason || 'No reason provided'}`,
           user_wallet: publisherWallet.id
@@ -666,7 +666,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (escrowHoldTransaction) {
         await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
           data: {
-            transactionStatus: 'success',
+            transactionStatus: 'paid',
             description: `${escrowHoldTransaction.description} - Payment completed`
           }
         });
@@ -698,7 +698,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           amount: withdrawalRequest.amount,
           netAmount: withdrawalRequest.amount, // Assuming no fees deducted at this stage by this system
           fee: 0,
-          transactionStatus: 'success', // Or 'completed'
+          transactionStatus: 'paid', // Or 'completed'
           gateway: withdrawalRequest.method,
           gatewayTransactionId: paymentResult.transactionId || `paid_${id}`,
           description: `Payout via ${withdrawalRequest.method} - Marked as Paid by Admin`,

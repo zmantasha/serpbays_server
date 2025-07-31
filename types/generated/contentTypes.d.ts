@@ -1504,7 +1504,12 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    denial_reason: Schema.Attribute.Text;
     description: Schema.Attribute.Text;
+    external_transaction_id: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
     fee: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
@@ -1514,7 +1519,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       > &
       Schema.Attribute.DefaultTo<0>;
     gateway: Schema.Attribute.Enumeration<
-      ['stripe', 'paypal', 'razorpay', 'test', 'promo']
+      ['stripe', 'paypal', 'razorpay', 'test', 'promo', 'system']
     > &
       Schema.Attribute.Required;
     gatewayTransactionId: Schema.Attribute.String & Schema.Attribute.Required;
@@ -1535,9 +1540,18 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
         number
       >;
     order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
+    payment_notes: Schema.Attribute.Text;
     publishedAt: Schema.Attribute.DateTime;
     transactionStatus: Schema.Attribute.Enumeration<
-      ['pending', 'success', 'failed', 'cancelled', 'refunded']
+      [
+        'pending',
+        'success',
+        'failed',
+        'cancelled',
+        'refunded',
+        'denied',
+        'paid',
+      ]
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'pending'>;
@@ -1772,6 +1786,7 @@ export interface ApiWithdrawalRequestWithdrawalRequest
   extends Struct.CollectionTypeSchema {
   collectionName: 'withdrawal_requests';
   info: {
+    description: 'Withdrawal requests with external transaction tracking';
     displayName: 'Withdrawal Request';
     pluralName: 'withdrawal-requests';
     singularName: 'withdrawal-request';
@@ -1791,7 +1806,12 @@ export interface ApiWithdrawalRequestWithdrawalRequest
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    denial_reason: Schema.Attribute.Text;
     details: Schema.Attribute.JSON & Schema.Attribute.Required;
+    external_transaction_id: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -1802,6 +1822,10 @@ export interface ApiWithdrawalRequestWithdrawalRequest
       ['razorpay', 'paypal', 'bank_transfer', 'payoneer']
     > &
       Schema.Attribute.Required;
+    payment_method_used: Schema.Attribute.Enumeration<
+      ['paypal', 'bank_transfer', 'razorpay', 'payoneer', 'other']
+    >;
+    payment_notes: Schema.Attribute.Text;
     publishedAt: Schema.Attribute.DateTime;
     publisher: Schema.Attribute.Relation<
       'manyToOne',

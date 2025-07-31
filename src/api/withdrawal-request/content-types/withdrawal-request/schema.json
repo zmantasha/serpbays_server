@@ -4,7 +4,8 @@
   "info": {
     "singularName": "withdrawal-request",
     "pluralName": "withdrawal-requests",
-    "displayName": "Withdrawal Request"
+    "displayName": "Withdrawal Request",
+    "description": "Withdrawal requests with external transaction tracking"
   },
   "options": {
     "draftAndPublish": true
@@ -35,6 +36,24 @@
       "enum": ["pending", "approved", "denied", "paid"],
       "default": "pending",
       "required": true
+    },
+    "external_transaction_id": {
+      "type": "string",
+      "maxLength": 255,
+      "description": "External payment transaction ID (PayPal, Bank, etc.)"
+    },
+    "payment_method_used": {
+      "type": "enumeration",
+      "enum": ["paypal", "bank_transfer", "razorpay", "payoneer", "other"],
+      "description": "Actual payment method used for this withdrawal"
+    },
+    "payment_notes": {
+      "type": "text",
+      "description": "Optional notes about the payment"
+    },
+    "denial_reason": {
+      "type": "text",
+      "description": "Reason for denying the withdrawal request"
     }
   }
 }

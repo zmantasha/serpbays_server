@@ -86,14 +86,27 @@ async function handlePaidWithdrawal(result) {
             console.log(`[Lifecycle] Found transaction #${escrowHoldTransaction.id} with status: ${escrowHoldTransaction.transactionStatus}`);
             
             // Only update if not already success
-            if (escrowHoldTransaction.transactionStatus !== 'success') {
+            if (escrowHoldTransaction.transactionStatus !== 'paid') {
+              // Prepare update data
+              const updateData = {
+                transactionStatus: 'paid',
+                description: `${escrowHoldTransaction.description} - Payment completed`
+              };
+
+              // Add external transaction ID if available
+              if (withdrawalRequest.external_transaction_id) {
+                updateData.external_transaction_id = withdrawalRequest.external_transaction_id;
+              }
+
+              // Add payment notes if available  
+              if (withdrawalRequest.payment_notes) {
+                updateData.payment_notes = withdrawalRequest.payment_notes;
+              }
+
               await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
-                data: {
-                  transactionStatus: 'success',
-                  description: `${escrowHoldTransaction.description} - Payment completed`
-                }
+                data: updateData
               });
-              console.log(`[Lifecycle] ✅ Updated transaction ${escrowHoldTransaction.id} to success`);
+              console.log(`[Lifecycle] ✅ Updated transaction ${escrowHoldTransaction.id} to success with external ID: ${withdrawalRequest.external_transaction_id || 'none'}`);
             } else {
               console.log(`[Lifecycle] ℹ️ Transaction ${escrowHoldTransaction.id} already marked as success`);
             }
@@ -182,15 +195,46 @@ async function handleDeniedWithdrawal(result) {
       if (escrowHoldTransaction) {
         console.log(`[Lifecycle] Found transaction #${escrowHoldTransaction.id}, updating to failed`);
         
+        // Prepare update data for failed transaction
+        const updateData = {
+          transactionStatus: 'denied',
+          description: `${escrowHoldTransaction.description} - Withdrawal denied`
+        };
+
+        // Add denial reason if available
+        if (withdrawalRequest.denial_reason) {
+          updateData.denial_reason = withdrawalRequest.denial_reason;
+        }
+        
         await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
-          data: {
-            transactionStatus: 'failed',
-            description: `${escrowHoldTransaction.description} - Withdrawal denied`
-          }
+          data: updateData
         });
-        console.log(`[Lifecycle] ✅ Updated transaction ${escrowHoldTransaction.id} to failed`);
+        console.log(`[Lifecycle] ✅ Updated transaction ${escrowHoldTransaction.id} to failed with denial reason: ${withdrawalRequest.denial_reason || 'none'}`);
       } else {
         console.log(`[Lifecycle] ⚠️ No matching transaction found for denied withdrawal #${result.id}`);
+      }
+      
+      // Create a separate refund transaction for better visibility
+      try {
+        const refundTransaction = await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            users_permissions_user: withdrawalRequest.publisher.id,
+            type: 'refund',
+            amount: Math.abs(refundAmount), // Ensure positive amount for refunds
+            netAmount: Math.abs(refundAmount), // Ensure positive amount for refunds
+            transactionStatus: 'refunded',
+            description: `Refund for denied withdrawal request #${result.id}`,
+            gateway: 'system',
+            gatewayTransactionId: `REFUND_WR_${result.id}_${Date.now()}`,
+            user_wallet: publisherWallet.id,
+            fee: 0,
+            transactionDate: new Date()
+          }
+        });
+        
+        console.log(`[Lifecycle] ✅ Created refund transaction #${refundTransaction.id} for +$${refundAmount}`);
+      } catch (refundError) {
+        console.error(`[Lifecycle] ❌ Failed to create refund transaction:`, refundError);
       }
       
     } catch (error) {
