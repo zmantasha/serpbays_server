@@ -24,6 +24,24 @@ module.exports = {
         middlewares: [],
       },
     },
+    // Country analytics route (must be before /:id route)
+    {
+      method: 'GET',
+      path: '/marketplaces/country-analytics',
+      handler: 'marketplace.getCountryAnalytics',
+      config: {
+        policies: [
+          {
+            name: 'global::simple-rate-limit',
+            config: {
+              interval: 60000,
+              max: 100,
+            },
+          },
+        ],
+        middlewares: [],
+      },
+    },
     {
       method: 'GET',
       path: '/marketplaces/:id',

@@ -2,8 +2,8 @@ POST http://localhost:1337/api/auth/local
 Content-Type: application/json
 
 {
-  "identifier": "advertiser10@gmail.com",
-  "password": "mantasha@123"
+  "identifier": "advertiser@gmail.com",
+  "password": "Mantasha@123"
 }
 
 
@@ -87,6 +87,10 @@ Content-Type: application/json
   "escrowBalance": "0",
   "currency": "USD"
 }
+###
+GET http://localhost:1337/api/marketplaces/country-analytics
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MiwiaWF0IjoxNzU0MDQ2ODcxLCJleHAiOjE3NTQ2NTE2NzF9.X6054zKsdeXADvz1ThNwJSQApvG5pYvczljgPTV8E2E
+
 ###
 POST http://localhost:1337/api/api/wallet/create
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NiwiaWF0IjoxNzQ2NjI0NTU5LCJleHAiOjE3NDcyMjkzNTl9.vqFlFP2TS9hxeiT5IPIBrZ7ThnPhBhkd0f9JtNDuj-g
