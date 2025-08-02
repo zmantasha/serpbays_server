@@ -604,5 +604,76 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       console.error('Error in bulk TAT update:', error);
       return ctx.badRequest(error.message);
     }
+  },
+
+   // Country analytics endpoint
+  async getCountryAnalytics(ctx) {
+    try {
+      // Import the country utility
+      const { getCountryInfo } = require('../../../utils/countryFlags');
+
+      // Get all marketplace entries with their countries
+      const entries = await strapi.entityService.findMany('api::marketplace.marketplace', {
+        fields: ['id', 'countries'],
+        filters: {
+          blacklist_status: 'active'
+        }
+      });
+
+      // Process and count websites by country
+      const countryStats = {};
+
+      entries.forEach(entry => {
+        if (entry.countries && Array.isArray(entry.countries)) {
+          entry.countries.forEach(country => {
+            if (country && typeof country === 'string') {
+              const cleanCountry = country.trim().toLowerCase();
+              if (cleanCountry) {
+                countryStats[cleanCountry] = (countryStats[cleanCountry] || 0) + 1;
+              }
+            }
+          });
+        } else if (entry.countries && typeof entry.countries === 'string') {
+          // Handle single country as string
+          const cleanCountry = entry.countries.trim().toLowerCase();
+          if (cleanCountry) {
+            countryStats[cleanCountry] = (countryStats[cleanCountry] || 0) + 1;
+          }
+        }
+      });
+      
+      // Convert to array format with flag data and sort by website count
+      function toTitleCase(str){
+        return str
+        .split(' ')
+        .map(word=> word.charAt(0).toUpperCase()+ word.slice(1))
+        .join(' ')
+      }
+
+      const sortedCountries = Object.entries(countryStats)
+        .map(([country, count]) => {
+          const countryInfo = getCountryInfo(country);
+          return {
+            country:toTitleCase(country),
+            code: countryInfo.code,
+            flag: countryInfo.flag,
+            flagPng: countryInfo.flagPng,
+            websiteCount: count
+          };
+        })
+        .sort((a, b) => b.websiteCount - a.websiteCount);
+
+      return {
+        data: sortedCountries,
+        meta: {
+          total: sortedCountries.length,
+          totalWebsites: entries.length
+        }
+      };
+
+    } catch (error) {
+      console.error('Error in country analytics:', error);
+      return ctx.badRequest(`Failed to get country analytics: ${error.message}`);
+    }
   }
 }));
