@@ -1,5 +1,5 @@
 module.exports = ({ env }) => ({
-  url: env('SERVER_URL', 'https://cms.serpbays.com'),
+  // url: env('SERVER_URL', 'https://cms.serpbays.com'),
   host: env('HOST', '0.0.0.0'),
   port: env.int('PORT', 1337),
   app: {

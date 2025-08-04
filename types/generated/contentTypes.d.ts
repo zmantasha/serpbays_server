@@ -1468,12 +1468,10 @@ export interface ApiShortlistShortlist extends Struct.CollectionTypeSchema {
       'manyToOne',
       'api::marketplace.marketplace'
     >;
-    notes: Schema.Attribute.Text;
     owner: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
     >;
-    project: Schema.Attribute.Relation<'manyToOne', 'api::project.project'>;
     publishedAt: Schema.Attribute.DateTime;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &

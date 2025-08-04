@@ -9,22 +9,19 @@ const { createCoreController } = require('@strapi/strapi').factories;
 module.exports = createCoreController('api::shortlist.shortlist', ({ strapi }) => ({
   async create(ctx) {
     const { user } = ctx.state;
-    const { project, marketplace, notes } = ctx.request.body.data;
-    console.log("project",project)
+    const { marketplace } = ctx.request.body.data;
     console.log("marketplace",marketplace)
-    console.log("notes",notes)
     if (!user) {
       return ctx.unauthorized('You must be logged in to create a shortlist item.');
     }
 
-    if (!project || !marketplace) {
+    if (!marketplace) {
         return ctx.badRequest('Project and Marketplace are required.');
     }
 
     // Check if item already exists
     const existing = await strapi.db.query('api::shortlist.shortlist').findOne({
       where: {
-        project: project,
         marketplace: marketplace,
         owner: user.id,
       },
@@ -38,9 +35,7 @@ module.exports = createCoreController('api::shortlist.shortlist', ({ strapi }) =
 
     const entity = await strapi.service('api::shortlist.shortlist').create({
       data: {
-        project,
         marketplace,
-        notes,
         owner: user.id,
         publishedAt: new Date(), // Manually set publishedAt if draft/publish is off
       },
@@ -70,7 +65,7 @@ module.exports = createCoreController('api::shortlist.shortlist', ({ strapi }) =
     const entries = await strapi.entityService.findMany('api::shortlist.shortlist', {
       ...ctx.query, // Pass along other query params like pagination, sort
       filters,      // Apply our combined filters
-      populate: ctx.query.populate || ['project', 'marketplace'], // Ensure relations are populated
+      populate: ctx.query.populate || ['marketplace'], // Ensure relations are populated
     });
     
     // Sanitize the output and transform it into the expected API response format

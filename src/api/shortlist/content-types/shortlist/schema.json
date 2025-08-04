@@ -19,14 +19,6 @@
     }
   },
   "attributes": {
-    "notes": {
-      "type": "text"
-    },
-    "project": {
-      "type": "relation",
-      "relation": "manyToOne",
-      "target": "api::project.project"
-    },
     "marketplace": {
       "type": "relation",
       "relation": "manyToOne",
