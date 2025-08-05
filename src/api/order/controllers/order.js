@@ -88,6 +88,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             return ctx.badRequest(`Project with ID ${projectId} not found or does not belong to you`);
           }
           
+          // Check if project is archived
+          if (project.archived) {
+            return ctx.badRequest(`Cannot create orders in archived project "${project.ProjectName}". Please unarchive the project first or create a new project.`);
+          }
+          
           // Add project to orderData
           orderData.project = projectId;
         }
