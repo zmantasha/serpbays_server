@@ -1517,7 +1517,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       > &
       Schema.Attribute.DefaultTo<0>;
     gateway: Schema.Attribute.Enumeration<
-      ['stripe', 'paypal', 'razorpay', 'test', 'promo', 'system']
+      ['stripe', 'paypal', 'razorpay', 'promo', 'system']
     > &
       Schema.Attribute.Required;
     gatewayTransactionId: Schema.Attribute.String & Schema.Attribute.Required;

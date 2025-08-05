@@ -252,7 +252,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           amount: paymentAmount,
           netAmount: paymentAmount,
           transactionStatus: 'success', // Mark as success since funds are now available
-          gateway: 'test',
+          gateway: 'system',
           gatewayTransactionId: `completed_${order.id}_${Date.now()}`,
           description: `Payment for order #${order.id} - funds available for withdrawal`,
           user_wallet: publisherWallet.id,
@@ -270,7 +270,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           netAmount: 0, // Since fee is 0
           fee: 0,
           transactionStatus: 'success',
-          gateway: 'test',
+          gateway: 'system',
           gatewayTransactionId: `fee_${order.id}_${Date.now()}`,
           description: `Platform fee for order #${order.id}`,
           // This would go to the platform wallet in a production system
@@ -387,7 +387,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           netAmount: order.escrowHeld,
           fee: 0,
           transactionStatus: 'success',
-          gateway: 'test',
+          gateway: 'system',
           gatewayTransactionId: `refund_${order.id}_${Date.now()}`,
           description: `Refund for rejected order #${order.id}`,
           user_wallet: advertiserWallet.id,

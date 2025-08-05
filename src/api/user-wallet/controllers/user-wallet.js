@@ -566,7 +566,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
                 amount: paymentAmount,
                 netAmount: paymentAmount,
                 transactionStatus: 'success',
-                gateway: 'test',
+                gateway: 'system',
                 gatewayTransactionId: `migration_${order.id}_${Date.now()}`,
                 description: `Migration: Payment for order #${order.id}`,
                 user_wallet: publisherWallet.id,
