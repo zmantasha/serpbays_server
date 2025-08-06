@@ -31,6 +31,7 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
                 id: item.id,
                 quantity: item.quantity || 1,
                 isSensitive: item.isSensitive || false,
+                serviceType:item.serviceType || null,
                 specialCategory: item.specialCategory || null,
                 website: {
                   id: marketplace.id,
@@ -42,6 +43,7 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
                      item.specialCategory === 'Casino' ? marketplace.adv_casino_pricing :
                      item.specialCategory === 'Crypto' ? marketplace.adv_crypto_pricing :
                      marketplace.price) : marketplace.price,
+                  link_insertion_price: marketplace.link_insertion_price || 0,
                   da: marketplace.moz_da,
                   dr: marketplace.ahrefs_dr,
                   minWordCount: marketplace.min_word_count,

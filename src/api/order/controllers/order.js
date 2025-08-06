@@ -71,7 +71,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           instructions, 
           projectName,
           projectId, 
-          outsourceLinks, 
+          outsourceLinks,
+          // Link Insertion specific fields
+          serviceType,
+          existingPostUrl,
+          anchorText,
+          landingPageUrl,
+          linkInsertionLanguage,
+          linkInsertionDescription,
           ...orderData 
         } = ctx.request.body.data || ctx.request.body;
 
@@ -288,7 +295,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           advertiser: user.id,
           orderDate: new Date(),
           isOutsourced: isOutsourced,
-          instructions: instructions || null
+          instructions: instructions || null,
+          // Add Link Insertion fields if this is a Link Insertion order
+          serviceType: serviceType || null,
+          existingPostUrl: existingPostUrl || null,
+          anchorText: anchorText || null,
+          landingPageUrl: landingPageUrl || null,
+          linkInsertionLanguage: linkInsertionLanguage || null,
+          linkInsertionDescription: linkInsertionDescription || null
         };
 
         console.log('Creating order with data:', orderToCreate);
@@ -367,8 +381,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Define default title for content
         const defaultTitle = `Order for ${orderData.description}`;
         
-        // Only create content object for non-outsourced orders
-        if (!isOutsourced) {
+        // Only create content object for non-outsourced orders and non-Link Insertion orders
+        if (!isOutsourced && serviceType !== 'link_insertion') {
           try {
             // Process order content if needed
             let contentData = {
