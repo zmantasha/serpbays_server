@@ -227,6 +227,30 @@
     "websiteCountries": {
       "type": "json",
       "description": "Website countries at time of order (snapshot)"
+    },
+    "serviceType": {
+      "type": "string",
+      "description": "Type of service (e.g., 'link_insertion', 'guest_post', etc.)"
+    },
+    "existingPostUrl": {
+      "type": "string",
+      "description": "URL of the existing post where the link will be inserted"
+    },
+    "anchorText": {
+      "type": "string",
+      "description": "The clickable text that will contain the link"
+    },
+    "landingPageUrl": {
+      "type": "string",
+      "description": "The URL where the link should point to"
+    },
+    "linkInsertionLanguage": {
+      "type": "string",
+      "description": "Language for the link insertion order"
+    },
+    "linkInsertionDescription": {
+      "type": "text",
+      "description": "Additional instructions or context for the link insertion"
     }
   }
 }

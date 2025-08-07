@@ -81,7 +81,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           linkInsertionDescription,
           ...orderData 
         } = ctx.request.body.data || ctx.request.body;
-
+         console.log("projectId",projectId)
+         console.log(projectName)
         // If projectId is provided, verify it exists and belongs to the user
         if (projectId) {
           const project = await strapi.db.query('api::project.project').findOne({
@@ -349,7 +350,6 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             console.log('Creating outsourced content details');
             // Create outsourced content details
             const outsourcedContentData = {
-              projectName: projectName || `Order for ${orderData.description}`,
               links: outsourceLinks || links || [],
               instructions: instructions || '',
               order: order.documentId,

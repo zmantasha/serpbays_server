@@ -1122,6 +1122,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'plugin::users-permissions.user'
     >;
+    anchorText: Schema.Attribute.String;
     chatroom: Schema.Attribute.Relation<'oneToOne', 'api::chatroom.chatroom'>;
     communications: Schema.Attribute.Relation<
       'oneToMany',
@@ -1143,7 +1144,11 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    existingPostUrl: Schema.Attribute.String;
     isOutsourced: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    landingPageUrl: Schema.Attribute.String;
+    linkInsertionDescription: Schema.Attribute.Text;
+    linkInsertionLanguage: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::order.order'> &
       Schema.Attribute.Private;
@@ -1183,6 +1188,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     revisionStatus: Schema.Attribute.Enumeration<
       ['requested', 'in_progress', 'completed']
     >;
+    serviceType: Schema.Attribute.String;
     totalAmount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<
@@ -1250,7 +1256,6 @@ export interface ApiOutsourcedContentOutsourcedContent
     > &
       Schema.Attribute.Private;
     order: Schema.Attribute.Relation<'oneToOne', 'api::order.order'>;
-    projectName: Schema.Attribute.String & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
