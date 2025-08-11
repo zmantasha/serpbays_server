@@ -51,12 +51,12 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       // Email to advertiser
-      const advertiserEmailData = {
-        to: advertiserEmail,
-        subject: `Order Created Successfully - Order #${order.id}`,
-        html: this.generateOrderCreationTemplate(order, 'advertiser'),
-        text: `Order #${order.id} created successfully. You will be notified when the publisher responds.`
-      };
+      // const advertiserEmailData = {
+      //   to: advertiserEmail,
+      //   subject: `Order Created Successfully - Order #${order.id}`,
+      //   html: this.generateOrderCreationTemplate(order, 'advertiser'),
+      //   text: `Order #${order.id} created successfully. You will be notified when the publisher responds.`
+      // };
 
       await Promise.all([
         strapi.plugins.email.services.email.send(publisherEmailData),
@@ -66,6 +66,37 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       console.log(`Order creation emails sent for order ${order.id}`);
     } catch (error) {
       console.error('Error sending order creation emails:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Send order rejection notification email
+   */
+  async sendOrderRejectionEmail(order, advertiserEmail, publisherEmail) {
+    try {
+      const advertiserEmailData = {
+        to: advertiserEmail,
+        subject: `Order Rejected - Order #${order.id}`,
+        html: this.generateOrderRejectionTemplate(order, 'advertiser'),
+        text: `Order #${order.id} has been rejected. Reason: ${order.rejectionReason}. Funds have been refunded to your wallet.`
+      };
+
+      const publisherEmailData = {
+        to: publisherEmail,
+        subject: `Order Rejection Confirmed - Order #${order.id}`,
+        html: this.generateOrderRejectionTemplate(order, 'publisher'),
+        text: `Order #${order.id} rejection confirmed. The advertiser has been notified.`
+      };
+
+      await Promise.all([
+        strapi.plugins.email.services.email.send(advertiserEmailData),
+        strapi.plugins.email.services.email.send(publisherEmailData)
+      ]);
+
+      console.log(`Order rejection emails sent for order ${order.id}`);
+    } catch (error) {
+      console.error('Error sending order rejection emails:', error);
       throw error;
     }
   },
@@ -177,6 +208,51 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       console.log(`Payment confirmation email sent for transaction ${transaction.id}`);
     } catch (error) {
       console.error('Error sending payment confirmation email:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Send withdrawal status email
+   */
+  async sendWithdrawalStatusEmail(withdrawalRequest, userEmail, status, reason = null) {
+    try {
+      let subject, template, text;
+      
+      switch(status) {
+        case 'approved':
+          subject = `Withdrawal Approved - Request #${withdrawalRequest.id}`;
+          template = this.generateWithdrawalApprovedTemplate(withdrawalRequest);
+          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been approved and will be processed soon.`;
+          break;
+          
+        case 'paid':
+          subject = `Payment Completed - Withdrawal #${withdrawalRequest.id}`;
+          template = this.generateWithdrawalPaidTemplate(withdrawalRequest);
+          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been completed and paid to your account.`;
+          break;
+          
+        case 'denied':
+          subject = `Withdrawal Denied - Request #${withdrawalRequest.id}`;
+          template = this.generateWithdrawalDeniedTemplate(withdrawalRequest, reason);
+          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been denied. Reason: ${reason || 'No reason provided'}`;
+          break;
+          
+        default:
+          throw new Error('Invalid withdrawal status');
+      }
+
+      const emailData = {
+        to: userEmail,
+        subject,
+        html: template,
+        text
+      };
+
+      await strapi.plugins.email.services.email.send(emailData);
+      console.log(`Withdrawal ${status} email sent for request ${withdrawalRequest.id}`);
+    } catch (error) {
+      console.error('Error sending withdrawal status email:', error);
       throw error;
     }
   },
@@ -535,14 +611,31 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       <html>
       <head>
         <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #007bff; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .order-details { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .button { display: inline-block; padding: 12px 24px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px; }
+          .header { background: #007bff; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
+          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #007bff; }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: #007bff; 
+            color: white !important; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            margin: 10px 5px; 
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background-color 0.3s;
+          }
+          .button:hover { background: #0056b3; }
+          .button.success { background: #28a745; }
+          .button.success:hover { background: #1e7e34; }
           .button.reject { background: #dc3545; }
-          .alert { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 10px 0; border-radius: 5px; }
+          .button.reject:hover { background: #c82333; }
+          .alert { background: #d1ecf1; border: 2px solid #007bff; padding: 20px; margin: 15px 0; border-radius: 8px; }
+          .email-commands { background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
+          code { background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
         </style>
       </head>
       <body>
@@ -564,9 +657,14 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             
             ${isPublisher ? `
               <div class="alert">
-                <strong>Action Required:</strong><br>
-                To accept this order, reply with: <code>ACCEPT-${order.id}</code><br>
-                To reject this order, reply with: <code>REJECT-${order.id}</code>
+                <strong>🎯 Action Required:</strong><br>
+                <p style="margin: 15px 0;">Please review and respond to this order:</p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="http://localhost:3000/publisher/available-orders" class="button" style="background: #007bff; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                    📋 View Available Orders
+                  </a>
+                </div>
               </div>
             ` : `
               <div class="alert">
@@ -594,12 +692,27 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       <html>
       <head>
         <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #28a745; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .order-details { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .alert { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 10px 0; border-radius: 5px; }
+          .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
+          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #28a745; }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: #28a745; 
+            color: white !important; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            margin: 10px 5px; 
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background-color 0.3s;
+          }
+          .button:hover { background: #1e7e34; }
+          .alert { background: #fff3cd; border: 2px solid #28a745; padding: 20px; margin: 15px 0; border-radius: 8px; }
+          .email-commands { background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
+          code { background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
         </style>
       </head>
       <body>
@@ -618,15 +731,29 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             
             ${isAdvertiser ? `
               <div class="alert">
-                <strong>Review Required:</strong><br>
-                To approve the delivery, reply with: <code>APPROVE-${order.id}</code><br>
-                To dispute the delivery, reply with: <code>DISPUTE-${order.id}</code>
+                <strong>🎯 Review Required:</strong><br>
+                <p style="margin: 15px 0;">Please review the delivered order:</p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="http://localhost:3000/orders/order-detail/${order.id}" class="button" style="background: #28a745; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                    📋 View Order Details
+                  </a>
+                </div>
+                
+                <p style="margin-top: 15px; color: #666;">⏰ You have 5 business days to review the delivery.</p>
               </div>
-              <p>You have 5 business days to review the delivery.</p>
             ` : `
               <div class="alert">
-                <strong>Status:</strong> Delivery sent to client for review<br>
-                You will be notified when they respond.
+                <strong>✅ Delivery Confirmed!</strong><br>
+                <p style="margin: 15px 0;">Your order has been delivered and sent to the client for review.</p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="http://localhost:3000/publisher/order-detail/${order.id}" class="button" style="background: #007bff; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                    📋 View Order Status
+                  </a>
+                </div>
+                
+                <p style="color: #666;">You will be notified when the client responds.</p>
               </div>
             `}
             
@@ -647,12 +774,25 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       <html>
       <head>
         <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #28a745; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .payment-info { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; border: 2px solid #28a745; }
-          .alert { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 10px 0; border-radius: 5px; }
+          .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
+          .payment-info { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #28a745; }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: #28a745; 
+            color: white !important; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            margin: 10px 5px; 
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background-color 0.3s;
+          }
+          .button:hover { background: #1e7e34; }
+          .alert { background: #d4edda; border: 2px solid #28a745; padding: 20px; margin: 15px 0; border-radius: 8px; }
         </style>
       </head>
       <body>
@@ -671,12 +811,153 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             </div>
             
             <div class="alert">
-              <strong>Great Job!</strong><br>
-              The client has approved your work and payment has been released to your account.
-              You can now withdraw these funds from your wallet.
+              <strong>🎉 Great Job!</strong><br>
+              <p style="margin: 15px 0;">The client has approved your work and payment has been released to your account!</p>
+              
+              <div style="text-align: center; margin: 20px 0;">
+                <a href="http://localhost:3000/publisher/earnings" class="button" style="background: #28a745; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                  💰 View Earnings & Withdraw
+                </a>
+              </div>
+              
+              <p style="color: #666;">You can now withdraw these funds from your wallet or use them for future orders.</p>
             </div>
             
-            <p>Thank you for your excellent work and for using SerpBays!</p>
+            <p style="text-align: center; margin-top: 20px; color: #666;">
+              Thank you for your excellent work and for using SerpBays!<br>
+              <small>Keep up the great work! 🚀</small>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  },
+
+  /**
+   * Generate order rejection email template
+   */
+  generateOrderRejectionTemplate(order, recipient) {
+    const isAdvertiser = recipient === 'advertiser';
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #dc3545; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
+          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #dc3545; }
+          .rejection-reason { background: #f8d7da; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #dc3545; }
+          .refund-info { background: #d4edda; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }
+          .confirmation-info { background: #fff3cd; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #ffc107; }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: #007bff; 
+            color: white !important; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            margin: 10px 5px; 
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background-color 0.3s;
+          }
+          .button:hover { background: #0056b3; }
+          .button.primary { background: #007bff; }
+          .button.primary:hover { background: #0056b3; }
+          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
+          .detail-label { font-weight: bold; color: #495057; }
+          .detail-value { color: #dc3545; font-weight: 500; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${isAdvertiser ? '❌ Order Rejected' : '✅ Order Rejection Confirmed'}</h1>
+          </div>
+          <div class="content">
+            <h2>Order #${order.id}</h2>
+            
+            <div class="order-details">
+              <h3>📋 Order Details</h3>
+              <div class="details-grid">
+                <div class="detail-item">
+                  <div class="detail-label">Description:</div>
+                  <div class="detail-value">${order.description}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Amount:</div>
+                  <div class="detail-value">$${order.totalAmount}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Website:</div>
+                  <div class="detail-value">${order.website?.url || order.websiteUrl || 'N/A'}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Rejection Date:</div>
+                  <div class="detail-value">${new Date(order.rejectedDate || Date.now()).toLocaleDateString()}</div>
+                </div>
+              </div>
+              
+              <div class="rejection-reason">
+                <h4>🚫 Rejection Reason</h4>
+                <p style="font-style: italic; margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.7); border-radius: 4px;">
+                  "${order.rejectionReason || 'No specific reason provided'}"
+                </p>
+              </div>
+            </div>
+            
+            ${isAdvertiser ? `
+              <div class="refund-info">
+                <h4>💰 Automatic Refund Processed</h4>
+                <p><strong>✅ Refund Status:</strong> Completed automatically</p>
+                <p><strong>💳 Refunded Amount:</strong> $${order.totalAmount}</p>
+                <p><strong>📅 Refund Date:</strong> ${new Date().toLocaleDateString()}</p>
+                <p><strong>💼 Wallet Status:</strong> Funds available for new orders</p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="http://localhost:3000/orders" class="button primary">
+                    🔍 Find Other Websites
+                  </a>
+                  <a href="http://localhost:3000/orders/order-detail/${order.id}" class="button">
+                    📋 View Order Details
+                  </a>
+                </div>
+                
+                <p style="margin-top: 10px; font-weight: bold; color: #155724;">
+                  The full order amount has been automatically refunded to your wallet and is available for placing new orders.
+                </p>
+              </div>
+            ` : `
+              <div class="confirmation-info">
+                <h4>✅ Rejection Confirmed</h4>
+                <p><strong>Status:</strong> Order rejection processed successfully</p>
+                <p><strong>Advertiser Notified:</strong> Yes, via email and notification</p>
+                <p><strong>Refund Processed:</strong> Automatic refund completed</p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="http://localhost:3000/publisher/available-orders" class="button primary">
+                    📋 View Available Orders
+                  </a>
+                  <a href="http://localhost:3000/publisher/order-detail/${order.id}" class="button">
+                    📋 View Order Details
+                  </a>
+                </div>
+                
+                <p style="color: #666;">Thank you for your honest evaluation. This helps maintain quality on our platform.</p>
+              </div>
+            `}
+            
+            <p style="text-align: center; margin-top: 20px; color: #666;">
+              ${isAdvertiser ? 
+                'Thank you for using SerpBays! We hope to serve you better next time.<br><small>Need help finding the right publisher? Contact support@serpbays.com</small>' : 
+                'Thank you for maintaining quality standards on SerpBays!<br><small>For any questions: support@serpbays.com</small>'
+              }
+            </p>
           </div>
         </div>
       </body>
@@ -811,6 +1092,333 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             </div>
             
             <p>Thank you for your payment and for using SerpBays!</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  },
+
+  /**
+   * Generate withdrawal approved email template
+   */
+  generateWithdrawalApprovedTemplate(withdrawalRequest) {
+    const currentDate = new Date();
+    const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
+    const expectedPaymentDate = new Date(currentDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #28a745; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .withdrawal-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #28a745; }
+          .processing-info { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }
+          .timeline { background: #e8f5e8; padding: 15px; margin: 10px 0; border-radius: 5px; }
+          .alert { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 10px 0; border-radius: 5px; }
+          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
+          .detail-label { font-weight: bold; color: #495057; }
+          .detail-value { color: #28a745; font-weight: 500; }
+          .next-steps { background: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>✅ Withdrawal Approved!</h1>
+          </div>
+          <div class="content">
+            <h2>Withdrawal Request #${withdrawalRequest.id}</h2>
+            
+            <div class="withdrawal-details">
+              <h3>📋 Approved Withdrawal Details</h3>
+              <div class="details-grid">
+                <div class="detail-item">
+                  <div class="detail-label">Amount:</div>
+                  <div class="detail-value">$${withdrawalRequest.amount}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Payment Method:</div>
+                  <div class="detail-value">${withdrawalRequest.method?.toUpperCase() || 'N/A'}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Request Date:</div>
+                  <div class="detail-value">${requestDate.toLocaleDateString()}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Approval Date:</div>
+                  <div class="detail-value">${currentDate.toLocaleDateString()}</div>
+                </div>
+              </div>
+              
+              <div class="processing-info">
+                <h4>🔄 Processing Information</h4>
+                <p><strong>Reference Number:</strong> SB-WD-${withdrawalRequest.id}-${currentDate.getFullYear()}</p>
+                <p><strong>Processing Status:</strong> Approved - Ready for payment</p>
+                <p><strong>Estimated Processing Time:</strong> 1-3 business days</p>
+              </div>
+              
+              ${withdrawalRequest.details && withdrawalRequest.details.email ? `
+              <div class="processing-info">
+                <h4>📧 Payment Destination</h4>
+                <p><strong>Will be sent to:</strong> ${withdrawalRequest.details.email}</p>
+                <p><strong>Payment Method:</strong> ${withdrawalRequest.method?.toUpperCase() || 'Selected method'}</p>
+              </div>
+              ` : ''}
+              
+              <div class="timeline">
+                <h4>📅 Payment Timeline</h4>
+                <p><strong>✅ Request Submitted:</strong> ${requestDate.toLocaleDateString()}</p>
+                <p><strong>✅ Approved:</strong> ${currentDate.toLocaleDateString()}</p>
+                <p><strong>🔄 Payment Processing:</strong> Next 1-3 business days</p>
+                <p><strong>💰 Expected Payment:</strong> By ${expectedPaymentDate.toLocaleDateString()}</p>
+              </div>
+            </div>
+            
+            <div class="alert">
+              <strong>🎉 Great News!</strong><br>
+              Your withdrawal request has been approved and is now in the payment queue. 
+              Our finance team will process the payment within 1-3 business days.
+              You will receive a confirmation email once the payment has been sent.
+            </div>
+            
+            <div class="next-steps">
+              <h4>📋 What Happens Next?</h4>
+              <ul style="margin: 10px 0; padding-left: 20px;">
+                <li>Your withdrawal is queued for payment processing</li>
+                <li>Payment will be sent within 1-3 business days</li>
+                <li>You'll receive a payment confirmation email</li>
+                <li>Funds will appear in your account within 1-3 days after payment</li>
+                <li>Keep this email for your records</li>
+              </ul>
+            </div>
+            
+            <p style="text-align: center; margin-top: 20px; color: #666;">
+              Thank you for using SerpBays!<br>
+              <small>For questions: support@serpbays.com</small>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  },
+
+  /**
+   * Generate withdrawal paid email template
+   */
+  generateWithdrawalPaidTemplate(withdrawalRequest) {
+    const currentDate = new Date();
+    const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
+    const processingTime = Math.ceil((currentDate - requestDate) / (1000 * 60 * 60 * 24)); // Days
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #007bff; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .payment-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #007bff; }
+          .transaction-info { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #007bff; }
+          .timeline { background: #e3f2fd; padding: 15px; margin: 10px 0; border-radius: 5px; }
+          .alert { background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; margin: 10px 0; border-radius: 5px; }
+          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
+          .detail-label { font-weight: bold; color: #495057; }
+          .detail-value { color: #007bff; font-weight: 500; }
+          .highlight { background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>💰 Payment Completed!</h1>
+          </div>
+          <div class="content">
+            <h2>Withdrawal #${withdrawalRequest.id}</h2>
+            
+            <div class="payment-details">
+              <h3>💳 Payment Summary</h3>
+              <div class="details-grid">
+                <div class="detail-item">
+                  <div class="detail-label">Amount Paid:</div>
+                  <div class="detail-value">$${withdrawalRequest.amount}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Payment Method:</div>
+                  <div class="detail-value">${withdrawalRequest.method?.toUpperCase() || 'N/A'}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Payment Date:</div>
+                  <div class="detail-value">${currentDate.toLocaleDateString()}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Processing Time:</div>
+                  <div class="detail-value">${processingTime} day${processingTime !== 1 ? 's' : ''}</div>
+                </div>
+              </div>
+              
+              ${withdrawalRequest.external_transaction_id ? `
+              <div class="transaction-info">
+                <h4>🔗 Transaction Information</h4>
+                <p><strong>External Transaction ID:</strong> ${withdrawalRequest.external_transaction_id}</p>
+                <p><strong>Reference Number:</strong> SB-WD-${withdrawalRequest.id}-${currentDate.getFullYear()}</p>
+              </div>
+              ` : ''}
+              
+              <div class="timeline">
+                <h4>📅 Payment Timeline</h4>
+                <p><strong>Request Submitted:</strong> ${requestDate.toLocaleDateString()}</p>
+                <p><strong>Payment Processed:</strong> ${currentDate.toLocaleDateString()}</p>
+                <p><strong>Expected in Account:</strong> ${new Date(currentDate.getTime() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
+              </div>
+            </div>
+            
+            <div class="alert">
+              <strong>🎉 Payment Successfully Sent!</strong><br>
+              Your withdrawal has been processed and the payment has been sent to your ${withdrawalRequest.method || 'selected'} account.
+              The funds should appear in your account within 1-3 business days.
+            </div>
+            
+            ${withdrawalRequest.details && withdrawalRequest.details.email ? `
+            <div class="highlight">
+              <strong>📧 Payment Destination:</strong><br>
+              Sent to: ${withdrawalRequest.details.email}
+            </div>
+            ` : ''}
+            
+            <div class="transaction-info">
+              <h4>📋 What's Next?</h4>
+              <ul style="margin: 10px 0; padding-left: 20px;">
+                <li>Check your ${withdrawalRequest.method || 'payment'} account in 1-3 business days</li>
+                <li>Keep this email as your payment confirmation</li>
+                <li>Contact support if funds don't appear within 5 business days</li>
+                <li>Your SerpBays wallet has been updated automatically</li>
+              </ul>
+            </div>
+            
+            <p style="text-align: center; margin-top: 20px; color: #666;">
+              Thank you for using SerpBays!<br>
+              <small>For support: support@serpbays.com</small>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  },
+
+  /**
+   * Generate withdrawal denied email template
+   */
+  generateWithdrawalDeniedTemplate(withdrawalRequest, reason) {
+    const currentDate = new Date();
+    const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #dc3545; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .withdrawal-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #dc3545; }
+          .denial-reason { background: #f8d7da; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #dc3545; }
+          .refund-info { background: #d4edda; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }
+          .support-info { background: #e2e3e5; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #6c757d; }
+          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
+          .detail-label { font-weight: bold; color: #495057; }
+          .detail-value { color: #dc3545; font-weight: 500; }
+          .next-steps { background: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>❌ Withdrawal Denied</h1>
+          </div>
+          <div class="content">
+            <h2>Withdrawal Request #${withdrawalRequest.id}</h2>
+            
+            <div class="withdrawal-details">
+              <h3>📋 Withdrawal Request Details</h3>
+              <div class="details-grid">
+                <div class="detail-item">
+                  <div class="detail-label">Amount:</div>
+                  <div class="detail-value">$${withdrawalRequest.amount}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Payment Method:</div>
+                  <div class="detail-value">${withdrawalRequest.method?.toUpperCase() || 'N/A'}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Request Date:</div>
+                  <div class="detail-value">${requestDate.toLocaleDateString()}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Decision Date:</div>
+                  <div class="detail-value">${currentDate.toLocaleDateString()}</div>
+                </div>
+              </div>
+              
+              <div class="denial-reason">
+                <h4>🚫 Reason for Denial</h4>
+                <p><strong>Admin Decision:</strong></p>
+                <p style="font-style: italic; margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.7); border-radius: 4px;">
+                  "${reason || 'No specific reason provided'}"
+                </p>
+                <p><strong>Reference Number:</strong> SB-WD-${withdrawalRequest.id}-DENIED-${currentDate.getFullYear()}</p>
+              </div>
+            </div>
+
+            <div class="refund-info">
+              <h4>💰 Automatic Refund Processed</h4>
+              <p><strong>✅ Refund Status:</strong> Completed automatically</p>
+              <p><strong>💳 Refund Amount:</strong> $${withdrawalRequest.amount}</p>
+              <p><strong>📅 Refund Date:</strong> ${currentDate.toLocaleDateString()}</p>
+              <p><strong>💼 Wallet Status:</strong> Funds available for immediate use</p>
+              <p style="margin-top: 10px; font-weight: bold; color: #155724;">
+                The full withdrawal amount has been automatically refunded to your SerpBays wallet and is available for immediate use.
+              </p>
+            </div>
+            
+            <div class="next-steps">
+              <h4>📋 What You Can Do Next</h4>
+              <ul style="margin: 10px 0; padding-left: 20px;">
+                <li>Review the denial reason above</li>
+                <li>Address any issues mentioned in the denial reason</li>
+                <li>Submit a new withdrawal request if appropriate</li>
+                <li>Contact support if you need clarification</li>
+                <li>Your wallet balance is now updated with the refunded amount</li>
+              </ul>
+            </div>
+
+            <div class="support-info">
+              <h4>📞 Need Help?</h4>
+              <p><strong>Contact Support:</strong></p>
+              <p>📧 Email: support@serpbays.com</p>
+              <p>📋 Reference Number: SB-WD-${withdrawalRequest.id}-DENIED</p>
+              <p>🕐 Support Hours: Monday - Friday, 9 AM - 6 PM</p>
+              <p style="margin-top: 10px; font-style: italic;">
+                Our support team can help clarify the denial reason and guide you on how to submit a successful withdrawal request.
+              </p>
+            </div>
+            
+            <p style="text-align: center; margin-top: 20px; color: #666;">
+              Thank you for using SerpBays!<br>
+              <small>We're here to help: support@serpbays.com</small>
+            </p>
           </div>
         </div>
       </body>

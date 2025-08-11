@@ -354,9 +354,11 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.unauthorized('Authentication required');
       }
       
-      // Check if user is an admin
-      const { role } = ctx.state.user;
-      if (!role || role.type !== 'admin') {
+      // Check if user is an admin or has special access
+      const { role, email } = ctx.state.user;
+      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      
+      if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
       }
       
@@ -437,9 +439,11 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.unauthorized('Authentication required');
       }
       
-      // Check if user is an admin
-      const { role } = ctx.state.user;
-      if (!role || role.type !== 'admin') {
+      // Check if user is an admin or has special access
+      const { role, email } = ctx.state.user;
+      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      
+      if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
       }
       
@@ -558,8 +562,15 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
   // Admin endpoint to MARK A WITHDRAWAL AS PAID (after external payment confirmation)
   async markAsPaidWithdrawal(ctx) {
     try {
-      // Check if user is authenticated and is an admin
-      if (!ctx.state.user || !ctx.state.user.role || ctx.state.user.role.type !== 'admin') {
+      // Check if user is authenticated and has admin access
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+      
+      const { role, email } = ctx.state.user;
+      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      
+      if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
       }
 

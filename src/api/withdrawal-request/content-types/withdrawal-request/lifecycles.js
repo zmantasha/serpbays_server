@@ -43,6 +43,21 @@ async function handlePaidWithdrawal(result) {
           
           console.log(`[Lifecycle] ✅ Updated pendingWithdrawalBalance for withdrawal ${result.id}: ${currentPendingBalance} → ${newPendingBalance}`);
           
+          // Send email notification for withdrawal payment
+          try {
+            const emailService = strapi.service('api::global.email-operations');
+            
+            await emailService.sendWithdrawalStatusEmail(
+              withdrawalRequest,
+              withdrawalRequest.publisher.email,
+              'paid'
+            );
+            
+            console.log(`[Lifecycle] ✅ Withdrawal paid email sent for withdrawal ${result.id}`);
+          } catch (emailError) {
+            console.error(`[Lifecycle] ❌ Failed to send withdrawal paid email:`, emailError);
+          }
+          
           // Also update the corresponding transaction status
           console.log(`[Lifecycle] Looking for transaction with withdrawal request #${result.id}...`);
           
@@ -168,6 +183,22 @@ async function handleDeniedWithdrawal(result) {
       console.log(`   - Wallet balance: ${currentWalletBalance} → ${newWalletBalance} (+$${refundAmount})`);
       console.log(`   - Pending balance: ${currentPendingBalance} → ${newPendingBalance} (-$${refundAmount})`);
       
+      // Send email notification for withdrawal denial
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        
+        await emailService.sendWithdrawalStatusEmail(
+          withdrawalRequest,
+          withdrawalRequest.publisher.email,
+          'denied',
+          withdrawalRequest.denial_reason
+        );
+        
+        console.log(`[Lifecycle] ✅ Withdrawal denial email sent for withdrawal ${result.id}`);
+      } catch (emailError) {
+        console.error(`[Lifecycle] ❌ Failed to send withdrawal denial email:`, emailError);
+      }
+      
       // Update the corresponding transaction status to failed
       console.log(`[Lifecycle] Looking for transaction to mark as failed...`);
       
@@ -242,13 +273,69 @@ async function handleDeniedWithdrawal(result) {
     }
 }
 
+// Handle approved withdrawal (not yet paid)
+async function handleApprovedWithdrawal(result) {
+  try {
+    // Get the withdrawal request with publisher details
+    const withdrawalRequest = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', result.id, {
+      populate: ['publisher']
+    });
+
+    if (!withdrawalRequest || !withdrawalRequest.publisher) {
+      console.error(`[Lifecycle] Publisher not found for withdrawal request ${result.id}`);
+      return;
+    }
+
+    // Send email notification for withdrawal approval
+    try {
+      const emailService = strapi.service('api::global.email-operations');
+      
+      await emailService.sendWithdrawalStatusEmail(
+        withdrawalRequest,
+        withdrawalRequest.publisher.email,
+        'approved'
+      );
+      
+      console.log(`[Lifecycle] ✅ Withdrawal approval email sent for withdrawal ${result.id}`);
+    } catch (emailError) {
+      console.error(`[Lifecycle] ❌ Failed to send withdrawal approval email:`, emailError);
+    }
+
+    // Find and update the corresponding transaction to approved status
+    let escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+      where: {
+        users_permissions_user: withdrawalRequest.publisher.id,
+        type: 'escrow_hold',
+        description: { $contains: `Withdrawal request #${result.id}` }
+      },
+      orderBy: { id: 'desc' }
+    });
+
+    if (escrowHoldTransaction && escrowHoldTransaction.transactionStatus === 'pending') {
+      await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
+        data: {
+          transactionStatus: 'success',
+          description: `${escrowHoldTransaction.description} - Approved by admin`
+        }
+      });
+      console.log(`[Lifecycle] ✅ Updated transaction ${escrowHoldTransaction.id} to approved status`);
+    }
+
+  } catch (error) {
+    console.error(`[Lifecycle] Error handling approved withdrawal ${result.id}:`, error);
+  }
+}
+
 module.exports = {
   // Lifecycle hook that runs after a withdrawal request is updated
   async afterUpdate(event) {
     const { result, params } = event;
     
-    // Handle both paid and denied withdrawal statuses
-    if (result.withdrawal_status === 'paid') {
+    // Handle different withdrawal statuses
+    if (result.withdrawal_status === 'approved') {
+      console.log(`[Lifecycle] Withdrawal request ${result.id} marked as approved - sending approval email`);
+      await handleApprovedWithdrawal(result);
+    } else if (result.withdrawal_status === 'paid') {
       console.log(`[Lifecycle] Withdrawal request ${result.id} marked as paid - updating pendingWithdrawalBalance`);
       await handlePaidWithdrawal(result);
     } else if (result.withdrawal_status === 'denied') {

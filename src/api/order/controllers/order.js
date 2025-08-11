@@ -1032,6 +1032,32 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Don't fail the order rejection if notification fails
         }
 
+        // Send email notification for order rejection
+        try {
+          // Get the updated order with full data for email
+          const fullOrder = await strapi.entityService.findOne('api::order.order', id, {
+            populate: ['website', 'advertiser', 'publisher']
+          });
+
+          // Get advertiser user data
+          const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: order.advertiser?.id || order.advertiser }
+          });
+
+          if (advertiserUser && advertiserUser.email) {
+            const emailService = strapi.service('api::global.email-operations');
+            await emailService.sendOrderRejectionEmail(
+              { ...fullOrder, rejectionReason: body.reason.trim() },
+              advertiserUser.email,
+              user.email
+            );
+            console.log(`Order rejection emails sent for order ${id}`);
+          }
+        } catch (emailError) {
+          console.error('Failed to send order rejection emails:', emailError);
+          // Don't fail the rejection if email fails
+        }
+
         return {
           data: updatedOrder,
           meta: {
