@@ -521,6 +521,20 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 user.id,
                 'new_order'
               );
+
+              // Send email notification for new order
+              try {
+                const emailService = strapi.service('api::global.email-operations');
+                await emailService.sendOrderCreationEmail(
+                  populatedOrder,
+                  publisherEmail,
+                  user.email
+                );
+                console.log(`Order creation emails sent for order ${order.id}`);
+              } catch (emailError) {
+                console.error('Failed to send order creation emails:', emailError);
+                // Don't fail order creation if email fails
+              }
             } else {
               console.log(`Publisher user not found for email: ${publisherEmail}`);
             }
@@ -1255,6 +1269,20 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             'order_delivered',
             { orderId: order.id }
           );
+
+          // Send email notification for order delivery
+          try {
+            const emailService = strapi.service('api::global.email-operations');
+            await emailService.sendOrderDeliveryEmail(
+              updatedOrder,
+              order.advertiser.email,
+              user.email
+            );
+            console.log(`Order delivery emails sent for order ${order.id}`);
+          } catch (emailError) {
+            console.error('Failed to send order delivery emails:', emailError);
+            // Don't fail delivery if email fails
+          }
         } catch (error) {
           console.error('Failed to create delivery notification:', error);
         }
@@ -1331,6 +1359,27 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               'payment_received',
               order.totalAmount
             );
+
+            // Send email notification for order completion with payment
+            try {
+              const publisherId = order.publisher?.id || order.publisher;
+              const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+                where: { id: publisherId }
+              });
+
+              if (publisherUser && publisherUser.email) {
+                const emailService = strapi.service('api::global.email-operations');
+                await emailService.sendOrderCompletionEmail(
+                  completedOrder,
+                  publisherUser.email,
+                  order.totalAmount
+                );
+                console.log(`Order completion email sent for order ${order.id}`);
+              }
+            } catch (emailError) {
+              console.error('Failed to send order completion email:', emailError);
+              // Don't fail completion if email fails
+            }
           } catch (notificationError) {
             console.error('Failed to create payment received notification:', notificationError);
             // Don't fail the order completion if notification fails

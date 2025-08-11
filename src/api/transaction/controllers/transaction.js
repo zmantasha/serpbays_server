@@ -477,5 +477,192 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       console.error('Error getting transaction status:', error);
       return ctx.badRequest('Failed to get transaction status');
     }
+  },
+
+  // Approve transaction via email (Admin only)
+  async approveTransaction(ctx) {
+    try {
+      const user = ctx.state.user;
+      
+      if (!user) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      // Check if user is admin
+      const isAdmin = user.role && (user.role.type === 'admin' || user.role.name === 'Admin');
+      
+      if (!isAdmin) {
+        return ctx.forbidden('Admin access required');
+      }
+
+      const { id } = ctx.params;
+      
+      const transaction = await strapi.entityService.findOne('api::transaction.transaction', id, {
+        populate: ['users_permissions_user']
+      });
+
+      if (!transaction) {
+        return ctx.notFound('Transaction not found');
+      }
+
+      // Update transaction status
+      const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
+        data: { 
+          transactionStatus: 'success',
+          approvedAt: new Date(),
+          approvedBy: user.id
+        }
+      });
+
+      // Send approval email
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        await emailService.sendTransactionApprovalEmail(
+          updatedTransaction,
+          transaction.users_permissions_user.email
+        );
+        console.log(`Transaction approval email sent for transaction ${id}`);
+      } catch (emailError) {
+        console.error('Failed to send transaction approval email:', emailError);
+        // Don't fail the approval if email fails
+      }
+
+      return {
+        data: updatedTransaction,
+        meta: {
+          message: 'Transaction approved successfully and email sent'
+        }
+      };
+    } catch (error) {
+      console.error('Error approving transaction:', error);
+      return ctx.internalServerError('An error occurred while approving the transaction');
+    }
+  },
+
+  // Deny transaction via email (Admin only)
+  async denyTransaction(ctx) {
+    try {
+      const user = ctx.state.user;
+      
+      if (!user) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      // Check if user is admin
+      const isAdmin = user.role && (user.role.type === 'admin' || user.role.name === 'Admin');
+      
+      if (!isAdmin) {
+        return ctx.forbidden('Admin access required');
+      }
+
+      const { id } = ctx.params;
+      const { reason } = ctx.request.body;
+
+      if (!reason || reason.trim().length === 0) {
+        return ctx.badRequest('Denial reason is required');
+      }
+      
+      const transaction = await strapi.entityService.findOne('api::transaction.transaction', id, {
+        populate: ['users_permissions_user']
+      });
+
+      if (!transaction) {
+        return ctx.notFound('Transaction not found');
+      }
+
+      // Update transaction status
+      const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
+        data: { 
+          transactionStatus: 'denied',
+          deniedAt: new Date(),
+          deniedBy: user.id,
+          denialReason: reason.trim()
+        }
+      });
+
+      // Send denial email
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        await emailService.sendTransactionDenialEmail(
+          updatedTransaction,
+          transaction.users_permissions_user.email,
+          reason.trim()
+        );
+        console.log(`Transaction denial email sent for transaction ${id}`);
+      } catch (emailError) {
+        console.error('Failed to send transaction denial email:', emailError);
+        // Don't fail the denial if email fails
+      }
+
+      return {
+        data: updatedTransaction,
+        meta: {
+          message: 'Transaction denied successfully and email sent'
+        }
+      };
+    } catch (error) {
+      console.error('Error denying transaction:', error);
+      return ctx.internalServerError('An error occurred while denying the transaction');
+    }
+  },
+
+  // Mark transaction as paid via email (Admin only)
+  async markTransactionPaid(ctx) {
+    try {
+      const user = ctx.state.user;
+      
+      if (!user) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      // Check if user is admin
+      const isAdmin = user.role && (user.role.type === 'admin' || user.role.name === 'Admin');
+      
+      if (!isAdmin) {
+        return ctx.forbidden('Admin access required');
+      }
+
+      const { id } = ctx.params;
+      
+      const transaction = await strapi.entityService.findOne('api::transaction.transaction', id, {
+        populate: ['users_permissions_user']
+      });
+
+      if (!transaction) {
+        return ctx.notFound('Transaction not found');
+      }
+
+      // Update transaction status
+      const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
+        data: { 
+          transactionStatus: 'paid',
+          paidAt: new Date(),
+          markedPaidBy: user.id
+        }
+      });
+
+      // Send payment confirmation email
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        await emailService.sendPaymentConfirmationEmail(
+          updatedTransaction,
+          transaction.users_permissions_user.email
+        );
+        console.log(`Payment confirmation email sent for transaction ${id}`);
+      } catch (emailError) {
+        console.error('Failed to send payment confirmation email:', emailError);
+        // Don't fail the operation if email fails
+      }
+
+      return {
+        data: updatedTransaction,
+        meta: {
+          message: 'Transaction marked as paid successfully and email sent'
+        }
+      };
+    } catch (error) {
+      console.error('Error marking transaction as paid:', error);
+      return ctx.internalServerError('An error occurred while marking the transaction as paid');
+    }
   }
 }));

@@ -85,6 +85,37 @@ module.exports = {
         }
       }
     },
+    // Transaction operations (Admin only)
+    {
+      method: 'PUT',
+      path: '/api/transactions/:id/approve',
+      handler: 'transaction.approveTransaction',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.update']
+        }
+      }
+    },
+    {
+      method: 'PUT',
+      path: '/api/transactions/:id/deny',
+      handler: 'transaction.denyTransaction',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.update']
+        }
+      }
+    },
+    {
+      method: 'PUT',
+      path: '/api/transactions/:id/mark-paid',
+      handler: 'transaction.markTransactionPaid',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.update']
+        }
+      }
+    },
     {
       method: 'POST',
       path: '/api/api/transactions/payment',
