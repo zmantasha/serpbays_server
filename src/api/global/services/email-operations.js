@@ -102,6 +102,37 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
+   * Send revision request notification email
+   */
+  async sendRevisionRequestEmail(order, publisherEmail, advertiserEmail) {
+    try {
+      const publisherEmailData = {
+        to: publisherEmail,
+        subject: `Revision Requested - Order #${order.id}`,
+        html: this.generateRevisionRequestTemplate(order, 'publisher'),
+        text: `Order #${order.id} revision requested. Reason: ${order.revisionMessage}. Please complete within 5 days.`
+      };
+
+      const advertiserEmailData = {
+        to: advertiserEmail,
+        subject: `Revision Request Submitted - Order #${order.id}`,
+        html: this.generateRevisionRequestTemplate(order, 'advertiser'),
+        text: `Your revision request for order #${order.id} has been submitted. The publisher will work on it within 5 days.`
+      };
+
+      await Promise.all([
+        strapi.plugins.email.services.email.send(publisherEmailData),
+        strapi.plugins.email.services.email.send(advertiserEmailData)
+      ]);
+
+      console.log(`Revision request emails sent for order ${order.id}`);
+    } catch (error) {
+      console.error('Error sending revision request emails:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Send order delivery notification email
    */
   async sendOrderDeliveryEmail(order, advertiserEmail, publisherEmail) {
@@ -956,6 +987,154 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
               ${isAdvertiser ? 
                 'Thank you for using SerpBays! We hope to serve you better next time.<br><small>Need help finding the right publisher? Contact support@serpbays.com</small>' : 
                 'Thank you for maintaining quality standards on SerpBays!<br><small>For any questions: support@serpbays.com</small>'
+              }
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  },
+
+  /**
+   * Generate revision request email template
+   */
+  generateRevisionRequestTemplate(order, recipient) {
+    const isPublisher = recipient === 'publisher';
+    const revisionDeadline = order.revisionDeadline ? new Date(order.revisionDeadline) : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #ffc107; color: #212529; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
+          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #ffc107; }
+          .revision-request { background: #fff3cd; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #ffc107; }
+          .timeline-info { background: #e2e3e5; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #6c757d; }
+          .action-info { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: #ffc107; 
+            color: #212529 !important; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            margin: 10px 5px; 
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background-color 0.3s;
+          }
+          .button:hover { background: #e0a800; }
+          .button.primary { background: #007bff; color: white !important; }
+          .button.primary:hover { background: #0056b3; }
+          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
+          .detail-label { font-weight: bold; color: #495057; }
+          .detail-value { color: #ffc107; font-weight: 500; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${isPublisher ? '🔄 Revision Requested' : '✅ Revision Request Submitted'}</h1>
+          </div>
+          <div class="content">
+            <h2>Order #${order.id}</h2>
+            
+            <div class="order-details">
+              <h3>📋 Order Details</h3>
+              <div class="details-grid">
+                <div class="detail-item">
+                  <div class="detail-label">Description:</div>
+                  <div class="detail-value">${order.description}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Amount:</div>
+                  <div class="detail-value">$${order.totalAmount}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Website:</div>
+                  <div class="detail-value">${order.website?.url || order.websiteUrl || 'N/A'}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Request Date:</div>
+                  <div class="detail-value">${new Date(order.revisionRequestedAt || Date.now()).toLocaleDateString()}</div>
+                </div>
+              </div>
+              
+              <div class="revision-request">
+                <h4>📝 Revision Request Details</h4>
+                <p style="font-style: italic; margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.7); border-radius: 4px;">
+                  "${order.revisionMessage || 'Revision requested by advertiser'}"
+                </p>
+                <p><strong>⏰ Deadline:</strong> ${revisionDeadline.toLocaleDateString()} (5 days from request)</p>
+              </div>
+            </div>
+            
+            ${isPublisher ? `
+              <div class="action-info">
+                <h4>🎯 Action Required</h4>
+                <p><strong>What to do next:</strong></p>
+                <ul style="margin: 10px 0; padding-left: 20px;">
+                  <li>Review the revision request details above</li>
+                  <li>Make the necessary changes to the delivered content</li>
+                  <li>Complete the revision within 5 days</li>
+                  <li>Submit the revised work for review</li>
+                </ul>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="http://localhost:3000/publisher/order-detail/${order.id}" class="button primary">
+                    🔄 Start Revision
+                  </a>
+                  <a href="http://localhost:3000/publisher/orders" class="button">
+                    📋 View All Orders
+                  </a>
+                </div>
+                
+                <div class="timeline-info">
+                  <h4>⏰ Important Timeline</h4>
+                  <p><strong>Revision Deadline:</strong> ${revisionDeadline.toLocaleDateString()}</p>
+                  <p><strong>Days Remaining:</strong> ${Math.ceil((revisionDeadline - new Date()) / (1000 * 60 * 60 * 24))} days</p>
+                  <p style="color: #dc3545; font-weight: bold;">⚠️ Failure to complete within 5 days may affect your publisher rating.</p>
+                </div>
+              </div>
+            ` : `
+              <div class="action-info">
+                <h4>✅ Request Submitted Successfully</h4>
+                <p><strong>What happens next:</strong></p>
+                <ul style="margin: 10px 0; padding-left: 20px;">
+                  <li>The publisher has been notified of your revision request</li>
+                  <li>They will work on the revision within 5 days</li>
+                  <li>You'll receive an email when the revision is completed</li>
+                  <li>You can track progress in your order dashboard</li>
+                </ul>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="http://localhost:3000/orders/order-detail/${order.id}" class="button primary">
+                    📋 Track Order Progress
+                  </a>
+                  <a href="http://localhost:3000/orders" class="button">
+                    📊 View All Orders
+                  </a>
+                </div>
+                
+                <div class="timeline-info">
+                  <h4>⏰ Expected Timeline</h4>
+                  <p><strong>Revision Deadline:</strong> ${revisionDeadline.toLocaleDateString()}</p>
+                  <p><strong>Expected Completion:</strong> Within 5 business days</p>
+                  <p style="color: #28a745; font-weight: bold;">✅ You'll be notified as soon as the revision is ready for review.</p>
+                </div>
+              </div>
+            `}
+            
+            <p style="text-align: center; margin-top: 20px; color: #666;">
+              ${isPublisher ? 
+                'Thank you for maintaining quality standards on SerpBays!<br><small>For technical support: support@serpbays.com</small>' : 
+                'Thank you for using SerpBays! We appreciate your feedback.<br><small>Need help? Contact support@serpbays.com</small>'
               }
             </p>
           </div>

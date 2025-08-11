@@ -1741,7 +1741,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         });
         
-        // Create notification for publisher about revision request
+                // Create notification for publisher about revision request
         try {
           await strapi.service('api::notification.notification').createOrderNotification(
             orderId,
@@ -1754,7 +1754,37 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           console.error('Failed to create revision requested notification:', notificationError);
           // Don't fail the revision request if notification fails
         }
-        
+
+        // Send email notification for revision request
+        try {
+          // Get the updated order with full data for email
+          const fullOrder = await strapi.entityService.findOne('api::order.order', orderId, {
+            populate: ['website', 'advertiser', 'publisher']
+          });
+
+          // Get publisher and advertiser user data
+          const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: order.publisher?.id || order.publisher }
+          });
+
+          const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: order.advertiser?.id || order.advertiser }
+          });
+
+          if (publisherUser && advertiserUser) {
+            const emailService = strapi.service('api::global.email-operations');
+            await emailService.sendRevisionRequestEmail(
+              { ...fullOrder, revisionMessage: message },
+              publisherUser.email,
+              advertiserUser.email
+            );
+            console.log(`Revision request emails sent for order ${orderId}`);
+          }
+        } catch (emailError) {
+          console.error('Failed to send revision request emails:', emailError);
+          // Don't fail the revision request if email fails
+        }
+
         return { 
           success: true,
           data: updated
