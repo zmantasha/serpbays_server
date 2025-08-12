@@ -59,8 +59,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       // };
 
       await Promise.all([
-        strapi.plugins.email.services.email.send(publisherEmailData),
-        strapi.plugins.email.services.email.send(advertiserEmailData)
+        strapi.plugins.email.services.email.send(publisherEmailData)
+        // strapi.plugins.email.services.email.send(advertiserEmailData)
       ]);
 
       console.log(`Order creation emails sent for order ${order.id}`);
@@ -82,16 +82,16 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text: `Order #${order.id} has been rejected. Reason: ${order.rejectionReason}. Funds have been refunded to your wallet.`
       };
 
-      const publisherEmailData = {
-        to: publisherEmail,
-        subject: `Order Rejection Confirmed - Order #${order.id}`,
-        html: this.generateOrderRejectionTemplate(order, 'publisher'),
-        text: `Order #${order.id} rejection confirmed. The advertiser has been notified.`
-      };
+      // const publisherEmailData = {
+      //   to: publisherEmail,
+      //   subject: `Order Rejection Confirmed - Order #${order.id}`,
+      //   html: this.generateOrderRejectionTemplate(order, 'publisher'),
+      //   text: `Order #${order.id} rejection confirmed. The advertiser has been notified.`
+      // };
 
       await Promise.all([
-        strapi.plugins.email.services.email.send(advertiserEmailData),
-        strapi.plugins.email.services.email.send(publisherEmailData)
+        strapi.plugins.email.services.email.send(advertiserEmailData)
+        // strapi.plugins.email.services.email.send(publisherEmailData)
       ]);
 
       console.log(`Order rejection emails sent for order ${order.id}`);
@@ -113,16 +113,16 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text: `Order #${order.id} revision requested. Reason: ${order.revisionMessage}. Please complete within 5 days.`
       };
 
-      const advertiserEmailData = {
-        to: advertiserEmail,
-        subject: `Revision Request Submitted - Order #${order.id}`,
-        html: this.generateRevisionRequestTemplate(order, 'advertiser'),
-        text: `Your revision request for order #${order.id} has been submitted. The publisher will work on it within 5 days.`
-      };
+      // const advertiserEmailData = {
+      //   to: advertiserEmail,
+      //   subject: `Revision Request Submitted - Order #${order.id}`,
+      //   html: this.generateRevisionRequestTemplate(order, 'advertiser'),
+      //   text: `Your revision request for order #${order.id} has been submitted. The publisher will work on it within 5 days.`
+      // };
 
       await Promise.all([
-        strapi.plugins.email.services.email.send(publisherEmailData),
-        strapi.plugins.email.services.email.send(advertiserEmailData)
+        strapi.plugins.email.services.email.send(publisherEmailData)
+        // strapi.plugins.email.services.email.send(advertiserEmailData)
       ]);
 
       console.log(`Revision request emails sent for order ${order.id}`);
@@ -692,7 +692,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 <p style="margin: 15px 0;">Please review and respond to this order:</p>
                 
                 <div style="text-align: center; margin: 20px 0;">
-                  <a href="http://localhost:3000/publisher/available-orders" class="button" style="background: #007bff; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/available-orders" class="button" style="background: #007bff; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
                     📋 View Available Orders
                   </a>
                 </div>
@@ -766,7 +766,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 <p style="margin: 15px 0;">Please review the delivered order:</p>
                 
                 <div style="text-align: center; margin: 20px 0;">
-                  <a href="http://localhost:3000/orders/order-detail/${order.id}" class="button" style="background: #28a745; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders/order-detail/${order.id}" class="button" style="background: #28a745; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
                     📋 View Order Details
                   </a>
                 </div>
@@ -779,7 +779,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 <p style="margin: 15px 0;">Your order has been delivered and sent to the client for review.</p>
                 
                 <div style="text-align: center; margin: 20px 0;">
-                  <a href="http://localhost:3000/publisher/order-detail/${order.id}" class="button" style="background: #007bff; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button" style="background: #007bff; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
                     📋 View Order Status
                   </a>
                 </div>
@@ -846,7 +846,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
               <p style="margin: 15px 0;">The client has approved your work and payment has been released to your account!</p>
               
               <div style="text-align: center; margin: 20px 0;">
-                <a href="http://localhost:3000/publisher/earnings" class="button" style="background: #28a745; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/earnings" class="button" style="background: #28a745; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
                   💰 View Earnings & Withdraw
                 </a>
               </div>
@@ -951,10 +951,10 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 <p><strong>💼 Wallet Status:</strong> Funds available for new orders</p>
                 
                 <div style="text-align: center; margin: 20px 0;">
-                  <a href="http://localhost:3000/orders" class="button primary">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders" class="button primary">
                     🔍 Find Other Websites
                   </a>
-                  <a href="http://localhost:3000/orders/order-detail/${order.id}" class="button">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders/order-detail/${order.id}" class="button">
                     📋 View Order Details
                   </a>
                 </div>
@@ -971,10 +971,10 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 <p><strong>Refund Processed:</strong> Automatic refund completed</p>
                 
                 <div style="text-align: center; margin: 20px 0;">
-                  <a href="http://localhost:3000/publisher/available-orders" class="button primary">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/available-orders" class="button primary">
                     📋 View Available Orders
                   </a>
-                  <a href="http://localhost:3000/publisher/order-detail/${order.id}" class="button">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button">
                     📋 View Order Details
                   </a>
                 </div>
@@ -1087,10 +1087,10 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 </ul>
                 
                 <div style="text-align: center; margin: 20px 0;">
-                  <a href="http://localhost:3000/publisher/order-detail/${order.id}" class="button primary">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button primary">
                     🔄 Start Revision
                   </a>
-                  <a href="http://localhost:3000/publisher/orders" class="button">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/orders" class="button">
                     📋 View All Orders
                   </a>
                 </div>
@@ -1114,10 +1114,10 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 </ul>
                 
                 <div style="text-align: center; margin: 20px 0;">
-                  <a href="http://localhost:3000/orders/order-detail/${order.id}" class="button primary">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders/order-detail/${order.id}" class="button primary">
                     📋 Track Order Progress
                   </a>
-                  <a href="http://localhost:3000/orders" class="button">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders" class="button">
                     📊 View All Orders
                   </a>
                 </div>

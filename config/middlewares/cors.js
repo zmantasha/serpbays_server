@@ -9,7 +9,7 @@ module.exports = {
       'Origin'
     ],
     origin: [
-      'http://localhost:3000',
+      process.env.CLIENT_URL || 'http://localhost:3000',
       'http://localhost:1337',
       'http://localhost:3800',
       'http://staging.serpbays.com',

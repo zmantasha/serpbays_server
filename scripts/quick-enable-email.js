@@ -23,7 +23,7 @@ async function enableEmailConfirmation() {
     console.log('2. Go to: http://localhost:1337/admin');
     console.log('3. Navigate to: Settings → Users & Permissions Plugin → Advanced Settings');
     console.log('4. Check "Enable email confirmation"');
-    console.log('5. Set "Confirmation page" to: http://localhost:3000/email-verification');
+    console.log(`5. Set "Confirmation page" to: ${process.env.CLIENT_URL || 'http://localhost:3000'}/email-verification`);
     console.log('6. Save the settings');
     
     console.log('\n⚠️  Important: You must complete the manual steps above for email verification to work!');
