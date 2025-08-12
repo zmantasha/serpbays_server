@@ -118,7 +118,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/api/transactions/payment',
+      path: '/api/transactions/payment',
       handler: 'transaction.createPayment',
       config: {
         auth: {
