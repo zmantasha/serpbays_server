@@ -228,6 +228,10 @@
     "adv_li_crypto_pricing": {
       "min": 0,
       "type": "integer"
+    },
+    "digital_pr": {
+      "type": "boolean",
+      "default": false
     }
   }
 }

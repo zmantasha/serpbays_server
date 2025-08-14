@@ -840,6 +840,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    digital_pr: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     dofollow_link: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
