@@ -43,11 +43,11 @@
       "required": true,
       "min": 0
     },
-    "forbidden_gp_price": {
+    "adv_li_cbd_pricing": {
       "type": "integer",
       "min": 0
     },
-    "forbidden_li_price": {
+    "adv_li_casino_pricing": {
       "type": "integer",
       "min": 0
     },
@@ -224,6 +224,10 @@
       "relation": "oneToMany",
       "target": "api::shortlist.shortlist",
       "mappedBy": "marketplace"
+    },
+    "adv_li_crypto_pricing": {
+      "min": 0,
+      "type": "integer"
     }
   }
 }

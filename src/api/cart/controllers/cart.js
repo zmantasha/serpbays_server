@@ -39,10 +39,16 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
                   url: marketplace.url,
                   regularPrice: marketplace.price,
                   sensitivePrice: item.isSensitive ? 
-                    (item.specialCategory === 'CBD' ? marketplace.adv_cbd_pricing :
-                     item.specialCategory === 'Casino' ? marketplace.adv_casino_pricing :
-                     item.specialCategory === 'Crypto' ? marketplace.adv_crypto_pricing :
-                     marketplace.price) : marketplace.price,
+                    (item.serviceType === 'link_insertion' ?
+                      (item.specialCategory === 'CBD' ? marketplace.adv_li_cbd_pricing :
+                       item.specialCategory === 'Casino' ? marketplace.adv_li_casino_pricing :
+                       item.specialCategory === 'Crypto' ? marketplace.adv_li_crypto_pricing :
+                       marketplace.link_insertion_price) :
+                      (item.specialCategory === 'CBD' ? marketplace.adv_cbd_pricing :
+                       item.specialCategory === 'Casino' ? marketplace.adv_casino_pricing :
+                       item.specialCategory === 'Crypto' ? marketplace.adv_crypto_pricing :
+                       marketplace.price)) : 
+                    (item.serviceType === 'link_insertion' ? marketplace.link_insertion_price : marketplace.price),
                   link_insertion_price: marketplace.link_insertion_price || 0,
                   da: marketplace.moz_da,
                   dr: marketplace.ahrefs_dr,

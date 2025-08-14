@@ -779,6 +779,27 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    adv_li_casino_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    adv_li_cbd_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    adv_li_crypto_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     ahrefs_dr: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -830,20 +851,6 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     domain_zone: Schema.Attribute.String;
     fast_placement_status: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
-    forbidden_gp_price: Schema.Attribute.Integer &
-      Schema.Attribute.SetMinMax<
-        {
-          min: 0;
-        },
-        number
-      >;
-    forbidden_li_price: Schema.Attribute.Integer &
-      Schema.Attribute.SetMinMax<
-        {
-          min: 0;
-        },
-        number
-      >;
     guidelines: Schema.Attribute.Text;
     language: Schema.Attribute.JSON & Schema.Attribute.Required;
     link_insertion_price: Schema.Attribute.Integer &
