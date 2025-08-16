@@ -60,7 +60,8 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
                   description: marketplace.description || '',
                   category: marketplace.category,
                   traffic: marketplace.ahrefs_traffic,
-                  publisher_writing_price:marketplace.publisher_writing_price
+                  publisher_writing_price:marketplace.publisher_writing_price,
+                  backlinkType:marketplace.backlink_type
                 }
               };
               itemsWithLiveData.push(updatedItem);
