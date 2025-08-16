@@ -232,6 +232,10 @@
       "type": "string",
       "description": "Type of service (e.g., 'link_insertion', 'guest_post', etc.)"
     },
+    "specialCategory": {
+      "type": "string",
+      "description": "Special pricing category (e.g., 'CBD', 'Casino', 'Crypto')"
+    },
     "existingPostUrl": {
       "type": "string",
       "description": "URL of the existing post where the link will be inserted"

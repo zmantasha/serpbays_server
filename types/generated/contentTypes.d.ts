@@ -852,6 +852,12 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     domain_zone: Schema.Attribute.String;
     fast_placement_status: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
+    gsc_permission_level: Schema.Attribute.Enumeration<
+      ['siteOwner', 'siteFullUser', 'siteUnverifiedUser', 'siteRestrictedUser']
+    >;
+    gsc_refresh_token: Schema.Attribute.Text & Schema.Attribute.Private;
+    gsc_verified: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    gsc_verified_at: Schema.Attribute.DateTime;
     guidelines: Schema.Attribute.Text;
     language: Schema.Attribute.JSON & Schema.Attribute.Required;
     link_insertion_price: Schema.Attribute.Integer &
@@ -1197,6 +1203,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       ['requested', 'in_progress', 'completed']
     >;
     serviceType: Schema.Attribute.String;
+    specialCategory: Schema.Attribute.String;
     totalAmount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<

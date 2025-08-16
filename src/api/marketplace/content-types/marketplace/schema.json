@@ -232,6 +232,30 @@
     "digital_pr": {
       "type": "boolean",
       "default": false
+    },
+    "gsc_verified": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the website is verified through Google Search Console"
+    },
+    "gsc_verified_at": {
+      "type": "datetime",
+      "description": "Timestamp when Google Search Console verification was completed"
+    },
+    "gsc_permission_level": {
+      "type": "enumeration",
+      "enum": [
+        "siteOwner",
+        "siteFullUser",
+        "siteUnverifiedUser",
+        "siteRestrictedUser"
+      ],
+      "description": "Permission level in Google Search Console"
+    },
+    "gsc_refresh_token": {
+      "type": "text",
+      "private": true,
+      "description": "Encrypted Google Search Console refresh token for API access"
     }
   }
 }
