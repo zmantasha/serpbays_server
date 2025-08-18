@@ -1009,6 +1009,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     url: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique;
+    website_status: Schema.Attribute.Enumeration<
+      ['pending', 'active', 'draft', 'rejected']
+    > &
+      Schema.Attribute.DefaultTo<'pending'>;
   };
 }
 
@@ -1417,6 +1421,110 @@ export interface ApiPromoRedemptionPromoRedemption
     user: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
+    >;
+  };
+}
+
+export interface ApiPublisherWebsitePublisherWebsite
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'publisher_websites';
+  info: {
+    description: 'Website submissions from publishers for marketplace approval';
+    displayName: 'Publisher Website Submission';
+    pluralName: 'publisher-websites';
+    singularName: 'publisher-website';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    advertiserPrice: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    approvedAt: Schema.Attribute.DateTime;
+    backlinkType: Schema.Attribute.Enumeration<['Do follow', 'No follow']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'Do follow'>;
+    categories: Schema.Attribute.JSON & Schema.Attribute.Required;
+    countries: Schema.Attribute.JSON &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<['United States']>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    deliveryTime: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'7-14 days'>;
+    description: Schema.Attribute.Text & Schema.Attribute.Required;
+    fastPlacement: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    gscPermissionLevel: Schema.Attribute.Enumeration<
+      ['siteOwner', 'siteFullUser', 'siteUnverifiedUser', 'siteRestrictedUser']
+    >;
+    gscRefreshToken: Schema.Attribute.Text & Schema.Attribute.Private;
+    gscVerified: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    gscVerifiedAt: Schema.Attribute.DateTime;
+    guidelines: Schema.Attribute.Text;
+    languages: Schema.Attribute.JSON &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<['English']>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::publisher-website.publisher-website'
+    > &
+      Schema.Attribute.Private;
+    marketplaceId: Schema.Attribute.Integer;
+    minWordCount: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<500>;
+    protocol: Schema.Attribute.Enumeration<['https', 'http']> &
+      Schema.Attribute.DefaultTo<'https'>;
+    publishedAt: Schema.Attribute.DateTime;
+    publisherEarnings: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisherEmail: Schema.Attribute.Email & Schema.Attribute.Required;
+    publisherName: Schema.Attribute.String;
+    rejectionReason: Schema.Attribute.Text;
+    reviewedAt: Schema.Attribute.DateTime;
+    reviewedBy: Schema.Attribute.String;
+    reviewNotes: Schema.Attribute.Text;
+    submissionStatus: Schema.Attribute.Enumeration<
+      [
+        'draft',
+        'pending_verification',
+        'verified_pending_review',
+        'under_review',
+        'approved',
+        'rejected',
+        'requires_changes',
+      ]
+    > &
+      Schema.Attribute.DefaultTo<'pending_verification'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    url: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    verificationMethod: Schema.Attribute.Enumeration<
+      ['google-search-console', 'google-analytics', 'html-file', 'meta-tag']
     >;
   };
 }
@@ -2446,6 +2554,7 @@ declare module '@strapi/strapi' {
       'api::project.project': ApiProjectProject;
       'api::promo-code.promo-code': ApiPromoCodePromoCode;
       'api::promo-redemption.promo-redemption': ApiPromoRedemptionPromoRedemption;
+      'api::publisher-website.publisher-website': ApiPublisherWebsitePublisherWebsite;
       'api::saved-filter.saved-filter': ApiSavedFilterSavedFilter;
       'api::shortlist.shortlist': ApiShortlistShortlist;
       'api::transaction.transaction': ApiTransactionTransaction;

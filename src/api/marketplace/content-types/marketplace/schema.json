@@ -200,6 +200,17 @@
       ],
       "default": "active"
     },
+    "website_status": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "active",
+        "draft",
+        "rejected"
+      ],
+      "default": "pending",
+      "description": "Status of the website submission process"
+    },
     "sponsored": {
       "type": "boolean",
       "default": false

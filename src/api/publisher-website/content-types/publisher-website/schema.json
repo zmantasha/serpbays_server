@@ -1,0 +1,154 @@
+{
+  "kind": "collectionType",
+  "collectionName": "publisher_websites",
+  "info": {
+    "singularName": "publisher-website",
+    "pluralName": "publisher-websites",
+    "displayName": "Publisher Website Submission",
+    "description": "Website submissions from publishers for marketplace approval"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "url": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "description": "Website URL without protocol"
+    },
+    "protocol": {
+      "type": "enumeration",
+      "enum": ["https", "http"],
+      "default": "https",
+      "description": "Website protocol"
+    },
+    "publisherEmail": {
+      "type": "email",
+      "required": true,
+      "description": "Email of the publisher submitting the website"
+    },
+    "publisherName": {
+      "type": "string",
+      "description": "Name of the publisher"
+    },
+    "verificationMethod": {
+      "type": "enumeration",
+      "enum": ["google-search-console", "google-analytics", "html-file", "meta-tag"],
+      "description": "Method used to verify website ownership"
+    },
+    "gscVerified": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether website is verified through Google Search Console"
+    },
+    "gscVerifiedAt": {
+      "type": "datetime",
+      "description": "When Google Search Console verification was completed"
+    },
+    "gscPermissionLevel": {
+      "type": "enumeration",
+      "enum": ["siteOwner", "siteFullUser", "siteUnverifiedUser", "siteRestrictedUser"],
+      "description": "Permission level in Google Search Console"
+    },
+    "gscRefreshToken": {
+      "type": "text",
+      "private": true,
+      "description": "Encrypted Google Search Console refresh token"
+    },
+    "categories": {
+      "type": "json",
+      "required": true,
+      "description": "Website categories"
+    },
+    "description": {
+      "type": "text",
+      "required": true,
+      "description": "Website description and audience information"
+    },
+    "guidelines": {
+      "type": "text",
+      "description": "Content guidelines and requirements"
+    },
+    "advertiserPrice": {
+      "type": "integer",
+      "required": true,
+      "min": 0,
+      "description": "Price advertisers will pay"
+    },
+    "publisherEarnings": {
+      "type": "integer",
+      "required": true,
+      "min": 0,
+      "description": "Amount publisher will receive"
+    },
+    "minWordCount": {
+      "type": "integer",
+      "required": true,
+      "min": 0,
+      "default": 500,
+      "description": "Minimum word count for content"
+    },
+    "deliveryTime": {
+      "type": "string",
+      "required": true,
+      "default": "7-14 days",
+      "description": "Expected delivery time"
+    },
+    "backlinkType": {
+      "type": "enumeration",
+      "enum": ["Do follow", "No follow"],
+      "required": true,
+      "default": "Do follow",
+      "description": "Type of backlinks offered"
+    },
+    "languages": {
+      "type": "json",
+      "required": true,
+      "default": ["English"],
+      "description": "Supported languages"
+    },
+    "countries": {
+      "type": "json",
+      "required": true,
+      "default": ["United States"],
+      "description": "Target countries"
+    },
+    "fastPlacement": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether fast placement is available"
+    },
+    "submissionStatus": {
+      "type": "enumeration",
+      "enum": ["draft", "pending_verification", "verified_pending_review", "under_review", "approved", "rejected", "requires_changes"],
+      "default": "pending_verification",
+      "description": "Current status of the website submission"
+    },
+    "reviewNotes": {
+      "type": "text",
+      "description": "Internal review notes from the team"
+    },
+    "rejectionReason": {
+      "type": "text",
+      "description": "Reason for rejection if applicable"
+    },
+    "reviewedBy": {
+      "type": "string",
+      "description": "Team member who reviewed the submission"
+    },
+    "reviewedAt": {
+      "type": "datetime",
+      "description": "When the review was completed"
+    },
+    "approvedAt": {
+      "type": "datetime",
+      "description": "When the website was approved"
+    },
+    "marketplaceId": {
+      "type": "integer",
+      "description": "ID of the created marketplace entry after approval"
+    }
+  }
+}
