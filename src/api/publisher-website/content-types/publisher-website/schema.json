@@ -149,6 +149,15 @@
     "marketplaceId": {
       "type": "integer",
       "description": "ID of the created marketplace entry after approval"
+    },
+    "changeRequests": {
+      "type": "text",
+      "description": "Specific changes requested by admin"
+    },
+    "reviewStartedAt": {
+      "type": "datetime",
+      "description": "When the review process started"
     }
   }
 }
+

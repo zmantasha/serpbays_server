@@ -1451,6 +1451,7 @@ export interface ApiPublisherWebsitePublisherWebsite
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'Do follow'>;
     categories: Schema.Attribute.JSON & Schema.Attribute.Required;
+    changeRequests: Schema.Attribute.Text;
     countries: Schema.Attribute.JSON &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<['United States']>;
@@ -1505,6 +1506,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     reviewedAt: Schema.Attribute.DateTime;
     reviewedBy: Schema.Attribute.String;
     reviewNotes: Schema.Attribute.Text;
+    reviewStartedAt: Schema.Attribute.DateTime;
     submissionStatus: Schema.Attribute.Enumeration<
       [
         'draft',
