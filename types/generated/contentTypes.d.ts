@@ -779,6 +779,13 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    adv_dating_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     adv_li_casino_pricing: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -794,6 +801,13 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         number
       >;
     adv_li_crypto_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    adv_li_dating_pricing: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
           min: 0;
@@ -926,6 +940,13 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    publisher_dating_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     publisher_email: Schema.Attribute.Email & Schema.Attribute.Required;
     publisher_forbidden_gp_price: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -935,6 +956,34 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         number
       >;
     publisher_forbidden_li_price: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_li_casino_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_li_cbd_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_li_crypto_pricing: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publisher_li_dating_pricing: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
           min: 0;
@@ -1438,31 +1487,136 @@ export interface ApiPublisherWebsitePublisherWebsite
     draftAndPublish: true;
   };
   attributes: {
-    advertiserPrice: Schema.Attribute.Integer &
+    allowedLinks: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 3;
+          min: 1;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<1>;
+    approvedAt: Schema.Attribute.DateTime;
+    backlinkType: Schema.Attribute.Enumeration<['Do follow', 'No follow']> &
       Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'Do follow'>;
+    backlinkValidity: Schema.Attribute.Enumeration<
+      ['one_year', 'three_years', 'five_years', 'lifetime']
+    > &
+      Schema.Attribute.DefaultTo<'one_year'>;
+    casinoAccepted: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    casinoGuestPostPrice: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
           min: 0;
         },
         number
-      >;
-    approvedAt: Schema.Attribute.DateTime;
-    backlinkType: Schema.Attribute.Enumeration<['Do follow', 'No follow']> &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'Do follow'>;
-    categories: Schema.Attribute.JSON & Schema.Attribute.Required;
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    casinoLinkInsertionPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    category: Schema.Attribute.String & Schema.Attribute.Required;
+    cbdAccepted: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    cbdGuestPostPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    cbdLinkInsertionPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
     changeRequests: Schema.Attribute.Text;
+    copywritingPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
     countries: Schema.Attribute.JSON &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<['United States']>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    deliveryTime: Schema.Attribute.String &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'7-14 days'>;
+    cryptoAccepted: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    cryptoGuestPostPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    cryptoLinkInsertionPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    datingAccepted: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    datingGuestPostPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    datingLinkInsertionPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
     description: Schema.Attribute.Text & Schema.Attribute.Required;
-    fastPlacement: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    doCopywriting: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    expectedTATHours: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 1;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<168>;
+    generalGuestPostPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    generalLinkInsertionPrice: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
     gscPermissionLevel: Schema.Attribute.Enumeration<
       ['siteOwner', 'siteFullUser', 'siteUnverifiedUser', 'siteRestrictedUser']
     >;
@@ -1470,9 +1624,10 @@ export interface ApiPublisherWebsitePublisherWebsite
     gscVerified: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     gscVerifiedAt: Schema.Attribute.DateTime;
     guidelines: Schema.Attribute.Text;
-    languages: Schema.Attribute.JSON &
+    isPRSite: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    language: Schema.Attribute.String &
       Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<['English']>;
+      Schema.Attribute.DefaultTo<'English'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -1492,14 +1647,6 @@ export interface ApiPublisherWebsitePublisherWebsite
     protocol: Schema.Attribute.Enumeration<['https', 'http']> &
       Schema.Attribute.DefaultTo<'https'>;
     publishedAt: Schema.Attribute.DateTime;
-    publisherEarnings: Schema.Attribute.Integer &
-      Schema.Attribute.Required &
-      Schema.Attribute.SetMinMax<
-        {
-          min: 0;
-        },
-        number
-      >;
     publisherEmail: Schema.Attribute.Email & Schema.Attribute.Required;
     publisherName: Schema.Attribute.String;
     rejectionReason: Schema.Attribute.Text;
@@ -1507,6 +1654,8 @@ export interface ApiPublisherWebsitePublisherWebsite
     reviewedBy: Schema.Attribute.String;
     reviewNotes: Schema.Attribute.Text;
     reviewStartedAt: Schema.Attribute.DateTime;
+    samplePosts: Schema.Attribute.JSON;
+    sponsored: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     submissionStatus: Schema.Attribute.Enumeration<
       [
         'draft',
@@ -1519,6 +1668,7 @@ export interface ApiPublisherWebsitePublisherWebsite
       ]
     > &
       Schema.Attribute.DefaultTo<'pending_verification'>;
+    ugc: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;

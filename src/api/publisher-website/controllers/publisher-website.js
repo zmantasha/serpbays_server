@@ -108,6 +108,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       });
 
+      // If this is an approved website being updated, also update the marketplace
+      if (existing.submissionStatus === 'approved' && existing.marketplaceId) {
+        console.log('Updating marketplace listing for approved website...');
+        try {
+          await this.createMarketplaceListing(updated);
+          console.log('Marketplace listing updated successfully');
+        } catch (marketplaceError) {
+          console.error('Failed to update marketplace listing:', marketplaceError);
+          // Don't fail the update if marketplace update fails
+        }
+      }
+
       return { data: updated };
     } catch (error) {
       console.error('Error updating publisher website:', error);
@@ -297,37 +309,116 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       });
 
+      // Helper function to convert enumeration values to human-readable format
+      const convertBacklinkValidity = (value) => {
+        const validityMap = {
+          'one_year': '1 Year',
+          'three_years': '3 Years', 
+          'five_years': '5 Years',
+          'lifetime': 'Lifetime'
+        };
+        return validityMap[value] || 'Lifetime';
+      };
+
       // Map publisher-website fields to marketplace fields
       const marketplaceData = {
         url: submission.url,
-        price: submission.advertiserPrice,
-        link_insertion_price: submission.advertiserPrice, // Default to same as guest post price
+        
+        // ADVERTISER PRICING (what publisher entered - this is what advertisers pay)
+        price: submission.generalGuestPostPrice || 0,
+        link_insertion_price: submission.generalLinkInsertionPrice || 0,
+        adv_casino_pricing: submission.casinoGuestPostPrice || 0,
+        adv_li_casino_pricing: submission.casinoLinkInsertionPrice || 0,
+        adv_crypto_pricing: submission.cryptoGuestPostPrice || 0,
+        adv_li_crypto_pricing: submission.cryptoLinkInsertionPrice || 0,
+        adv_cbd_pricing: submission.cbdGuestPostPrice || 0,
+        adv_li_cbd_pricing: submission.cbdLinkInsertionPrice || 0,
+        adv_dating_pricing: submission.datingGuestPostPrice || 0,
+        adv_li_dating_pricing: submission.datingLinkInsertionPrice || 0,
+
+        // PUBLISHER EARNINGS (advertiser price - 20% = 80% of what they entered)
+        publisher_price: Math.floor(Math.max(
+          (submission.generalGuestPostPrice || 0) * 0.8,
+          (submission.generalLinkInsertionPrice || 0) * 0.8
+        )) || 1, // Ensure it's at least 1 since it's required
+        publisher_link_insertion_price: Math.floor((submission.generalLinkInsertionPrice || 0) * 0.8),
+        
+        // Publisher earnings for sensitive categories
+        publisher_casino_pricing: Math.floor(Math.max(
+          (submission.casinoGuestPostPrice || 0) * 0.8,
+          (submission.casinoLinkInsertionPrice || 0) * 0.8
+        )),
+        publisher_crypto_pricing: Math.floor(Math.max(
+          (submission.cryptoGuestPostPrice || 0) * 0.8,
+          (submission.cryptoLinkInsertionPrice || 0) * 0.8
+        )),
+        publisher_cbd_pricing: Math.floor(Math.max(
+          (submission.cbdGuestPostPrice || 0) * 0.8,
+          (submission.cbdLinkInsertionPrice || 0) * 0.8
+        )),
+        publisher_dating_pricing: Math.floor(Math.max(
+          (submission.datingGuestPostPrice || 0) * 0.8,
+          (submission.datingLinkInsertionPrice || 0) * 0.8
+        )),
+        
+        // Publisher earnings for specific Link Insertion sensitive categories
+        publisher_li_casino_pricing: Math.floor((submission.casinoLinkInsertionPrice || 0) * 0.8),
+        publisher_li_crypto_pricing: Math.floor((submission.cryptoLinkInsertionPrice || 0) * 0.8),
+        publisher_li_cbd_pricing: Math.floor((submission.cbdLinkInsertionPrice || 0) * 0.8),
+        publisher_li_dating_pricing: Math.floor((submission.datingLinkInsertionPrice || 0) * 0.8),
+
         min_word_count: submission.minWordCount,
         backlink_type: submission.backlinkType,
-        category: submission.categories,
+        category: [submission.category], // Convert string to array for marketplace schema
         guidelines: submission.guidelines,
-        backlink_validity: 'Permanent', // Default value
+        backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
         publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
         publisher_email: submission.publisherEmail,
-        publisher_price: submission.publisherEarnings,
-        fast_placement_status: submission.fastPlacement || false,
+        
+        // Map new content options
+        sponsored: submission.sponsored,
+        ugc: submission.ugc,
+        digital_pr: submission.isPRSite,
+        publisher_writing_price: submission.copywritingPrice || 0,
+
+        // Map delivery and samples
+        tat: Math.ceil(submission.expectedTATHours / 24), // Convert hours to days
+        placement_speed: submission.expectedTATHours <= 72 ? 'Fast' : 'Normal',
+        sample_links: JSON.stringify(submission.samplePosts || []), // Convert array to JSON string
+
+        // Existing fields
         countries: submission.countries,
-        language: submission.languages,
+        language: [submission.language], // Convert string to array for marketplace schema
         website_status: 'active',
         gsc_verified: submission.gscVerified || false,
         gsc_verified_at: submission.gscVerifiedAt,
-        gsc_permission_level: submission.gscPermissionLevel,
-        placement_speed: submission.fastPlacement ? 'Fast' : 'Normal',
-        tat: 7, // Default 7 days
-        publishedAt: new Date()
+        gsc_permission_level: submission.gscPermissionLevel
       };
+
+      // Clean up undefined values before sending to Strapi
+      Object.keys(marketplaceData).forEach(key => {
+        if (marketplaceData[key] === undefined) {
+          delete marketplaceData[key];
+        }
+      });
 
       if (existingListing && existingListing.length > 0) {
         console.log('Updating existing marketplace listing:', existingListing[0].id);
+        console.log('New pricing data:', {
+          price: marketplaceData.price,
+          link_insertion_price: marketplaceData.link_insertion_price,
+          adv_casino_pricing: marketplaceData.adv_casino_pricing,
+          adv_crypto_pricing: marketplaceData.adv_crypto_pricing,
+          publisher_price: marketplaceData.publisher_price,
+          publisher_casino_pricing: marketplaceData.publisher_casino_pricing
+        });
+        
         // Update existing listing
         const updated = await strapi.entityService.update('api::marketplace.marketplace', existingListing[0].id, {
           data: marketplaceData
         });
+        
+        console.log('Marketplace updated successfully with new pricing');
         
         // Store marketplace ID in publisher-website submission
         await strapi.entityService.update('api::publisher-website.publisher-website', submission.id, {

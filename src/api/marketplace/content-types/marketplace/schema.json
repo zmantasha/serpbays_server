@@ -170,6 +170,34 @@
       "type": "integer",
       "min": 0
     },
+    "adv_dating_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "adv_li_dating_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_dating_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_li_dating_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_li_casino_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_li_cbd_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_li_crypto_pricing": {
+      "type": "integer",
+      "min": 0
+    },
     "similarweb_traffic": {
       "type": "integer",
       "min": 0
