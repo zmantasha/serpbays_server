@@ -118,8 +118,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   // Admin action: Approve website submission
   async approve(ctx) {
     try {
+      console.log('=== APPROVAL PROCESS STARTED ===');
       const { id } = ctx.params;
       const user = ctx.state.user;
+      console.log('Approving submission ID:', id);
+      console.log('User:', user?.email || 'No user found');
 
       // Check if user is admin (you may need to adjust this based on your admin role setup)
       if (!user || user.role?.type !== 'admin') {
@@ -127,29 +130,43 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      console.log('Found submission:', submission?.url || 'No submission found');
       
       if (!submission) {
         return ctx.notFound('Submission not found');
       }
 
       // Update submission status to approved
+      console.log('Updating submission status to approved...');
       const approved = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           submissionStatus: 'approved',
           reviewedAt: new Date(),
-          reviewedBy: user.email,
-          reviewNotes: ctx.request.body.reviewNotes || 'Approved by admin'
+          reviewedBy: user?.email || 'system',
+          reviewNotes: ctx.request.body.reviewNotes || 'Approved by admin',
+          approvedAt: new Date()
         }
       });
+      console.log('Submission updated:', approved.submissionStatus);
 
       // Create marketplace entry
-      await this.createMarketplaceListing(approved);
+      console.log('Creating marketplace listing...');
+      try {
+        const marketplaceListing = await this.createMarketplaceListing(approved);
+        console.log('Marketplace listing created successfully:', marketplaceListing?.id);
+      } catch (marketplaceError) {
+        console.error('Failed to create marketplace listing:', marketplaceError);
+        // Don't fail the approval if marketplace creation fails
+      }
 
       // TODO: Send approval email notification
+      console.log('=== APPROVAL PROCESS COMPLETED ===');
       
       return { data: approved, message: 'Website approved and added to marketplace' };
     } catch (error) {
       console.error('Error approving website:', error);
+      console.error('Error details:', error.message);
+      console.error('Error stack:', error.stack);
       return ctx.internalServerError('Failed to approve website');
     }
   },
@@ -266,9 +283,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     }
   },
 
+
+
   // Helper function: Create marketplace listing from approved submission
   async createMarketplaceListing(submission) {
     try {
+      console.log('Creating marketplace listing for submission:', submission.url);
+      
       // Check if marketplace listing already exists
       const existingListing = await strapi.entityService.findMany('api::marketplace.marketplace', {
         filters: {
@@ -276,57 +297,63 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       });
 
+      // Map publisher-website fields to marketplace fields
+      const marketplaceData = {
+        url: submission.url,
+        price: submission.advertiserPrice,
+        link_insertion_price: submission.advertiserPrice, // Default to same as guest post price
+        min_word_count: submission.minWordCount,
+        backlink_type: submission.backlinkType,
+        category: submission.categories,
+        guidelines: submission.guidelines,
+        backlink_validity: 'Permanent', // Default value
+        publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
+        publisher_email: submission.publisherEmail,
+        publisher_price: submission.publisherEarnings,
+        fast_placement_status: submission.fastPlacement || false,
+        countries: submission.countries,
+        language: submission.languages,
+        website_status: 'active',
+        gsc_verified: submission.gscVerified || false,
+        gsc_verified_at: submission.gscVerifiedAt,
+        gsc_permission_level: submission.gscPermissionLevel,
+        placement_speed: submission.fastPlacement ? 'Fast' : 'Normal',
+        tat: 7, // Default 7 days
+        publishedAt: new Date()
+      };
+
       if (existingListing && existingListing.length > 0) {
+        console.log('Updating existing marketplace listing:', existingListing[0].id);
         // Update existing listing
-        return await strapi.entityService.update('api::marketplace.marketplace', existingListing[0].id, {
-          data: {
-            url: submission.url,
-            protocol: submission.protocol,
-            websiteName: submission.url.replace(/^www\./, ''),
-            websiteDescription: submission.description,
-            websiteCategory: submission.categories,
-            price: submission.advertiserPrice,
-            publisher_price: submission.publisherEarnings,
-            minWordCount: submission.minWordCount,
-            deliveryTime: submission.deliveryTime,
-            backlinkType: submission.backlinkType,
-            languages: submission.languages,
-            countries: submission.countries,
-            fastPlacement: submission.fastPlacement,
-            guidelines: submission.guidelines,
-            website_status: 'active',
-            gsc_verified: submission.gscVerified,
-            gsc_verified_at: submission.gscVerifiedAt,
-            publishedAt: new Date()
-          }
+        const updated = await strapi.entityService.update('api::marketplace.marketplace', existingListing[0].id, {
+          data: marketplaceData
         });
+        
+        // Store marketplace ID in publisher-website submission
+        await strapi.entityService.update('api::publisher-website.publisher-website', submission.id, {
+          data: { marketplaceId: updated.id }
+        });
+        
+        return updated;
       } else {
+        console.log('Creating new marketplace listing');
         // Create new marketplace listing
-        return await strapi.entityService.create('api::marketplace.marketplace', {
-          data: {
-            url: submission.url,
-            protocol: submission.protocol,
-            websiteName: submission.url.replace(/^www\./, ''),
-            websiteDescription: submission.description,
-            websiteCategory: submission.categories,
-            price: submission.advertiserPrice,
-            publisher_price: submission.publisherEarnings,
-            minWordCount: submission.minWordCount,
-            deliveryTime: submission.deliveryTime,
-            backlinkType: submission.backlinkType,
-            languages: submission.languages,
-            countries: submission.countries,
-            fastPlacement: submission.fastPlacement,
-            guidelines: submission.guidelines,
-            website_status: 'active',
-            gsc_verified: submission.gscVerified,
-            gsc_verified_at: submission.gscVerifiedAt,
-            publishedAt: new Date()
-          }
+        const created = await strapi.entityService.create('api::marketplace.marketplace', {
+          data: marketplaceData
         });
+        
+        // Store marketplace ID in publisher-website submission
+        await strapi.entityService.update('api::publisher-website.publisher-website', submission.id, {
+          data: { marketplaceId: created.id }
+        });
+        
+        console.log('Successfully created marketplace listing with ID:', created.id);
+        return created;
       }
     } catch (error) {
       console.error('Error creating marketplace listing:', error);
+      console.error('Error details:', error.message);
+      console.error('Submission data:', JSON.stringify(submission, null, 2));
       throw error;
     }
   }
