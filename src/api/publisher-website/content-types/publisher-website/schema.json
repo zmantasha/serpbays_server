@@ -8,7 +8,7 @@
     "description": "Website submissions from publishers for marketplace approval"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "pluginOptions": {},
   "attributes": {
@@ -20,7 +20,10 @@
     },
     "protocol": {
       "type": "enumeration",
-      "enum": ["https", "http"],
+      "enum": [
+        "https",
+        "http"
+      ],
       "default": "https",
       "description": "Website protocol"
     },
@@ -35,7 +38,12 @@
     },
     "verificationMethod": {
       "type": "enumeration",
-      "enum": ["google-search-console", "google-analytics", "html-file", "meta-tag"],
+      "enum": [
+        "google-search-console",
+        "google-analytics",
+        "html-file",
+        "meta-tag"
+      ],
       "description": "Method used to verify website ownership"
     },
     "gscVerified": {
@@ -49,7 +57,12 @@
     },
     "gscPermissionLevel": {
       "type": "enumeration",
-      "enum": ["siteOwner", "siteFullUser", "siteUnverifiedUser", "siteRestrictedUser"],
+      "enum": [
+        "siteOwner",
+        "siteFullUser",
+        "siteUnverifiedUser",
+        "siteRestrictedUser"
+      ],
       "description": "Permission level in Google Search Console"
     },
     "gscRefreshToken": {
@@ -148,7 +161,10 @@
     },
     "backlinkType": {
       "type": "enumeration",
-      "enum": ["Do follow", "No follow"],
+      "enum": [
+        "Do follow",
+        "No follow"
+      ],
       "required": true,
       "default": "Do follow",
       "description": "Type of backlinks offered"
@@ -162,12 +178,17 @@
     },
     "backlinkValidity": {
       "type": "enumeration",
-      "enum": ["one_year", "three_years", "five_years", "lifetime"],
+      "enum": [
+        "one_year",
+        "three_years",
+        "five_years",
+        "lifetime"
+      ],
       "default": "one_year",
       "description": "How long backlinks remain valid"
     },
     "category": {
-      "type": "string",
+      "type": "json",
       "required": true,
       "description": "Primary website category"
     },
@@ -181,13 +202,17 @@
     "countries": {
       "type": "json",
       "required": true,
-      "default": ["United States"],
+      "default": [
+        "United States"
+      ],
       "description": "Target countries (max 3, first is primary)"
     },
     "language": {
-      "type": "string",
+      "type": "json",
       "required": true,
-      "default": "English",
+      "default": [
+        "English"
+      ],
       "description": "Primary language"
     },
     "sponsored": {
@@ -228,7 +253,15 @@
     },
     "submissionStatus": {
       "type": "enumeration",
-      "enum": ["draft", "pending_verification", "verified_pending_review", "under_review", "approved", "rejected", "requires_changes"],
+      "enum": [
+        "draft",
+        "pending_verification",
+        "verified_pending_review",
+        "under_review",
+        "approved",
+        "rejected",
+        "requires_changes"
+      ],
       "default": "pending_verification",
       "description": "Current status of the website submission"
     },
@@ -266,4 +299,3 @@
     }
   }
 }
-

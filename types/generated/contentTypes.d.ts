@@ -1484,7 +1484,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     singularName: 'publisher-website';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     allowedLinks: Schema.Attribute.Integer &
@@ -1522,7 +1522,7 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<0>;
-    category: Schema.Attribute.String & Schema.Attribute.Required;
+    category: Schema.Attribute.JSON & Schema.Attribute.Required;
     cbdAccepted: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     cbdGuestPostPrice: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -1625,9 +1625,9 @@ export interface ApiPublisherWebsitePublisherWebsite
     gscVerifiedAt: Schema.Attribute.DateTime;
     guidelines: Schema.Attribute.Text;
     isPRSite: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
-    language: Schema.Attribute.String &
+    language: Schema.Attribute.JSON &
       Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'English'>;
+      Schema.Attribute.DefaultTo<['English']>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',

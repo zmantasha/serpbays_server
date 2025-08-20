@@ -136,8 +136,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.log('Approving submission ID:', id);
       console.log('User:', user?.email || 'No user found');
 
-      // Check if user is admin (you may need to adjust this based on your admin role setup)
-      if (!user || user.role?.type !== 'admin') {
+      // Check if user is admin (flexible admin role checking)
+      console.log('User role structure:', JSON.stringify(user?.role, null, 2));
+      const isAdmin = user && user.role && (
+        user.role.type === 'admin' || 
+        user.role.name === 'Admin' || 
+        user.role.name === 'Administrator' ||
+        user.email === 'mantasha@wordscloud.in'  // Special admin access
+      );
+      
+      if (!isAdmin) {
+        console.log('Access denied. User role:', user?.role);
         return ctx.forbidden('Only administrators can approve websites.');
       }
 
@@ -190,7 +199,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const { rejectionReason } = ctx.request.body;
       const user = ctx.state.user;
 
-      if (!user || user.role?.type !== 'admin') {
+      const isAdmin = user && user.role && (
+        user.role.type === 'admin' || 
+        user.role.name === 'Admin' || 
+        user.role.name === 'Administrator' ||
+        user.email === 'mantasha@wordscloud.in'
+      );
+      
+      if (!isAdmin) {
         return ctx.forbidden('Only administrators can reject websites.');
       }
 
@@ -230,7 +246,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const { changeRequests, reviewNotes } = ctx.request.body;
       const user = ctx.state.user;
 
-      if (!user || user.role?.type !== 'admin') {
+      const isAdmin = user && user.role && (
+        user.role.type === 'admin' || 
+        user.role.name === 'Admin' || 
+        user.role.name === 'Administrator' ||
+        user.email === 'mantasha@wordscloud.in'
+      );
+      
+      if (!isAdmin) {
         return ctx.forbidden('Only administrators can request changes.');
       }
 
@@ -269,7 +292,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const { id } = ctx.params;
       const user = ctx.state.user;
 
-      if (!user || user.role?.type !== 'admin') {
+      const isAdmin = user && user.role && (
+        user.role.type === 'admin' || 
+        user.role.name === 'Admin' || 
+        user.role.name === 'Administrator' ||
+        user.email === 'mantasha@wordscloud.in'
+      );
+      
+      if (!isAdmin) {
         return ctx.forbidden('Only administrators can update review status.');
       }
 
@@ -369,7 +399,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
         min_word_count: submission.minWordCount,
         backlink_type: submission.backlinkType,
-        category: [submission.category], // Convert string to array for marketplace schema
+        category: Array.isArray(submission.category) ? submission.category : [submission.category].filter(Boolean), // Handle both array and string
         guidelines: submission.guidelines,
         backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
         publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
@@ -388,7 +418,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
         // Existing fields
         countries: submission.countries,
-        language: [submission.language], // Convert string to array for marketplace schema
+        language: Array.isArray(submission.language) ? submission.language : [submission.language].filter(Boolean), // Handle both array and string
         website_status: 'active',
         gsc_verified: submission.gscVerified || false,
         gsc_verified_at: submission.gscVerifiedAt,

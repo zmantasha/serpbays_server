@@ -38,6 +38,22 @@ module.exports = {
         description: 'Mark a submission as under review',
       },
     },
+    {
+      method: 'POST',
+      path: '/publisher-websites/:id/manual-approve',
+      handler: 'admin-approval.manualApprove',
+      config: {
+        description: 'Manual approval endpoint for admin use',
+      },
+    },
+    {
+      method: 'GET',
+      path: '/publisher-websites/:id/approval-status',
+      handler: 'admin-approval.getApprovalStatus',
+      config: {
+        description: 'Get approval status and marketplace listing info',
+      },
+    },
 
   ],
 };
