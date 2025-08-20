@@ -511,5 +511,62 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.error('Submission data:', JSON.stringify(submission, null, 2));
       throw error;
     }
+  },
+
+  // Delete publisher website and associated marketplace listing
+  async delete(ctx) {
+    try {
+      const { id } = ctx.params;
+      const user = ctx.state.user;
+
+      if (!user) {
+        return ctx.unauthorized('You must be logged in to delete websites.');
+      }
+
+      // First find the website to check ownership
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+
+      if (!website) {
+        return ctx.notFound('Website not found');
+      }
+
+      // Check if the website belongs to the current user
+      if (website.publisherEmail !== user.email) {
+        return ctx.forbidden('You can only delete your own website submissions.');
+      }
+
+      console.log(`Deleting website ID: ${id} for user: ${user.email}`);
+
+      // If website has a marketplace listing, delete it first
+      if (website.marketplaceId) {
+        try {
+          console.log(`Deleting marketplace listing ID: ${website.marketplaceId}`);
+          await strapi.entityService.delete('api::marketplace.marketplace', website.marketplaceId);
+          console.log('Marketplace listing deleted successfully');
+        } catch (marketplaceError) {
+          console.error('Error deleting marketplace listing:', marketplaceError);
+          // Continue with deletion even if marketplace deletion fails
+          // This prevents orphaned publisher websites
+        }
+      }
+
+      // Delete the publisher website
+      await strapi.entityService.delete('api::publisher-website.publisher-website', id);
+      console.log('Publisher website deleted successfully');
+
+      return {
+        data: {
+          id: website.id,
+          url: website.url,
+          deleted: true,
+          deletedAt: new Date().toISOString()
+        },
+        message: 'Website and associated marketplace listing deleted successfully'
+      };
+
+    } catch (error) {
+      console.error('Error deleting publisher website:', error);
+      return ctx.internalServerError('Failed to delete website');
+    }
   }
 }));
