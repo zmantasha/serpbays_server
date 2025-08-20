@@ -83,6 +83,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     }
   },
 
+  // Get single publisher website by ID
+  async findOne(ctx) {
+    try {
+      const { id } = ctx.params;
+      const user = ctx.state.user;
+
+      if (!user) {
+        return ctx.unauthorized('You must be logged in to view website details.');
+      }
+
+      // First find the website
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: '*'
+      });
+
+      if (!website) {
+        return ctx.notFound('Website not found');
+      }
+
+      // Check if the website belongs to the current user
+      if (website.publisherEmail !== user.email) {
+        return ctx.forbidden('You can only view your own website submissions.');
+      }
+
+      return { data: website };
+    } catch (error) {
+      console.error('Error fetching publisher website:', error);
+      return ctx.internalServerError('Failed to fetch website details');
+    }
+  },
+
   // Update existing submission
   async update(ctx) {
     try {
@@ -108,17 +139,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       });
 
+      console.log("updated",updated)
+      console.log("existing",existing)
+
       // If this is an approved website being updated, also update the marketplace
-      if (existing.submissionStatus === 'approved' && existing.marketplaceId) {
-        console.log('Updating marketplace listing for approved website...');
-        try {
-          await this.createMarketplaceListing(updated);
-          console.log('Marketplace listing updated successfully');
-        } catch (marketplaceError) {
-          console.error('Failed to update marketplace listing:', marketplaceError);
-          // Don't fail the update if marketplace update fails
-        }
-      }
+      // if (existing.submissionStatus === 'approved' && existing.marketplaceId) {
+      //   console.log('Updating marketplace listing for approved website...');
+      //   try {
+      //     await this.createMarketplaceListing(updated);
+      //     console.log('Marketplace listing updated successfully');
+      //   } catch (marketplaceError) {
+      //     console.error('Failed to update marketplace listing:', marketplaceError);
+      //     // Don't fail the update if marketplace update fails
+      //   }
+      // }
 
       return { data: updated };
     } catch (error) {
