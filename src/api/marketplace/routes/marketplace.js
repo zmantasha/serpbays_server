@@ -68,6 +68,17 @@ module.exports = {
         middlewares: [],
       },
     },
+    // Check if domain exists in marketplace
+    {
+      method: 'GET',
+      path: '/marketplaces/check-domain/:domain',
+      handler: 'marketplace.checkDomainExists',
+      config: {
+        auth: false, // Make this endpoint public
+        policies: [],
+        middlewares: [],
+      },
+    },
     // Custom CSV upload route
     {
       method: 'POST',

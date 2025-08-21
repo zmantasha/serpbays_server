@@ -295,6 +295,17 @@
       "type": "text",
       "private": true,
       "description": "Encrypted Google Search Console refresh token for API access"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "active",
+        "paused",
+        "draft",
+        "rejected"
+      ],
+      "default": "active",
+      "description": "Current status of the marketplace listing"
     }
   }
 }

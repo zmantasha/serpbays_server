@@ -244,13 +244,37 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     const user = ctx.state.user;
     console.log(user)
     
-    // Advertiser (user.Advertiser === true) can see all listings
+    // Initialize query filters if they don't exist
+    if (!ctx.query) ctx.query = {};
+    if (!ctx.query.filters) ctx.query.filters = {};
+    
+    // Advertiser (user.Advertiser === true) can see all active listings
     // Publisher (user.Advertiser === false) only sees their listings
-    // if (user && user.Advertiser === false && user.Publisher===true) {
-    //   if (!ctx.query) ctx.query = {};
-    //   if (!ctx.query.filters) ctx.query.filters = {};
-    //   ctx.query.filters.publisher_email = user.email;
-    // }
+    if (user && user.Advertiser === false && user.Publisher === true) {
+      // Publishers see their own listings (all statuses)
+      ctx.query.filters.publisher_email = user.email;
+    } else {
+      // Advertisers and public users only see active listings (hide paused listings)
+      // Only show marketplace listings that have proper status and are not paused
+      ctx.query.filters.$and = [
+        // Must have proper marketplace status (active or legacy null/empty)
+        {
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        },
+        // Must have proper website status (indicating they are approved/live websites)
+        {
+          $or: [
+            { website_status: 'active' },
+            { website_status: { $null: true } }, // Legacy records
+            { website_status: '' } // Legacy records
+          ]
+        }
+      ];
+    }
     
     
     // Handle sorting - ensure proper field mapping and default sort
@@ -301,6 +325,46 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     }
     // Call the default core action
     return await super.findOne(ctx);
+  },
+
+  // Check if domain exists in marketplace
+  async checkDomainExists(ctx) {
+    const { domain } = ctx.params;
+    
+    if (!domain) {
+      return ctx.badRequest('Domain parameter is required');
+    }
+
+    try {
+      // Clean the domain (remove protocol and trailing slashes)
+      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      
+      // Check if domain exists in marketplace
+      const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
+        where: { url: cleanDomain },
+        select: ['id', 'url', 'publisher_email', 'publisher_name']
+      });
+
+      if (existingEntry) {
+        return ctx.send({
+          exists: true,
+          message: `This domain "${cleanDomain}" is already listed in the marketplace by ${existingEntry.publisher_name}`,
+          data: {
+            url: existingEntry.url,
+            publisher_name: existingEntry.publisher_name,
+            publisher_email: existingEntry.publisher_email
+          }
+        });
+      } else {
+        return ctx.send({
+          exists: false,
+          message: 'Domain is available'
+        });
+      }
+    } catch (error) {
+      console.error('Error checking domain existence:', error);
+      return ctx.internalServerError('Failed to check domain existence');
+    }
   },
 
   async uploadCSV(ctx) {

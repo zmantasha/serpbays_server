@@ -120,7 +120,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const { id } = ctx.params;
       const { data } = ctx.request.body;
       const user = ctx.state.user;
-
+      console.log("dataaa",data)
       if (!user) {
         return ctx.unauthorized('You must be logged in to update a website.');
       }
@@ -135,7 +135,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const updated = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           ...data,
-          submissionStatus: data.gscVerified ? 'verified_pending_review' : 'pending_verification'
+          // Don't override submissionStatus if it's explicitly provided
+          submissionStatus: data.submissionStatus || existing.submissionStatus,
         }
       });
 
@@ -454,6 +455,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         countries: submission.countries,
         language: Array.isArray(submission.language) ? submission.language : [submission.language].filter(Boolean), // Handle both array and string
         website_status: 'active',
+        status: 'active', // Default status for new marketplace listings
         gsc_verified: submission.gscVerified || false,
         gsc_verified_at: submission.gscVerifiedAt,
         gsc_permission_level: submission.gscPermissionLevel
@@ -567,6 +569,113 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     } catch (error) {
       console.error('Error deleting publisher website:', error);
       return ctx.internalServerError('Failed to delete website');
+    }
+  },
+
+  // Pause/Resume listing
+  async pauseListing(ctx) {
+    try {
+      const { id } = ctx.params;
+      const user = ctx.state.user;
+
+      if (!user) {
+        return ctx.unauthorized('You must be logged in to manage your listings.');
+      }
+
+      // Check if this submission belongs to the user and is approved
+      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      
+      if (!existing || existing.publisherEmail !== user.email) {
+        return ctx.forbidden('You can only manage your own website listings.');
+      }
+
+      if (existing.submissionStatus !== 'approved') {
+        return ctx.badRequest('Only approved websites can be paused.');
+      }
+
+      // Update to paused status
+      const updated = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+        data: {
+          submissionStatus: 'listing_paused',
+          pausedAt: new Date()
+        }
+      });
+
+      // Also update marketplace listing if it exists
+      if (existing.marketplaceId) {
+        try {
+          await strapi.entityService.update('api::marketplace.marketplace', existing.marketplaceId, {
+            data: {
+              status: 'paused'
+            }
+          });
+          console.log('✅ Marketplace listing paused successfully');
+        } catch (marketplaceError) {
+          console.error('⚠️ Failed to pause marketplace listing:', marketplaceError);
+          // Don't fail the operation if marketplace update fails
+        }
+      }
+
+      return { 
+        data: updated,
+        message: 'Listing paused successfully. You will not receive new guest post orders.' 
+      };
+    } catch (error) {
+      console.error('Error pausing listing:', error);
+      return ctx.internalServerError('Failed to pause listing');
+    }
+  },
+
+  async resumeListing(ctx) {
+    try {
+      const { id } = ctx.params;
+      const user = ctx.state.user;
+
+      if (!user) {
+        return ctx.unauthorized('You must be logged in to manage your listings.');
+      }
+
+      // Check if this submission belongs to the user and is paused
+      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      
+      if (!existing || existing.publisherEmail !== user.email) {
+        return ctx.forbidden('You can only manage your own website listings.');
+      }
+
+      if (existing.submissionStatus !== 'listing_paused') {
+        return ctx.badRequest('Only paused listings can be resumed.');
+      }
+
+      // Update to approved status (resume)
+      const updated = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+        data: {
+          submissionStatus: 'approved',
+          resumedAt: new Date()
+        }
+      });
+
+      // Also update marketplace listing if it exists
+      if (existing.marketplaceId) {
+        try {
+          await strapi.entityService.update('api::marketplace.marketplace', existing.marketplaceId, {
+            data: {
+              status: 'active'
+            }
+          });
+          console.log('✅ Marketplace listing resumed successfully');
+        } catch (marketplaceError) {
+          console.error('⚠️ Failed to resume marketplace listing:', marketplaceError);
+          // Don't fail the operation if marketplace update fails
+        }
+      }
+
+      return { 
+        data: updated,
+        message: 'Listing resumed successfully. You can now receive new guest post orders.' 
+      };
+    } catch (error) {
+      console.error('Error resuming listing:', error);
+      return ctx.internalServerError('Failed to resume listing');
     }
   }
 }));

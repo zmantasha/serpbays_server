@@ -1050,6 +1050,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         number
       >;
     sponsored: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    status: Schema.Attribute.Enumeration<
+      ['active', 'paused', 'draft', 'rejected']
+    > &
+      Schema.Attribute.DefaultTo<'active'>;
     tat: Schema.Attribute.Integer;
     ugc: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     updatedAt: Schema.Attribute.DateTime;
@@ -1498,7 +1502,6 @@ export interface ApiPublisherWebsitePublisherWebsite
       Schema.Attribute.DefaultTo<1>;
     approvedAt: Schema.Attribute.DateTime;
     backlinkType: Schema.Attribute.Enumeration<['Do follow', 'No follow']> &
-      Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'Do follow'>;
     backlinkValidity: Schema.Attribute.Enumeration<
       ['one_year', 'three_years', 'five_years', 'lifetime']
@@ -1522,7 +1525,7 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<0>;
-    category: Schema.Attribute.JSON & Schema.Attribute.Required;
+    category: Schema.Attribute.JSON;
     cbdAccepted: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     cbdGuestPostPrice: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -1550,7 +1553,6 @@ export interface ApiPublisherWebsitePublisherWebsite
       > &
       Schema.Attribute.DefaultTo<0>;
     countries: Schema.Attribute.JSON &
-      Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<['United States']>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
@@ -1591,7 +1593,8 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<0>;
-    description: Schema.Attribute.Text & Schema.Attribute.Required;
+    description: Schema.Attribute.Text;
+    detailsCompletedAt: Schema.Attribute.DateTime;
     doCopywriting: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     expectedTATHours: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -1625,9 +1628,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     gscVerifiedAt: Schema.Attribute.DateTime;
     guidelines: Schema.Attribute.Text;
     isPRSite: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
-    language: Schema.Attribute.JSON &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<['English']>;
+    language: Schema.Attribute.JSON & Schema.Attribute.DefaultTo<['English']>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -1636,7 +1637,6 @@ export interface ApiPublisherWebsitePublisherWebsite
       Schema.Attribute.Private;
     marketplaceId: Schema.Attribute.Integer;
     minWordCount: Schema.Attribute.Integer &
-      Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<
         {
           min: 0;
@@ -1644,27 +1644,37 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<500>;
+    pausedAt: Schema.Attribute.DateTime;
     protocol: Schema.Attribute.Enumeration<['https', 'http']> &
       Schema.Attribute.DefaultTo<'https'>;
     publishedAt: Schema.Attribute.DateTime;
     publisherEmail: Schema.Attribute.Email & Schema.Attribute.Required;
     publisherName: Schema.Attribute.String;
     rejectionReason: Schema.Attribute.Text;
+    resumedAt: Schema.Attribute.DateTime;
     reviewedAt: Schema.Attribute.DateTime;
     reviewedBy: Schema.Attribute.String;
     reviewNotes: Schema.Attribute.Text;
     reviewStartedAt: Schema.Attribute.DateTime;
     samplePosts: Schema.Attribute.JSON;
     sponsored: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    stepCompleted: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 4;
+          min: 1;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<1>;
     submissionStatus: Schema.Attribute.Enumeration<
       [
-        'draft',
         'pending_verification',
-        'verified_pending_review',
-        'under_review',
-        'approved',
+        'pending_final_submission',
+        'approval_pending',
         'rejected',
-        'requires_changes',
+        'approved',
+        'listing_paused',
       ]
     > &
       Schema.Attribute.DefaultTo<'pending_verification'>;
@@ -1675,6 +1685,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     url: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique;
+    urlAddedAt: Schema.Attribute.DateTime;
     verificationMethod: Schema.Attribute.Enumeration<
       ['google-search-console', 'google-analytics', 'html-file', 'meta-tag']
     >;

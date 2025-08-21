@@ -72,7 +72,7 @@
     },
     "description": {
       "type": "text",
-      "required": true,
+      "required": false,
       "description": "Website description and audience information"
     },
     "guidelines": {
@@ -165,7 +165,7 @@
         "Do follow",
         "No follow"
       ],
-      "required": true,
+      "required": false,
       "default": "Do follow",
       "description": "Type of backlinks offered"
     },
@@ -189,19 +189,19 @@
     },
     "category": {
       "type": "json",
-      "required": true,
+      "required": false,
       "description": "Primary website category"
     },
     "minWordCount": {
       "type": "integer",
-      "required": true,
+      "required": false,
       "min": 0,
       "default": 500,
       "description": "Minimum word count for content"
     },
     "countries": {
       "type": "json",
-      "required": true,
+      "required": false,
       "default": [
         "United States"
       ],
@@ -209,7 +209,7 @@
     },
     "language": {
       "type": "json",
-      "required": true,
+      "required": false,
       "default": [
         "English"
       ],
@@ -254,13 +254,12 @@
     "submissionStatus": {
       "type": "enumeration",
       "enum": [
-        "draft",
         "pending_verification",
-        "verified_pending_review",
-        "under_review",
-        "approved",
+        "pending_final_submission",
+        "approval_pending",
         "rejected",
-        "requires_changes"
+        "approved",
+        "listing_paused"
       ],
       "default": "pending_verification",
       "description": "Current status of the website submission"
@@ -296,6 +295,29 @@
     "reviewStartedAt": {
       "type": "datetime",
       "description": "When the review process started"
+    },
+    "stepCompleted": {
+      "type": "integer",
+      "min": 1,
+      "max": 4,
+      "default": 1,
+      "description": "Last completed step in the 4-step process"
+    },
+    "urlAddedAt": {
+      "type": "datetime",
+      "description": "When the URL was first added (Step 1)"
+    },
+    "detailsCompletedAt": {
+      "type": "datetime",
+      "description": "When website details and pricing were completed (Step 3-4)"
+    },
+    "pausedAt": {
+      "type": "datetime",
+      "description": "When the listing was paused"
+    },
+    "resumedAt": {
+      "type": "datetime", 
+      "description": "When the listing was last resumed"
     }
   }
 }
