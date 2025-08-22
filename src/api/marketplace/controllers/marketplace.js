@@ -342,17 +342,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Check if domain exists in marketplace
       const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
         where: { url: cleanDomain },
-        select: ['id', 'url', 'publisher_email', 'publisher_name']
+        select: ['id', 'url']
       });
 
       if (existingEntry) {
         return ctx.send({
           exists: true,
-          message: `This domain "${cleanDomain}" is already listed in the marketplace by ${existingEntry.publisher_name}`,
+          message: `This domain "${cleanDomain}" is already listed in the marketplace`,
           data: {
-            url: existingEntry.url,
-            publisher_name: existingEntry.publisher_name,
-            publisher_email: existingEntry.publisher_email
+            url: existingEntry.url
           }
         });
       } else {
