@@ -1491,6 +1491,8 @@ export interface ApiPublisherWebsitePublisherWebsite
     draftAndPublish: false;
   };
   attributes: {
+    addedByReseller: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
     allowedLinks: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -1544,6 +1546,13 @@ export interface ApiPublisherWebsitePublisherWebsite
       > &
       Schema.Attribute.DefaultTo<0>;
     changeRequests: Schema.Attribute.Text;
+    claimedBy: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    claimingInProgress: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    claimSubmittedAt: Schema.Attribute.DateTime;
     copywritingPrice: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -1575,6 +1584,10 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<0>;
+    currentPublisherId: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     datingAccepted: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
     datingGuestPostPrice: Schema.Attribute.Integer &
@@ -1644,6 +1657,15 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<500>;
+    originalPublisherId: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    originalWebsiteId: Schema.Attribute.Integer;
+    ownershipTransferReason: Schema.Attribute.Enumeration<
+      ['claimed_by_owner', 'admin_transfer', 'other']
+    >;
+    ownershipTransferredAt: Schema.Attribute.DateTime;
     pausedAt: Schema.Attribute.DateTime;
     protocol: Schema.Attribute.Enumeration<['https', 'http']> &
       Schema.Attribute.DefaultTo<'https'>;
@@ -1651,6 +1673,10 @@ export interface ApiPublisherWebsitePublisherWebsite
     publisherEmail: Schema.Attribute.Email & Schema.Attribute.Required;
     publisherName: Schema.Attribute.String;
     rejectionReason: Schema.Attribute.Text;
+    resellerCode: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 50;
+      }>;
     resumedAt: Schema.Attribute.DateTime;
     reviewedAt: Schema.Attribute.DateTime;
     reviewedBy: Schema.Attribute.String;
@@ -1687,8 +1713,64 @@ export interface ApiPublisherWebsitePublisherWebsite
       Schema.Attribute.Unique;
     urlAddedAt: Schema.Attribute.DateTime;
     verificationMethod: Schema.Attribute.Enumeration<
-      ['google-search-console', 'google-analytics', 'html-file', 'meta-tag']
+      [
+        'google-search-console',
+        'google-analytics',
+        'html-file',
+        'meta-tag',
+        'reseller-code',
+      ]
     >;
+  };
+}
+
+export interface ApiResellerCodeResellerCode
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'reseller_codes';
+  info: {
+    description: 'Codes for resellers to bypass website verification';
+    displayName: 'Reseller Code';
+    pluralName: 'reseller-codes';
+    singularName: 'reseller-code';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    assignedTo: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    assignedToName: Schema.Attribute.String;
+    code: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 50;
+      }>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    expiresAt: Schema.Attribute.DateTime;
+    isActive: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    lastUsedAt: Schema.Attribute.DateTime;
+    lastUsedBy: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::reseller-code.reseller-code'
+    > &
+      Schema.Attribute.Private;
+    notes: Schema.Attribute.Text;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    usageLimit: Schema.Attribute.Integer;
+    usedCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
   };
 }
 
@@ -2718,6 +2800,7 @@ declare module '@strapi/strapi' {
       'api::promo-code.promo-code': ApiPromoCodePromoCode;
       'api::promo-redemption.promo-redemption': ApiPromoRedemptionPromoRedemption;
       'api::publisher-website.publisher-website': ApiPublisherWebsitePublisherWebsite;
+      'api::reseller-code.reseller-code': ApiResellerCodeResellerCode;
       'api::saved-filter.saved-filter': ApiSavedFilterSavedFilter;
       'api::shortlist.shortlist': ApiShortlistShortlist;
       'api::transaction.transaction': ApiTransactionTransaction;

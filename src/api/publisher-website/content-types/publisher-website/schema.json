@@ -42,7 +42,8 @@
         "google-search-console",
         "google-analytics",
         "html-file",
-        "meta-tag"
+        "meta-tag",
+        "reseller-code"
       ],
       "description": "Method used to verify website ownership"
     },
@@ -318,6 +319,56 @@
     "resumedAt": {
       "type": "datetime", 
       "description": "When the listing was last resumed"
+    },
+    "resellerCode": {
+      "type": "string",
+      "maxLength": 50,
+      "description": "Reseller code used to add this website (if any)"
+    },
+    "addedByReseller": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this website was added using a reseller code"
+    },
+    "originalPublisherId": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Original publisher who added the website (reseller)"
+    },
+    "currentPublisherId": {
+      "type": "relation",
+      "relation": "manyToOne", 
+      "target": "plugin::users-permissions.user",
+      "description": "Current publisher who owns the website"
+    },
+    "ownershipTransferredAt": {
+      "type": "datetime",
+      "description": "When ownership was transferred from reseller to real owner"
+    },
+    "ownershipTransferReason": {
+      "type": "enumeration",
+      "enum": ["claimed_by_owner", "admin_transfer", "other"],
+      "description": "Reason for ownership transfer"
+    },
+    "claimingInProgress": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether someone is currently claiming this website"
+    },
+    "claimedBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "User who is claiming ownership (pending approval)"
+    },
+    "claimSubmittedAt": {
+      "type": "datetime",
+      "description": "When ownership claim was submitted"
+    },
+    "originalWebsiteId": {
+      "type": "integer",
+      "description": "ID of the original website being claimed (for claim entries)"
     }
   }
 }

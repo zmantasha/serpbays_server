@@ -18,6 +18,27 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to submit a website.');
       }
 
+      // Handle reseller code if provided
+      let resellerCodeData = null;
+      if (data.resellerCode) {
+        try {
+          // Validate and use the reseller code
+          const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(data.resellerCode);
+          
+          if (!codeValidation.valid) {
+            return ctx.badRequest(`Invalid reseller code: ${codeValidation.reason}`);
+          }
+
+          // Use the code (increment counter)
+          await strapi.service('api::reseller-code.reseller-code').useCode(data.resellerCode, user.id);
+          resellerCodeData = codeValidation.codeData;
+          
+        } catch (error) {
+          console.error('Error processing reseller code:', error);
+          return ctx.badRequest('Failed to validate reseller code');
+        }
+      }
+
       // Check if this URL already exists for this publisher
       const existingSubmission = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
         filters: {
@@ -26,29 +47,42 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       });
 
+      // Prepare submission data
+      const submissionData = {
+        ...data,
+        publisherEmail: user.email,
+        publisherName: user.username || user.email,
+        publishedAt: new Date()
+      };
+
+      // Add reseller code data if provided
+      if (resellerCodeData) {
+        submissionData.addedByReseller = true;
+        submissionData.resellerCode = data.resellerCode;
+        submissionData.originalPublisherId = user.id;
+        submissionData.currentPublisherId = user.id;
+        // Reseller code bypasses verification
+        submissionData.submissionStatus = 'pending_final_submission';
+        submissionData.stepCompleted = 2;
+        submissionData.verificationMethod = 'reseller-code';
+        submissionData.gscVerified = false; // Not GSC verified, but reseller verified
+      } else {
+        submissionData.addedByReseller = false;
+        submissionData.currentPublisherId = user.id;
+        submissionData.submissionStatus = data.gscVerified ? 'verified_pending_review' : 'pending_verification';
+      }
+
       if (existingSubmission && existingSubmission.length > 0) {
         // Update existing submission
         const updated = await strapi.entityService.update('api::publisher-website.publisher-website', existingSubmission[0].id, {
-          data: {
-            ...data,
-            publisherEmail: user.email,
-            publisherName: user.username || user.email,
-            submissionStatus: data.gscVerified ? 'verified_pending_review' : 'pending_verification',
-            publishedAt: new Date()
-          }
+          data: submissionData
         });
 
         return { data: updated };
       } else {
         // Create new submission
         const submission = await strapi.entityService.create('api::publisher-website.publisher-website', {
-          data: {
-            ...data,
-            publisherEmail: user.email,
-            publisherName: user.username || user.email,
-            submissionStatus: data.gscVerified ? 'verified_pending_review' : 'pending_verification',
-            publishedAt: new Date()
-          }
+          data: submissionData
         });
 
         return { data: submission };
@@ -132,9 +166,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.forbidden('You can only update your own website submissions.');
       }
 
+      // Filter out relation fields that shouldn't be updated directly
+      const { 
+        originalPublisherId, 
+        currentPublisherId, 
+        claimedBy, 
+        originalWebsiteId,
+        ...updateData 
+      } = data;
+
       const updated = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
-          ...data,
+          ...updateData,
           // Don't override submissionStatus if it's explicitly provided
           submissionStatus: data.submissionStatus || existing.submissionStatus,
         }
@@ -677,5 +720,102 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.error('Error resuming listing:', error);
       return ctx.internalServerError('Failed to resume listing');
     }
+  },
+
+  /**
+   * Handle ownership claim for existing website
+   * POST /api/publisher-websites/claim/:id
+   */
+  async claimOwnership(ctx) {
+    try {
+      const { id } = ctx.params;
+      const user = ctx.state.user;
+
+      if (!user) {
+        return ctx.unauthorized('You must be logged in to claim ownership.');
+      }
+
+      // Find the website
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId', 'originalPublisherId']
+      });
+
+      if (!website) {
+        return ctx.notFound('Website not found');
+      }
+
+      // Check if already claiming
+      if (website.claimingInProgress) {
+        return ctx.badRequest('This website is already being claimed by someone else');
+      }
+
+      // Check if user is already the owner
+      if (website.publisherEmail === user.email) {
+        return ctx.badRequest('You already own this website');
+      }
+
+      return ctx.send({
+        success: true,
+        message: 'Ownership claim flow started. Please complete GSC verification.',
+        data: { websiteId: id, canProceedToClaim: true }
+      });
+
+    } catch (error) {
+      console.error('Error processing ownership claim:', error);
+      return ctx.internalServerError('Failed to process ownership claim');
+    }
+  },
+
+  /**
+   * Check if a domain can be claimed (public endpoint)
+   * GET /api/publisher-websites/check-claimable/:domain
+   */
+  async checkClaimable(ctx) {
+    try {
+      const { domain } = ctx.params;
+      
+      if (!domain) {
+        return ctx.badRequest('Domain is required');
+      }
+
+      // Clean the domain
+      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+      // Find website by URL
+      const websites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
+        filters: {
+          url: cleanDomain
+        },
+        fields: ['id', 'url', 'publisherEmail', 'publisherName', 'addedByReseller', 'submissionStatus']
+      });
+
+      if (!websites || websites.length === 0) {
+        return ctx.send({
+          exists: false,
+          claimable: false,
+          message: 'Website not found'
+        });
+      }
+
+      const website = websites[0];
+      
+      return ctx.send({
+        exists: true,
+        claimable: true, // Any existing website can potentially be claimed
+        addedByReseller: website.addedByReseller || false,
+        currentStatus: website.submissionStatus,
+        data: {
+          id: website.id,
+          url: website.url,
+          publisherName: website.publisherName, // Show publisher name for transparency
+          addedByReseller: website.addedByReseller
+        }
+      });
+
+    } catch (error) {
+      console.error('Error checking claimable domain:', error);
+      return ctx.internalServerError('Error checking domain');
+    }
   }
+
 }));
