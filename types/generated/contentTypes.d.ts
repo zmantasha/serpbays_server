@@ -1546,10 +1546,12 @@ export interface ApiPublisherWebsitePublisherWebsite
       > &
       Schema.Attribute.DefaultTo<0>;
     changeRequests: Schema.Attribute.Text;
+    claimedAt: Schema.Attribute.DateTime;
     claimedBy: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
     >;
+    claimedFrom: Schema.Attribute.String;
     claimingInProgress: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
     claimSubmittedAt: Schema.Attribute.DateTime;
@@ -1657,6 +1659,7 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<500>;
+    newOwnerWebsiteId: Schema.Attribute.Integer;
     originalPublisherId: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
@@ -1701,6 +1704,7 @@ export interface ApiPublisherWebsitePublisherWebsite
         'rejected',
         'approved',
         'listing_paused',
+        'ownership_transferred',
       ]
     > &
       Schema.Attribute.DefaultTo<'pending_verification'>;
@@ -1708,9 +1712,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    url: Schema.Attribute.String &
-      Schema.Attribute.Required &
-      Schema.Attribute.Unique;
+    url: Schema.Attribute.String & Schema.Attribute.Required;
     urlAddedAt: Schema.Attribute.DateTime;
     verificationMethod: Schema.Attribute.Enumeration<
       [

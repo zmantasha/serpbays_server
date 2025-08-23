@@ -15,9 +15,9 @@
     "url": {
       "type": "string",
       "required": true,
-      "unique": true,
       "description": "Website URL without protocol"
     },
+
     "protocol": {
       "type": "enumeration",
       "enum": [
@@ -260,7 +260,8 @@
         "approval_pending",
         "rejected",
         "approved",
-        "listing_paused"
+        "listing_paused",
+        "ownership_transferred"
       ],
       "default": "pending_verification",
       "description": "Current status of the website submission"
@@ -369,6 +370,18 @@
     "originalWebsiteId": {
       "type": "integer",
       "description": "ID of the original website being claimed (for claim entries)"
+    },
+    "claimedFrom": {
+      "type": "string",
+      "description": "Email of the original publisher when this website was claimed"
+    },
+    "claimedAt": {
+      "type": "datetime",
+      "description": "When this website was successfully claimed by the new owner"
+    },
+    "newOwnerWebsiteId": {
+      "type": "integer",
+      "description": "ID of the new website entry created for the new owner (for original websites that were claimed)"
     }
   }
 }

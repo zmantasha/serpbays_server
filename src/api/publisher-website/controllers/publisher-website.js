@@ -187,16 +187,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.log("existing",existing)
 
       // If this is an approved website being updated, also update the marketplace
-      // if (existing.submissionStatus === 'approved' && existing.marketplaceId) {
-      //   console.log('Updating marketplace listing for approved website...');
-      //   try {
-      //     await this.createMarketplaceListing(updated);
-      //     console.log('Marketplace listing updated successfully');
-      //   } catch (marketplaceError) {
-      //     console.error('Failed to update marketplace listing:', marketplaceError);
-      //     // Don't fail the update if marketplace update fails
-      //   }
-      // }
+      if (existing.submissionStatus === 'approved' && existing.marketplaceId) {
+        console.log('Updating marketplace listing for approved website...');
+        try {
+          await this.createMarketplaceListing(updated);
+          console.log('Marketplace listing updated successfully');
+        } catch (marketplaceError) {
+          console.error('Failed to update marketplace listing:', marketplaceError);
+          // Don't fail the update if marketplace update fails
+        }
+      }
 
       return { data: updated };
     } catch (error) {
@@ -729,35 +729,105 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   async claimOwnership(ctx) {
     try {
       const { id } = ctx.params;
+      const { data } = ctx.request.body;
       const user = ctx.state.user;
 
       if (!user) {
         return ctx.unauthorized('You must be logged in to claim ownership.');
       }
 
-      // Find the website
-      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+      // Find the existing website
+      const existingWebsite = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
         populate: ['currentPublisherId', 'originalPublisherId']
       });
 
-      if (!website) {
+      if (!existingWebsite) {
         return ctx.notFound('Website not found');
       }
 
-      // Check if already claiming
-      if (website.claimingInProgress) {
-        return ctx.badRequest('This website is already being claimed by someone else');
-      }
-
       // Check if user is already the owner
-      if (website.publisherEmail === user.email) {
+      if (existingWebsite.publisherEmail === user.email) {
         return ctx.badRequest('You already own this website');
       }
 
+      // Check if it was added by reseller (required for claiming)
+      if (!existingWebsite.addedByReseller) {
+        return ctx.badRequest('This website cannot be claimed as it was not added by a reseller');
+      }
+
+      console.log('🏴 Processing ownership claim for website:', existingWebsite.url);
+      console.log('🏴 Original owner:', existingWebsite.publisherEmail);
+      console.log('🏴 New claiming owner:', user.email);
+
+      // STEP 1: Create a NEW website entry for the claiming user
+      // Now we can use the same URL since unique constraint is removed
+      const newOwnerWebsiteData = {
+        ...data,
+        url: existingWebsite.url, // Same URL is now allowed
+        publisherEmail: user.email,
+        publisherName: user.username || user.email.split('@')[0],
+        
+        // Reference to original website
+        originalWebsiteId: existingWebsite.id,
+        claimedFrom: existingWebsite.publisherEmail,
+        claimedAt: new Date().toISOString(),
+        ownershipTransferReason: 'claimed_by_owner',
+        
+        // Set publisher relations correctly for new owner
+        originalPublisherId: existingWebsite.currentPublisherId || existingWebsite.publisherEmail,
+        currentPublisherId: user.id,
+        
+        // Verification details - must be GSC for claims
+        verificationMethod: 'google-search-console',
+        gscVerified: true,
+        gscVerifiedAt: new Date().toISOString(),
+        
+        // Status - submit for admin review (NOT approved yet)
+        submissionStatus: 'approval_pending',
+        stepCompleted: 4,
+        submittedForReviewAt: new Date().toISOString()
+      };
+
+      // Create the new website entry for the claiming user
+      const newOwnerWebsite = await strapi.entityService.create('api::publisher-website.publisher-website', {
+        data: newOwnerWebsiteData
+      });
+
+      console.log('✅ New website entry created for claiming user:', newOwnerWebsite.id);
+
+      // STEP 2: Update the ORIGINAL website to show "Ownership Transferred" status
+      // This keeps the original publisher's data intact but marks it as transferred
+      await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+        data: {
+          submissionStatus: 'ownership_transferred',
+          ownershipTransferredAt: new Date().toISOString(),
+          ownershipTransferReason: 'claimed_by_owner',
+          claimedBy: user.id,
+          claimedAt: new Date().toISOString(),
+          newOwnerWebsiteId: newOwnerWebsite.id, // Link to new owner's entry
+          
+          // Set relations correctly - original publisher becomes the "original"
+          originalPublisherId: existingWebsite.currentPublisherId || existingWebsite.publisherEmail,
+          currentPublisherId: user.id, // New owner becomes current
+          
+          // Keep ALL original data intact - just change status
+          // Original publisher can still see all their historical data
+        }
+      });
+
+      console.log('✅ Original website marked as ownership transferred');
+
+      // Note: Marketplace delisting will be handled automatically by the lifecycle hook
+      // when the new owner's website gets approved
+
       return ctx.send({
         success: true,
-        message: 'Ownership claim flow started. Please complete GSC verification.',
-        data: { websiteId: id, canProceedToClaim: true }
+        message: 'Ownership claimed successfully! Your website has been submitted for review.',
+        data: { 
+          newWebsiteId: newOwnerWebsite.id,
+          originalWebsiteId: existingWebsite.id,
+          claimedWebsite: newOwnerWebsite
+        }
       });
 
     } catch (error) {
@@ -765,6 +835,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       return ctx.internalServerError('Failed to process ownership claim');
     }
   },
+
+
 
   /**
    * Check if a domain can be claimed (public endpoint)
@@ -781,15 +853,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Clean the domain
       const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
-      // Find website by URL
-      const websites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
+      // Find all websites by URL
+      const allWebsites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
         filters: {
           url: cleanDomain
         },
-        fields: ['id', 'url', 'publisherEmail', 'publisherName', 'addedByReseller', 'submissionStatus']
+        fields: ['id', 'url', 'publisherEmail', 'publisherName', 'addedByReseller', 'submissionStatus', 'verificationMethod', 'gscVerified']
       });
 
-      if (!websites || websites.length === 0) {
+      if (!allWebsites || allWebsites.length === 0) {
         return ctx.send({
           exists: false,
           claimable: false,
@@ -797,18 +869,47 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
       }
 
-      const website = websites[0];
+      console.log('🔍 [checkClaimable] Found websites for', cleanDomain, ':', allWebsites.map(w => ({
+        id: w.id,
+        status: w.submissionStatus,
+        verificationMethod: w.verificationMethod,
+        publisherEmail: w.publisherEmail
+      })));
+
+      // Prioritize active websites over ownership_transferred ones
+      const activeWebsites = allWebsites.filter(w => w.submissionStatus !== 'ownership_transferred');
+      const website = activeWebsites.length > 0 ? activeWebsites[0] : allWebsites[0];
+      
+      console.log('🎯 [checkClaimable] Selected website:', {
+        id: website.id,
+        status: website.submissionStatus,
+        verificationMethod: website.verificationMethod,
+        isActive: activeWebsites.length > 0
+      });
+      
+      console.log('🔍 [checkClaimable] Website found:', {
+        id: website.id,
+        url: website.url,
+        publisherEmail: website.publisherEmail,
+        submissionStatus: website.submissionStatus,
+        verificationMethod: website.verificationMethod
+      });
+      
+      // Simple logic: If verification method is Google Search Console, don't allow claiming
+      const isGSCVerified = website.verificationMethod === 'google-search-console';
+      
+      console.log('🔍 [checkClaimable] GSC verified:', isGSCVerified);
       
       return ctx.send({
         exists: true,
-        claimable: true, // Any existing website can potentially be claimed
-        addedByReseller: website.addedByReseller || false,
+        claimable: !isGSCVerified, // Can only claim if NOT verified via GSC
+        isGSCVerified: isGSCVerified,
         currentStatus: website.submissionStatus,
         data: {
           id: website.id,
           url: website.url,
-          publisherName: website.publisherName, // Show publisher name for transparency
-          addedByReseller: website.addedByReseller
+          publisherName: website.publisherName,
+          verificationMethod: website.verificationMethod
         }
       });
 

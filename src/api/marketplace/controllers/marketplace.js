@@ -254,10 +254,10 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Publishers see their own listings (all statuses)
       ctx.query.filters.publisher_email = user.email;
     } else {
-      // Advertisers and public users only see active listings (hide paused listings)
-      // Only show marketplace listings that have proper status and are not paused
+      // Advertisers and public users only see active listings (hide paused/delisted listings)
+      // Only show marketplace listings that have proper status and are not paused or delisted
       ctx.query.filters.$and = [
-        // Must have proper marketplace status (active or legacy null/empty)
+        // Must have proper marketplace status (active or legacy null/empty) - exclude delisted
         {
           $or: [
             { status: 'active' },
@@ -274,6 +274,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           ]
         }
       ];
+      
+      console.log('🔍 Marketplace filters for public/advertisers:', JSON.stringify(ctx.query.filters, null, 2));
     }
     
     
