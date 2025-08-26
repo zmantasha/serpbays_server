@@ -854,6 +854,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    delistedAt: Schema.Attribute.DateTime;
+    delistedReason: Schema.Attribute.Enumeration<
+      ['ownership_transferred', 'admin_action', 'violation', 'other']
+    >;
     digital_pr: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     dofollow_link: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -1051,7 +1055,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
       >;
     sponsored: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     status: Schema.Attribute.Enumeration<
-      ['active', 'paused', 'draft', 'rejected']
+      ['active', 'paused', 'draft', 'rejected', 'delisted']
     > &
       Schema.Attribute.DefaultTo<'active'>;
     tat: Schema.Attribute.Integer;

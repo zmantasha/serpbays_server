@@ -242,7 +242,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           orderData.websitePublisherName = marketplace.publisher_name;
           orderData.websitePublisherEmail = marketplace.publisher_email;
           orderData.websitePublisherPrice = marketplace.publisher_price;
-          orderData.websiteTat = marketplace.tat;
+          orderData.websiteTat = marketplace.tat * 24; // Convert days to hours for frontend calculation
           orderData.websiteDofollowLink = marketplace.dofollow_link;
           orderData.websiteFastPlacement = marketplace.fast_placement_status;
           orderData.websiteAhrefsDr = marketplace.ahrefs_dr;
@@ -675,42 +675,22 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Include only orders where user is advertiser
           baseFilters.advertiser = user.id;
         } else if (type === 'publisher') {
-          // Include only orders where user is publisher OR for websites they own
-          // but exclude orders they placed as advertiser
-          baseFilters.$or = [];
-          baseFilters.$or.push({ publisher: user.id });
-          
-          // Also include orders for websites owned by this publisher
-          const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
-            where: { publisher_email: user.email }
-          });
-          
-          if (publisherWebsites && publisherWebsites.length > 0) {
-            const websiteIds = publisherWebsites.map(website => website.id);
-            baseFilters.$or.push({ 
-              website: { id: { $in: websiteIds } }
-            });
-          }
+          // ONLY include orders where user is directly assigned as publisher
+          // This ensures orders stay with the publisher who accepted them,
+          // even after website ownership transfers
+          baseFilters.publisher = user.id;
           
           // Exclude orders where user is the advertiser (to prevent self-acceptance)
           baseFilters.advertiser = { $ne: user.id };
+          
+          console.log(`[Order Filter] Publisher ${user.id} - filtering by publisher field only`);
         } else if (type === 'all') {
-          // Include orders where user is advertiser OR publisher
+          // Include orders where user is advertiser OR publisher (direct relationships only)
           baseFilters.$or = [];
           baseFilters.$or.push({ advertiser: user.id });
           baseFilters.$or.push({ publisher: user.id });
           
-          // Also include orders for websites owned by this publisher
-          const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
-            where: { publisher_email: user.email }
-          });
-          
-          if (publisherWebsites && publisherWebsites.length > 0) {
-            const websiteIds = publisherWebsites.map(website => website.id);
-            baseFilters.$or.push({ 
-              website: { id: { $in: websiteIds } }
-            });
-          }
+          console.log(`[Order Filter] User ${user.id} - filtering by direct relationships only`);
         }
 
         // Add search filters
@@ -847,9 +827,37 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         // Get publisher's websites by matching the email
+        // For available orders, we ONLY want active websites they currently own
+        // Historical orders are handled via the publisher field, not marketplace ownership
         const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
-          where: { publisher_email: user.email }
+          where: { 
+            publisher_email: user.email,
+            status: 'active' // Only active websites for new available orders
+          }
         });
+
+        console.log(`[Available Orders] User ${user.id} (${user.email}) found ${publisherWebsites.length} websites:`);
+        publisherWebsites.forEach(website => {
+          console.log(`  - Website ${website.id}: ${website.url} (status: ${website.status}, delisted reason: ${website.delistedReason || 'N/A'})`);
+        });
+        
+        // Debug: Check what orders exist for wordscloud.in
+        if (publisherWebsites.some(w => w.url === 'wordscloud.in')) {
+          const wordscloudinSite = publisherWebsites.find(w => w.url === 'wordscloud.in');
+          console.log(`[Debug] Checking orders for wordscloud.in (website ID: ${wordscloudinSite.id})`);
+          
+          const allOrdersForSite = await strapi.entityService.findMany('api::order.order', {
+            filters: {
+              website: { id: wordscloudinSite.id }
+            },
+            populate: ['website', 'advertiser', 'publisher']
+          });
+          
+          console.log(`[Debug] Found ${allOrdersForSite.length} total orders for wordscloud.in:`);
+          allOrdersForSite.forEach(order => {
+            console.log(`  - Order ${order.id}: Status=${order.orderStatus}, Publisher=${order.publisher?.id || 'null'}, Date=${order.orderDate}, Advertiser=${order.advertiser?.id}`);
+          });
+        }
 
         let orders = [];
 
@@ -865,21 +873,73 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Get website IDs
         const websiteIds = publisherWebsites.map(website => website.id);
+        console.log(`[Available Orders] Looking for orders in websites: [${websiteIds.join(', ')}]`);
 
-        // Find pending orders only for publisher's websites
-        // Publishers should not see orders they placed as advertisers
-        orders = await strapi.entityService.findMany('api::order.order', {
+        // Get orders for currently owned websites
+        let currentWebsiteOrders = [];
+        if (websiteIds.length > 0) {
+          currentWebsiteOrders = await strapi.entityService.findMany('api::order.order', {
             filters: {
               website: { id: { $in: websiteIds } },
-                orderStatus: 'pending',
-            publisher: null, // No publisher assigned yet
-            advertiser: { id: { $ne: user.id } } // Exclude orders placed by this user as advertiser
-              },
+              orderStatus: 'pending',
+              publisher: null, // No publisher assigned yet
+              advertiser: { id: { $ne: user.id } } // Exclude orders placed by this user as advertiser
+            },
             populate: ['website', 'advertiser', 'outsourcedContent'],
             sort: { orderDate: 'desc' }
           });
+        }
+
+        // ALSO get orders for websites that were transferred FROM this user
+        // These are orders that were already visible to them before the transfer
+        const transferredWebsites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+          where: {
+            publisherEmail: user.email,
+            submissionStatus: 'ownership_transferred'
+          }
+        });
+        
+        console.log(`[Debug] User ${user.email} has ${transferredWebsites.length} transferred websites`);
+
+        let historicalOrders = [];
+        if (transferredWebsites.length > 0) {
+          console.log(`[Available Orders] Found ${transferredWebsites.length} transferred websites for user ${user.id}`);
           
-        console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (excluding own orders)`);
+          for (const transferredWebsite of transferredWebsites) {
+            // Find the current marketplace listing for this URL
+            const currentMarketplaceListing = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { url: transferredWebsite.url, status: 'active' }
+            });
+            
+            if (currentMarketplaceListing && transferredWebsite.ownershipTransferredAt) {
+              // Get pending orders placed BEFORE the transfer date
+              const preTransferOrders = await strapi.entityService.findMany('api::order.order', {
+                filters: {
+                  website: { id: currentMarketplaceListing.id },
+                  orderStatus: 'pending',
+                  publisher: null,
+                  orderDate: { $lt: transferredWebsite.ownershipTransferredAt },
+                  advertiser: { id: { $ne: user.id } }
+                },
+                populate: ['website', 'advertiser', 'outsourcedContent'],
+                sort: { orderDate: 'desc' }
+              });
+              
+              console.log(`[Available Orders] Found ${preTransferOrders.length} pre-transfer orders for ${transferredWebsite.url}`);
+              historicalOrders = historicalOrders.concat(preTransferOrders);
+            }
+          }
+        }
+
+        // Combine current and historical orders
+        const combinedOrders = [...currentWebsiteOrders, ...historicalOrders];
+        
+        // Remove duplicates (in case of any overlap)
+        orders = combinedOrders.filter((order, index, self) => 
+          index === self.findIndex(o => o.id === order.id)
+        );
+          
+        console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (${currentWebsiteOrders.length} current + ${historicalOrders.length} historical)`);
         
         // Log all order IDs for debugging
         console.log('Available order IDs:', orders.map(order => order.id).join(', '));
@@ -1162,16 +1222,28 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           } 
           // Special case: Check if the website belongs to this user
           else if (order.website && order.website.id) {
-            const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-              where: { id: order.website.id, publisher_email: user.email }
-            });
+                      // Check if user is the current website owner for NEW orders only
+          // For historical orders, only the originally assigned publisher can deliver
+          const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: order.website.id, publisher_email: user.email }
+          });
             
-            if (isWebsiteOwner) {
-              console.log('User owns this website. Fixing publisher association...');
+          if (isWebsiteOwner) {
+            // Only allow website owner to take over if this is a very recent order (within 24 hours)
+            // This prevents ownership transfers from stealing old orders
+            const orderAge = new Date() - new Date(order.orderDate);
+            const maxAgeForOwnerTakeover = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+            
+            if (orderAge <= maxAgeForOwnerTakeover) {
+              console.log('User owns this website and order is recent. Allowing publisher association...');
               publisherNeedsUpdate = true;
             } else {
-              return ctx.forbidden('You do not have permission to update this order. You are neither the publisher nor the website owner.');
+              console.log(`Order is too old (${Math.round(orderAge / (1000 * 60 * 60))} hours) for automatic publisher assignment.`);
+              return ctx.forbidden('This order was placed before your ownership. Only the originally assigned publisher can deliver it.');
             }
+          } else {
+            return ctx.forbidden('You do not have permission to update this order. You are neither the publisher nor the website owner.');
+          }
           } else {
             return ctx.forbidden('You do not have permission to update this order. Publisher ID does not match your user ID.');
           }

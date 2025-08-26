@@ -65,7 +65,7 @@ async function handlePaidWithdrawal(result) {
           let escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
             where: {
               users_permissions_user: withdrawalRequest.publisher.id,
-              type: 'escrow_hold',
+              type: 'withdrawal',
               transactionStatus: 'pending',
               description: { $contains: `Withdrawal request #${result.id}` }
             }
@@ -77,7 +77,7 @@ async function handlePaidWithdrawal(result) {
             escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
               where: {
                 users_permissions_user: withdrawalRequest.publisher.id,
-                type: 'escrow_hold',
+                type: 'withdrawal',
                 description: { $contains: `Withdrawal request #${result.id}` }
               },
               orderBy: { id: 'desc' }
@@ -90,7 +90,7 @@ async function handlePaidWithdrawal(result) {
             escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
               where: {
                 users_permissions_user: withdrawalRequest.publisher.id,
-                type: 'escrow_hold',
+                type: 'withdrawal',
                 amount: withdrawalRequest.amount
               },
               orderBy: { id: 'desc' }
@@ -205,7 +205,7 @@ async function handleDeniedWithdrawal(result) {
       let escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: {
           users_permissions_user: withdrawalRequest.publisher.id,
-          type: 'escrow_hold',
+          type: 'withdrawal',
           description: { $contains: `Withdrawal request #${result.id}` }
         },
         orderBy: { id: 'desc' }
@@ -216,7 +216,7 @@ async function handleDeniedWithdrawal(result) {
         escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
           where: {
             users_permissions_user: withdrawalRequest.publisher.id,
-            type: 'escrow_hold',
+            type: 'withdrawal',
             amount: withdrawalRequest.amount
           },
           orderBy: { id: 'desc' }
@@ -305,7 +305,7 @@ async function handleApprovedWithdrawal(result) {
     let escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
       where: {
         users_permissions_user: withdrawalRequest.publisher.id,
-        type: 'escrow_hold',
+        type: 'withdrawal',
         description: { $contains: `Withdrawal request #${result.id}` }
       },
       orderBy: { id: 'desc' }

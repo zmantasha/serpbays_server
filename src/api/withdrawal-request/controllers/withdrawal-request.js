@@ -218,7 +218,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Create a transaction record for the withdrawal request with unique ID
       const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
         data: {
-          type: 'escrow_hold',
+          type: 'withdrawal',
           amount: requestAmount,
           netAmount: requestAmount,
           fee: 0,
@@ -489,7 +489,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: {
           users_permissions_user: withdrawalRequest.publisher.id,
-          type: 'escrow_hold',
+          type: 'withdrawal',
           transactionStatus: 'pending',
           description: { $contains: 'Withdrawal request' }
         }
@@ -668,7 +668,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: {
           users_permissions_user: withdrawalRequest.publisher.id,
-          type: 'escrow_hold',
+          type: 'withdrawal',
           transactionStatus: 'pending',
           description: { $contains: 'Withdrawal request' }
         }

@@ -302,10 +302,25 @@
         "active",
         "paused",
         "draft",
-        "rejected"
+        "rejected",
+        "delisted"
       ],
       "default": "active",
       "description": "Current status of the marketplace listing"
+    },
+    "delistedReason": {
+      "type": "enumeration",
+      "enum": [
+        "ownership_transferred",
+        "admin_action",
+        "violation",
+        "other"
+      ],
+      "description": "Reason why the listing was delisted"
+    },
+    "delistedAt": {
+      "type": "datetime",
+      "description": "When the listing was delisted"
     }
   }
 }
