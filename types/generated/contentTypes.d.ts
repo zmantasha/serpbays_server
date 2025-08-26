@@ -1704,6 +1704,7 @@ export interface ApiPublisherWebsitePublisherWebsite
         'rejected',
         'approved',
         'listing_paused',
+        'ownership_claimed',
         'ownership_transferred',
       ]
     > &

@@ -774,7 +774,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         ownershipTransferReason: 'claimed_by_owner',
         
         // Set publisher relations correctly for new owner
-        originalPublisherId: existingWebsite.currentPublisherId || existingWebsite.publisherEmail,
+        originalPublisherId: existingWebsite.currentPublisherId || null,
         currentPublisherId: user.id,
         
         // Verification details - must be GSC for claims
@@ -799,15 +799,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // This keeps the original publisher's data intact but marks it as transferred
       await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
-          submissionStatus: 'ownership_transferred',
-          ownershipTransferredAt: new Date().toISOString(),
-          ownershipTransferReason: 'claimed_by_owner',
+          submissionStatus: 'ownership_claimed',
+          // ownershipTransferredAt: new Date().toISOString(),
+          // ownershipTransferReason: 'claimed_by_owner',
           claimedBy: user.id,
           claimedAt: new Date().toISOString(),
           newOwnerWebsiteId: newOwnerWebsite.id, // Link to new owner's entry
           
-          // Set relations correctly - original publisher becomes the "original"
-          originalPublisherId: existingWebsite.currentPublisherId || existingWebsite.publisherEmail,
+          // Set relations correctly - find the original publisher's user ID
+          originalPublisherId: existingWebsite.currentPublisherId || null,
           currentPublisherId: user.id, // New owner becomes current
           
           // Keep ALL original data intact - just change status

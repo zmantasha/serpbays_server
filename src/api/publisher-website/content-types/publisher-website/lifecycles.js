@@ -29,21 +29,22 @@ module.exports = {
         console.error('❌ Failed to create marketplace listing:', marketplaceError);
       }
       
-      // STEP 2: Find all other approved websites with the same URL and transfer ownership
-      const otherApprovedWebsites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+      // STEP 2: Find all other websites with the same URL that need ownership transfer
+      // This includes both 'approved' and 'ownership_claimed' websites
+      const otherWebsitesToTransfer = await strapi.db.query('api::publisher-website.publisher-website').findMany({
         where: {
           url: updatedWebsiteUrl,
-          submissionStatus: 'approved',
+          submissionStatus: { $in: ['approved', 'ownership_claimed'] }, // Include both statuses
           id: { $ne: updatedWebsiteId } // Exclude the currently approved website
-        },
-        populate: ['marketplaceId'] // Populate marketplaceId to delist
+        }
+        // Removed populate to avoid relation issues
       });
       
-      if (otherApprovedWebsites.length > 0) {
-        console.log(`🔄 Found ${otherApprovedWebsites.length} other approved websites with URL ${updatedWebsiteUrl}.`);
+      if (otherWebsitesToTransfer.length > 0) {
+        console.log(`🔄 Found ${otherWebsitesToTransfer.length} other websites (approved/ownership_claimed) with URL ${updatedWebsiteUrl}.`);
         
-        for (const oldWebsite of otherApprovedWebsites) {
-          console.log(`🔄 Transferring ownership for old website ${oldWebsite.id} (${oldWebsite.url}).`);
+        for (const oldWebsite of otherWebsitesToTransfer) {
+          console.log(`🔄 Transferring ownership for old website ${oldWebsite.id} (${oldWebsite.url}) - Status: ${oldWebsite.submissionStatus} → ownership_transferred`);
           
           // Update the old website to 'ownership_transferred'
           await strapi.entityService.update('api::publisher-website.publisher-website', oldWebsite.id, {
@@ -59,14 +60,26 @@ module.exports = {
           
           // Delist from marketplace if it had an entry
           if (oldWebsite.marketplaceId) {
-            await strapi.entityService.update('api::marketplace.marketplace', oldWebsite.marketplaceId.id, {
-              data: {
-                status: 'delisted',
-                delistedReason: 'ownership_transferred',
-                delistedAt: new Date().toISOString()
+            try {
+              // Fetch the marketplace entry separately to avoid relation issues
+              const marketplaceEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
+                where: { id: oldWebsite.marketplaceId }
+              });
+              
+              if (marketplaceEntry) {
+                await strapi.entityService.update('api::marketplace.marketplace', oldWebsite.marketplaceId, {
+                  data: {
+                    status: 'delisted',
+                    delistedReason: 'ownership_transferred',
+                    delistedAt: new Date().toISOString()
+                  }
+                });
+                console.log(`📤 Marketplace listing ${oldWebsite.marketplaceId} delisted.`);
               }
-            });
-            console.log(`📤 Marketplace listing ${oldWebsite.marketplaceId.id} delisted.`);
+            } catch (marketplaceError) {
+              console.error(`⚠️ Failed to delist marketplace entry ${oldWebsite.marketplaceId}:`, marketplaceError);
+              // Don't fail the whole operation if marketplace delisting fails
+            }
           }
         }
       }

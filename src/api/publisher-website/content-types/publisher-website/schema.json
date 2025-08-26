@@ -261,6 +261,7 @@
         "rejected",
         "approved",
         "listing_paused",
+        "ownership_claimed",
         "ownership_transferred"
       ],
       "default": "pending_verification",
