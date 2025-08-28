@@ -58,10 +58,10 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
         limit: parseInt(pageSize),
         populate: {
           advertiser: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName']
+            fields: ['id', 'username', 'email', 'firstName', 'lastName']
           },
           publisher: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName']
+            fields: ['id', 'username', 'email', 'firstName', 'lastName']
           }
         }
       });
@@ -97,10 +97,10 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       const order = await strapi.entityService.findOne('api::order.order', id, {
         populate: {
           advertiser: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
+            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
           },
           publisher: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
+            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
           },
           communications: {
             populate: ['sender'],
