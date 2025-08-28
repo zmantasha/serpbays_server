@@ -107,25 +107,6 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
             escrowBalance: newEscrowBalance
           }
         });
-
-        // Create transaction record for advertiser showing escrow hold
-        const escrowTransaction = await strapi.entityService.create('api::transaction.transaction', {
-          data: {
-            type: 'escrow_hold',
-            amount: escrowHeld,
-            netAmount: escrowHeld,
-            transactionStatus: 'success',
-            gateway: 'system',
-            gatewayTransactionId: `escrow_${order.id}_${Date.now()}`,
-            description: `Escrow hold for order #${order.id} - Funds held until order completion`,
-            user_wallet: currentWallet.id,
-            users_permissions_user: user.id,
-            order: order.id,
-            publishedAt: new Date()
-          }
-        });
-
-        console.log(`[ORDER CREATE] Created escrow transaction ${escrowTransaction.id} for order ${order.id}`);
         
         console.log("current",currentWallet)
         // Verify the update worked
@@ -516,25 +497,15 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         // If no publisher assigned, check if current user can be assigned
         let canDeliver = false;
         
-        // If the order is for a website owned by this user (only for recent orders)
+        // If the order is for a website owned by this user
         if (order.website && order.website.id) {
           const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { id: order.website.id, publisher_email: user.email }
           });
           
           if (isWebsiteOwner) {
-            // Only allow website owner to take over if this is a very recent order (within 24 hours)
-            // This prevents ownership transfers from stealing old orders
-            const orderAge = new Date() - new Date(order.orderDate);
-            const maxAgeForOwnerTakeover = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-            
-            if (orderAge <= maxAgeForOwnerTakeover) {
-              console.log('User owns this website and order is recent. Allowing publisher assignment.');
-              canDeliver = true;
-            } else {
-              console.log(`Order is too old (${Math.round(orderAge / (1000 * 60 * 60))} hours) for automatic publisher takeover.`);
-              // Don't set canDeliver = true for old orders
-            }
+            console.log('User owns this website. Assigning as publisher.');
+            canDeliver = true;
           }
         }
         

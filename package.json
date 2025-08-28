@@ -16,7 +16,8 @@
     "upgrade": "npx @strapi/upgrade latest",
     "upgrade:dry": "npx @strapi/upgrade latest --dry",
     "email:setup": "node ./scripts/quick-enable-email.js",
-    "email:test": "node ./scripts/test-email.js"
+    "email:test": "node ./scripts/test-email.js",
+    "admin:setup": "node ./scripts/create-admin-user.js"
   },
   "dependencies": {
     "@paypal/checkout-server-sdk": "^1.0.3",

@@ -31,4 +31,6 @@ module.exports = [
   'strapi::session',
   'strapi::favicon',
   'strapi::public',
+  // Custom admin middleware
+  'global::admin-logger',
 ];

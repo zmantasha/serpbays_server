@@ -2,20 +2,20 @@
 
 module.exports = ({ strapi }) => {
   // Initialize Socket.IO
-  const io = require('socket.io')(strapi.server.httpServer, {
-    cors: {
-      origin: [
-        process.env.CLIENT_URL || 'http://localhost:3000',
-        'https://staging.serpbays.com',
-        'https://serpbays.com',
-        'https://cms.serpbays.com'
-      ],
-      methods: ['GET', 'POST'],
-      allowedHeaders: ['Authorization'],
-      credentials: true
-    },
-    transports: ['websocket']
-  });
+const io = require('socket.io')(strapi.server.httpServer, {
+  path: '/socket.io',
+  // DO NOT force ['websocket']; allow default (websocket+polling)
+  cors: {
+    origin: [
+      process.env.CLIENT_URL || 'http://localhost:3000',
+      'https://staging.serpbays.com',
+      'https://serpbays.com',
+      'https://cms.serpbays.com'
+    ],
+    methods: ['GET','POST'],
+    credentials: true
+  }
+});
 
   // Store connected users
   const connectedUsers = new Map();
