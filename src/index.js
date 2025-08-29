@@ -22,6 +22,25 @@ module.exports = {
     // Initialize WebSocket after Strapi is ready
     await websocketBootstrap({ strapi });
 
+    // Register admin routes
+    const adminRoutes = [
+      require('./api/admin/routes/admin'),
+      require('./api/admin/routes/users'),
+      require('./api/admin/routes/orders'),
+      require('./api/admin/routes/transactions'),
+      require('./api/admin/routes/communications'),
+      require('./api/admin/routes/websites'),
+      require('./api/admin/routes/marketplace')
+    ];
+
+    adminRoutes.forEach(routeConfig => {
+      if (routeConfig.routes) {
+        routeConfig.routes.forEach(route => {
+          strapi.server.routes(route);
+        });
+      }
+    });
+
     // Add request debugging middleware
     strapi.server.use(async (ctx, next) => {
       // Log the request details for debugging

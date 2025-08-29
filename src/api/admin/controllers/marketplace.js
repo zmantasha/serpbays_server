@@ -9,42 +9,33 @@ const { createCoreController } = require('@strapi/strapi').factories;
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
 
   /**
-   * Get all marketplace websites with pagination and filters for admin panel
+   * Get marketplace websites with pagination and filtering
    */
   async find(ctx) {
     try {
-      const { 
-        page = 1, 
-        pageSize = 20, 
-        sort = 'createdAt:desc',
-        search = '',
-        category = '',
-        status = ''
-      } = ctx.query;
+      const { page = 1, pageSize = 20, search, categoryFilter, statusFilter } = ctx.query;
 
       // Build filters
       const filters = {};
       
-      // Search filter
       if (search) {
         filters.$or = [
-          { domain: { $containsi: search } },
-          { title: { $containsi: search } },
-          { description: { $containsi: search } }
+          { url: { $containsi: search } },
+          { publisher_name: { $containsi: search } },
+          { publisher_email: { $containsi: search } }
         ];
       }
 
-      // Category filter
-      if (category) {
-        filters.category = category;
+      if (categoryFilter) {
+        filters.category = categoryFilter;
       }
 
-      // Status filter (using publishedAt as status indicator)
-      if (status === 'active') {
-        filters.publishedAt = { $notNull: true };
-      } else if (status === 'inactive') {
-        filters.publishedAt = { $null: true };
+      if (statusFilter) {
+        filters.status = statusFilter;
       }
+
+      // Sort options
+      const sort = { createdAt: 'desc' };
 
       // Get marketplace websites with pagination
       const websites = await strapi.entityService.findMany('api::marketplace.marketplace', {
@@ -59,40 +50,77 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Get total count for pagination
       const total = await strapi.db.query('api::marketplace.marketplace').count({ where: filters });
 
-      // Transform data for admin panel
-      const transformedWebsites = websites.map(website => ({
-        id: website.id,
-        domain: website.domain,
-        title: website.title || website.domain,
-        category: website.category,
-        subcategory: website.subcategory,
-        metrics: {
-          da: website.domainAuthority,
-          dr: website.domainRating,
-          traffic: website.monthlyTraffic,
-          backlinks: website.backlinks,
-          organicKeywords: website.organicKeywords,
-          pageSpeed: website.pageSpeed,
-          mobileFriendly: website.mobileFriendly,
-          ssl: website.sslCertificate
-        },
-        content: {
-          language: website.language,
-          country: website.country,
-          updateFrequency: website.contentUpdateFrequency,
-          contentType: website.contentType,
-          topics: website.topics ? website.topics.split(',').map(t => t.trim()) : []
-        },
-        financial: {
-          price: parseFloat(website.price || 0),
-          currency: website.currency || 'USD',
-          commission: parseFloat(website.commission || 0),
-          netAmount: parseFloat(website.price || 0) - parseFloat(website.commission || 0)
-        },
-        status: website.publishedAt ? 'Active' : 'Inactive',
-        approvalDate: website.publishedAt,
-        lastUpdated: website.updatedAt,
-        createdAt: website.createdAt
+      // Transform data for admin panel with real order counts
+      const transformedWebsites = await Promise.all(websites.map(async (website) => {
+        // Get orders for this website
+        const orders = await strapi.db.query('api::order.order').findMany({
+          where: { website: website.id }
+        });
+        
+        // Calculate order counts for this website
+        const totalOrders = orders.length;
+        
+        // Calculate last month orders
+        const lastMonth = new Date();
+        lastMonth.setMonth(lastMonth.getMonth() - 1);
+        const lastMonthOrders = orders.filter(order => {
+          const orderDate = new Date(order.createdAt);
+          return orderDate >= lastMonth;
+        }).length;
+
+        console.log(`[DEBUG] Website ${website.id} (${website.url}): totalOrders=${totalOrders}, lastMonthOrders=${lastMonthOrders}`);
+
+        return {
+          id: website.id,
+          domain: website.url,
+          title: website.publisher_name || website.url,
+          category: website.category,
+          subcategory: website.subcategory,
+          metrics: {
+            da: website.moz_da,
+            dr: website.ahrefs_dr,
+            traffic: website.ahrefs_traffic,
+            backlinks: website.ahrefs_rank,
+            organicKeywords: website.semrush_authority_score,
+            pageSpeed: website.placement_speed,
+            mobileFriendly: website.fast_placement_status,
+            ssl: true // Default to true since there's no SSL field in schema
+          },
+          content: {
+            language: 'English', // Default since not in schema
+            country: 'United States', // Default since not in schema
+            updateFrequency: website.placement_speed || 'Normal',
+            contentType: 'Blog Articles', // Default since not in schema
+            topics: [] // Default since not in schema
+          },
+          financial: {
+            price: parseFloat(website.price || 0),
+            currency: 'USD', // Default since not in schema
+            commission: parseFloat(website.publisher_price || 0),
+            netAmount: parseFloat(website.price || 0) - parseFloat(website.publisher_price || 0)
+          },
+          publisher: {
+            name: website.publisher_name || 'Unknown Publisher',
+            email: website.publisher_email || 'N/A',
+            phone: '', // Default since not in schema
+            rating: 4.5, // Default rating since not in schema
+            completedOrders: totalOrders, // Real order count
+            joinDate: website.createdAt,
+            specialization: 'General' // Default since not in schema
+          },
+          performance: {
+            lastMonthOrders: lastMonthOrders, // Real last month orders
+            totalOrders: totalOrders, // Real total orders
+            averageRating: 4.5, // Default since not in schema
+            completionRate: 100, // Default since not in schema
+            responseTime: '24h', // Default since not in schema
+            revenue: 0 // Default since not in schema
+          },
+          status: website.publishedAt ? 'Active' : 'Inactive',
+          approvalDate: website.publishedAt,
+          lastUpdated: website.updatedAt,
+          createdAt: website.createdAt
+        };
       }));
 
       ctx.send({
@@ -126,23 +154,41 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         return ctx.notFound('Marketplace website not found');
       }
 
+      // Get orders for this website
+      const orders = await strapi.db.query('api::order.order').findMany({
+        where: { website: website.id }
+      });
+      
+      // Calculate order counts for this website
+      const totalOrders = orders.length;
+      
+      // Calculate last month orders
+      const lastMonth = new Date();
+      lastMonth.setMonth(lastMonth.getMonth() - 1);
+      const lastMonthOrders = orders.filter(order => {
+        const orderDate = new Date(order.createdAt);
+        return orderDate >= lastMonth;
+      }).length;
+
+      console.log(`[DEBUG] Website ${website.id} (${website.url}): totalOrders=${totalOrders}, lastMonthOrders=${lastMonthOrders}`);
+
       // Transform data for admin panel
       const transformedWebsite = {
         id: website.id,
-        domain: website.domain,
-        title: website.title || website.domain,
+        domain: website.url,
+        title: website.publisher_name || website.url,
         description: website.description,
         category: website.category,
         subcategory: website.subcategory,
         metrics: {
-          da: website.domainAuthority,
-          dr: website.domainRating,
-          traffic: website.monthlyTraffic,
-          backlinks: website.backlinks,
-          organicKeywords: website.organicKeywords,
-          pageSpeed: website.pageSpeed,
-          mobileFriendly: website.mobileFriendly,
-          ssl: website.sslCertificate,
+          da: website.moz_da,
+          dr: website.ahrefs_dr,
+          traffic: website.ahrefs_traffic,
+          backlinks: website.ahrefs_rank,
+          organicKeywords: website.semrush_authority_score,
+          pageSpeed: website.placement_speed,
+          mobileFriendly: website.fast_placement_status,
+          ssl: true, // Default to true since there's no SSL field in schema
           socialMedia: {
             twitter: website.twitterHandle,
             linkedin: website.linkedinProfile,
@@ -150,29 +196,48 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           }
         },
         content: {
-          language: website.language,
-          country: website.country,
-          updateFrequency: website.contentUpdateFrequency,
-          contentType: website.contentType,
-          topics: website.topics ? website.topics.split(',').map(t => t.trim()) : [],
-          targetAudience: website.targetAudience
+          language: 'English', // Default since not in schema
+          country: 'United States', // Default since not in schema
+          updateFrequency: website.placement_speed || 'Normal',
+          contentType: 'Blog Articles', // Default since not in schema
+          topics: [], // Default since not in schema
+          targetAudience: 'General' // Default since not in schema
+        },
+        publisher: {
+          name: website.publisher_name || 'Unknown Publisher',
+          email: website.publisher_email || 'N/A',
+          phone: '', // Default since not in schema
+          rating: 4.5, // Default rating since not in schema
+          completedOrders: totalOrders, // Real order count
+          joinDate: website.createdAt,
+          specialization: 'General' // Default since not in schema
+        },
+        performance: {
+          lastMonthOrders: lastMonthOrders, // Real last month orders
+          totalOrders: totalOrders, // Real total orders
+          averageRating: 4.5, // Default since not in schema
+          completionRate: 100, // Default since not in schema
+          responseTime: '24h', // Default since not in schema
+          revenue: 0 // Default since not in schema
         },
         financial: {
           price: parseFloat(website.price || 0),
-          currency: website.currency || 'USD',
-          commission: parseFloat(website.commission || 0),
-          netAmount: parseFloat(website.price || 0) - parseFloat(website.commission || 0)
+          currency: 'USD', // Default since not in schema
+          commission: parseFloat(website.publisher_price || 0),
+          netAmount: parseFloat(website.price || 0) - parseFloat(website.publisher_price || 0)
         },
         contact: {
-          email: website.contactEmail,
-          phone: website.contactPhone,
-          website: website.contactWebsite
+          email: website.publisher_email,
+          phone: '', // Default since not in schema
+          website: website.url
         },
         status: website.publishedAt ? 'Active' : 'Inactive',
         approvalDate: website.publishedAt,
         lastUpdated: website.updatedAt,
         createdAt: website.createdAt,
-        tat: website.tat || 'Not specified'
+        tat: website.tat || 'Not specified',
+        documents: [], // Default since not in schema
+        notes: [] // Default since not in schema
       };
 
       ctx.send({
@@ -182,6 +247,57 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     } catch (error) {
       console.error('[ADMIN MARKETPLACE FIND ONE ERROR]', error);
       return ctx.internalServerError('Failed to fetch marketplace website details');
+    }
+  },
+
+  /**
+   * Get marketplace statistics for admin dashboard
+   */
+  async getStats(ctx) {
+    try {
+      const total = await strapi.db.query('api::marketplace.marketplace').count();
+      const active = await strapi.db.query('api::marketplace.marketplace').count({
+        where: { publishedAt: { $notNull: true } }
+      });
+      const inactive = await strapi.db.query('api::marketplace.marketplace').count({
+        where: { publishedAt: { $null: true } }
+      });
+
+      // Get category breakdown
+      const categories = await strapi.db.query('api::marketplace.marketplace').findMany({
+        select: ['category']
+      });
+      
+      const categoryBreakdown = {};
+      categories.forEach(website => {
+        const cat = website.category || 'Uncategorized';
+        categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
+      });
+
+      // Calculate average metrics
+      const metricsData = await strapi.db.query('api::marketplace.marketplace').findMany({
+        select: ['moz_da', 'ahrefs_dr', 'price']
+      });
+      
+      const avgDA = metricsData.reduce((sum, w) => sum + (parseFloat(w.moz_da) || 0), 0) / metricsData.length || 0;
+      const avgDR = metricsData.reduce((sum, w) => sum + (parseFloat(w.ahrefs_dr) || 0), 0) / metricsData.length || 0;
+      const avgPrice = metricsData.reduce((sum, w) => sum + (parseFloat(w.price) || 0), 0) / metricsData.length || 0;
+
+      ctx.send({
+        total,
+        active,
+        inactive,
+        categoryBreakdown,
+        averageMetrics: {
+          domainAuthority: Math.round(avgDA * 10) / 10,
+          domainRating: Math.round(avgDR * 10) / 10,
+          price: Math.round(avgPrice * 100) / 100
+        }
+      });
+
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE STATS ERROR]', error);
+      return ctx.internalServerError('Failed to fetch marketplace statistics');
     }
   },
 
@@ -199,35 +315,28 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Transform admin panel data back to Strapi format
       const strapiData = {};
       
-      if (updateData.title) strapiData.title = updateData.title;
+      if (updateData.title) strapiData.publisher_name = updateData.title;
       if (updateData.description) strapiData.description = updateData.description;
       if (updateData.category) strapiData.category = updateData.category;
       if (updateData.subcategory) strapiData.subcategory = updateData.subcategory;
       
       if (updateData.metrics) {
-        if (updateData.metrics.da) strapiData.domainAuthority = updateData.metrics.da;
-        if (updateData.metrics.dr) strapiData.domainRating = updateData.metrics.dr;
-        if (updateData.metrics.traffic) strapiData.monthlyTraffic = updateData.metrics.traffic;
-        if (updateData.metrics.backlinks) strapiData.backlinks = updateData.metrics.backlinks;
-        if (updateData.metrics.organicKeywords) strapiData.organicKeywords = updateData.metrics.organicKeywords;
-        if (updateData.metrics.pageSpeed) strapiData.pageSpeed = updateData.metrics.pageSpeed;
-        if (updateData.metrics.mobileFriendly !== undefined) strapiData.mobileFriendly = updateData.metrics.mobileFriendly;
-        if (updateData.metrics.ssl !== undefined) strapiData.sslCertificate = updateData.metrics.ssl;
+        if (updateData.metrics.da) strapiData.moz_da = updateData.metrics.da;
+        if (updateData.metrics.dr) strapiData.ahrefs_dr = updateData.metrics.dr;
+        if (updateData.metrics.traffic) strapiData.ahrefs_traffic = updateData.metrics.traffic;
+        if (updateData.metrics.backlinks) strapiData.ahrefs_rank = updateData.metrics.backlinks;
+        if (updateData.metrics.organicKeywords) strapiData.semrush_authority_score = updateData.metrics.organicKeywords;
+        if (updateData.metrics.pageSpeed) strapiData.placement_speed = updateData.metrics.pageSpeed;
+        if (updateData.metrics.mobileFriendly !== undefined) strapiData.fast_placement_status = updateData.metrics.mobileFriendly;
       }
       
       if (updateData.content) {
-        if (updateData.content.language) strapiData.language = updateData.content.language;
-        if (updateData.content.country) strapiData.country = updateData.content.country;
-        if (updateData.content.updateFrequency) strapiData.contentUpdateFrequency = updateData.content.updateFrequency;
-        if (updateData.content.contentType) strapiData.contentType = updateData.content.contentType;
-        if (updateData.content.topics) strapiData.topics = updateData.content.topics.join(', ');
-        if (updateData.content.targetAudience) strapiData.targetAudience = updateData.content.targetAudience;
+        if (updateData.content.updateFrequency) strapiData.placement_speed = updateData.content.updateFrequency;
       }
       
       if (updateData.financial) {
         if (updateData.financial.price) strapiData.price = updateData.financial.price;
-        if (updateData.financial.currency) strapiData.currency = updateData.financial.currency;
-        if (updateData.financial.commission) strapiData.commission = updateData.financial.commission;
+        if (updateData.financial.commission) strapiData.publisher_price = updateData.financial.commission;
       }
 
       if (updateData.tat) strapiData.tat = updateData.tat;
@@ -296,57 +405,6 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   },
 
   /**
-   * Get marketplace statistics for admin dashboard
-   */
-  async getStats(ctx) {
-    try {
-      const total = await strapi.db.query('api::marketplace.marketplace').count();
-      const active = await strapi.db.query('api::marketplace.marketplace').count({
-        where: { publishedAt: { $notNull: true } }
-      });
-      const inactive = await strapi.db.query('api::marketplace.marketplace').count({
-        where: { publishedAt: { $null: true } }
-      });
-
-      // Get category breakdown
-      const categories = await strapi.db.query('api::marketplace.marketplace').findMany({
-        select: ['category']
-      });
-      
-      const categoryBreakdown = {};
-      categories.forEach(website => {
-        const cat = website.category || 'Uncategorized';
-        categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
-      });
-
-      // Calculate average metrics
-      const metricsData = await strapi.db.query('api::marketplace.marketplace').findMany({
-        select: ['domainAuthority', 'domainRating', 'price']
-      });
-      
-      const avgDA = metricsData.reduce((sum, w) => sum + (parseFloat(w.domainAuthority) || 0), 0) / metricsData.length || 0;
-      const avgDR = metricsData.reduce((sum, w) => sum + (parseFloat(w.domainRating) || 0), 0) / metricsData.length || 0;
-      const avgPrice = metricsData.reduce((sum, w) => sum + (parseFloat(w.price) || 0), 0) / metricsData.length || 0;
-
-      ctx.send({
-        total,
-        active,
-        inactive,
-        categoryBreakdown,
-        averageMetrics: {
-          domainAuthority: Math.round(avgDA * 10) / 10,
-          domainRating: Math.round(avgDR * 10) / 10,
-          price: Math.round(avgPrice * 100) / 100
-        }
-      });
-
-    } catch (error) {
-      console.error('[ADMIN MARKETPLACE STATS ERROR]', error);
-      return ctx.internalServerError('Failed to fetch marketplace statistics');
-    }
-  },
-
-  /**
    * Bulk import websites from CSV (admin action)
    */
   async bulkImport(ctx) {
@@ -376,7 +434,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           // Check for duplicates
           if (duplicateCheck) {
             const existing = await strapi.db.query('api::marketplace.marketplace').findOne({
-              where: { domain }
+              where: { url: domain }
             });
 
             if (existing) {
@@ -384,10 +442,10 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                 // Update existing website
                 await strapi.entityService.update('api::marketplace.marketplace', existing.id, {
                   data: {
-                    title,
+                    publisher_name: title,
                     category,
-                    domainAuthority: da,
-                    monthlyTraffic: traffic,
+                    moz_da: da,
+                    ahrefs_traffic: traffic,
                     price,
                     publishedAt: status === 'Active' ? new Date() : null
                   }
@@ -403,13 +461,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           // Create new website
           await strapi.entityService.create('api::marketplace.marketplace', {
             data: {
-              domain,
-              title,
+              url: domain,
+              publisher_name: title,
               category,
-              domainAuthority: da,
-              monthlyTraffic: traffic,
+              moz_da: da,
+              ahrefs_traffic: traffic,
               price,
-              currency: 'USD',
               publishedAt: status === 'Active' ? new Date() : null
             }
           });
@@ -435,5 +492,4 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       return ctx.internalServerError('Failed to perform bulk import');
     }
   }
-
 }));
