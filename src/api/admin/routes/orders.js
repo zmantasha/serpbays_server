@@ -60,6 +60,33 @@ module.exports = {
         policies: ['global::is-admin'],
         middlewares: ['global::admin-logger']
       }
+    },
+    {
+      method: 'GET',
+      path: '/api/admin/orders/:id/content',
+      handler: 'orders.getOrderContent',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
+      method: 'GET',
+      path: '/api/admin/orders/:id/chatroom',
+      handler: 'orders.getOrderChatroom',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/admin/orders/:id/chatroom/message',
+      handler: 'orders.sendMessage',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
     }
   ]
 };

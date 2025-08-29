@@ -47,7 +47,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Gateway filter
       if (gateway) {
-        filters.paymentGateway = gateway;
+        filters.gateway = gateway;
       }
 
       // User filter
@@ -259,12 +259,12 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       // Get payment method breakdown
       const paymentMethods = await strapi.db.query('api::transaction.transaction').findMany({
         where: { transactionStatus: 'completed' },
-        select: ['paymentGateway']
+        select: ['gateway']
       });
       
       const methodBreakdown = {};
       paymentMethods.forEach(transaction => {
-        const method = transaction.paymentGateway || 'unknown';
+        const method = transaction.gateway || 'unknown';
         methodBreakdown[method] = (methodBreakdown[method] || 0) + 1;
       });
 
@@ -332,10 +332,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           date: t.createdAt,
           user: t.users_permissions_user?.email || 'N/A',
           amount: t.amount,
-          currency: t.currency,
           status: t.transactionStatus,
-          type: t.transactionType,
-          gateway: t.paymentGateway,
+          type: t.type,
+          gateway: t.gateway,
           order: t.order?.id || 'N/A'
         }));
 

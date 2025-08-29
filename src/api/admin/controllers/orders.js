@@ -102,6 +102,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           publisher: {
             fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
           },
+          orderContent: {
+            fields: ['url', 'metaDescription', 'keywords', 'links', 'minWordCount']
+          },
+          outsourcedContent: {
+            fields: ['links', 'instructions']
+          },
           communications: {
             populate: ['sender'],
             sort: 'createdAt:desc'
@@ -309,6 +315,225 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
     } catch (error) {
       console.error('[ADMIN ORDER CANCEL ERROR]', error);
       return ctx.internalServerError('Failed to cancel order');
+    }
+  },
+
+  /**
+   * Get order content (admin access)
+   */
+  async getOrderContent(ctx) {
+    try {
+      const { id } = ctx.params;
+      
+      // Find the order content for this order
+      const orderContent = await strapi.db.query('api::order-content.order-content').findOne({
+        where: { order: id },
+      });
+      
+      // Find the outsourced content for this order
+      const outsourcedContent = await strapi.db.query('api::outsourced-content.outsourced-content').findOne({
+        where: { order: id },
+      });
+      
+      ctx.send({
+        orderContent,
+        outsourcedContent
+      });
+    } catch (error) {
+      console.error('[ADMIN ORDER CONTENT ERROR]', error);
+      return ctx.internalServerError('Failed to fetch order content');
+    }
+  },
+
+  /**
+   * Get order chatroom and communications (admin access)
+   */
+  async getOrderChatroom(ctx) {
+    try {
+      const { id } = ctx.params;
+      console.log('[ADMIN ORDER CHATROOM] Fetching chatroom for order:', id);
+      
+      // Find the chatroom for this order
+      const chatroom = await strapi.db.query('api::chatroom.chatroom').findOne({
+        where: { order: id },
+        populate: {
+          order: {
+            fields: ['id', 'description', 'orderStatus']
+          },
+          advertiser: {
+            fields: ['id', 'username', 'email', 'firstName', 'lastName']
+          },
+          publisher: {
+            fields: ['id', 'username', 'email', 'firstName', 'lastName']
+          },
+          communications: {
+            populate: {
+              sender: {
+                fields: ['id', 'username', 'email', 'firstName', 'lastName']
+              }
+            },
+            orderBy: { createdAt: 'asc' }
+          }
+        }
+      });
+      
+      if (!chatroom) {
+        console.log('[ADMIN ORDER CHATROOM] No existing chatroom found, creating new one');
+        // Create a new chatroom if it doesn't exist
+        const order = await strapi.db.query('api::order.order').findOne({
+          where: { id },
+          populate: ['advertiser', 'publisher']
+        });
+        
+        if (!order) {
+          console.log('[ADMIN ORDER CHATROOM] Order not found:', id);
+          return ctx.notFound('Order not found');
+        }
+        
+        // Check if there are existing communications for this order
+        const existingCommunications = await strapi.db.query('api::communication.communication').findMany({
+          where: { order: id },
+          populate: {
+            sender: {
+              fields: ['id', 'username', 'email', 'firstName', 'lastName']
+            }
+          },
+          orderBy: { createdAt: 'asc' }
+        });
+        
+        console.log('[ADMIN ORDER CHATROOM] Found existing communications:', existingCommunications.length);
+        
+        const newChatroom = await strapi.db.query('api::chatroom.chatroom').create({
+          data: {
+            order: id,
+            advertiser: order.advertiser?.id,
+            publisher: order.publisher?.id,
+            status: 'active',
+            lastActivity: new Date()
+          }
+        });
+        
+        // If there are existing communications, link them to the new chatroom
+        if (existingCommunications.length > 0) {
+          await strapi.db.query('api::chatroom.chatroom').update({
+            where: { id: newChatroom.id },
+            data: {
+              communications: {
+                connect: existingCommunications.map(comm => comm.id)
+              }
+            }
+          });
+        }
+        
+        ctx.send({
+          chatroom: newChatroom,
+          communications: existingCommunications
+        });
+      } else {
+        // If chatroom exists but has no communications, check for direct communications
+        let communications = chatroom.communications || [];
+        
+        if (communications.length === 0) {
+          // Fallback: get communications directly from the order
+          communications = await strapi.db.query('api::communication.communication').findMany({
+            where: { order: id },
+            populate: {
+              sender: {
+                fields: ['id', 'username', 'email', 'firstName', 'lastName']
+              }
+            },
+            orderBy: { createdAt: 'asc' }
+          });
+        }
+        
+        ctx.send({
+          chatroom,
+          communications: communications
+        });
+      }
+    } catch (error) {
+      console.error('[ADMIN ORDER CHATROOM ERROR]', error);
+      return ctx.internalServerError('Failed to fetch order chatroom');
+    }
+  },
+
+  /**
+   * Send message in order chatroom (admin access)
+   */
+  async sendMessage(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { message, messageType = 'admin_message' } = ctx.request.body;
+      
+      if (!message || message.trim() === '') {
+        return ctx.badRequest('Message cannot be empty');
+      }
+      
+      // Find or create chatroom for this order
+      let chatroom = await strapi.db.query('api::chatroom.chatroom').findOne({
+        where: { order: id }
+      });
+      
+      if (!chatroom) {
+        const order = await strapi.db.query('api::order.order').findOne({
+          where: { id },
+          populate: ['advertiser', 'publisher']
+        });
+        
+        if (!order) {
+          return ctx.notFound('Order not found');
+        }
+        
+        chatroom = await strapi.db.query('api::chatroom.chatroom').create({
+          data: {
+            order: id,
+            advertiser: order.advertiser?.id,
+            publisher: order.publisher?.id,
+            status: 'active',
+            lastActivity: new Date()
+          }
+        });
+      }
+      
+      // Create the communication message
+      const communication = await strapi.db.query('api::communication.communication').create({
+        data: {
+          sender: ctx.state.user.id,
+          order: id,
+          message: message.trim(),
+          messageType,
+          isAdminMessage: true,
+          publishedAt: new Date()
+        }
+      });
+      
+      // Add communication to chatroom
+      await strapi.db.query('api::chatroom.chatroom').update({
+        where: { id: chatroom.id },
+        data: {
+          communications: {
+            connect: [communication.id]
+          },
+          lastActivity: new Date()
+        }
+      });
+      
+      // Return the created message with sender info
+      const messageWithSender = await strapi.db.query('api::communication.communication').findOne({
+        where: { id: communication.id },
+        populate: {
+          sender: {
+            fields: ['id', 'username', 'email', 'firstName', 'lastName']
+          }
+        }
+      });
+      
+      ctx.send({
+        message: messageWithSender
+      });
+    } catch (error) {
+      console.error('[ADMIN SEND MESSAGE ERROR]', error);
+      return ctx.internalServerError('Failed to send message');
     }
   }
 
