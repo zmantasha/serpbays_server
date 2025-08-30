@@ -53,6 +53,15 @@ module.exports = {
       }
     },
     {
+      method: 'PUT',
+      path: '/api/admin/withdrawals/:id/pay',
+      handler: 'withdrawals.pay',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
       method: 'POST',
       path: '/api/admin/withdrawals/bulk-process',
       handler: 'withdrawals.bulkProcess',

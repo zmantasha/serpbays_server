@@ -8,7 +8,7 @@
     "description": "Withdrawal requests with external transaction tracking"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "attributes": {
     "publisher": {
@@ -24,7 +24,12 @@
     },
     "method": {
       "type": "enumeration",
-      "enum": ["razorpay", "paypal", "bank_transfer", "payoneer"],
+      "enum": [
+        "razorpay",
+        "paypal",
+        "bank_transfer",
+        "payoneer"
+      ],
       "required": true
     },
     "details": {
@@ -33,7 +38,12 @@
     },
     "withdrawal_status": {
       "type": "enumeration",
-      "enum": ["pending", "approved", "denied", "paid"],
+      "enum": [
+        "pending",
+        "approved",
+        "denied",
+        "paid"
+      ],
       "default": "pending",
       "required": true
     },
@@ -44,7 +54,13 @@
     },
     "payment_method_used": {
       "type": "enumeration",
-      "enum": ["paypal", "bank_transfer", "razorpay", "payoneer", "other"],
+      "enum": [
+        "paypal",
+        "bank_transfer",
+        "razorpay",
+        "payoneer",
+        "other"
+      ],
       "description": "Actual payment method used for this withdrawal"
     },
     "payment_notes": {
@@ -57,4 +73,3 @@
     }
   }
 }
-

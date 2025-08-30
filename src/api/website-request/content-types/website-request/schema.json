@@ -8,7 +8,7 @@
     "description": "Requests for specific websites or website criteria from advertisers"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "pluginOptions": {},
   "attributes": {

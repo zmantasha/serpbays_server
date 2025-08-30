@@ -52,7 +52,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         },
         populate: {
           publisher: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName']
+            fields: ['id', 'username', 'email', 'firstName', 'lastName']
           }
         }
       });
@@ -88,7 +88,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
         populate: {
           publisher: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber'],
+            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber'],
             populate: ['user_wallet']
           }
         }
@@ -145,31 +145,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         populate: ['publisher']
       });
 
-      // Update user wallet - move from pending to completed
-      const wallet = await strapi.controller('api::user-wallet.user-wallet')
-        .getOrCreateWallet(withdrawal.publisher.id);
-
-      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-        data: {
-          pendingWithdrawalBalance: parseFloat(wallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount),
-          // Note: balance has already been deducted when request was created
-        }
-      });
-
-      // Create transaction record for the withdrawal
-      await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          users_permissions_user: withdrawal.publisher.id,
-          transactionType: 'withdrawal',
-          transactionStatus: 'completed',
-          amount: withdrawal.amount,
-          currency: withdrawal.currency || 'USD',
-          description: `Withdrawal approved - ${paymentReference || 'No reference'}`,
-          transactionId: `WD-${id}-${Date.now()}`,
-          paymentGateway: withdrawal.paymentMethod || 'manual',
-          publishedAt: new Date()
-        }
-      });
+      // Note: No balance deduction here - amount stays in pendingWithdrawalBalance
+      // until the withdrawal is actually paid out
 
       ctx.send({
         data: updatedWithdrawal
@@ -208,8 +185,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Update withdrawal request
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
         data: { 
-          withdrawal_status: 'rejected',
-          rejectionReason: reason,
+          withdrawal_status: 'denied',
+          denial_reason: reason, // Changed to match lifecycle system
           rejectedAt: new Date(),
           rejectedBy: ctx.state.user.id,
           processedAt: new Date()
@@ -217,16 +194,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         populate: ['publisher']
       });
 
-      // Update user wallet - return funds from pending to available balance
-      const wallet = await strapi.controller('api::user-wallet.user-wallet')
-        .getOrCreateWallet(withdrawal.publisher.id);
-
-      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-        data: {
-          balance: parseFloat(wallet.balance) + parseFloat(withdrawal.amount),
-          pendingWithdrawalBalance: parseFloat(wallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount)
-        }
-      });
+      // Note: Wallet balance updates are handled automatically by the lifecycle system
+      // when the withdrawal status changes to 'denied'
 
       ctx.send({
         data: updatedWithdrawal
@@ -235,6 +204,71 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
     } catch (error) {
       console.error('[ADMIN WITHDRAWAL REJECT ERROR]', error);
       return ctx.internalServerError('Failed to reject withdrawal request');
+    }
+  },
+
+  /**
+   * Pay withdrawal request (admin action) - actually deduct amount when paying
+   */
+  async pay(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { paymentReference, paymentMethod } = ctx.request.body;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} paying withdrawal ${id}`);
+
+      // Get withdrawal request details
+      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: ['publisher']
+      });
+
+      if (!withdrawal) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      if (withdrawal.withdrawal_status !== 'approved') {
+        return ctx.badRequest('Withdrawal request must be approved before it can be paid');
+      }
+
+      // Update withdrawal request
+      const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: { 
+          withdrawal_status: 'paid',
+          paymentReference,
+          paymentMethod,
+          paidAt: new Date(),
+          paidBy: ctx.state.user.id,
+          processedAt: new Date()
+        },
+        populate: ['publisher']
+      });
+
+      // Note: Wallet balance updates are handled automatically by the lifecycle system
+      // when the withdrawal status changes to 'paid'
+
+      // Create transaction record for the actual payment
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          users_permissions_user: withdrawal.publisher.id,
+          transactionType: 'withdrawal',
+          transactionStatus: 'completed',
+          amount: withdrawal.amount,
+          currency: withdrawal.currency || 'USD',
+          description: `Withdrawal paid - ${paymentReference || 'No reference'}`,
+          transactionId: `WD-${id}-${Date.now()}`,
+          paymentGateway: paymentMethod || 'manual',
+          publishedAt: new Date()
+        }
+      });
+
+      ctx.send({
+        data: updatedWithdrawal
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL PAY ERROR]', error);
+      return ctx.internalServerError('Failed to pay withdrawal request');
     }
   },
 

@@ -2047,7 +2047,7 @@ export interface ApiWebsiteRequestWebsiteRequest
     singularName: 'website-request';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     additionalRequirements: Schema.Attribute.Text;
@@ -2170,7 +2170,7 @@ export interface ApiWithdrawalRequestWithdrawalRequest
     singularName: 'withdrawal-request';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     amount: Schema.Attribute.Decimal &
