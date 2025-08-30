@@ -34,7 +34,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Status filter
       if (status) {
-        filters.status = status;
+        filters.withdrawal_status = status;
       }
 
       // User filter
@@ -128,14 +128,14 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.notFound('Withdrawal request not found');
       }
 
-      if (withdrawal.status !== 'pending') {
+      if (withdrawal.withdrawal_status !== 'pending') {
         return ctx.badRequest('Withdrawal request has already been processed');
       }
 
       // Update withdrawal request
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
         data: { 
-          status: 'approved',
+          withdrawal_status: 'approved',
           adminNotes,
           paymentReference,
           approvedAt: new Date(),
@@ -201,14 +201,14 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.notFound('Withdrawal request not found');
       }
 
-      if (withdrawal.status !== 'pending') {
+      if (withdrawal.withdrawal_status !== 'pending') {
         return ctx.badRequest('Withdrawal request has already been processed');
       }
 
       // Update withdrawal request
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
         data: { 
-          status: 'rejected',
+          withdrawal_status: 'rejected',
           rejectionReason: reason,
           rejectedAt: new Date(),
           rejectedBy: ctx.state.user.id,
@@ -245,18 +245,21 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
     try {
       const total = await strapi.db.query('api::withdrawal-request.withdrawal-request').count();
       const pending = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
-        where: { status: 'pending' }
+        where: { withdrawal_status: 'pending' }
       });
       const approved = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
-        where: { status: 'approved' }
+        where: { withdrawal_status: 'approved' }
       });
-      const rejected = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
-        where: { status: 'rejected' }
+      const denied = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+        where: { withdrawal_status: 'denied' }
+      });
+      const paid = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+        where: { withdrawal_status: 'paid' }
       });
 
       // Calculate total amount requested
       const totalAmountData = await strapi.db.query('api::withdrawal-request.withdrawal-request').findMany({
-        select: ['amount', 'status']
+        select: ['amount', 'withdrawal_status']
       });
       
       const totalAmount = totalAmountData.reduce((sum, withdrawal) => {
@@ -264,11 +267,11 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }, 0);
 
       const approvedAmount = totalAmountData
-        .filter(w => w.status === 'approved')
+        .filter(w => w.withdrawal_status === 'approved')
         .reduce((sum, withdrawal) => sum + parseFloat(withdrawal.amount || 0), 0);
 
       const pendingAmount = totalAmountData
-        .filter(w => w.status === 'pending')
+        .filter(w => w.withdrawal_status === 'pending')
         .reduce((sum, withdrawal) => sum + parseFloat(withdrawal.amount || 0), 0);
 
       // Get new withdrawal requests this month
@@ -285,10 +288,12 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
 
       ctx.send({
+        totalRequests: total,
         total,
         pending,
         approved,
-        rejected,
+        denied,
+        paid,
         totalAmount: totalAmount.toFixed(2),
         approvedAmount: approvedAmount.toFixed(2),
         pendingAmount: pendingAmount.toFixed(2),
