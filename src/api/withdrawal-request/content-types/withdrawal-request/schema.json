@@ -8,7 +8,7 @@
     "description": "Withdrawal requests with external transaction tracking"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "attributes": {
     "publisher": {
@@ -54,6 +54,45 @@
     "denial_reason": {
       "type": "text",
       "description": "Reason for denying the withdrawal request"
+    },
+    "admin_notes": {
+      "type": "text",
+      "description": "Admin notes about the withdrawal request"
+    },
+    "payment_reference": {
+      "type": "string",
+      "maxLength": 255,
+      "description": "Payment reference or transaction ID"
+    },
+    "approved_at": {
+      "type": "datetime",
+      "description": "When the withdrawal was approved"
+    },
+    "approved_by": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Admin who approved the withdrawal"
+    },
+    "paid_at": {
+      "type": "datetime",
+      "description": "When the withdrawal was marked as paid"
+    },
+    "paid_by": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Admin who marked the withdrawal as paid"
+    },
+    "rejected_at": {
+      "type": "datetime",
+      "description": "When the withdrawal was rejected"
+    },
+    "rejected_by": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Admin who rejected the withdrawal"
     }
   }
 }

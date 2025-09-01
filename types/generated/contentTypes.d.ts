@@ -2051,6 +2051,12 @@ export interface ApiWebsiteRequestWebsiteRequest
   };
   attributes: {
     additionalRequirements: Schema.Attribute.Text;
+    adminNotes: Schema.Attribute.Text;
+    approvedAt: Schema.Attribute.DateTime;
+    approvedBy: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     assignedTo: Schema.Attribute.String;
     budgetRange: Schema.Attribute.Enumeration<
       [
@@ -2142,12 +2148,26 @@ export interface ApiWebsiteRequestWebsiteRequest
     proposalSent: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     proposalSentAt: Schema.Attribute.DateTime;
     publishedAt: Schema.Attribute.DateTime;
+    rejectedAt: Schema.Attribute.DateTime;
+    rejectedBy: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    rejectionReason: Schema.Attribute.Text;
     requestType: Schema.Attribute.Enumeration<['specific', 'criteria']> &
       Schema.Attribute.Required;
     responseNotes: Schema.Attribute.Text;
     specificDomains: Schema.Attribute.Text;
     status: Schema.Attribute.Enumeration<
-      ['pending', 'reviewing', 'in-progress', 'completed', 'cancelled']
+      [
+        'pending',
+        'under_review',
+        'approved',
+        'rejected',
+        'in-progress',
+        'completed',
+        'cancelled',
+      ]
     > &
       Schema.Attribute.DefaultTo<'pending'>;
     timeline: Schema.Attribute.Enumeration<
@@ -2156,6 +2176,10 @@ export interface ApiWebsiteRequestWebsiteRequest
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    user: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     userEmail: Schema.Attribute.Email & Schema.Attribute.Required;
   };
 }
@@ -2170,9 +2194,10 @@ export interface ApiWithdrawalRequestWithdrawalRequest
     singularName: 'withdrawal-request';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
+    admin_notes: Schema.Attribute.Text;
     amount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<
@@ -2181,6 +2206,11 @@ export interface ApiWithdrawalRequestWithdrawalRequest
         },
         number
       >;
+    approved_at: Schema.Attribute.DateTime;
+    approved_by: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -2200,12 +2230,26 @@ export interface ApiWithdrawalRequestWithdrawalRequest
       ['razorpay', 'paypal', 'bank_transfer', 'payoneer']
     > &
       Schema.Attribute.Required;
+    paid_at: Schema.Attribute.DateTime;
+    paid_by: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     payment_method_used: Schema.Attribute.Enumeration<
       ['paypal', 'bank_transfer', 'razorpay', 'payoneer', 'other']
     >;
     payment_notes: Schema.Attribute.Text;
+    payment_reference: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
     publishedAt: Schema.Attribute.DateTime;
     publisher: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    rejected_at: Schema.Attribute.DateTime;
+    rejected_by: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
     >;

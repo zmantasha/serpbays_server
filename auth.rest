@@ -29,8 +29,8 @@ PUT http://localhost:1337/api/publisher-websites/26/approve
 }
 
 ###
-GET http://localhost:1337/api/api/admin/websites
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NCwiaWF0IjoxNzU2MzY5MzM2LCJleHAiOjE3NTY5NzQxMzZ9.QrexKK6lsqPqvHoGLE_V3ngERMyEiTvyA2t_p2n73Pk
+GET http://localhost:1337/api/api/admin/website-requests?page=1&pageSize=20
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NCwiaWF0IjoxNzU2NzAzMjk2LCJleHAiOjE3NTczMDgwOTZ9.S-bu9jdJDB3laO-55uHBukpbc_cQ82O_bvgnzAdWVpo
 
 ###
 DELETE  http://localhost:1337/api/shortlists/25

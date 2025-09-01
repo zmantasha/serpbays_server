@@ -96,7 +96,7 @@
     },
     "status": {
       "type": "enumeration",
-      "enum": ["pending", "reviewing", "in-progress", "completed", "cancelled"],
+      "enum": ["pending", "under_review", "approved", "rejected", "in-progress", "completed", "cancelled"],
       "default": "pending",
       "description": "Status of the request"
     },
@@ -121,6 +121,40 @@
     "proposalSentAt": {
       "type": "datetime",
       "description": "When the proposal was sent"
+    },
+    "adminNotes": {
+      "type": "text",
+      "description": "Admin notes about the request"
+    },
+    "rejectionReason": {
+      "type": "text",
+      "description": "Reason for rejecting the request"
+    },
+    "approvedAt": {
+      "type": "datetime",
+      "description": "When the request was approved"
+    },
+    "approvedBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Admin who approved the request"
+    },
+    "rejectedAt": {
+      "type": "datetime",
+      "description": "When the request was rejected"
+    },
+    "rejectedBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Admin who rejected the request"
+    },
+    "user": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "User who made the request"
     }
   }
 } 
