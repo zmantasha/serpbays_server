@@ -13,11 +13,29 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
    */
   async find(ctx) {
     try {
-      const { page = 1, pageSize = 20, search, categoryFilter, statusFilter } = ctx.query;
+      const { 
+        page = 1, 
+        pageSize = 20, 
+        search, 
+        category, 
+        status,
+        // Numerical range filters
+        minDA, maxDA, minDR, maxDR,
+        minAhrefsTraffic, maxAhrefsTraffic,
+        minPrice, maxPrice,
+        minSemrushTraffic, maxSemrushTraffic,
+        minSimilarwebTraffic, maxSimilarwebTraffic,
+        minSpamScore, maxSpamScore,
+        // Additional filters
+        sensitiveCategory, language, country,
+        allowedLinks, placementSpeed, sponsored, ugc, backlinkType,
+        websiteUrl, domainZone, contentType
+      } = ctx.query;
 
       // Build filters
       const filters = {};
       
+      // Search filter
       if (search) {
         filters.$or = [
           { url: { $containsi: search } },
@@ -26,12 +44,101 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         ];
       }
 
-      if (categoryFilter) {
-        filters.category = categoryFilter;
+      // Basic filters
+      if (category && category !== 'All categories') {
+        filters.category = category;
       }
 
-      if (statusFilter) {
-        filters.status = statusFilter;
+      if (status && status !== 'All Status') {
+        filters.status = status;
+      }
+
+      // Numerical range filters
+      if (minDA || maxDA) {
+        filters.moz_da = {};
+        if (minDA) filters.moz_da.$gte = parseInt(minDA);
+        if (maxDA) filters.moz_da.$lte = parseInt(maxDA);
+      }
+
+      if (minDR || maxDR) {
+        filters.ahrefs_dr = {};
+        if (minDR) filters.ahrefs_dr.$gte = parseInt(minDR);
+        if (maxDR) filters.ahrefs_dr.$lte = parseInt(maxDR);
+      }
+
+      if (minAhrefsTraffic || maxAhrefsTraffic) {
+        filters.ahrefs_traffic = {};
+        if (minAhrefsTraffic) filters.ahrefs_traffic.$gte = parseInt(minAhrefsTraffic);
+        if (maxAhrefsTraffic) filters.ahrefs_traffic.$lte = parseInt(maxAhrefsTraffic);
+      }
+
+      if (minPrice || maxPrice) {
+        filters.price = {};
+        if (minPrice) filters.price.$gte = parseFloat(minPrice);
+        if (maxPrice) filters.price.$lte = parseFloat(maxPrice);
+      }
+
+      if (minSemrushTraffic || maxSemrushTraffic) {
+        filters.semrush_traffic = {};
+        if (minSemrushTraffic) filters.semrush_traffic.$gte = parseInt(minSemrushTraffic);
+        if (maxSemrushTraffic) filters.semrush_traffic.$lte = parseInt(maxSemrushTraffic);
+      }
+
+      if (minSimilarwebTraffic || maxSimilarwebTraffic) {
+        filters.similarweb_traffic = {};
+        if (minSimilarwebTraffic) filters.similarweb_traffic.$gte = parseInt(minSimilarwebTraffic);
+        if (maxSimilarwebTraffic) filters.similarweb_traffic.$lte = parseInt(maxSimilarwebTraffic);
+      }
+
+      if (minSpamScore || maxSpamScore) {
+        filters.spam_score = {};
+        if (minSpamScore) filters.spam_score.$gte = parseInt(minSpamScore);
+        if (maxSpamScore) filters.spam_score.$lte = parseInt(maxSpamScore);
+      }
+
+      // Additional filters
+      if (sensitiveCategory && sensitiveCategory !== 'Any sensitive category') {
+        filters.sensitive_category = sensitiveCategory;
+      }
+
+      if (language && language !== 'All languages') {
+        filters.language = language;
+      }
+
+      if (country && country !== 'All countries') {
+        filters.countries = country;
+      }
+
+      if (allowedLinks && allowedLinks !== 'Any') {
+        filters.allowed_links = allowedLinks;
+      }
+
+      if (placementSpeed && placementSpeed !== 'Any') {
+        filters.placement_speed = placementSpeed;
+      }
+
+      if (sponsored && sponsored !== 'Any') {
+        filters.sponsored = sponsored;
+      }
+
+      if (ugc && ugc !== 'Any') {
+        filters.ugc = ugc;
+      }
+
+      if (backlinkType && backlinkType !== 'Any') {
+        filters.backlink_type = backlinkType;
+      }
+
+      if (websiteUrl) {
+        filters.url = { $containsi: websiteUrl };
+      }
+
+      if (domainZone) {
+        filters.url = { $containsi: domainZone };
+      }
+
+      if (contentType && contentType !== 'All') {
+        filters.content_type = contentType;
       }
 
       // Sort options
@@ -70,7 +177,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
         console.log(`[DEBUG] Website ${website.id} (${website.url}): totalOrders=${totalOrders}, lastMonthOrders=${lastMonthOrders}`);
 
-        return {
+        const transformed = {
           id: website.id,
           domain: website.url,
           title: website.publisher_name || website.url,
@@ -121,9 +228,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           lastUpdated: website.updatedAt,
           createdAt: website.createdAt
         };
+
+        console.log(`[DEBUG] Transformed website:`, transformed);
+        return transformed;
       }));
 
-      ctx.send({
+      // Return the transformed data in the expected format
+      return {
         data: transformedWebsites,
         meta: {
           pagination: {
@@ -133,7 +244,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             total
           }
         }
-      });
+      };
 
     } catch (error) {
       console.error('[ADMIN MARKETPLACE FIND ERROR]', error);
