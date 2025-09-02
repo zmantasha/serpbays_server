@@ -17,6 +17,28 @@ module.exports = {
       }
     },
 
+    // Get website statistics
+    {
+      method: 'GET',
+      path: '/api/admin/websites/stats',
+      handler: 'websites.getStats',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Bulk update metrics from CSV (MUST come before :id routes)
+    {
+      method: 'POST',
+      path: '/api/admin/websites/bulk-update-metrics',
+      handler: 'websites.bulkUpdateMetrics',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
     // Get single website
     {
       method: 'GET',
@@ -50,11 +72,11 @@ module.exports = {
       }
     },
 
-    // Get website statistics
+    // Update website metrics
     {
-      method: 'GET',
-      path: '/api/admin/websites/stats',
-      handler: 'websites.getStats',
+      method: 'PUT',
+      path: '/api/admin/websites/:id/metrics',
+      handler: 'websites.updateMetrics',
       config: {
         policies: ['global::is-admin'],
         middlewares: []

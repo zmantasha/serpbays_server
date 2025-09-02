@@ -1497,6 +1497,42 @@ export interface ApiPublisherWebsitePublisherWebsite
   attributes: {
     addedByReseller: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
+    ahrefs_dr: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_keywords: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_rank: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 1;
+        },
+        number
+      >;
+    ahrefs_referring_domain: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_traffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     allowedLinks: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -1655,6 +1691,18 @@ export interface ApiPublisherWebsitePublisherWebsite
     > &
       Schema.Attribute.Private;
     marketplaceId: Schema.Attribute.Integer;
+    metrics_last_updated: Schema.Attribute.DateTime;
+    metrics_update_count: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    metrics_update_method: Schema.Attribute.Enumeration<
+      ['manual', 'api', 'bulk_import']
+    >;
     minWordCount: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -1663,6 +1711,22 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<500>;
+    moz_da: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    moz_spam_score: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
     newOwnerWebsiteId: Schema.Attribute.Integer;
     originalPublisherId: Schema.Attribute.Relation<
       'manyToOne',
@@ -1690,6 +1754,21 @@ export interface ApiPublisherWebsitePublisherWebsite
     reviewNotes: Schema.Attribute.Text;
     reviewStartedAt: Schema.Attribute.DateTime;
     samplePosts: Schema.Attribute.JSON;
+    semrush_authority_score: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 1000;
+          min: 0;
+        },
+        number
+      >;
+    semrush_traffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     sponsored: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     stepCompleted: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
