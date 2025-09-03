@@ -581,6 +581,91 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   },
 
   /**
+   * Create new website
+   */
+  async create(ctx) {
+    try {
+      const websiteData = ctx.request.body;
+
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} creating new website`, websiteData);
+
+      // Prepare the data with proper defaults and transformations
+      const preparedData = {
+        url: websiteData.url,
+        protocol: 'https',
+        publisherEmail: websiteData.publisherEmail || 'admin@serpbays.com', // Required field
+        publisherName: websiteData.publisherName,
+        description: websiteData.description,
+        submissionStatus: websiteData.submissionStatus || 'approval_pending',
+        generalGuestPostPrice: parseInt(websiteData.generalGuestPostPrice) || 0,
+        generalLinkInsertionPrice: parseInt(websiteData.generalLinkInsertionPrice) || 0,
+        expectedTATHours: parseInt(websiteData.expectedTATHours) || 168,
+        minWordCount: parseInt(websiteData.minWordCount) || 500,
+        category: websiteData.category || ['General'],
+        countries: websiteData.countries || ['United States'],
+        language: websiteData.language || ['English'],
+        backlinkType: websiteData.backlinkType || 'Do follow',
+        backlinkValidity: websiteData.backlinkValidity || 'three_years',
+        allowedLinks: parseInt(websiteData.allowedLinks) || 1,
+        sponsored: Boolean(websiteData.sponsored),
+        ugc: Boolean(websiteData.ugc),
+        isPRSite: Boolean(websiteData.isPRSite),
+        doCopywriting: Boolean(websiteData.doCopywriting),
+        copywritingPrice: parseInt(websiteData.copywritingPrice) || 0,
+        casinoAccepted: Boolean(websiteData.casinoAccepted),
+        casinoGuestPostPrice: parseInt(websiteData.casinoGuestPostPrice) || 0,
+        casinoLinkInsertionPrice: parseInt(websiteData.casinoLinkInsertionPrice) || 0,
+        cryptoAccepted: Boolean(websiteData.cryptoAccepted),
+        cryptoGuestPostPrice: parseInt(websiteData.cryptoGuestPostPrice) || 0,
+        cryptoLinkInsertionPrice: parseInt(websiteData.cryptoLinkInsertionPrice) || 0,
+        cbdAccepted: Boolean(websiteData.cbdAccepted),
+        cbdGuestPostPrice: parseInt(websiteData.cbdGuestPostPrice) || 0,
+        cbdLinkInsertionPrice: parseInt(websiteData.cbdLinkInsertionPrice) || 0,
+        datingAccepted: Boolean(websiteData.datingAccepted),
+        datingGuestPostPrice: parseInt(websiteData.datingGuestPostPrice) || 0,
+        datingLinkInsertionPrice: parseInt(websiteData.datingLinkInsertionPrice) || 0,
+        samplePosts: websiteData.samplePosts || [],
+        guidelines: websiteData.guidelines,
+        stepCompleted: 4, // Mark as completed since admin is adding it
+        urlAddedAt: new Date(),
+        detailsCompletedAt: new Date()
+      };
+
+      console.log('Prepared data for website creation:', preparedData);
+
+      // Create the new website
+      const newWebsite = await strapi.entityService.create('api::publisher-website.publisher-website', {
+        data: preparedData,
+        populate: ['currentPublisherId', 'originalPublisherId']
+      });
+
+      // Transform data to match frontend expectations
+      const transformedWebsite = {
+        id: newWebsite.id,
+        domain: newWebsite.url || 'N/A',
+        title: newWebsite.publisherName || 'N/A',
+        description: newWebsite.description || 'No description available',
+        status: newWebsite.submissionStatus || 'pending',
+        traffic: newWebsite.moz_da || 'N/A',
+        addedDate: newWebsite.createdAt,
+        owner: {
+          id: newWebsite.currentPublisherId?.id || newWebsite.originalPublisherId?.id || 0,
+          username: newWebsite.currentPublisherId?.username || newWebsite.originalPublisherId?.username || 'Unknown',
+          email: newWebsite.currentPublisherId?.email || newWebsite.originalPublisherId?.email || 'N/A'
+        }
+      };
+
+      ctx.send({
+        data: transformedWebsite
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WEBSITE CREATE ERROR]', error);
+      return ctx.internalServerError('Failed to create website');
+    }
+  },
+
+  /**
    * Update website (general update)
    */
   async update(ctx) {

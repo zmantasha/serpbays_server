@@ -17,6 +17,17 @@ module.exports = {
       }
     },
 
+    // Create new website
+    {
+      method: 'POST',
+      path: '/api/admin/websites',
+      handler: 'websites.create',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
     // Get website statistics
     {
       method: 'GET',
