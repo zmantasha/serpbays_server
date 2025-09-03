@@ -2116,6 +2116,56 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiVoucherCodeVoucherCode extends Struct.CollectionTypeSchema {
+  collectionName: 'voucher_codes';
+  info: {
+    displayName: 'Voucher Code';
+    pluralName: 'voucher-codes';
+    singularName: 'voucher-code';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    amount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    code: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    expiryDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::voucher-code.voucher-code'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    usedAt: Schema.Attribute.DateTime;
+    usedBy: Schema.Attribute.Relation<
+      'oneToOne',
+      'plugin::users-permissions.user'
+    >;
+    voucherStatus: Schema.Attribute.Enumeration<
+      ['active', 'used', 'expired', 'inactive']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'active'>;
+  };
+}
+
 export interface ApiWebsiteRequestWebsiteRequest
   extends Struct.CollectionTypeSchema {
   collectionName: 'website_requests';
@@ -2935,6 +2985,7 @@ declare module '@strapi/strapi' {
       'api::shortlist.shortlist': ApiShortlistShortlist;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
+      'api::voucher-code.voucher-code': ApiVoucherCodeVoucherCode;
       'api::website-request.website-request': ApiWebsiteRequestWebsiteRequest;
       'api::withdrawal-request.withdrawal-request': ApiWithdrawalRequestWithdrawalRequest;
       'plugin::content-releases.release': PluginContentReleasesRelease;
