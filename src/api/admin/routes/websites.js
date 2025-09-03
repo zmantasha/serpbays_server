@@ -81,6 +81,17 @@ module.exports = {
         policies: ['global::is-admin'],
         middlewares: []
       }
+    },
+
+    // Update website (general update)
+    {
+      method: 'PUT',
+      path: '/api/admin/websites/:id',
+      handler: 'websites.update',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
     }
   ]
 };

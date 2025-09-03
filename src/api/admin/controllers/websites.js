@@ -354,6 +354,49 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         populate: ['currentPublisherId', 'originalPublisherId']
       });
 
+      // Add the approved website to the marketplace
+      if (updatedWebsite.url) {
+        console.log(`[ADMIN ACTION] Adding approved website ${updatedWebsite.url} to marketplace`);
+        
+        try {
+          // Check if marketplace record already exists
+          const existingMarketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
+            filters: { url: updatedWebsite.url },
+            limit: 1
+          });
+
+          if (existingMarketplaceRecord && existingMarketplaceRecord.length > 0) {
+            console.log(`[ADMIN ACTION] Marketplace record already exists for website ${updatedWebsite.url}, updating it`);
+            
+            // Update existing marketplace record
+            await strapi.entityService.update('api::marketplace.marketplace', existingMarketplaceRecord[0].id, {
+              data: {
+                status: 'active',
+                updatedAt: new Date()
+              }
+            });
+          } else {
+            console.log(`[ADMIN ACTION] Creating new marketplace record for website ${updatedWebsite.url}`);
+            
+            // Create new marketplace record
+            await strapi.entityService.create('api::marketplace.marketplace', {
+              data: {
+                url: updatedWebsite.url,
+                status: 'active',
+                publisherWebsite: updatedWebsite.id,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }
+            });
+          }
+          
+          console.log(`[ADMIN ACTION] Successfully added website ${updatedWebsite.url} to marketplace`);
+        } catch (marketplaceError) {
+          console.error(`[ADMIN ACTION] Error adding website ${updatedWebsite.url} to marketplace:`, marketplaceError);
+          // Don't fail the approval if marketplace creation fails
+        }
+      }
+
       // Transform data to match frontend expectations with all detailed fields
       const transformedWebsite = {
         id: updatedWebsite.id,
@@ -462,6 +505,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} rejecting website ${id}. Reason: ${reason}`);
 
+      // Get the website before updating to check if it was previously approved
+      const websiteBeforeUpdate = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId', 'originalPublisherId']
+      });
+
+      const wasPreviouslyApproved = websiteBeforeUpdate.submissionStatus === 'approved';
+      const websiteUrl = websiteBeforeUpdate.url;
+
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: { 
           submissionStatus: 'rejected',
@@ -471,6 +522,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         },
         populate: ['currentPublisherId', 'originalPublisherId']
       });
+
+      // If the website was previously approved, remove it from the marketplace
+      if (wasPreviouslyApproved && websiteUrl) {
+        console.log(`[ADMIN ACTION] Website ${websiteUrl} was previously approved, removing from marketplace`);
+        
+        try {
+          // Find and remove the marketplace record
+          const marketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
+            filters: { url: websiteUrl },
+            limit: 1
+          });
+
+          if (marketplaceRecord && marketplaceRecord.length > 0) {
+            const marketplaceId = marketplaceRecord[0].id;
+            console.log(`[ADMIN ACTION] Removing marketplace record ${marketplaceId} for website ${websiteUrl}`);
+            
+            await strapi.entityService.delete('api::marketplace.marketplace', marketplaceId);
+            console.log(`[ADMIN ACTION] Successfully removed marketplace record for website ${websiteUrl}`);
+            
+            // Log the action for audit purposes
+            console.log(`[ADMIN AUDIT] Website ${websiteUrl} (ID: ${id}) rejected and removed from marketplace by admin ${ctx.state.user.id} at ${new Date().toISOString()}. Reason: ${reason}`);
+          } else {
+            console.log(`[ADMIN ACTION] No marketplace record found for website ${websiteUrl}`);
+          }
+        } catch (marketplaceError) {
+          console.error(`[ADMIN ACTION] Error removing marketplace record for website ${websiteUrl}:`, marketplaceError);
+          // Don't fail the rejection if marketplace removal fails
+        }
+      } else if (!wasPreviouslyApproved) {
+        console.log(`[ADMIN ACTION] Website ${websiteUrl} was not previously approved (status: ${websiteBeforeUpdate.submissionStatus}), no marketplace action needed`);
+      }
 
       // Transform data to match frontend expectations
       const transformedWebsite = {
@@ -495,6 +577,103 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     } catch (error) {
       console.error('[ADMIN WEBSITE REJECT ERROR]', error);
       return ctx.internalServerError('Failed to reject website');
+    }
+  },
+
+  /**
+   * Update website (general update)
+   */
+  async update(ctx) {
+    try {
+      const { id } = ctx.params;
+      const updateData = ctx.request.body;
+
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating website ${id}`, updateData);
+
+      // Map frontend field names to database field names
+      const mappedData = {
+        url: updateData.url,
+        publisherName: updateData.publisherName,
+        description: updateData.description,
+        submissionStatus: updateData.submissionStatus,
+        moz_da: updateData.moz_da,
+        ahrefs_dr: updateData.ahrefs_dr,
+        ahrefs_traffic: updateData.ahrefs_traffic,
+        ahrefs_rank: updateData.ahrefs_rank,
+        semrush_authority_score: updateData.semrush_authority_score,
+        moz_spam_score: updateData.moz_spam_score,
+        ahrefs_referring_domain: updateData.ahrefs_referring_domain,
+        ahrefs_keywords: updateData.ahrefs_keywords,
+        semrush_traffic: updateData.semrush_traffic,
+        generalGuestPostPrice: updateData.generalGuestPostPrice,
+        generalLinkInsertionPrice: updateData.generalLinkInsertionPrice,
+        expectedTATHours: updateData.expectedTATHours,
+        minWordCount: updateData.minWordCount,
+        category: updateData.category,
+        countries: updateData.countries,
+        language: updateData.language,
+        backlinkType: updateData.backlinkType,
+        backlinkValidity: updateData.backlinkValidity,
+        allowedLinks: updateData.allowedLinks,
+        sponsored: updateData.sponsored,
+        ugc: updateData.ugc,
+        isPRSite: updateData.isPRSite,
+        doCopywriting: updateData.doCopywriting,
+        copywritingPrice: updateData.copywritingPrice,
+        casinoAccepted: updateData.casinoAccepted,
+        casinoGuestPostPrice: updateData.casinoGuestPostPrice,
+        casinoLinkInsertionPrice: updateData.casinoLinkInsertionPrice,
+        cryptoAccepted: updateData.cryptoAccepted,
+        cryptoGuestPostPrice: updateData.cryptoGuestPostPrice,
+        cryptoLinkInsertionPrice: updateData.cryptoLinkInsertionPrice,
+        cbdAccepted: updateData.cbdAccepted,
+        cbdGuestPostPrice: updateData.cbdGuestPostPrice,
+        cbdLinkInsertionPrice: updateData.cbdLinkInsertionPrice,
+        datingAccepted: updateData.datingAccepted,
+        datingGuestPostPrice: updateData.datingGuestPostPrice,
+        datingLinkInsertionPrice: updateData.datingLinkInsertionPrice,
+        samplePosts: updateData.samplePosts,
+        guidelines: updateData.guidelines
+      };
+
+      // Remove undefined values
+      Object.keys(mappedData).forEach(key => {
+        if (mappedData[key] === undefined) {
+          delete mappedData[key];
+        }
+      });
+
+      console.log(`[ADMIN ACTION] Mapped update data:`, mappedData);
+
+      // Update the website
+      const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+        data: mappedData,
+        populate: ['currentPublisherId', 'originalPublisherId']
+      });
+
+      // Transform data to match frontend expectations
+      const transformedWebsite = {
+        id: updatedWebsite.id,
+        domain: updatedWebsite.url || 'N/A',
+        title: updatedWebsite.publisherName || 'N/A',
+        description: updatedWebsite.description || 'No description available',
+        status: updatedWebsite.submissionStatus || 'pending',
+        traffic: updatedWebsite.moz_da || 'N/A',
+        addedDate: updatedWebsite.createdAt,
+        owner: {
+          id: updatedWebsite.currentPublisherId?.id || updatedWebsite.originalPublisherId?.id || 0,
+          username: updatedWebsite.currentPublisherId?.username || updatedWebsite.originalPublisherId?.username || 'Unknown',
+          email: updatedWebsite.currentPublisherId?.email || updatedWebsite.originalPublisherId?.email || 'N/A'
+        }
+      };
+
+      ctx.send({
+        data: transformedWebsite
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WEBSITE UPDATE ERROR]', error);
+      return ctx.internalServerError('Failed to update website');
     }
   },
 
