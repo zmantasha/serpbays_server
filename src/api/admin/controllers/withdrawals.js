@@ -52,7 +52,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         },
         populate: {
           publisher: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName']
+            select: ['id', 'username', 'email', 'firstName', 'lastName']
           }
         }
       });
@@ -88,7 +88,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
         populate: {
           publisher: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber'],
+            select: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber'],
             populate: ['user_wallet']
           }
         }
@@ -110,7 +110,6 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
   /**
    * Approve withdrawal request (admin action)
-   * Only changes status to approved, doesn't deduct from pending balance
    */
   async approve(ctx) {
     try {
@@ -133,16 +132,43 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.badRequest('Withdrawal request has already been processed');
       }
 
-      // Update withdrawal request - only change status to approved
+      // Update withdrawal request
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
         data: { 
           withdrawal_status: 'approved',
-          admin_notes: adminNotes,
-          payment_reference: paymentReference,
-          approved_at: new Date(),
-          approved_by: ctx.state.user.id
+          adminNotes,
+          paymentReference,
+          approvedAt: new Date(),
+          approvedBy: ctx.state.user.id,
+          processedAt: new Date()
         },
         populate: ['publisher']
+      });
+
+      // Update user wallet - move from pending to completed
+      const wallet = await strapi.controller('api::user-wallet.user-wallet')
+        .getOrCreateWallet(withdrawal.publisher.id);
+
+      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+        data: {
+          pendingWithdrawalBalance: parseFloat(wallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount),
+          // Note: balance has already been deducted when request was created
+        }
+      });
+
+      // Create transaction record for the withdrawal
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          users_permissions_user: withdrawal.publisher.id,
+          transactionType: 'withdrawal',
+          transactionStatus: 'completed',
+          amount: withdrawal.amount,
+          currency: withdrawal.currency || 'USD',
+          description: `Withdrawal approved - ${paymentReference || 'No reference'}`,
+          transactionId: `WD-${id}-${Date.now()}`,
+          paymentGateway: withdrawal.paymentMethod || 'manual',
+          publishedAt: new Date()
+        }
       });
 
       ctx.send({
@@ -179,15 +205,27 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.badRequest('Withdrawal request has already been processed');
       }
 
-      // Update withdrawal request - lifecycle hook will handle wallet updates
+      // Update withdrawal request
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
         data: { 
-          withdrawal_status: 'denied',
-          denial_reason: reason,
-          rejected_at: new Date(),
-          rejected_by: ctx.state.user.id
+          withdrawal_status: 'rejected',
+          rejectionReason: reason,
+          rejectedAt: new Date(),
+          rejectedBy: ctx.state.user.id,
+          processedAt: new Date()
         },
         populate: ['publisher']
+      });
+
+      // Update user wallet - return funds from pending to available balance
+      const wallet = await strapi.controller('api::user-wallet.user-wallet')
+        .getOrCreateWallet(withdrawal.publisher.id);
+
+      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+        data: {
+          balance: parseFloat(wallet.balance) + parseFloat(withdrawal.amount),
+          pendingWithdrawalBalance: parseFloat(wallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount)
+        }
       });
 
       ctx.send({
@@ -197,53 +235,6 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
     } catch (error) {
       console.error('[ADMIN WITHDRAWAL REJECT ERROR]', error);
       return ctx.internalServerError('Failed to reject withdrawal request');
-    }
-  },
-
-  /**
-   * Mark withdrawal as paid (admin action)
-   * This is when the amount is actually deducted from pending balance
-   */
-  async markAsPaid(ctx) {
-    try {
-      const { id } = ctx.params;
-      const { paymentReference, paymentNotes } = ctx.request.body;
-
-      // Log admin action
-      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} marking withdrawal ${id} as paid`);
-
-      // Get withdrawal request details
-      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
-        populate: ['publisher']
-      });
-
-      if (!withdrawal) {
-        return ctx.notFound('Withdrawal request not found');
-      }
-
-      if (withdrawal.withdrawal_status !== 'approved') {
-        return ctx.badRequest('Withdrawal request must be approved before marking as paid');
-      }
-
-      // Update withdrawal request to paid status - lifecycle hook will handle wallet updates
-      const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-        data: { 
-          withdrawal_status: 'paid',
-          payment_notes: paymentNotes,
-          external_transaction_id: paymentReference,
-          paid_at: new Date(),
-          paid_by: ctx.state.user.id
-        },
-        populate: ['publisher']
-      });
-
-      ctx.send({
-        data: updatedWithdrawal
-      });
-
-    } catch (error) {
-      console.error('[ADMIN WITHDRAWAL MARK AS PAID ERROR]', error);
-      return ctx.internalServerError('Failed to mark withdrawal as paid');
     }
   },
 
@@ -316,6 +307,67 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
   },
 
   /**
+   * Mark withdrawal as paid (admin action)
+   */
+  async markAsPaid(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { paymentReference, paymentDate } = ctx.request.body;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} marking withdrawal ${id} as paid`);
+
+      // Get withdrawal request details
+      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: ['publisher']
+      });
+
+      if (!withdrawal) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      if (withdrawal.withdrawal_status !== 'approved') {
+        return ctx.badRequest('Withdrawal request must be approved before marking as paid');
+      }
+
+      // Update withdrawal request
+      const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: { 
+          withdrawal_status: 'paid',
+          paymentReference,
+          paidAt: paymentDate ? new Date(paymentDate) : new Date(),
+          paidBy: ctx.state.user.id,
+          processedAt: new Date()
+        },
+        populate: ['publisher']
+      });
+
+      // Create transaction record for the payment
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          users_permissions_user: withdrawal.publisher.id,
+          transactionType: 'withdrawal_payment',
+          transactionStatus: 'completed',
+          amount: withdrawal.amount,
+          currency: withdrawal.currency || 'USD',
+          description: `Withdrawal payment completed - ${paymentReference || 'No reference'}`,
+          transactionId: `WP-${id}-${Date.now()}`,
+          paymentGateway: withdrawal.paymentMethod || 'manual',
+          publishedAt: new Date()
+        }
+      });
+
+      ctx.send({
+        data: updatedWithdrawal
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL MARK AS PAID ERROR]', error);
+      return ctx.internalServerError('Failed to mark withdrawal as paid');
+    }
+  },
+
+  /**
    * Bulk process withdrawals (admin action)
    */
   async bulkProcess(ctx) {
@@ -326,8 +378,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.badRequest('No withdrawal IDs provided');
       }
 
-      if (!['approve', 'reject', 'mark-as-paid'].includes(action)) {
-        return ctx.badRequest('Invalid action. Must be "approve", "reject", or "mark-as-paid"');
+      if (!['approve', 'reject'].includes(action)) {
+        return ctx.badRequest('Invalid action. Must be "approve" or "reject"');
       }
 
       const results = [];
@@ -341,17 +393,10 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
               state: ctx.state,
               send: () => {} // Mock send function
             });
-          } else if (action === 'reject') {
+          } else {
             await this.reject({
               params: { id: withdrawalId },
               request: { body: { reason: notes } },
-              state: ctx.state,
-              send: () => {} // Mock send function
-            });
-          } else if (action === 'mark-as-paid') {
-            await this.markAsPaid({
-              params: { id: withdrawalId },
-              request: { body: { paymentReference: notes } },
               state: ctx.state,
               send: () => {} // Mock send function
             });

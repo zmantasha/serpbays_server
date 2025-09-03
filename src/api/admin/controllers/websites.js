@@ -85,7 +85,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }))
       });
 
-      // Transform data to match frontend expectations
+      // Transform data to match frontend expectations with comprehensive fields
       const transformedWebsites = websites.map(website => ({
         id: website.id,
         domain: website.url || 'N/A',
@@ -98,7 +98,87 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           id: website.currentPublisherId?.id || website.originalPublisherId?.id || 0,
           username: website.currentPublisherId?.username || website.originalPublisherId?.username || 'Unknown',
           email: website.currentPublisherId?.email || website.originalPublisherId?.email || 'N/A'
-        }
+        },
+        // SEO Metrics
+        metrics: {
+          da: website.moz_da || 0,
+          dr: website.ahrefs_dr || 0,
+          traffic: website.ahrefs_traffic || 0,
+          backlinks: website.ahrefs_referring_domain || 0,
+          organicKeywords: website.ahrefs_keywords || 0,
+          pageSpeed: website.pageSpeed || 'Normal',
+          mobileFriendly: website.mobileFriendly || true,
+          ssl: website.ssl || true,
+          // Additional metrics fields
+          ahrefs_rank: website.ahrefs_rank || 0,
+          semrush_authority_score: website.semrush_authority_score || 0,
+          moz_spam_score: website.moz_spam_score || 0,
+          semrush_traffic: website.semrush_traffic || 0
+        },
+        // Pricing information
+        pricing: {
+          general: {
+            guestPost: website.generalGuestPostPrice || 0,
+            linkInsertion: website.generalLinkInsertionPrice || 0
+          },
+          casino: {
+            accepted: website.casinoAccepted || false,
+            guestPost: website.casinoGuestPostPrice || 0,
+            linkInsertion: website.casinoLinkInsertionPrice || 0
+          },
+          crypto: {
+            accepted: website.cryptoAccepted || false,
+            guestPost: website.cryptoGuestPostPrice || 0,
+            linkInsertion: website.cryptoLinkInsertionPrice || 0
+          },
+          cbd: {
+            accepted: website.cbdAccepted || false,
+            guestPost: website.cbdGuestPostPrice || 0,
+            linkInsertion: website.cbdLinkInsertionPrice || 0
+          },
+          dating: {
+            accepted: website.datingAccepted || false,
+            guestPost: website.datingGuestPostPrice || 0,
+            linkInsertion: website.datingLinkInsertionPrice || 0
+          },
+          copywriting: {
+            offered: website.doCopywriting || false,
+            price: website.copywritingPrice || 0
+          }
+        },
+        // Content requirements
+        content: {
+          minWordCount: website.minWordCount || 500,
+          backlinkType: website.backlinkType || 'Do follow',
+          allowedLinks: website.allowedLinks || 1,
+          backlinkValidity: website.backlinkValidity || 'one_year',
+          sponsored: website.sponsored || false,
+          ugc: website.ugc || false,
+          isPRSite: website.isPRSite || false
+        },
+        // Categories and targeting
+        categories: website.category || [],
+        countries: website.countries || ['United States'],
+        languages: website.language || ['English'],
+        // Verification and technical
+        gscVerified: website.gscVerified || false,
+        gscVerifiedAt: website.gscVerifiedAt,
+        gscPermissionLevel: website.gscPermissionLevel,
+        verificationMethod: website.verificationMethod,
+        // Turnaround time
+        tatHours: website.expectedTATHours || 168,
+        // Sample posts
+        samplePosts: website.samplePosts || [],
+        // Guidelines
+        guidelines: website.guidelines || 'No guidelines provided',
+        // Additional metadata
+        protocol: website.protocol || 'https',
+        resellerCode: website.resellerCode,
+        addedByReseller: website.addedByReseller || false,
+        // SEO Metrics tracking
+        metrics_last_updated: website.metrics_last_updated,
+        metrics_update_count: website.metrics_update_count || 0,
+        metrics_update_method: website.metrics_update_method
       }));
       
       console.log('[ADMIN WEBSITES FIND]', {
@@ -435,11 +515,95 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         metrics_update_count: (metricsData.metrics_update_count || 0) + 1,
         metrics_update_method: 'manual'
       };
-      
+
+      // Update publisher-website collection
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: updateData,
         populate: ['currentPublisherId', 'originalPublisherId']
       });
+
+      // Check if this is an ownership transfer and handle marketplace update accordingly
+      const websiteUrl = updatedWebsite.url;
+      if (websiteUrl) {
+        const marketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
+          filters: { url: websiteUrl },
+          limit: 1
+        });
+
+        if (marketplaceRecord && marketplaceRecord.length > 0) {
+          const marketplaceId = marketplaceRecord[0].id;
+          
+          // Check if this is an ownership transfer
+          if (updatedWebsite.submissionStatus === 'ownership_transferred') {
+            console.log(`[ADMIN ACTION] Website ${websiteUrl} has ownership transferred status`);
+            
+            // Find the verified publisher's website (not the ownership transfer record)
+            const verifiedPublisherWebsite = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
+              filters: { 
+                url: websiteUrl,
+                submissionStatus: 'approved',
+                gscVerified: true,
+                $not: { submissionStatus: 'ownership_transferred' }
+              },
+              populate: ['currentPublisherId'],
+              limit: 1
+            });
+
+            if (verifiedPublisherWebsite && verifiedPublisherWebsite.length > 0) {
+              const verifiedWebsite = verifiedPublisherWebsite[0];
+              console.log(`[ADMIN ACTION] Found verified publisher website ${verifiedWebsite.id} for ${websiteUrl}`);
+              
+              // Use metrics from the verified publisher's website, not the ownership transfer record
+              const updateDataMarketplace = {
+                ahrefs_dr: verifiedWebsite.ahrefs_dr || metricsData.ahrefs_dr,
+                ahrefs_traffic: verifiedWebsite.ahrefs_traffic || metricsData.ahrefs_traffic,
+                ahrefs_rank: verifiedWebsite.ahrefs_rank || metricsData.ahrefs_rank,
+                moz_da: verifiedWebsite.moz_da || metricsData.moz_da,
+                semrush_authority_score: verifiedWebsite.semrush_authority_score || metricsData.semrush_authority_score,
+                semrush_traffic: verifiedWebsite.semrush_traffic || metricsData.semrush_traffic,
+                moz_spam_score: verifiedWebsite.moz_spam_score || metricsData.moz_spam_score,
+                ahrefs_referring_domain: verifiedWebsite.ahrefs_referring_domain || metricsData.ahrefs_referring_domain,
+                ahrefs_keywords: verifiedWebsite.ahrefs_keywords || metricsData.ahrefs_keywords,
+                metrics_last_updated: new Date(),
+                metrics_update_count: (verifiedWebsite.metrics_update_count || 0) + 1,
+                metrics_update_method: 'ownership_transfer_verified'
+              };
+
+              await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+                data: updateDataMarketplace
+              });
+
+              console.log(`[ADMIN ACTION] Updated marketplace record ${marketplaceId} with verified publisher metrics for ${websiteUrl}`);
+            } else {
+              console.log(`[ADMIN ACTION] No verified publisher website found for ${websiteUrl}, skipping marketplace update`);
+            }
+          } else {
+            // Normal website (not ownership transfer) - update marketplace with current metrics
+            const updateDataMarketplace = {
+              ahrefs_dr: metricsData.ahrefs_dr,
+              ahrefs_traffic: metricsData.ahrefs_traffic,
+              ahrefs_rank: metricsData.ahrefs_rank,
+              moz_da: metricsData.moz_da,
+              semrush_authority_score: metricsData.semrush_authority_score,
+              semrush_traffic: metricsData.semrush_traffic,
+              moz_spam_score: metricsData.moz_spam_score,
+              ahrefs_referring_domain: metricsData.ahrefs_referring_domain,
+              ahrefs_keywords: metricsData.ahrefs_keywords,
+              metrics_last_updated: new Date(),
+              metrics_update_count: (metricsData.metrics_update_count || 0) + 1,
+              metrics_update_method: 'manual'
+            };
+
+            await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+              data: updateDataMarketplace
+            });
+
+            console.log(`[ADMIN ACTION] Updated marketplace record ${marketplaceId} for website ${websiteUrl}`);
+          }
+        } else {
+          console.log(`[ADMIN ACTION] No marketplace record found for website ${websiteUrl}`);
+        }
+      }
 
       // Transform data to match frontend expectations
       const transformedWebsite = {
@@ -662,6 +826,93 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             data: updateData
           });
           console.log("updateedWebsite",updatedWebsite)
+
+          // Also update the corresponding marketplace record with ownership transfer logic
+          const websiteUrl = updatedWebsite.url;
+          if (websiteUrl) {
+            try {
+              const marketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
+                filters: { url: websiteUrl },
+                limit: 1
+              });
+
+              if (marketplaceRecord && marketplaceRecord.length > 0) {
+                const marketplaceId = marketplaceRecord[0].id;
+                
+                // Check if this is an ownership transfer
+                if (updatedWebsite.submissionStatus === 'ownership_transferred') {
+                  console.log(`[ADMIN ACTION] Website ${websiteUrl} has ownership transferred status in bulk update`);
+                  
+                  // Find the verified publisher's website (not the ownership transfer record)
+                  const verifiedPublisherWebsite = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
+                    filters: { 
+                      url: websiteUrl,
+                      submissionStatus: 'approved',
+                      gscVerified: true,
+                      $not: { submissionStatus: 'ownership_transferred' }
+                    },
+                    limit: 1
+                  });
+
+                  if (verifiedPublisherWebsite && verifiedPublisherWebsite.length > 0) {
+                    const verifiedWebsite = verifiedPublisherWebsite[0];
+                    console.log(`[ADMIN ACTION] Found verified publisher website ${verifiedWebsite.id} for ${websiteUrl} in bulk update`);
+                    
+                    // Use metrics from the verified publisher's website, not the ownership transfer record
+                    const updateDataMarketplace = {
+                      ahrefs_dr: verifiedWebsite.ahrefs_dr || metricsData.ahrefs_dr,
+                      ahrefs_traffic: verifiedWebsite.ahrefs_traffic || metricsData.ahrefs_traffic,
+                      ahrefs_rank: verifiedWebsite.ahrefs_rank || metricsData.ahrefs_rank,
+                      moz_da: verifiedWebsite.moz_da || metricsData.moz_da,
+                      semrush_authority_score: verifiedWebsite.semrush_authority_score || metricsData.semrush_authority_score,
+                      semrush_traffic: verifiedWebsite.semrush_traffic || metricsData.semrush_traffic,
+                      moz_spam_score: verifiedWebsite.moz_spam_score || metricsData.moz_spam_score,
+                      ahrefs_referring_domain: verifiedWebsite.ahrefs_referring_domain || metricsData.ahrefs_referring_domain,
+                      ahrefs_keywords: verifiedWebsite.ahrefs_keywords || metricsData.ahrefs_keywords,
+                      metrics_last_updated: new Date(),
+                      metrics_update_count: (verifiedWebsite.metrics_update_count || 0) + 1,
+                      metrics_update_method: 'bulk_import_ownership_transfer_verified'
+                    };
+
+                    await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+                      data: updateDataMarketplace
+                    });
+
+                    console.log(`[ADMIN ACTION] Updated marketplace record ${marketplaceId} with verified publisher metrics for ${websiteUrl} in bulk update`);
+                  } else {
+                    console.log(`[ADMIN ACTION] No verified publisher website found for ${websiteUrl} in bulk update, skipping marketplace update`);
+                  }
+                } else {
+                  // Normal website (not ownership transfer) - update marketplace with current metrics
+                  const updateDataMarketplace = {
+                    ahrefs_dr: metricsData.ahrefs_dr,
+                    ahrefs_traffic: metricsData.ahrefs_traffic,
+                    ahrefs_rank: metricsData.ahrefs_rank,
+                    moz_da: metricsData.moz_da,
+                    semrush_authority_score: metricsData.semrush_authority_score,
+                    semrush_traffic: metricsData.semrush_traffic,
+                    moz_spam_score: metricsData.moz_spam_score,
+                    ahrefs_referring_domain: metricsData.ahrefs_referring_domain,
+                    ahrefs_keywords: metricsData.ahrefs_keywords,
+                    metrics_last_updated: new Date(),
+                    metrics_update_count: (metricsData.metrics_update_count || 0) + 1,
+                    metrics_update_method: 'bulk_import'
+                  };
+
+                  await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+                    data: updateDataMarketplace
+                  });
+
+                  console.log(`[ADMIN ACTION] Updated marketplace record ${marketplaceId} for website ${websiteUrl} in bulk update`);
+                }
+              } else {
+                console.log(`[ADMIN ACTION] No marketplace record found for website ${websiteUrl}`);
+              }
+            } catch (marketplaceError) {
+              console.error(`[ADMIN ACTION] Error updating marketplace for website ${websiteUrl}:`, marketplaceError);
+              // Don't fail the entire bulk update for marketplace sync errors
+            }
+          }
 
           results.push({
             id: updatedWebsite.id,
