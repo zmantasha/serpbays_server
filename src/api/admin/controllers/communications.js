@@ -106,15 +106,15 @@ module.exports = createCoreController('api::communication.communication', ({ str
       const communication = await strapi.entityService.findOne('api::communication.communication', id, {
         populate: {
           sender: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
+            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
           },
           order: {
             populate: {
               advertiser: {
-                select: ['id', 'username', 'email', 'firstName', 'lastName']
+                fields: ['id', 'username', 'email', 'firstName', 'lastName']
               },
               publisher: {
-                select: ['id', 'username', 'email', 'firstName', 'lastName']
+                fields: ['id', 'username', 'email', 'firstName', 'lastName']
               }
             }
           }
@@ -160,10 +160,10 @@ module.exports = createCoreController('api::communication.communication', ({ str
         },
         populate: {
           sender: {
-            select: ['id', 'username', 'email']
+            fields: ['id', 'username', 'email']
           },
           order: {
-            select: ['id', 'description']
+            fields: ['id', 'description']
           }
         }
       });
@@ -339,10 +339,10 @@ module.exports = createCoreController('api::communication.communication', ({ str
         },
         populate: {
           sender: {
-            select: ['id', 'username', 'email']
+            fields: ['id', 'username', 'email']
           },
           order: {
-            select: ['id', 'description']
+            fields: ['id', 'description']
           }
         }
       });

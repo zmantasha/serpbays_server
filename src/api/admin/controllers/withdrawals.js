@@ -52,7 +52,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         },
         populate: {
           publisher: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName']
+            fields: ['id', 'username', 'email', 'firstName', 'lastName']
           }
         }
       });
@@ -88,9 +88,9 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
         populate: {
           publisher: {
-            select: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber'],
-            populate: ['user_wallet']
-          }
+            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
+          },
+          user_wallet: true
         }
       });
 

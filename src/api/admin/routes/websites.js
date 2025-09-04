@@ -50,6 +50,28 @@ module.exports = {
       }
     },
 
+    // Export websites with filters
+    {
+      method: 'GET',
+      path: '/api/admin/websites/export',
+      handler: 'websites.exportFiltered',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Check website conflicts
+    {
+      method: 'GET',
+      path: '/api/admin/websites/check-conflict',
+      handler: 'websites.checkConflict',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
     // Get single website
     {
       method: 'GET',
@@ -88,6 +110,17 @@ module.exports = {
       method: 'PUT',
       path: '/api/admin/websites/:id/metrics',
       handler: 'websites.updateMetrics',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Replace website
+    {
+      method: 'PUT',
+      path: '/api/admin/websites/:id/replace',
+      handler: 'websites.replaceWebsite',
       config: {
         policies: ['global::is-admin'],
         middlewares: []
