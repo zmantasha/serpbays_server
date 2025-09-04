@@ -126,6 +126,15 @@ module.exports = {
         middlewares: []
       }
     },
+    {
+      method: 'POST',
+      path: '/api/admin/websites/bulk-import',
+      handler: 'websites.bulkImport',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
 
     // Update website (general update)
     {

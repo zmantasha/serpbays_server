@@ -796,6 +796,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         addedByReseller: websiteData.publisherType === 'reseller',
         gscVerified: websiteData.publisherType === 'gsc-verified',
         gscVerifiedAt: websiteData.publisherType === 'gsc-verified' ? new Date() : null,
+        // Set publisher relations if selectedUserId is provided
+        currentPublisherId: websiteData.selectedUserId ? parseInt(websiteData.selectedUserId) : null,
+        originalPublisherId: websiteData.selectedUserId ? parseInt(websiteData.selectedUserId) : null,
         generalGuestPostPrice: parseInt(websiteData.generalGuestPostPrice) || 0,
         generalLinkInsertionPrice: parseInt(websiteData.generalLinkInsertionPrice) || 0,
         expectedTATHours: parseInt(websiteData.expectedTATHours) || 168,
@@ -1609,6 +1612,246 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     } catch (error) {
       console.error('[ADMIN WEBSITES REPLACE ERROR]', error)
       return ctx.internalServerError('Failed to replace website')
+    }
+  },
+
+  /**
+   * Bulk import websites from CSV data
+   */
+  async bulkImport(ctx) {
+    try {
+      const { websites } = ctx.request.body
+      
+      if (!Array.isArray(websites) || websites.length === 0) {
+        return ctx.badRequest('No websites data provided')
+      }
+
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} bulk importing ${websites.length} websites`)
+
+      const results = {
+        total: websites.length,
+        successful: 0,
+        errors: 0,
+        conflicts: 0,
+        details: []
+      }
+
+      // Process websites in batches to avoid memory issues with large datasets
+      const batchSize = 100
+      const batches = []
+      for (let i = 0; i < websites.length; i += batchSize) {
+        batches.push(websites.slice(i, i + batchSize))
+      }
+
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex]
+        
+        for (let i = 0; i < batch.length; i++) {
+          const websiteData = batch[i]
+          
+          try {
+            // Normalize URL
+            const normalizeUrl = (url) => {
+              if (!url.trim()) return ''
+              let normalized = url.trim()
+              try {
+                if (normalized.includes('://') || normalized.startsWith('//')) {
+                  if (!normalized.includes('://')) {
+                    normalized = 'https:' + normalized
+                  }
+                  const urlObj = new URL(normalized)
+                  normalized = urlObj.hostname
+                  normalized = normalized.replace(/^www\./i, '')
+                  return normalized
+                } else {
+                  normalized = normalized.replace(/^\/+/, '')
+                  normalized = normalized.split('/')[0]
+                  normalized = normalized.split('?')[0]
+                  normalized = normalized.split('#')[0]
+                  normalized = normalized.replace(/\.+$/, '')
+                  return normalized
+                }
+              } catch (error) {
+                let fallback = url.trim()
+                fallback = fallback.replace(/^https?:\/\//i, '')
+                fallback = fallback.replace(/^\/+/, '')
+                fallback = fallback.replace(/^www\./i, '')
+                fallback = fallback.split('/')[0]
+                fallback = fallback.replace(/\.+$/, '')
+                return fallback
+              }
+            }
+
+            const normalizedUrl = normalizeUrl(websiteData.url || '')
+            if (!normalizedUrl) {
+              results.errors++
+              results.details.push({
+                url: websiteData.url || 'N/A',
+                status: 'error',
+                message: 'Invalid URL format'
+              })
+              continue
+            }
+
+            // Check for conflicts using the same logic as single import
+            const publisherType = websiteData.publisherType || 'reseller'
+            const existingWebsite = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
+              filters: { 
+                url: normalizedUrl,
+                submissionStatus: 'approved'
+              },
+              populate: {
+                currentPublisherId: {
+                  fields: ['id', 'username', 'email', 'firstName', 'lastName']
+                },
+                originalPublisherId: {
+                  fields: ['id', 'username', 'email', 'firstName', 'lastName']
+                }
+              }
+            })
+
+            // Apply business rules for conflict resolution
+            if (existingWebsite.length > 0) {
+              const existing = existingWebsite[0]
+              const isExistingGSC = existing.verificationMethod === 'google-search-console'
+              const isNewGSC = publisherType === 'gsc-verified'
+              const isExistingReseller = existing.addedByReseller === true
+              const isNewReseller = publisherType === 'reseller'
+
+              let canReplace = false
+              let conflictMessage = ''
+
+              if (isExistingGSC && isNewGSC) {
+                // GSC vs GSC - can replace
+                canReplace = true
+                conflictMessage = 'GSC verified site replaced with new GSC verified site'
+              } else if (isExistingGSC && isNewReseller) {
+                // GSC vs Reseller - CANNOT replace
+                canReplace = false
+                conflictMessage = 'Cannot replace GSC verified site with reseller site'
+              } else if (isExistingReseller && isNewGSC) {
+                // Reseller vs GSC - can replace
+                canReplace = true
+                conflictMessage = 'Reseller site replaced with GSC verified site'
+              } else if (isExistingReseller && isNewReseller) {
+                // Reseller vs Reseller - can replace
+                canReplace = true
+                conflictMessage = 'Reseller site replaced with new reseller site'
+              }
+
+              if (!canReplace) {
+                results.conflicts++
+                results.details.push({
+                  url: normalizedUrl,
+                  status: 'conflict',
+                  message: conflictMessage
+                })
+                continue
+              } else {
+                // Replace existing website
+                const preparedData = this.prepareWebsiteData(websiteData, normalizedUrl)
+                await strapi.entityService.update('api::publisher-website.publisher-website', existing.id, {
+                  data: preparedData
+                })
+                
+                results.successful++
+                results.details.push({
+                  url: normalizedUrl,
+                  status: 'success',
+                  message: `Replaced existing website: ${conflictMessage}`
+                })
+                continue
+              }
+            }
+
+            // No conflict - create new website
+            const preparedData = this.prepareWebsiteData(websiteData, normalizedUrl)
+            await strapi.entityService.create('api::publisher-website.publisher-website', {
+              data: preparedData
+            })
+            
+            results.successful++
+            results.details.push({
+              url: normalizedUrl,
+              status: 'success',
+              message: 'Website created successfully'
+            })
+
+          } catch (error) {
+            console.error(`[BULK IMPORT] Error processing website ${websiteData.url}:`, error)
+            results.errors++
+            results.details.push({
+              url: websiteData.url || 'N/A',
+              status: 'error',
+              message: error.message || 'Unknown error occurred'
+            })
+          }
+        }
+        
+        // Log progress
+        const processed = (batchIndex + 1) * batchSize
+        const totalProcessed = Math.min(processed, websites.length)
+        console.log(`[BULK IMPORT] Progress: ${totalProcessed}/${websites.length} (${Math.round((totalProcessed / websites.length) * 100)}%)`)
+      }
+
+      console.log(`[BULK IMPORT] Completed: ${results.successful} successful, ${results.errors} errors, ${results.conflicts} conflicts`)
+
+      return ctx.send(results)
+
+    } catch (error) {
+      console.error('[ADMIN WEBSITES BULK IMPORT ERROR]', error)
+      return ctx.internalServerError('Failed to process bulk import')
+    }
+  },
+
+  // Helper method to prepare website data (extracted from create method)
+  prepareWebsiteData(websiteData, normalizedUrl) {
+    const publisherType = websiteData.publisherType || 'reseller'
+    
+    return {
+      url: normalizedUrl,
+      protocol: 'https',
+      publisherEmail: websiteData.publisherEmail || 'admin@serpbays.com',
+      publisherName: websiteData.publisherName || 'Unknown Publisher',
+      description: websiteData.description || 'Bulk imported website',
+      submissionStatus: 'approval_pending',
+      publisherType: publisherType,
+      verificationMethod: publisherType === 'gsc-verified' ? 'google-search-console' : 'reseller-code',
+      addedByReseller: publisherType === 'reseller',
+      gscVerified: publisherType === 'gsc-verified',
+      gscVerifiedAt: publisherType === 'gsc-verified' ? new Date() : null,
+      generalGuestPostPrice: parseInt(websiteData.generalGuestPostPrice) || 0,
+      generalLinkInsertionPrice: parseInt(websiteData.generalLinkInsertionPrice) || 0,
+      expectedTATHours: parseInt(websiteData.expectedTATHours) || 168,
+      minWordCount: parseInt(websiteData.minWordCount) || 500,
+      category: websiteData.category ? websiteData.category.split(',').map(c => c.trim()) : ['General'],
+      countries: websiteData.countries ? websiteData.countries.split(',').map(c => c.trim()) : ['United States'],
+      language: websiteData.language ? websiteData.language.split(',').map(l => l.trim()) : ['English'],
+      backlinkType: websiteData.backlinkType || 'Do follow',
+      backlinkValidity: websiteData.backlinkValidity || 'three_years',
+      allowedLinks: parseInt(websiteData.allowedLinks) || 1,
+      sponsored: websiteData.sponsored === 'true' || websiteData.sponsored === true,
+      ugc: websiteData.ugc === 'true' || websiteData.ugc === true,
+      isPRSite: websiteData.isPRSite === 'true' || websiteData.isPRSite === true,
+      doCopywriting: websiteData.doCopywriting === 'true' || websiteData.doCopywriting === true,
+      copywritingPrice: parseInt(websiteData.copywritingPrice) || 0,
+      casinoAccepted: websiteData.casinoAccepted === 'true' || websiteData.casinoAccepted === true,
+      casinoGuestPostPrice: parseInt(websiteData.casinoGuestPostPrice) || 0,
+      casinoLinkInsertionPrice: parseInt(websiteData.casinoLinkInsertionPrice) || 0,
+      cryptoAccepted: websiteData.cryptoAccepted === 'true' || websiteData.cryptoAccepted === true,
+      cryptoGuestPostPrice: parseInt(websiteData.cryptoGuestPostPrice) || 0,
+      cryptoLinkInsertionPrice: parseInt(websiteData.cryptoLinkInsertionPrice) || 0,
+      cbdAccepted: websiteData.cbdAccepted === 'true' || websiteData.cbdAccepted === true,
+      cbdGuestPostPrice: parseInt(websiteData.cbdGuestPostPrice) || 0,
+      cbdLinkInsertionPrice: parseInt(websiteData.cbdLinkInsertionPrice) || 0,
+      datingAccepted: websiteData.datingAccepted === 'true' || websiteData.datingAccepted === true,
+      datingGuestPostPrice: parseInt(websiteData.datingGuestPostPrice) || 0,
+      datingLinkInsertionPrice: parseInt(websiteData.datingLinkInsertionPrice) || 0,
+      samplePosts: websiteData.samplePosts ? websiteData.samplePosts.split(',').map(s => s.trim()) : [],
+      guidelines: websiteData.guidelines || 'No guidelines provided',
+      stepCompleted: 4,
+      urlAddedAt: new Date(),
+      detailsCompletedAt: new Date()
     }
   },
 
