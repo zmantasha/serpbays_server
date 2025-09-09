@@ -33,7 +33,7 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           user = result.user;
           jwt = result.jwt;
         } else {
-          // Fallback: manually verify credentials
+          // Fallback: manually verify credentials with proper password validation
           const foundUser = await strapi.db.query('plugin::users-permissions.user').findOne({
             where: {
               $or: [
@@ -45,11 +45,21 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           });
 
           if (!foundUser) {
+            console.log(`[ADMIN LOGIN FAILED] User not found: ${identifier}`);
             return ctx.badRequest('Invalid credentials');
           }
 
-          // Check password (you might need to implement password verification)
-          // For now, let's assume the password is correct if user exists
+          // Properly validate password using Strapi's password service
+          const isValidPassword = await strapi.plugins['users-permissions'].services.user.validatePassword(
+            password,
+            foundUser.password
+          );
+
+          if (!isValidPassword) {
+            console.log(`[ADMIN LOGIN FAILED] Invalid password for user: ${identifier}`);
+            return ctx.badRequest('Invalid credentials');
+          }
+
           user = foundUser;
           jwt = strapi.plugins['users-permissions'].services.jwt.issue({
             id: user.id
