@@ -61,3 +61,4 @@ Authorization: Bearer invalid-token
 ### 8. Test with regular admin (should fail for super admin functions)
 GET {{baseUrl}}/api/admin/roles
 Authorization: Bearer regular-admin-token
+
