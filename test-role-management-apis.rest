@@ -1,0 +1,63 @@
+### Role Management API Tests
+### Test the role management endpoints for super admins
+
+@baseUrl = http://localhost:1337
+@adminToken = your-admin-jwt-token-here
+
+### 1. Create a new admin role
+POST {{baseUrl}}/api/admin/roles
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "name": "Content Manager",
+  "description": "Manages content and user interactions",
+  "type": "custom",
+  "permissions": ["content_management", "user_read", "communication_access"]
+}
+
+### 2. List all admin roles
+GET {{baseUrl}}/api/admin/roles
+Authorization: Bearer {{adminToken}}
+
+### 3. Update an admin role
+PUT {{baseUrl}}/api/admin/roles/1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "name": "Senior Content Manager",
+  "description": "Senior level content management with additional permissions",
+  "permissions": ["content_management", "user_management", "communication_access", "analytics_access"]
+}
+
+### 4. Assign role to user
+POST {{baseUrl}}/api/admin/roles/assign
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "userId": "1",
+  "roleId": "2"
+}
+
+### 5. Remove role from user
+POST {{baseUrl}}/api/admin/roles/remove
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "userId": "1"
+}
+
+### 6. Delete an admin role
+DELETE {{baseUrl}}/api/admin/roles/1
+Authorization: Bearer {{adminToken}}
+
+### 7. Test unauthorized access (should fail)
+GET {{baseUrl}}/api/admin/roles
+Authorization: Bearer invalid-token
+
+### 8. Test with regular admin (should fail for super admin functions)
+GET {{baseUrl}}/api/admin/roles
+Authorization: Bearer regular-admin-token

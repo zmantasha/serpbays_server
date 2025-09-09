@@ -25,6 +25,7 @@ module.exports = {
     // Register admin routes
     const adminRoutes = [
       require('./api/admin/routes/admin'),
+      require('./api/admin/routes/role-management'),
       require('./api/admin/routes/users'),
       require('./api/admin/routes/orders'),
       require('./api/admin/routes/transactions'),

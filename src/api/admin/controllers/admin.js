@@ -67,13 +67,12 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         { populate: ['role'] }
       );
 
-      // For now, allow any authenticated user to access admin panel
-      // In production, you should implement proper admin role checking
-      const isAdmin = userWithRole.role?.type === 'authenticated' || 
-                     userWithRole.role?.type === 'admin' ||
-                     userWithRole.email === 'admin@serpbays.com';
+      // Check if user has proper admin role
+      const allowedAdminTypes = ['super_admin', 'admin', 'moderator'];
+      const isAdmin = userWithRole.role?.type && allowedAdminTypes.includes(userWithRole.role.type);
 
       if (!isAdmin) {
+        console.log(`[ADMIN LOGIN DENIED] User ${user.id} (${user.email}) denied admin login - Role: '${userWithRole.role?.type}' (${userWithRole.role?.name})`);
         return ctx.forbidden('Access denied. Admin privileges required.');
       }
 
