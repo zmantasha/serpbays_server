@@ -2,7 +2,7 @@
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const Razorpay = require('razorpay');
-const paypal = require('@paypal/checkout-server-sdk');
+const paypalService = require('./paypal');
 const crypto = require('crypto');
 
 // Initialize Razorpay
@@ -11,12 +11,7 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
-// Initialize PayPal
-const environment = new paypal.core.SandboxEnvironment(
-  process.env.PAYPAL_CLIENT_ID,
-  process.env.PAYPAL_CLIENT_SECRET
-);
-const paypalClient = new paypal.core.PayPalHttpClient(environment);
+// PayPal service is now imported from separate file
 
 module.exports = {
   // Create payment intent for Stripe
@@ -51,22 +46,9 @@ module.exports = {
   },
 
   // Create PayPal order
-  async createPayPalOrder(amount, currency = 'USD') {
+  async createPayPalOrder(amount, currency = 'USD', metadata = {}) {
     try {
-      const request = new paypal.orders.OrdersCreateRequest();
-      request.prefer("return=representation");
-      request.requestBody({
-        intent: 'CAPTURE',
-        purchase_units: [{
-          amount: {
-            currency_code: currency.toUpperCase(),
-            value: amount.toString()
-          }
-        }]
-      });
-
-      const order = await paypalClient.execute(request);
-      return order.result;
+      return await paypalService.createOrder(amount, currency, metadata);
     } catch (error) {
       throw new Error(`PayPal order creation failed: ${error.message}`);
     }
@@ -99,11 +81,54 @@ module.exports = {
   // Capture PayPal payment
   async capturePayPalPayment(orderId) {
     try {
-      const request = new paypal.orders.OrdersCaptureRequest(orderId);
-      const capture = await paypalClient.execute(request);
-      return capture.result.status === 'COMPLETED';
+      return await paypalService.captureOrder(orderId);
     } catch (error) {
       throw new Error(`PayPal payment capture failed: ${error.message}`);
+    }
+  },
+
+  // Get PayPal order details
+  async getPayPalOrderDetails(orderId) {
+    try {
+      return await paypalService.getOrderDetails(orderId);
+    } catch (error) {
+      throw new Error(`PayPal get order details failed: ${error.message}`);
+    }
+  },
+
+  // Verify PayPal webhook
+  async verifyPayPalWebhook(headers, body, webhookId) {
+    try {
+      return await paypalService.verifyWebhookSignature(headers, body, webhookId);
+    } catch (error) {
+      throw new Error(`PayPal webhook verification failed: ${error.message}`);
+    }
+  },
+
+  // Create PayPal payout
+  async createPayPalPayout(amount, currency, recipientEmail, metadata = {}) {
+    try {
+      return await paypalService.createPayout(amount, currency, recipientEmail, metadata);
+    } catch (error) {
+      throw new Error(`PayPal payout creation failed: ${error.message}`);
+    }
+  },
+
+  // Get PayPal payout status
+  async getPayPalPayoutStatus(batchId) {
+    try {
+      return await paypalService.getPayoutStatus(batchId);
+    } catch (error) {
+      throw new Error(`PayPal get payout status failed: ${error.message}`);
+    }
+  },
+
+  // Refund PayPal payment
+  async refundPayPalPayment(captureId, amount = null, reason = 'requested_by_customer') {
+    try {
+      return await paypalService.refundPayment(captureId, amount, reason);
+    } catch (error) {
+      throw new Error(`PayPal refund failed: ${error.message}`);
     }
   }
 }; 
