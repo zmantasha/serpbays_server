@@ -4,10 +4,11 @@
   "info": {
     "singularName": "voucher-code",
     "pluralName": "voucher-codes",
-    "displayName": "Voucher Code"
+    "displayName": "Voucher Code",
+    "description": ""
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "attributes": {
     "code": {
@@ -45,11 +46,6 @@
     },
     "usedAt": {
       "type": "datetime"
-    },
-    "createdBy": {
-      "type": "relation",
-      "relation": "oneToOne",
-      "target": "plugin::users-permissions.user"
     }
   }
 }

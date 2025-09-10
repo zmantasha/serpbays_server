@@ -2119,12 +2119,13 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
 export interface ApiVoucherCodeVoucherCode extends Struct.CollectionTypeSchema {
   collectionName: 'voucher_codes';
   info: {
+    description: '';
     displayName: 'Voucher Code';
     pluralName: 'voucher-codes';
     singularName: 'voucher-code';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     amount: Schema.Attribute.Decimal &
