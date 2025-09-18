@@ -1,7 +1,9 @@
 const strapi = require('@strapi/strapi');
 
-async function setupEmailVerification() {
+async function enableEmailSettingsWithCustomRegistration() {
   try {
+    console.log('🔧 Enabling email settings with custom registration...');
+    
     // Initialize Strapi
     await strapi.load();
     
@@ -12,25 +14,23 @@ async function setupEmailVerification() {
       name: 'users-permissions',
     });
 
-    // Enable email confirmation
+    // Get current advanced settings
     const advancedSettings = await pluginStore.get({ key: 'advanced' });
     
+    // Enable email confirmation but keep registration disabled
+    // This allows email templates to work but prevents default registration
     await pluginStore.set({
       key: 'advanced',
       value: {
         ...advancedSettings,
-        email_confirmation: true,
-        email_confirmation_redirection: `${process.env.CLIENT_URL || 'http://localhost:3000'}/email-verification`,
-        email_reset_password: `${process.env.CLIENT_URL || 'http://localhost:3000'}/reset-password`,
-        allow_register: true,
+        allow_register: false, // Keep registration disabled
+        email_confirmation: true, // Enable email confirmation for templates
         default_role: 'authenticated'
       }
     });
 
-    // Get email settings
-    const emailSettings = await pluginStore.get({ key: 'email' });
-
     // Set up email templates
+    const emailSettings = await pluginStore.get({ key: 'email' });
     const defaultEmailSettings = {
       reset_password: {
         display: 'Email.template.reset_password',
@@ -146,21 +146,31 @@ async function setupEmailVerification() {
       }
     });
 
-    console.log('✅ Email verification has been enabled successfully!');
-    console.log('✅ Email templates have been configured with SerpBays branding!');
-    console.log('✅ Settings updated:');
-    console.log('   - Email confirmation: enabled');
-    console.log(`   - Confirmation redirect: ${process.env.CLIENT_URL || 'http://localhost:3000'}/email-verification`);
-    console.log('   - Registration: enabled');
+    console.log('✅ Email confirmation enabled');
+    console.log('✅ Email templates configured');
+    console.log('✅ Registration kept disabled');
+    console.log('✅ Custom registration system will handle registration');
+    console.log('');
+    console.log('📧 How it works:');
+    console.log('   1. Email confirmation is enabled for templates');
+    console.log('   2. Registration is disabled (prevents default registration)');
+    console.log('   3. Custom registration endpoint handles registration');
+    console.log('   4. Custom email service sends verification emails');
+    console.log('');
+    console.log('🎯 Next steps:');
+    console.log('1. Restart your Strapi server');
+    console.log('2. Update your frontend to use: POST /api/auth/register');
+    console.log('3. Test registration at your frontend');
+    console.log('4. Check that emails use your frontend domain');
     
     await strapi.destroy();
     process.exit(0);
     
   } catch (error) {
-    console.error('❌ Error setting up email verification:', error);
+    console.error('❌ Error setting up email settings:', error);
     process.exit(1);
   }
 }
 
 // Run the setup
-setupEmailVerification(); 
+enableEmailSettingsWithCustomRegistration();
