@@ -70,7 +70,7 @@ async function testCustomVerification() {
     
     // Test verification with invalid token
     try {
-      const verifyResponse = await fetch(`${serverUrl}/api/api/auth/verify-email?confirmation=invalid-token&email=test@example.com`);
+      const verifyResponse = await fetch(`${serverUrl}/api/auth/email-confirmation?confirmation=invalid-token&email=test@example.com`);
       
       if (verifyResponse.redirected) {
         console.log('✅ Invalid token correctly redirected to:', verifyResponse.url);

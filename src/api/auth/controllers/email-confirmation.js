@@ -78,5 +78,68 @@ module.exports = {
         details: error.message
       });
     }
+  },
+
+  async sendVerificationEmail(ctx) {
+    const { email } = ctx.request.body;
+    
+    if (!email) {
+      return ctx.badRequest('Email is required', {
+        error: 'missing_email',
+        details: 'Email parameter is required'
+      });
+    }
+    
+    try {
+      // Find user by email
+      const user = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { email: email }
+      });
+
+      if (!user) {
+        return ctx.badRequest('User not found', {
+          error: 'user_not_found',
+          details: 'No user found with this email address'
+        });
+      }
+
+      if (user.confirmed) {
+        return ctx.badRequest('Email already verified', {
+          error: 'already_confirmed',
+          details: 'This email is already verified'
+        });
+      }
+
+      // Generate new verification token
+      const customEmailService = strapi.service('api::auth.custom-email-verification');
+      const verificationToken = customEmailService.generateVerificationToken();
+
+      // Update user with new token
+      await strapi.db.query('plugin::users-permissions.user').update({
+        where: { id: user.id },
+        data: {
+          confirmationToken: verificationToken,
+          confirmationTokenCreatedAt: new Date()
+        }
+      });
+
+      // Send verification email
+      await customEmailService.sendVerificationEmail(user, verificationToken);
+
+      console.log(`✅ Verification email sent to ${user.email}`);
+      
+      return ctx.send({
+        success: true,
+        message: 'Verification email sent successfully'
+      });
+      
+    } catch (error) {
+      console.error('Send verification email error:', error);
+      
+      return ctx.badRequest('Failed to send verification email', {
+        error: 'send_failed',
+        details: error.message
+      });
+    }
   }
 };

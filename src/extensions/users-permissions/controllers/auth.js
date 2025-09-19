@@ -120,7 +120,7 @@ module.exports = {
     }
 
     // Redirect to our custom verification endpoint
-    return ctx.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/api/api/auth/verify-email?confirmation=${confirmation}`);
+    return ctx.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/email-verification?confirmation=${confirmation}`);
   },
 
   // Override login to handle custom verification
