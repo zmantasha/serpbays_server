@@ -312,21 +312,38 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   },
 
   async findOne(ctx) {
-    // Get authenticated user from context
-    const user = ctx.state.user;
-    // console.log(user)
-    // Advertiser (user.Advertiser === true) can see all listings
-    // Publisher (user.Advertiser === false) can only access their own listings
-    if (user && user.Advertiser === false) {
-      const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
-        fields: ['publisher_email']
-      });
-      if (!entry || entry.publisher_email !== user.email) {
-        return ctx.unauthorized('You are not allowed to view this listing.');
+    try {
+      // Get authenticated user from context
+      const user = ctx.state.user;
+      console.log('🔍 findOne - User:', user ? { id: user.id, email: user.email, Advertiser: user.Advertiser, Publisher: user.Publisher } : 'No user');
+      console.log('🔍 Requesting entry ID:', ctx.params.id);
+      
+      // Check if entry exists directly
+      const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id);
+      console.log('🔍 Direct entry lookup:', entry ? 'Found' : 'Not found');
+      
+      if (!entry) {
+        return ctx.notFound('Marketplace entry not found');
       }
+      
+      // Check user permissions
+      if (user && user.Advertiser === false && user.Publisher === true) {
+        console.log('🔍 User is a Publisher, checking ownership...');
+        if (entry.publisher_email !== user.email) {
+          console.log('🔍 Publisher not authorized - Entry email:', entry.publisher_email, 'User email:', user.email);
+          return ctx.unauthorized('You are not allowed to view this listing.');
+        }
+        console.log('🔍 Publisher authorized to view their own listing');
+      } else {
+        console.log('🔍 User is Advertiser or public user, allowing access to all listings');
+      }
+      
+      // Return the entry directly
+      return { data: entry };
+    } catch (error) {
+      console.error('🔍 Error in findOne:', error.message);
+      throw error;
     }
-    // Call the default core action
-    return await super.findOne(ctx);
   },
 
   // Check if domain exists in marketplace
