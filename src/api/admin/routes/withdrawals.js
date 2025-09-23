@@ -54,8 +54,8 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/withdrawals/:id/pay',
-      handler: 'withdrawals.pay',
+      path: '/api/admin/withdrawals/:id/mark-as-paid',
+      handler: 'withdrawals.markAsPaid',
       config: {
         policies: ['global::is-admin'],
         middlewares: ['global::admin-logger']

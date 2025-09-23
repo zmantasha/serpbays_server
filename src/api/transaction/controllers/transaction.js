@@ -71,7 +71,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(parsedAmount, currency);
             break;
           case 'paypal':
-            paymentData = await strapi.service('api::transaction.payment').createPayPalOrder(parsedAmount, currency);
+            paymentData = await strapi.service('api::transaction.payment').createPayPalOrder(parsedAmount, currency, {
+              walletId: wallet.id,
+              userId: userId
+            });
             break;
           default:
             return ctx.badRequest('Invalid payment gateway');

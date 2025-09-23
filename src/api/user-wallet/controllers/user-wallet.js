@@ -345,24 +345,32 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     }
   },
 
-  // Redeem promo code
+  // Redeem promo code or voucher code
   async redeemPromo(ctx) {
+    const transaction = await strapi.db.transaction();
+    
     try {
       const userId = ctx.state?.user?.id;
       if (!userId) {
+        await transaction.rollback();
         return ctx.unauthorized('Authentication required');
       }
 
       const { promoCode } = ctx.request.body;
       if (!promoCode) {
+        await transaction.rollback();
         return ctx.badRequest('Promo code is required');
       }
 
       // Use centralized wallet creation - create wallet if it doesn't exist
       const wallet = await this.getOrCreateWallet(userId);
-      console.log(`[PROMO REDEMPTION] Got/created wallet ${wallet.id} for user ${userId}`);
+      console.log(`[PROMO/VOUCHER REDEMPTION] Got/created wallet ${wallet.id} for user ${userId}`);
 
-      // Find the promo code in the database
+      let codeType = 'promo';
+      let codeData = null;
+      let isVoucher = false;
+
+      // First, try to find a promo code
       const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
         where: { 
           code: promoCode,
@@ -373,55 +381,114 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }
       });
 
-      if (!promo) {
-        return ctx.badRequest('Invalid or expired promo code');
-      }
+      if (promo) {
+        codeData = promo;
+        codeType = 'promo';
+        console.log(`[PROMO] Found promo code: ${promoCode}, amount: $${promo.amount}`);
+      } else {
+        // If not a promo code, try to find a voucher code
+        const voucher = await strapi.db.query('api::voucher-code.voucher-code').findOne({
+          where: {
+            code: promoCode,
+            voucherStatus: 'active',
+            expiryDate: {
+              $gt: new Date()
+            }
+          }
+        });
 
-      // Check if user has already used this promo code
-      const existingRedemption = await strapi.db.query('api::promo-redemption.promo-redemption').findOne({
-        where: { 
-          promoCode: promo.id,
-          user: userId
+        if (voucher) {
+          codeData = voucher;
+          codeType = 'voucher';
+          isVoucher = true;
+          console.log(`[VOUCHER] Found voucher code: ${promoCode}, amount: $${voucher.amount}`);
+        } else {
+          await transaction.rollback();
+          return ctx.badRequest('Invalid or expired code');
         }
-      });
-
-      if (existingRedemption) {
-        return ctx.badRequest('You have already used this promo code');
       }
+
+      if (!codeData) {
+        await transaction.rollback();
+        return ctx.badRequest('Invalid or expired code');
+      }
+
+      // CRITICAL: Validate usage BEFORE making any changes
+      if (isVoucher) {
+        // For voucher codes, check if they've already been used
+        if (codeData.voucherStatus === 'used' || codeData.usedBy) {
+          await transaction.rollback();
+          return ctx.badRequest('This voucher code has already been used');
+        }
+        
+        // Double-check with a fresh query to prevent race conditions
+        const freshVoucher = await strapi.db.query('api::voucher-code.voucher-code').findOne({
+          where: {
+            id: codeData.id,
+            voucherStatus: 'active'
+          }
+        });
+        
+        if (!freshVoucher || freshVoucher.usedBy) {
+          await transaction.rollback();
+          return ctx.badRequest('This voucher code has already been used');
+        }
+      } else {
+        // For promo codes, check if user has already used this promo code
+        const existingRedemption = await strapi.db.query('api::promo-redemption.promo-redemption').findOne({
+          where: { 
+            promoCode: codeData.id,
+            user: userId
+          }
+        });
+
+        if (existingRedemption) {
+          await transaction.rollback();
+          return ctx.badRequest('You have already used this promo code');
+        }
+        
+        // Check if promo code has reached its redemption limit
+        if (codeData.currentRedemptions >= codeData.maxRedemptions) {
+          await transaction.rollback();
+          return ctx.badRequest('This promo code has reached its usage limit');
+        }
+      }
+
+      // Now that validation passed, proceed with the transaction
+      const currentBalance = parseFloat(wallet.balance) || 0;
+      const codeAmount = parseFloat(codeData.amount) || 0;
+      const newBalance = currentBalance + codeAmount;
+
+      console.log(`[${codeType.toUpperCase()}] Updating balance for user ${userId}: ${currentBalance} + ${codeAmount} = ${newBalance}`);
 
       // Update wallet balance
-      const currentBalance = parseFloat(wallet.balance) || 0;
-      const promoAmount = parseFloat(promo.amount) || 0;
-      const newBalance = currentBalance + promoAmount;
-
-      console.log(`[PROMO] Updating balance for user ${userId}: ${currentBalance} + ${promoAmount} = ${newBalance}`);
-
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: wallet.id },
         data: {
-          balance: newBalance  // ✅ Store as number, not string
+          balance: newBalance
         }
       });
 
-      console.log(`[PROMO] Balance updated successfully for wallet ${wallet.id}`);
+      console.log(`[${codeType.toUpperCase()}] Balance updated successfully for wallet ${wallet.id}`);
 
       // Create transaction record
-      const transaction = await strapi.entityService.create('api::transaction.transaction', {
+      const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
         data: {
-          type: 'promo',
-          amount: promoAmount,
-          netAmount: promoAmount,
-          currency: wallet.currency || 'USD',
+          type: codeType === 'voucher' ? 'promo' : codeType, // Use 'promo' type for both voucher and promo codes
+          amount: codeAmount,
+          netAmount: codeAmount,
           transactionStatus: 'success',
-          gateway: 'promo',
-          gatewayTransactionId: `PROMO_${promoCode}_${Date.now()}`,
-          description: `Promo code redemption: ${promoCode}`,
+          gateway: 'promo', // Use 'promo' gateway for both voucher and promo codes
+          gatewayTransactionId: `${codeType.toUpperCase()}_${promoCode}_${Date.now()}`,
+          description: `${codeType === 'voucher' ? 'Voucher' : 'Promo'} code redemption: ${promoCode}`,
           user_wallet: wallet.id,
           users_permissions_user: userId,
           fee: 0,
           metadata: {
             promoCode: promoCode,
-            promoId: promo.id
+            promoId: codeData.id,
+            codeType: codeType, // Store the actual code type in metadata
+            currency: wallet.currency || 'USD' // Store currency in metadata instead
           },
           publishedAt: new Date(),
           createdBy: null,
@@ -429,32 +496,60 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }
       });
 
-      // Record promo code redemption
-      const redemption = await strapi.entityService.create('api::promo-redemption.promo-redemption', {
-        data: {
-          promoCode: promo.id,
-          user: userId,
-          redeemedAt: new Date(),
-          publishedAt: new Date(),
-          createdBy: null,
-          updatedBy: null
-        }
-      });
+      if (isVoucher) {
+        // Mark voucher code as used
+        await strapi.entityService.update('api::voucher-code.voucher-code', codeData.id, {
+          data: {
+            voucherStatus: 'used',
+            usedBy: userId,
+            usedAt: new Date()
+          }
+        });
+        console.log(`[VOUCHER] Marked voucher code ${promoCode} as used by user ${userId}`);
+        
+        // For vouchers, we don't create a promo-redemption record since it's for promo codes only
+        // The voucher usage is tracked directly in the voucher-code table
+      } else {
+        // Record promo code redemption
+        const redemption = await strapi.entityService.create('api::promo-redemption.promo-redemption', {
+          data: {
+            promoCode: codeData.id,
+            user: userId,
+            redeemedAt: new Date(),
+            publishedAt: new Date(),
+            createdBy: null,
+            updatedBy: null
+          }
+        });
+        
+        // Update the promo code's current redemptions count
+        await strapi.entityService.update('api::promo-code.promo-code', codeData.id, {
+          data: {
+            currentRedemptions: codeData.currentRedemptions + 1
+          }
+        });
+        console.log(`[PROMO] Updated redemption count for promo code ${promoCode}: ${codeData.currentRedemptions + 1}/${codeData.maxRedemptions}`);
+      }
+
+      // Commit the transaction
+      await transaction.commit();
 
       return {
         data: {
-          amount: promoAmount,
-          message: `Successfully redeemed promo code for $${promoAmount}`
+          amount: codeAmount,
+          codeType: codeType,
+          message: `Successfully redeemed ${codeType === 'voucher' ? 'voucher' : 'promo'} code for $${codeAmount}`
         }
       };
     } catch (error) {
-      console.error('Promo redemption error:', error);
+      console.error('Promo/Voucher redemption error:', error);
+      await transaction.rollback();
       // Return more specific error message
-      return ctx.badRequest(error.message || 'Failed to redeem promo code');
+      return ctx.badRequest(error.message || 'Failed to redeem code');
     }
   },
 
-  // Check promo code validity
+  // Check promo code or voucher code validity
   async checkPromoCode(ctx) {
     try {
       const { promoCode } = ctx.request.body;
@@ -462,7 +557,10 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.badRequest('Promo code is required');
       }
 
-      // Find the promo code in the database
+      let codeData = null;
+      let codeType = 'promo';
+
+      // First, try to find a promo code
       const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
         where: { 
           code: promoCode,
@@ -473,20 +571,42 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }
       });
 
-      if (!promo) {
-        return ctx.badRequest('Invalid or expired promo code');
+      if (promo) {
+        codeData = promo;
+        codeType = 'promo';
+      } else {
+        // If not a promo code, try to find a voucher code
+        const voucher = await strapi.db.query('api::voucher-code.voucher-code').findOne({
+          where: {
+            code: promoCode,
+            voucherStatus: 'active',
+            expiryDate: {
+              $gt: new Date()
+            }
+          }
+        });
+
+        if (voucher) {
+          codeData = voucher;
+          codeType = 'voucher';
+        }
+      }
+
+      if (!codeData) {
+        return ctx.badRequest('Invalid or expired code');
       }
 
       return {
         data: {
           valid: true,
-          amount: promo.amount,
-          expiryDate: promo.expiryDate
+          codeType: codeType,
+          amount: codeData.amount,
+          expiryDate: codeData.expiryDate
         }
       };
     } catch (error) {
-      console.error('Promo code check error:', error);
-      return ctx.badRequest(error.message || 'Failed to check promo code');
+      console.error('Promo/Voucher code check error:', error);
+      return ctx.badRequest(error.message || 'Failed to check code');
     }
   },
 

@@ -17,6 +17,61 @@ module.exports = {
       }
     },
 
+    // Create new website
+    {
+      method: 'POST',
+      path: '/api/admin/websites',
+      handler: 'websites.create',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Get website statistics
+    {
+      method: 'GET',
+      path: '/api/admin/websites/stats',
+      handler: 'websites.getStats',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Bulk update metrics from CSV (MUST come before :id routes)
+    {
+      method: 'POST',
+      path: '/api/admin/websites/bulk-update-metrics',
+      handler: 'websites.bulkUpdateMetrics',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Export websites with filters
+    {
+      method: 'GET',
+      path: '/api/admin/websites/export',
+      handler: 'websites.exportFiltered',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Check website conflicts
+    {
+      method: 'GET',
+      path: '/api/admin/websites/check-conflict',
+      handler: 'websites.checkConflict',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
     // Get single website
     {
       method: 'GET',
@@ -50,11 +105,42 @@ module.exports = {
       }
     },
 
-    // Get website statistics
+    // Update website metrics
     {
-      method: 'GET',
-      path: '/api/admin/websites/stats',
-      handler: 'websites.getStats',
+      method: 'PUT',
+      path: '/api/admin/websites/:id/metrics',
+      handler: 'websites.updateMetrics',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Replace website
+    {
+      method: 'PUT',
+      path: '/api/admin/websites/:id/replace',
+      handler: 'websites.replaceWebsite',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/admin/websites/bulk-import',
+      handler: 'websites.bulkImport',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Update website (general update)
+    {
+      method: 'PUT',
+      path: '/api/admin/websites/:id',
+      handler: 'websites.update',
       config: {
         policies: ['global::is-admin'],
         middlewares: []

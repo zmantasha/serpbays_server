@@ -25,12 +25,16 @@ module.exports = {
     // Register admin routes
     const adminRoutes = [
       require('./api/admin/routes/admin'),
+      require('./api/admin/routes/role-management'),
       require('./api/admin/routes/users'),
       require('./api/admin/routes/orders'),
       require('./api/admin/routes/transactions'),
       require('./api/admin/routes/communications'),
       require('./api/admin/routes/websites'),
-      require('./api/admin/routes/marketplace')
+      require('./api/admin/routes/website-requests'),
+      require('./api/admin/routes/marketplace'),
+      require('./api/admin/routes/withdrawals'),
+      require('./api/admin/routes/codes')
     ];
 
     adminRoutes.forEach(routeConfig => {

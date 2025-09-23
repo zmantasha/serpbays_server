@@ -20,7 +20,7 @@ async function setupEmailVerification() {
       value: {
         ...advancedSettings,
         email_confirmation: true,
-        email_confirmation_redirection: `${process.env.CLIENT_URL || 'http://localhost:3000'}/email-verification?verified=true`,
+        email_confirmation_redirection: `${process.env.CLIENT_URL || 'http://localhost:3000'}/email-verification`,
         email_reset_password: `${process.env.CLIENT_URL || 'http://localhost:3000'}/reset-password`,
         allow_register: true,
         default_role: 'authenticated'

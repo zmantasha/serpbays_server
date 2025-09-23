@@ -88,9 +88,9 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
         populate: {
           publisher: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber'],
-            populate: ['user_wallet']
-          }
+            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
+          },
+          user_wallet: true
         }
       });
 
@@ -145,8 +145,32 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         populate: ['publisher']
       });
 
-      // Note: No balance deduction here - amount stays in pendingWithdrawalBalance
-      // until the withdrawal is actually paid out
+      // Update user wallet - move from pending to completed
+      const wallet = await strapi.controller('api::user-wallet.user-wallet')
+        .getOrCreateWallet(withdrawal.publisher.id);
+
+      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+        data: {
+          pendingWithdrawalBalance: parseFloat(wallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount),
+          // Note: balance has already been deducted when request was created
+        }
+      });
+
+      // Create transaction record for the withdrawal
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          users_permissions_user: withdrawal.publisher.id,
+          type: 'withdrawal',
+          transactionStatus: 'success',
+          amount: parseFloat(withdrawal.amount),
+          netAmount: parseFloat(withdrawal.amount),
+          gateway: 'system',
+          gatewayTransactionId: `WD-${id}-${Date.now()}`,
+          description: `Withdrawal approved - ${paymentReference || 'No reference'}`,
+          fee: 0,
+          user_wallet: wallet.id
+        }
+      });
 
       ctx.send({
         data: updatedWithdrawal
@@ -186,9 +210,9 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
         data: { 
           withdrawal_status: 'denied',
-          denial_reason: reason, // Changed to match lifecycle system
-          rejectedAt: new Date(),
-          rejectedBy: ctx.state.user.id,
+          denial_reason: reason,
+          rejected_at: new Date(),
+          rejected_by: ctx.state.user.id,
           processedAt: new Date()
         },
         populate: ['publisher']
@@ -337,6 +361,95 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
     } catch (error) {
       console.error('[ADMIN WITHDRAWAL STATS ERROR]', error);
       return ctx.internalServerError('Failed to fetch withdrawal statistics');
+    }
+  },
+
+  /**
+   * Mark withdrawal as paid (admin action)
+   */
+  async markAsPaid(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { paymentReference, paymentNotes, paymentDate } = ctx.request.body;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} marking withdrawal ${id} as paid`);
+
+      // Get withdrawal request details
+      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: ['publisher']
+      });
+
+      if (!withdrawal) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      if (withdrawal.withdrawal_status !== 'approved') {
+        return ctx.badRequest('Withdrawal request must be approved before marking as paid');
+      }
+
+      // Check if there's sufficient pending withdrawal balance
+      const publisherWallet = await strapi.entityService.findOne('api::user-wallet.user-wallet', withdrawal.publisher.id);
+      if (!publisherWallet) {
+        return ctx.badRequest('Publisher wallet not found');
+      }
+
+      const currentPendingBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
+      const withdrawalAmount = parseFloat(withdrawal.amount);
+      
+      if (currentPendingBalance < withdrawalAmount) {
+        return ctx.badRequest(`Insufficient pending withdrawal balance. Available: ${currentPendingBalance}, Required: ${withdrawalAmount}`);
+      }
+
+      // Use database transaction to ensure atomicity
+      const trx = await strapi.db.connection.transaction();
+      
+      try {
+        // Update withdrawal request
+        const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+          data: { 
+            withdrawal_status: 'paid',
+            paymentReference,
+            paymentNotes,
+            paidAt: paymentDate ? new Date(paymentDate) : new Date(),
+            paidBy: ctx.state.user.id,
+            processedAt: new Date()
+          },
+          populate: ['publisher']
+        });
+
+        // Create transaction record for the payment
+        await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            users_permissions_user: withdrawal.publisher.id,
+            type: 'payout',
+            transactionStatus: 'paid',
+            amount: parseFloat(withdrawal.amount),
+            netAmount: parseFloat(withdrawal.amount),
+            gateway: 'system',
+            gatewayTransactionId: `WP-${id}-${Date.now()}`,
+            description: `Withdrawal payment completed - ${paymentReference || 'No reference'}`,
+            fee: 0,
+            user_wallet: publisherWallet.id
+          }
+        });
+
+        // Commit the transaction
+        await trx.commit();
+
+        ctx.send({
+          data: updatedWithdrawal
+        });
+      } catch (transactionError) {
+        // Rollback the transaction
+        await trx.rollback();
+        console.error('[ADMIN WITHDRAWAL MARK AS PAID TRANSACTION ERROR]', transactionError);
+        throw transactionError;
+      }
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL MARK AS PAID ERROR]', error);
+      return ctx.internalServerError('Failed to mark withdrawal as paid');
     }
   },
 

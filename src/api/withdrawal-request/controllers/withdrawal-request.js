@@ -1107,13 +1107,64 @@ async function processRazorpayPayout(withdrawalRequest) {
 
 // Helper function to process PayPal payout
 async function processPaypalPayout(withdrawalRequest) {
-  // TODO: Implement PayPal payout API integration
-  console.log('MOCK: Processing PayPal payout', withdrawalRequest);
-  
-  // Mock implementation
-  return {
-    success: true,
-    transactionId: `paypal_${Date.now()}`,
-    message: 'PayPal payout successfully processed'
-  };
+  try {
+    console.log('Processing PayPal payout for withdrawal:', withdrawalRequest.id);
+    
+    // Get the payment service
+    const paymentService = strapi.service('api::transaction.payment');
+    
+    // Check if PayPal payouts are available
+    try {
+      // Create PayPal payout
+      const payoutResult = await paymentService.createPayPalPayout(
+        parseFloat(withdrawalRequest.amount),
+        'USD', // You might want to make this dynamic
+        withdrawalRequest.paymentDetails?.email || withdrawalRequest.publisher?.email,
+        {
+          withdrawalId: withdrawalRequest.id,
+          userId: withdrawalRequest.publisher?.id
+        }
+      );
+    
+      if (payoutResult.success) {
+        console.log('PayPal payout created successfully:', payoutResult.batchId);
+        
+        // Update withdrawal request with PayPal batch ID
+        await strapi.entityService.update('api::withdrawal-request.withdrawal-request', withdrawalRequest.id, {
+          data: {
+            external_transaction_id: payoutResult.batchId,
+            payment_reference: payoutResult.batchId,
+            processedAt: new Date()
+          }
+        });
+        
+        return {
+          success: true,
+          transactionId: payoutResult.batchId,
+          message: 'PayPal payout successfully created',
+          batchId: payoutResult.batchId
+        };
+      } else {
+        throw new Error('PayPal payout creation failed');
+      }
+    } catch (payoutError) {
+      if (payoutError.message.includes('PayPal payouts SDK not available')) {
+        console.warn('PayPal payouts SDK not available, falling back to manual processing');
+        return {
+          success: true,
+          transactionId: `manual_paypal_${Date.now()}`,
+          message: 'PayPal payout queued for manual processing (SDK not available)',
+          requiresManualProcessing: true
+        };
+      }
+      throw payoutError;
+    }
+  } catch (error) {
+    console.error('PayPal payout error:', error);
+    return {
+      success: false,
+      error: error.message,
+      message: 'PayPal payout failed'
+    };
+  }
 }

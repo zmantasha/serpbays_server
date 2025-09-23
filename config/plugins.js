@@ -3,12 +3,17 @@ module.exports = ({ env }) => ({
     config: {
       register: {
         allowedFields: ['Advertiser', 'Publisher', 'firstName','lastName'],
-        
       },
       jwt: {
         expiresIn: '7d',
       },
       jwtSecret: env('JWT_SECRET', 'your-secret-key-here'),
+      // Enable registration and email confirmation
+      allow_register: true,
+      email_confirmation: true,
+      email_confirmation_redirection: `${env('CLIENT_URL', 'http://localhost:3000')}/email-verification`,
+      email_reset_password: `${env('CLIENT_URL', 'http://localhost:3000')}/reset-password`,
+      default_role: 'authenticated'
     }
   },
   'upload': {

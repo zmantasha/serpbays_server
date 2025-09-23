@@ -11,7 +11,7 @@ module.exports = createCoreController('api::website-request.website-request', ({
   /**
    * Get all website requests with pagination and filters for admin panel
    */
-  async find(ctx) {
+  async getWebsiteRequests(ctx) {
     try {
       const { 
         page = 1, 
@@ -29,266 +29,259 @@ module.exports = createCoreController('api::website-request.website-request', ({
       // Search filter
       if (search) {
         filters.$or = [
-          { specificDomains: { $containsi: search } },
-          { category: { $containsi: search } },
-          { additionalRequirements: { $containsi: search } },
+          { title: { $containsi: search } },
+          { domain: { $containsi: search } },
           { userEmail: { $containsi: search } }
         ];
       }
 
       // Status filter
-      if (status) {
+      if (status && status !== 'all') {
         filters.status = status;
       }
 
       // Category filter
-      if (category) {
+      if (category && category !== 'all') {
         filters.category = category;
       }
 
-      // User filter
+      // User ID filter
       if (userId) {
-        filters.userEmail = userId;
+        filters.userId = userId;
       }
 
-      // Get website requests with pagination
-      const websiteRequests = await strapi.entityService.findMany('api::website-request.website-request', {
+      const response = await strapi.entityService.findMany('api::website-request.website-request', {
         filters,
         sort,
-        pagination: {
-          page: parseInt(page),
-          pageSize: parseInt(pageSize)
-        }
+        populate: {
+          user: {
+            fields: ['id', 'username', 'email']
+          }
+        },
+        start: (page - 1) * pageSize,
+        limit: pageSize,
       });
 
       // Get total count for pagination
-      const total = await strapi.db.query('api::website-request.website-request').count({ where: filters });
+      const total = await strapi.entityService.count('api::website-request.website-request', {
+        filters,
+      });
 
-      ctx.send({
-        data: websiteRequests,
-        meta: {
-          pagination: {
-            page: parseInt(page),
-            pageSize: parseInt(pageSize),
-            pageCount: Math.ceil(total / pageSize),
-            total
-          }
+      return {
+        data: response,
+        pagination: {
+          page: parseInt(page),
+          pageSize: parseInt(pageSize),
+          total,
+          totalPages: Math.ceil(total / pageSize)
         }
-      });
-
+      };
     } catch (error) {
-      console.error('[ADMIN WEBSITE REQUESTS FIND ERROR]', error);
-      return ctx.internalServerError('Failed to fetch website requests');
-    }
-  },
-
-  /**
-   * Get single website request with full details
-   */
-  async findOne(ctx) {
-    try {
-      const { id } = ctx.params;
-
-      const websiteRequest = await strapi.entityService.findOne('api::website-request.website-request', id);
-
-      if (!websiteRequest) {
-        return ctx.notFound('Website request not found');
-      }
-
-      ctx.send({
-        data: websiteRequest
-      });
-
-    } catch (error) {
-      console.error('[ADMIN WEBSITE REQUEST FIND ONE ERROR]', error);
-      return ctx.internalServerError('Failed to fetch website request details');
-    }
-  },
-
-  /**
-   * Approve website request (admin action)
-   */
-  async approve(ctx) {
-    try {
-      const { id } = ctx.params;
-      const { adminNotes } = ctx.request.body;
-
-      // Log admin action
-      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} approving website request ${id}`);
-
-      // Get website request details
-      const websiteRequest = await strapi.entityService.findOne('api::website-request.website-request', id);
-
-      if (!websiteRequest) {
-        return ctx.notFound('Website request not found');
-      }
-
-      if (websiteRequest.status !== 'pending') {
-        return ctx.badRequest('Website request has already been processed');
-      }
-
-      // Update website request
-      const updatedRequest = await strapi.entityService.update('api::website-request.website-request', id, {
-        data: { 
-          status: 'approved',
-          adminNotes,
-          reviewedAt: new Date(),
-          reviewedBy: ctx.state.user.id
-        }
-      });
-
-      // Create a new website entry in the publisher-website collection
-      await strapi.entityService.create('api::publisher-website.publisher-website', {
-        data: {
-          domain: websiteRequest.specificDomains || 'example.com', // Use specificDomains or fallback
-          title: websiteRequest.category || 'Website Request',
-          description: websiteRequest.additionalRequirements || 'Approved website request',
-          category: websiteRequest.category || 'General',
-          status: 'active',
-          publisherEmail: websiteRequest.userEmail, // Use userEmail instead of publisher.email
-          da: websiteRequest.minDA || 0,
-          traffic: websiteRequest.minTraffic || '0',
-          addedDate: new Date(),
-          publishedAt: new Date()
-        }
-      });
-
-      ctx.send({
-        data: updatedRequest
-      });
-
-    } catch (error) {
-      console.error('[ADMIN WEBSITE REQUEST APPROVE ERROR]', error);
-      return ctx.internalServerError('Failed to approve website request');
-    }
-  },
-
-  /**
-   * Reject website request (admin action)
-   */
-  async reject(ctx) {
-    try {
-      const { id } = ctx.params;
-      const { reason } = ctx.request.body;
-
-      // Log admin action
-      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} rejecting website request ${id}. Reason: ${reason}`);
-
-      // Get website request details
-      const websiteRequest = await strapi.entityService.findOne('api::website-request.website-request', id);
-
-      if (!websiteRequest) {
-        return ctx.notFound('Website request not found');
-      }
-
-      if (websiteRequest.status !== 'pending') {
-        return ctx.badRequest('Website request has already been processed');
-      }
-
-      // Update website request
-      const updatedRequest = await strapi.entityService.update('api::website-request.website-request', id, {
-        data: { 
-          status: 'rejected',
-          adminNotes: reason,
-          reviewedAt: new Date(),
-          reviewedBy: ctx.state.user.id
-        }
-      });
-
-      ctx.send({
-        data: updatedRequest
-      });
-
-    } catch (error) {
-      console.error('[ADMIN WEBSITE REQUEST REJECT ERROR]', error);
-      return ctx.internalServerError('Failed to reject website request');
+      console.error('Admin getWebsiteRequests error:', error);
+      return ctx.badRequest('Failed to fetch website requests', { error: error.message });
     }
   },
 
   /**
    * Get website request statistics for admin dashboard
    */
-  async getStats(ctx) {
+  async getWebsiteRequestStats(ctx) {
     try {
-      const total = await strapi.db.query('api::website-request.website-request').count();
-      const pending = await strapi.db.query('api::website-request.website-request').count({
-        where: { status: 'pending' }
-      });
-      const underReview = await strapi.db.query('api::website-request.website-request').count({
-        where: { status: 'under_review' }
-      });
-      const approved = await strapi.db.query('api::website-request.website-request').count({
-        where: { status: 'approved' }
-      });
-      const rejected = await strapi.db.query('api::website-request.website-request').count({
-        where: { status: 'rejected' }
-      });
+      const [total, pending, underReview, approved, rejected] = await Promise.all([
+        strapi.entityService.count('api::website-request.website-request', {}),
+        strapi.entityService.count('api::website-request.website-request', { 
+          filters: { status: 'pending' } 
+        }),
+        strapi.entityService.count('api::website-request.website-request', { 
+          filters: { status: 'under_review' } 
+        }),
+        strapi.entityService.count('api::website-request.website-request', { 
+          filters: { status: 'approved' } 
+        }),
+        strapi.entityService.count('api::website-request.website-request', { 
+          filters: { status: 'rejected' } 
+        })
+      ]);
 
-      ctx.send({
+      return {
         totalRequests: total,
         pending,
         underReview,
         approved,
         rejected
-      });
-
+      };
     } catch (error) {
-      console.error('[ADMIN WEBSITE REQUEST STATS ERROR]', error);
-      return ctx.internalServerError('Failed to fetch website request statistics');
+      console.error('Admin getWebsiteRequestStats error:', error);
+      return ctx.badRequest('Failed to fetch website request stats', { error: error.message });
     }
   },
 
   /**
-   * Bulk process website requests (admin action)
+   * Get a specific website request by ID
    */
-  async bulkProcess(ctx) {
+  async getWebsiteRequestById(ctx) {
+    try {
+      const { id } = ctx.params;
+
+      const websiteRequest = await strapi.entityService.findOne('api::website-request.website-request', id, {
+        populate: {
+          user: {
+            fields: ['id', 'username', 'email', 'firstName', 'lastName']
+          }
+        }
+      });
+
+      if (!websiteRequest) {
+        return ctx.notFound('Website request not found');
+      }
+
+      return { data: websiteRequest };
+    } catch (error) {
+      console.error('Admin getWebsiteRequestById error:', error);
+      return ctx.badRequest('Failed to fetch website request', { error: error.message });
+    }
+  },
+
+  /**
+   * Approve a website request
+   */
+  async approveWebsiteRequest(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { adminNotes } = ctx.request.body;
+
+      const updatedRequest = await strapi.entityService.update('api::website-request.website-request', id, {
+        data: {
+          status: 'approved',
+          adminNotes: adminNotes || '',
+          approvedAt: new Date(),
+          approvedBy: ctx.state.user.id
+        },
+        populate: {
+          user: {
+            fields: ['id', 'username', 'email']
+          }
+        }
+      });
+
+      if (!updatedRequest) {
+        return ctx.notFound('Website request not found');
+      }
+
+      // TODO: Send email notification to user about approval
+      console.log(`Website request ${id} approved by admin ${ctx.state.user.id}`);
+
+      return updatedRequest;
+    } catch (error) {
+      console.error('Admin approveWebsiteRequest error:', error);
+      return ctx.badRequest('Failed to approve website request', { error: error.message });
+    }
+  },
+
+  /**
+   * Reject a website request
+   */
+  async rejectWebsiteRequest(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { reason } = ctx.request.body;
+
+      if (!reason) {
+        return ctx.badRequest('Rejection reason is required');
+      }
+
+      const updatedRequest = await strapi.entityService.update('api::website-request.website-request', id, {
+        data: {
+          status: 'rejected',
+          rejectionReason: reason,
+          rejectedAt: new Date(),
+          rejectedBy: ctx.state.user.id
+        },
+        populate: {
+          user: {
+            fields: ['id', 'username', 'email']
+          }
+        }
+      });
+
+      if (!updatedRequest) {
+        return ctx.notFound('Website request not found');
+      }
+
+      // TODO: Send email notification to user about rejection
+      console.log(`Website request ${id} rejected by admin ${ctx.state.user.id}`);
+
+      return updatedRequest;
+    } catch (error) {
+      console.error('Admin rejectWebsiteRequest error:', error);
+      return ctx.badRequest('Failed to reject website request', { error: error.message });
+    }
+  },
+
+  /**
+   * Bulk process website requests (approve/reject multiple)
+   */
+  async bulkProcessWebsiteRequests(ctx) {
     try {
       const { requestIds, action, notes } = ctx.request.body;
 
-      if (!Array.isArray(requestIds) || requestIds.length === 0) {
-        return ctx.badRequest('No request IDs provided');
+      if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
+        return ctx.badRequest('Request IDs array is required');
       }
 
       if (!['approve', 'reject'].includes(action)) {
-        return ctx.badRequest('Invalid action. Must be "approve" or "reject"');
+        return ctx.badRequest('Action must be either "approve" or "reject"');
+      }
+
+      if (action === 'reject' && !notes) {
+        return ctx.badRequest('Rejection reason is required for reject action');
+      }
+
+      const updateData = {
+        status: action === 'approve' ? 'approved' : 'rejected',
+        [`${action}edAt`]: new Date(),
+        [`${action}edBy`]: ctx.state.user.id
+      };
+
+      if (action === 'approve') {
+        updateData.adminNotes = notes || '';
+      } else {
+        updateData.rejectionReason = notes;
       }
 
       const results = [];
-
-      for (const requestId of requestIds) {
+      
+      for (const id of requestIds) {
         try {
-          if (action === 'approve') {
-            await this.approve({
-              params: { id: requestId },
-              request: { body: { adminNotes: notes } },
-              state: ctx.state,
-              send: () => {} // Mock send function
-            });
-          } else {
-            await this.reject({
-              params: { id: requestId },
-              request: { body: { reason: notes } },
-              state: ctx.state,
-              send: () => {} // Mock send function
-            });
-          }
-          results.push({ id: requestId, status: 'success' });
+          const updated = await strapi.entityService.update('api::website-request.website-request', id, {
+            data: updateData,
+            populate: {
+              user: {
+                fields: ['id', 'username', 'email']
+              }
+            }
+          });
+          results.push({ id, success: true, data: updated });
         } catch (error) {
-          results.push({ id: requestId, status: 'error', message: error.message });
+          results.push({ id, success: false, error: error.message });
         }
       }
 
-      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} bulk ${action} ${requestIds.length} website requests`);
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
 
-      ctx.send({
-        message: `Bulk ${action} completed`,
+      console.log(`Bulk ${action} processed: ${successCount} successful, ${failCount} failed`);
+
+      return {
+        success: true,
+        processed: successCount,
+        failed: failCount,
         results
-      });
-
+      };
     } catch (error) {
-      console.error('[ADMIN WEBSITE REQUEST BULK PROCESS ERROR]', error);
-      return ctx.internalServerError('Failed to process bulk website request action');
+      console.error('Admin bulkProcessWebsiteRequests error:', error);
+      return ctx.badRequest('Failed to bulk process website requests', { error: error.message });
     }
   }
 
-})); 
+}));

@@ -438,6 +438,32 @@ export interface ApiArticleArticle extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiAuthAuth extends Struct.CollectionTypeSchema {
+  collectionName: 'auths';
+  info: {
+    description: 'Authentication endpoints';
+    displayName: 'Auth';
+    pluralName: 'auths';
+    singularName: 'auth';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::auth.auth'> &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiAuthorAuthor extends Struct.CollectionTypeSchema {
   collectionName: 'authors';
   info: {
@@ -1497,6 +1523,42 @@ export interface ApiPublisherWebsitePublisherWebsite
   attributes: {
     addedByReseller: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
+    ahrefs_dr: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_keywords: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_rank: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 1;
+        },
+        number
+      >;
+    ahrefs_referring_domain: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    ahrefs_traffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     allowedLinks: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -1655,6 +1717,18 @@ export interface ApiPublisherWebsitePublisherWebsite
     > &
       Schema.Attribute.Private;
     marketplaceId: Schema.Attribute.Integer;
+    metrics_last_updated: Schema.Attribute.DateTime;
+    metrics_update_count: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    metrics_update_method: Schema.Attribute.Enumeration<
+      ['manual', 'api', 'bulk_import']
+    >;
     minWordCount: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -1663,6 +1737,22 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<500>;
+    moz_da: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    moz_spam_score: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
     newOwnerWebsiteId: Schema.Attribute.Integer;
     originalPublisherId: Schema.Attribute.Relation<
       'manyToOne',
@@ -1690,6 +1780,21 @@ export interface ApiPublisherWebsitePublisherWebsite
     reviewNotes: Schema.Attribute.Text;
     reviewStartedAt: Schema.Attribute.DateTime;
     samplePosts: Schema.Attribute.JSON;
+    semrush_authority_score: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 1000;
+          min: 0;
+        },
+        number
+      >;
+    semrush_traffic: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     sponsored: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     stepCompleted: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -2037,6 +2142,57 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiVoucherCodeVoucherCode extends Struct.CollectionTypeSchema {
+  collectionName: 'voucher_codes';
+  info: {
+    description: '';
+    displayName: 'Voucher Code';
+    pluralName: 'voucher-codes';
+    singularName: 'voucher-code';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    amount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    code: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    expiryDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::voucher-code.voucher-code'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    usedAt: Schema.Attribute.DateTime;
+    usedBy: Schema.Attribute.Relation<
+      'oneToOne',
+      'plugin::users-permissions.user'
+    >;
+    voucherStatus: Schema.Attribute.Enumeration<
+      ['active', 'used', 'expired', 'inactive']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'active'>;
+  };
+}
+
 export interface ApiWebsiteRequestWebsiteRequest
   extends Struct.CollectionTypeSchema {
   collectionName: 'website_requests';
@@ -2051,6 +2207,12 @@ export interface ApiWebsiteRequestWebsiteRequest
   };
   attributes: {
     additionalRequirements: Schema.Attribute.Text;
+    adminNotes: Schema.Attribute.Text;
+    approvedAt: Schema.Attribute.DateTime;
+    approvedBy: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     assignedTo: Schema.Attribute.String;
     budgetRange: Schema.Attribute.Enumeration<
       [
@@ -2142,12 +2304,26 @@ export interface ApiWebsiteRequestWebsiteRequest
     proposalSent: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     proposalSentAt: Schema.Attribute.DateTime;
     publishedAt: Schema.Attribute.DateTime;
+    rejectedAt: Schema.Attribute.DateTime;
+    rejectedBy: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    rejectionReason: Schema.Attribute.Text;
     requestType: Schema.Attribute.Enumeration<['specific', 'criteria']> &
       Schema.Attribute.Required;
     responseNotes: Schema.Attribute.Text;
     specificDomains: Schema.Attribute.Text;
     status: Schema.Attribute.Enumeration<
-      ['pending', 'reviewing', 'in-progress', 'completed', 'cancelled']
+      [
+        'pending',
+        'under_review',
+        'approved',
+        'rejected',
+        'in-progress',
+        'completed',
+        'cancelled',
+      ]
     > &
       Schema.Attribute.DefaultTo<'pending'>;
     timeline: Schema.Attribute.Enumeration<
@@ -2156,6 +2332,10 @@ export interface ApiWebsiteRequestWebsiteRequest
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    user: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     userEmail: Schema.Attribute.Email & Schema.Attribute.Required;
   };
 }
@@ -2173,6 +2353,7 @@ export interface ApiWithdrawalRequestWithdrawalRequest
     draftAndPublish: false;
   };
   attributes: {
+    admin_notes: Schema.Attribute.Text;
     amount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<
@@ -2181,6 +2362,11 @@ export interface ApiWithdrawalRequestWithdrawalRequest
         },
         number
       >;
+    approved_at: Schema.Attribute.DateTime;
+    approved_by: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -2200,12 +2386,26 @@ export interface ApiWithdrawalRequestWithdrawalRequest
       ['razorpay', 'paypal', 'bank_transfer', 'payoneer']
     > &
       Schema.Attribute.Required;
+    paid_at: Schema.Attribute.DateTime;
+    paid_by: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     payment_method_used: Schema.Attribute.Enumeration<
       ['paypal', 'bank_transfer', 'razorpay', 'payoneer', 'other']
     >;
     payment_notes: Schema.Attribute.Text;
+    payment_reference: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
     publishedAt: Schema.Attribute.DateTime;
     publisher: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    rejected_at: Schema.Attribute.DateTime;
+    rejected_by: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
     >;
@@ -2790,6 +2990,7 @@ declare module '@strapi/strapi' {
       'admin::user': AdminUser;
       'api::about.about': ApiAboutAbout;
       'api::article.article': ApiArticleArticle;
+      'api::auth.auth': ApiAuthAuth;
       'api::author.author': ApiAuthorAuthor;
       'api::cart.cart': ApiCartCart;
       'api::category.category': ApiCategoryCategory;
@@ -2812,6 +3013,7 @@ declare module '@strapi/strapi' {
       'api::shortlist.shortlist': ApiShortlistShortlist;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
+      'api::voucher-code.voucher-code': ApiVoucherCodeVoucherCode;
       'api::website-request.website-request': ApiWebsiteRequestWebsiteRequest;
       'api::withdrawal-request.withdrawal-request': ApiWithdrawalRequestWithdrawalRequest;
       'plugin::content-releases.release': PluginContentReleasesRelease;

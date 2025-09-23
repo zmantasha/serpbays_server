@@ -383,6 +383,70 @@
     "newOwnerWebsiteId": {
       "type": "integer",
       "description": "ID of the new website entry created for the new owner (for original websites that were claimed)"
+    },
+    "ahrefs_dr": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "description": "Ahrefs Domain Rating (0-100)"
+    },
+    "ahrefs_traffic": {
+      "type": "integer",
+      "min": 0,
+      "description": "Ahrefs traffic estimate (numbers only)"
+    },
+    "ahrefs_rank": {
+      "type": "integer",
+      "min": 1,
+      "description": "Ahrefs global rank"
+    },
+    "moz_da": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "description": "Moz Domain Authority (0-100)"
+    },
+    "semrush_authority_score": {
+      "type": "integer",
+      "min": 0,
+      "max": 1000,
+      "description": "Semrush Authority Score (0-1000)"
+    },
+    "semrush_traffic": {
+      "type": "integer",
+      "min": 0,
+      "description": "Semrush traffic estimate (numbers only)"
+    },
+    "moz_spam_score": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "description": "Moz Spam Score (0-100)"
+    },
+    "ahrefs_referring_domain": {
+      "type": "integer",
+      "min": 0,
+      "description": "Ahrefs referring domains count"
+    },
+    "ahrefs_keywords": {
+      "type": "integer",
+      "min": 0,
+      "description": "Ahrefs organic keywords count"
+    },
+    "metrics_last_updated": {
+      "type": "datetime",
+      "description": "When SEO metrics were last updated (manually or via API)"
+    },
+    "metrics_update_count": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Number of times metrics have been updated"
+    },
+    "metrics_update_method": {
+      "type": "enumeration",
+      "enum": ["manual", "api", "bulk_import"],
+      "description": "Method used for last metrics update"
     }
   }
 }

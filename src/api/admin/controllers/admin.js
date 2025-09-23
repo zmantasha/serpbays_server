@@ -33,7 +33,7 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           user = result.user;
           jwt = result.jwt;
         } else {
-          // Fallback: manually verify credentials
+          // Fallback: manually verify credentials with proper password validation
           const foundUser = await strapi.db.query('plugin::users-permissions.user').findOne({
             where: {
               $or: [
@@ -45,11 +45,21 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           });
 
           if (!foundUser) {
+            console.log(`[ADMIN LOGIN FAILED] User not found: ${identifier}`);
             return ctx.badRequest('Invalid credentials');
           }
 
-          // Check password (you might need to implement password verification)
-          // For now, let's assume the password is correct if user exists
+          // Properly validate password using Strapi's password service
+          const isValidPassword = await strapi.plugins['users-permissions'].services.user.validatePassword(
+            password,
+            foundUser.password
+          );
+
+          if (!isValidPassword) {
+            console.log(`[ADMIN LOGIN FAILED] Invalid password for user: ${identifier}`);
+            return ctx.badRequest('Invalid credentials');
+          }
+
           user = foundUser;
           jwt = strapi.plugins['users-permissions'].services.jwt.issue({
             id: user.id
@@ -67,13 +77,12 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         { populate: ['role'] }
       );
 
-      // For now, allow any authenticated user to access admin panel
-      // In production, you should implement proper admin role checking
-      const isAdmin = userWithRole.role?.type === 'authenticated' || 
-                     userWithRole.role?.type === 'admin' ||
-                     userWithRole.email === 'admin@serpbays.com';
+      // Check if user has proper admin role
+      const allowedAdminTypes = ['super_admin', 'admin', 'moderator'];
+      const isAdmin = userWithRole.role?.type && allowedAdminTypes.includes(userWithRole.role.type);
 
       if (!isAdmin) {
+        console.log(`[ADMIN LOGIN DENIED] User ${user.id} (${user.email}) denied admin login - Role: '${userWithRole.role?.type}' (${userWithRole.role?.name})`);
         return ctx.forbidden('Access denied. Admin privileges required.');
       }
 

@@ -42,7 +42,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Type filter
       if (type) {
-        filters.transactionType = type;
+        filters.type = type;
       }
 
       // Gateway filter
@@ -55,14 +55,18 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         filters.users_permissions_user = userId;
       }
 
+      // Calculate pagination using start/limit (entityService findMany)
+      const pageNum = parseInt(page)
+      const sizeNum = parseInt(pageSize)
+      const start = (pageNum - 1) * sizeNum
+      const limit = sizeNum
+
       // Get transactions with pagination
       const transactions = await strapi.entityService.findMany('api::transaction.transaction', {
         filters,
         sort,
-        pagination: {
-          page: parseInt(page),
-          pageSize: parseInt(pageSize)
-        },
+        start,
+        limit,
         populate: {
           users_permissions_user: {
             fields: ['id', 'username', 'email']
@@ -73,16 +77,22 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         }
       });
 
+      // Alias `type` to `transactionType` for admin frontend compatibility
+      const normalized = (transactions || []).map(t => ({
+        ...t,
+        transactionType: t.type
+      }));
+
       // Get total count for pagination
       const total = await strapi.db.query('api::transaction.transaction').count({ where: filters });
 
       ctx.send({
-        data: transactions,
+        data: normalized,
         meta: {
           pagination: {
-            page: parseInt(page),
-            pageSize: parseInt(pageSize),
-            pageCount: Math.ceil(total / pageSize),
+            page: pageNum,
+            pageSize: sizeNum,
+            pageCount: Math.ceil(total / sizeNum),
             total
           }
         }
@@ -117,7 +127,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       }
 
       ctx.send({
-        data: transaction
+        data: transaction ? { ...transaction, transactionType: transaction.type } : null
       });
 
     } catch (error) {
@@ -179,7 +189,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       });
 
       // If this is a payment transaction, update user wallet
-      if (updatedTransaction.transactionType === 'payment') {
+      if (updatedTransaction.type === 'payment') {
         const wallet = await strapi.controller('api::user-wallet.user-wallet')
           .getOrCreateWallet(updatedTransaction.users_permissions_user.id);
         
