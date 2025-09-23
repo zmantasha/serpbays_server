@@ -5,7 +5,7 @@ module.exports = ({ strapi }) => {
 const io = require('socket.io')(strapi.server.httpServer, {
   // DO NOT force ['websocket']; allow default (websocket+polling)
  cors: {
-      origin:   ["https://staging.serpbays.com","http://localhost:3000"],
+      origin:   "https://staging.serpbays.com",
       methods: ['GET', 'POST'],
       allowedHeaders: ['Authorization'],
       transports: ['polling'],
