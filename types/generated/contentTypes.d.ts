@@ -2001,8 +2001,9 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
         number
       > &
       Schema.Attribute.DefaultTo<0>;
+    fund_source: Schema.Attribute.Enumeration<['main_fund', 'promo_fund']>;
     gateway: Schema.Attribute.Enumeration<
-      ['stripe', 'paypal', 'razorpay', 'promo', 'system']
+      ['stripe', 'paypal', 'razorpay', 'promo', 'voucher', 'system']
     > &
       Schema.Attribute.Required;
     gatewayTransactionId: Schema.Attribute.String & Schema.Attribute.Required;
@@ -2024,6 +2025,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       >;
     order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
     payment_notes: Schema.Attribute.Text;
+    promo_code_id: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
     transactionStatus: Schema.Attribute.Enumeration<
       [
@@ -2116,7 +2118,25 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
       'api::user-wallet.user-wallet'
     > &
       Schema.Attribute.Private;
+    mainBalance: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
     pendingWithdrawalBalance: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    promoBalance: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<
         {

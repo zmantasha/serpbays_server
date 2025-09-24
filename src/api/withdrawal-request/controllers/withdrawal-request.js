@@ -146,10 +146,21 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         note: 'Available balance equals wallet balance'
         });
         
-      // STEP 6: Check if user has sufficient wallet balance for withdrawal.
-      if (walletBalance < requestAmount) {
-        return ctx.badRequest(`Insufficient funds. Available balance: ${walletBalance}, Requested: ${requestAmount}`);
-        }
+      // STEP 6: Check if user has sufficient MAIN balance for withdrawal (promo funds cannot be withdrawn)
+      const mainBalance = parseFloat(publisherWallet.mainBalance || 0);
+      const promoBalance = parseFloat(publisherWallet.promoBalance || 0);
+      const totalBalance = parseFloat(publisherWallet.balance || 0);
+      
+      console.log('Balance breakdown:', {
+        mainBalance,
+        promoBalance,
+        totalBalance,
+        requestAmount
+      });
+      
+      if (mainBalance < requestAmount) {
+        return ctx.badRequest(`Insufficient withdrawable funds. Available for withdrawal: ${mainBalance}, Requested: ${requestAmount}. Note: Promo credits (${promoBalance}) cannot be withdrawn.`);
+      }
         
       // The rest of the create method continues from here...
       // Note: `completedOrdersTransactions` used later for marking specific transactions
@@ -240,11 +251,15 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         withdrawalAmount: requestAmount
       });
       
-      // Subtract the withdrawal amount from wallet balance and add to pendingWithdrawalBalance
+      // Subtract the withdrawal amount from MAIN balance and add to pendingWithdrawalBalance
+      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) - requestAmount;
+      const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
+      
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
         data: {
-          balance: (parseFloat(publisherWallet.balance) || 0) - requestAmount,
+          mainBalance: newMainBalance,
+          balance: newTotalBalance,
           pendingWithdrawalBalance: (parseFloat(publisherWallet.pendingWithdrawalBalance) || 0) + requestAmount
         }
       });
@@ -507,12 +522,17 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.log(`[DenyWithdrawal] No matching withdrawal request transaction found for withdrawal #${id}`);
       }
       
-      // Return the funds to the publisher's balance
+      // Return the funds to the publisher's MAIN balance (since withdrawals only come from main balance)
+      const refundAmount = parseFloat(withdrawalRequest.amount);
+      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) + refundAmount;
+      const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
+      
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
         data: {
-          balance: publisherWallet.balance + withdrawalRequest.amount,
-          pendingWithdrawalBalance: Math.max(0, (publisherWallet.pendingWithdrawalBalance || 0) - withdrawalRequest.amount)
+          mainBalance: newMainBalance,
+          balance: newTotalBalance,
+          pendingWithdrawalBalance: Math.max(0, (parseFloat(publisherWallet.pendingWithdrawalBalance) || 0) - refundAmount)
         }
       });
       

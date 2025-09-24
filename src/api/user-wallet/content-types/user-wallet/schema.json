@@ -38,7 +38,22 @@
       "type": "decimal",
       "default": 0,
       "required": true,
-      "min": 0
+      "min": 0,
+      "description": "Total balance (mainBalance + promoBalance) - computed field"
+    },
+    "mainBalance": {
+      "type": "decimal",
+      "default": 0,
+      "required": true,
+      "min": 0,
+      "description": "Withdrawable funds from direct payments"
+    },
+    "promoBalance": {
+      "type": "decimal",
+      "default": 0,
+      "required": true,
+      "min": 0,
+      "description": "Non-withdrawable funds from vouchers/promo codes"
     },
     "escrowBalance": {
       "type": "decimal",
