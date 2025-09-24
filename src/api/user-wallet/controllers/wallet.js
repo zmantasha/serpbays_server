@@ -129,6 +129,7 @@ module.exports = {
             netAmount: parsedAmount,
             transactionStatus: 'pending',
             gateway,
+            fund_source: 'main_fund', // Direct payments go to main balance
             user_wallet: wallet.id,
             users_permissions_user: userId,
             publishedAt: new Date()

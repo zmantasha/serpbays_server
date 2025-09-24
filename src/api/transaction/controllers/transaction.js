@@ -265,9 +265,17 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               console.log(`💵 Updating wallet balance: ${currentBalance} + ${transactionAmount} = ${newBalance}`);
               
               try {
-                await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-                  data: { balance: newBalance }
-                });
+                // Use the new separate balance tracking system
+                await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
+                  wallet.users_permissions_user.id,
+                  transactionAmount,
+                  {
+                    gateway: existingTransaction.gateway,
+                    gatewayTransactionId: existingTransaction.gatewayTransactionId,
+                    description: `${existingTransaction.gateway} deposit`,
+                    metadata: existingTransaction.metadata
+                  }
+                );
                 
                 console.log(`✅ Wallet balance updated successfully to ${newBalance}`);
                 
@@ -405,6 +413,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           gateway: gateway,
           gatewayTransactionId: gatewayTransactionId,
           transactionStatus: 'pending',
+          fund_source: 'main_fund', // Direct payments go to main balance
           user_wallet: walletId,
           users_permissions_user: userId || wallet.users_permissions_user,
           metadata: {
