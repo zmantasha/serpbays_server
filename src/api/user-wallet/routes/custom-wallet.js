@@ -35,6 +35,30 @@ module.exports = {
         policies: [],
         middlewares: []
       }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/add-promo-funds',
+      handler: 'wallet.addPromoFunds',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.addPromoFunds']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/redeem-promo-code',
+      handler: 'wallet.redeemPromoCode',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.redeemPromoCode']
+        },
+        policies: [],
+        middlewares: []
+      }
     }
   ]
 }; 

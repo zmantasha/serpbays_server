@@ -52,6 +52,7 @@
         "paypal",
         "razorpay",
         "promo",
+        "voucher",
         "system"
       ],
       "required": true
@@ -111,6 +112,18 @@
     "denial_reason": {
       "type": "text",
       "description": "Reason for denying withdrawal request"
+    },
+    "promo_code_id": {
+      "type": "string",
+      "description": "ID of the promo code used for this transaction"
+    },
+    "fund_source": {
+      "type": "enumeration",
+      "enum": [
+        "main_fund",
+        "promo_fund"
+      ],
+      "description": "Source of funds for this transaction"
     }
   }
 }

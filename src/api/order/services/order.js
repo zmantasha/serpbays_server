@@ -44,10 +44,21 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         where: { id: wallet.id }
       });
       
-      // Check if user has sufficient balance
-      if (!freshWallet || freshWallet.balance < escrowHeld) {
-        throw new Error('Insufficient funds');
+      // Check if user has sufficient balance (using separate balance tracking)
+      const totalBalance = parseFloat(freshWallet.balance || 0);
+      const mainBalance = parseFloat(freshWallet.mainBalance || 0);
+      const promoBalance = parseFloat(freshWallet.promoBalance || 0);
+      
+      if (!freshWallet || totalBalance < escrowHeld) {
+        throw new Error(`Insufficient funds. Available: ${totalBalance}, Required: ${escrowHeld}`);
       }
+      
+      console.log('Balance check for order:', {
+        totalBalance,
+        mainBalance,
+        promoBalance,
+        escrowHeld
+      });
 
       // Check if user is trying to order from their own website
       if (data.website && data.website.publisher_email === user.email) {
@@ -89,21 +100,25 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           throw new Error('Wallet not found during money transfer');
         }
     
-        // MONEY FLOW: Advertiser Balance → Advertiser Escrow
-        const newBalance = currentWallet.balance - escrowHeld;
+        // MONEY FLOW: Use spending priority (promo funds first, then main funds) → Advertiser Escrow
+        const spendResult = await strapi.controller('api::user-wallet.user-wallet').spendFunds(
+          user.id,
+          escrowHeld,
+          order.id,
+          { description: `Order #${order.id} escrow hold` }
+        );
+        
         const newEscrowBalance = currentWallet.escrowBalance + escrowHeld;
-        console.log('currentWallet',currentWallet.escrowBalance+escrowHeld)
-        console.log('newEcsro',newEscrowBalance)
         
         console.log(`[ORDER CREATE] Money Flow for User ${user.id}:`);
         console.log(`  - Wallet ID: ${currentWallet.id} (original: ${wallet.id})`);
-        console.log(`  - Deducting ${escrowHeld} from balance: ${currentWallet.balance} → ${newBalance}`);
+        console.log(`  - Spent ${escrowHeld} using priority: Promo ${spendResult.promoSpent}, Main ${spendResult.mainSpent}`);
         console.log(`  - Adding ${escrowHeld} to escrow: ${currentWallet.escrowBalance} → ${newEscrowBalance}`);
         
+        // Update escrow balance
         await strapi.db.query('api::user-wallet.user-wallet').update({
-          where: { id: currentWallet.id },  // ✅ Use currentWallet.id, not wallet.id
+          where: { id: currentWallet.id },
           data: {
-            balance: newBalance,
             escrowBalance: newEscrowBalance
           }
         });
@@ -216,13 +231,12 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       // Calculate payment amount (without platform fee)
       const paymentAmount = order.totalAmount;
       
-      // MONEY FLOW: Advertiser Escrow → Publisher Balance
+      // MONEY FLOW: Advertiser Escrow → Publisher MAIN Balance (earnings are withdrawable)
       const newAdvertiserEscrow = advertiserWallet.escrowBalance - order.escrowHeld;
-      const newPublisherBalance = publisherWallet.balance + paymentAmount;
       
       console.log(`[ORDER COMPLETE] Money Flow for Order ${order.id}:`);
       console.log(`  - Advertiser ${order.advertiser.id}: Escrow ${advertiserWallet.escrowBalance} → ${newAdvertiserEscrow}`);
-      console.log(`  - Publisher ${publisherId}: Balance ${publisherWallet.balance} → ${newPublisherBalance}`);
+      console.log(`  - Publisher ${publisherId}: Adding ${paymentAmount} to MAIN balance (withdrawable)`);
       console.log(`  - Amount transferred: ${paymentAmount}`);
       
       // Release escrow funds from advertiser wallet 
@@ -233,34 +247,18 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
 
-      // Add earnings to publisher wallet balance
-      await strapi.db.query('api::user-wallet.user-wallet').update({
-        where: { id: publisherWallet.id },
-        data: {
-          balance: newPublisherBalance
+      // Add earnings to publisher MAIN balance (withdrawable funds)
+      await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
+        publisherId,
+        paymentAmount,
+        {
+          description: `Earnings from order #${order.id}`,
+          gateway: 'system',
+          gatewayTransactionId: `earnings_${order.id}_${Date.now()}`
         }
-      });
+      );
       
       console.log(`[ORDER COMPLETE] ✅ Money transfer completed successfully`);
-
-      console.log(`Added ${paymentAmount} to publisher wallet. New balance: ${publisherWallet.balance + paymentAmount}`);
-
-      // Create a transaction record for the payment (this is what shows in earnings)
-      const paymentTransaction = await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          type: 'escrow_release',
-          amount: paymentAmount,
-          netAmount: paymentAmount,
-          transactionStatus: 'success', // Mark as success since funds are now available
-          gateway: 'system',
-          gatewayTransactionId: `completed_${order.id}_${Date.now()}`,
-          description: `Payment for order #${order.id} - funds available for withdrawal`,
-          user_wallet: publisherWallet.id,
-          users_permissions_user: publisherId,
-          order: order.id,
-          publishedAt: new Date() // Required for visibility in queries
-        }
-      });
       
       // Create platform fee transaction
       const feeTransaction = await strapi.entityService.create('api::transaction.transaction', {
@@ -280,8 +278,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
       
-      console.log("Created transactions:", {
-        paymentTransactionId: paymentTransaction.id,
+      console.log("Created fee transaction:", {
         feeTransactionId: feeTransaction.id
       });
       
@@ -370,35 +367,27 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         currentEscrow: advertiserWallet.escrowBalance
       });
       
-      // Refund escrow funds back to advertiser wallet balance
+      // Refund escrow funds back to advertiser MAIN balance (since escrow was held from main/promo spending)
+      const refundAmount = parseFloat(order.escrowHeld);
+      const result = await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
+        advertiserId,
+        refundAmount,
+        { 
+          description: `Refund for rejected order #${order.id}`,
+          gateway: 'system',
+          gatewayTransactionId: `refund_${order.id}_${Date.now()}`
+        }
+      );
+      
+      // Reduce escrow balance
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: advertiserWallet.id },
         data: {
-          balance: advertiserWallet.balance + order.escrowHeld,
-          escrowBalance: advertiserWallet.escrowBalance - order.escrowHeld
+          escrowBalance: advertiserWallet.escrowBalance - refundAmount
         }
       });
       
-      // Create a transaction record for the refund
-      const refundTransaction = await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          type: 'refund',
-          amount: order.escrowHeld,
-          netAmount: order.escrowHeld,
-          fee: 0,
-          transactionStatus: 'success',
-          gateway: 'system',
-          gatewayTransactionId: `refund_${order.id}_${Date.now()}`,
-          description: `Refund for rejected order #${order.id}`,
-          user_wallet: advertiserWallet.id,
-          users_permissions_user: advertiserId,
-          order: order.id
-        }
-      });
-      
-      console.log("Created refund transaction:", {
-        refundTransactionId: refundTransaction.id
-      });
+      console.log("Refund transaction created via addMainFunds method");
       
       console.log(`Order ${id} rejected and escrow refunded successfully`);
       return order;

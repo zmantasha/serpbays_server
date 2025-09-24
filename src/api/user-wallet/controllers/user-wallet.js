@@ -32,6 +32,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           users_permissions_user: userId,
           type: 'unified',
           balance: 0,
+          mainBalance: 0,
+          promoBalance: 0,
           escrowBalance: 0,
           pendingWithdrawalBalance: 0,
           currency: 'USD',
@@ -189,10 +191,15 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
        console.log(`[Simple] Getting balance for user ${userId}, wallet ID: ${wallet.id}, balance: ${wallet.balance}`);
 
-       // Use simple wallet balances directly (no complex calculations)
-       const walletBalance = parseFloat(wallet.balance || 0);
+       // Use separate balance tracking - only mainBalance is withdrawable
+       const mainBalance = parseFloat(wallet.mainBalance || 0);
+       const promoBalance = parseFloat(wallet.promoBalance || 0);
+       const totalBalance = parseFloat(wallet.balance || 0);
        const storedEscrowBalance = parseFloat(wallet.escrowBalance || 0);
        const pendingWithdrawalBalance = parseFloat(wallet.pendingWithdrawalBalance || 0);
+       
+       // Available balance = mainBalance - pendingWithdrawalBalance (only main balance can be withdrawn)
+       const walletBalance = mainBalance;
 
       // Calculate earnings from completed orders (for publishers)
       let completedOrdersAmount = 0;
@@ -260,12 +267,15 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       const totalAvailable = walletBalance;
 
       console.log(`[Simple] Balance calculation for user ${userId}:`, {
-        walletBalance,
+        mainBalance,
+        promoBalance,
+        totalBalance,
+        walletBalance: 'mainBalance only (withdrawable)',
         storedEscrowBalance,
         pendingWithdrawalBalance,
         totalAvailable,
-        calculation: `Available Balance = Wallet Balance = ${totalAvailable}`,
-        note: 'Available balance equals wallet balance (pending withdrawals already deducted)'
+        calculation: `Available Balance = Main Balance - Pending Withdrawals = ${totalAvailable}`,
+        note: `Main balance: ${mainBalance}, Promo balance: ${promoBalance}, Total: ${totalBalance}, Available for withdrawal: ${totalAvailable}`
       });
 
       // Note: escrowBalance is kept separate for order processing, 
@@ -715,6 +725,232 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     } catch (error) {
       console.error('Migration error:', error);
       return ctx.badRequest('Migration failed');
+    }
+  },
+
+  // Add funds to main balance (from direct payments)
+  async addMainFunds(userId, amount, transactionData = {}) {
+    try {
+      const wallet = await this.getOrCreateWallet(userId);
+      const newMainBalance = parseFloat(wallet.mainBalance || 0) + parseFloat(amount);
+      const newTotalBalance = parseFloat(wallet.balance || 0) + parseFloat(amount);
+
+      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+        data: {
+          mainBalance: newMainBalance,
+          balance: newTotalBalance
+        }
+      });
+
+      // Create transaction record
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'deposit',
+          amount: parseFloat(amount),
+          netAmount: parseFloat(amount),
+          transactionStatus: 'success',
+          gateway: transactionData.gateway || 'system',
+          gatewayTransactionId: transactionData.gatewayTransactionId || `main_${Date.now()}`,
+          fund_source: 'main_fund',
+          description: transactionData.description || 'Direct payment deposit',
+          user_wallet: wallet.id,
+          users_permissions_user: userId,
+          metadata: transactionData.metadata,
+          publishedAt: new Date()
+        }
+      });
+
+      console.log(`Added ${amount} to main balance for user ${userId}`);
+      return { success: true, newMainBalance, newTotalBalance };
+    } catch (error) {
+      console.error('Error adding main funds:', error);
+      throw error;
+    }
+  },
+
+  // Add funds to promo balance (from vouchers/promo codes)
+  async addPromoFunds(userId, amount, promoCodeId = null, transactionData = {}) {
+    try {
+      const wallet = await this.getOrCreateWallet(userId);
+      const newPromoBalance = parseFloat(wallet.promoBalance || 0) + parseFloat(amount);
+      const newTotalBalance = parseFloat(wallet.balance || 0) + parseFloat(amount);
+
+      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+        data: {
+          promoBalance: newPromoBalance,
+          balance: newTotalBalance
+        }
+      });
+
+      // Create transaction record
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'promo',
+          amount: parseFloat(amount),
+          netAmount: parseFloat(amount),
+          transactionStatus: 'success',
+          gateway: 'promo',
+          gatewayTransactionId: `promo_${Date.now()}`,
+          fund_source: 'promo_fund',
+          promo_code_id: promoCodeId,
+          description: transactionData.description || 'Promo code/voucher deposit',
+          user_wallet: wallet.id,
+          users_permissions_user: userId,
+          metadata: transactionData.metadata,
+          publishedAt: new Date()
+        }
+      });
+
+      console.log(`Added ${amount} to promo balance for user ${userId}`);
+      return { success: true, newPromoBalance, newTotalBalance };
+    } catch (error) {
+      console.error('Error adding promo funds:', error);
+      throw error;
+    }
+  },
+
+  // Spend funds with priority (promo first, then main)
+  async spendFunds(userId, amount, orderId = null, transactionData = {}) {
+    try {
+      const wallet = await this.getOrCreateWallet(userId);
+      const spendAmount = parseFloat(amount);
+      const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+      const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+      const totalAvailable = currentMainBalance + currentPromoBalance;
+
+      if (totalAvailable < spendAmount) {
+        throw new Error(`Insufficient funds. Available: ${totalAvailable}, Required: ${spendAmount}`);
+      }
+
+      let remainingToSpend = spendAmount;
+      let promoSpent = 0;
+      let mainSpent = 0;
+
+      // Spend from promo balance first
+      if (remainingToSpend > 0 && currentPromoBalance > 0) {
+        promoSpent = Math.min(remainingToSpend, currentPromoBalance);
+        remainingToSpend -= promoSpent;
+      }
+
+      // Spend from main balance if needed
+      if (remainingToSpend > 0) {
+        mainSpent = remainingToSpend;
+      }
+
+      // Update wallet balances
+      const newPromoBalance = currentPromoBalance - promoSpent;
+      const newMainBalance = currentMainBalance - mainSpent;
+      const newTotalBalance = newPromoBalance + newMainBalance;
+
+      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+        data: {
+          promoBalance: newPromoBalance,
+          mainBalance: newMainBalance,
+          balance: newTotalBalance
+        }
+      });
+
+      // Create transaction records for spending
+      if (promoSpent > 0) {
+        await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            type: 'payment',
+            amount: promoSpent,
+            netAmount: promoSpent,
+            transactionStatus: 'success',
+            gateway: 'system',
+            gatewayTransactionId: `spend_promo_${Date.now()}`,
+            fund_source: 'promo_fund',
+            description: transactionData.description || 'Purchase payment (promo funds)',
+            user_wallet: wallet.id,
+            users_permissions_user: userId,
+            order: orderId,
+            metadata: { ...transactionData.metadata, spent_from: 'promo' },
+            publishedAt: new Date()
+          }
+        });
+      }
+
+      if (mainSpent > 0) {
+        await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            type: 'payment',
+            amount: mainSpent,
+            netAmount: mainSpent,
+            transactionStatus: 'success',
+            gateway: 'system',
+            gatewayTransactionId: `spend_main_${Date.now()}`,
+            fund_source: 'main_fund',
+            description: transactionData.description || 'Purchase payment (main funds)',
+            user_wallet: wallet.id,
+            users_permissions_user: userId,
+            order: orderId,
+            metadata: { ...transactionData.metadata, spent_from: 'main' },
+            publishedAt: new Date()
+          }
+        });
+      }
+
+      console.log(`Spent ${amount} from wallet for user ${userId} (Promo: ${promoSpent}, Main: ${mainSpent})`);
+      return { 
+        success: true, 
+        promoSpent, 
+        mainSpent, 
+        newPromoBalance, 
+        newMainBalance, 
+        newTotalBalance 
+      };
+    } catch (error) {
+      console.error('Error spending funds:', error);
+      throw error;
+    }
+  },
+
+  // Get wallet balance with separate tracking
+  async getWalletBalance(userId) {
+    try {
+      const wallet = await this.getOrCreateWallet(userId);
+      return {
+        id: wallet.id,
+        totalBalance: parseFloat(wallet.balance || 0),
+        mainBalance: parseFloat(wallet.mainBalance || 0),
+        promoBalance: parseFloat(wallet.promoBalance || 0),
+        escrowBalance: parseFloat(wallet.escrowBalance || 0),
+        pendingWithdrawalBalance: parseFloat(wallet.pendingWithdrawalBalance || 0),
+        withdrawableBalance: parseFloat(wallet.mainBalance || 0), // Only main balance can be withdrawn
+        currency: wallet.currency,
+        type: wallet.type
+      };
+    } catch (error) {
+      console.error('Error getting wallet balance:', error);
+      throw error;
+    }
+  },
+
+  // Validate withdrawal (only from main balance)
+  async validateWithdrawal(userId, amount) {
+    try {
+      const wallet = await this.getOrCreateWallet(userId);
+      const withdrawableBalance = parseFloat(wallet.mainBalance || 0);
+      const requestedAmount = parseFloat(amount);
+
+      if (withdrawableBalance < requestedAmount) {
+        return {
+          valid: false,
+          error: 'Insufficient withdrawable funds',
+          available: withdrawableBalance,
+          requested: requestedAmount
+        };
+      }
+
+      return {
+        valid: true,
+        available: withdrawableBalance,
+        requested: requestedAmount
+      };
+    } catch (error) {
+      console.error('Error validating withdrawal:', error);
+      throw error;
     }
   }
 }));
