@@ -284,11 +284,14 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       // Return simplified response
       return {
         data: {
-          balance: totalAvailable, // Available for spending/withdrawal
-          walletBalance, // Total wallet balance
+          balance: totalBalance, // Total balance (mainBalance + promoBalance) for transaction history
+          walletBalance, // Available for spending/withdrawal (mainBalance only)
+          totalBalance, // Total balance (mainBalance + promoBalance)
+          mainBalance, // Withdrawable funds
+          promoBalance, // Non-withdrawable funds
           escrowBalance: storedEscrowBalance, // Amount held in escrow for active orders
           pendingWithdrawalBalance, // Amount pending withdrawal
-          totalAvailable, // Same as balance, for clarity
+          totalAvailable, // Same as walletBalance, for clarity
           currency: wallet.currency || "USD",
           userType: wallet.type || 'unified'
         }
