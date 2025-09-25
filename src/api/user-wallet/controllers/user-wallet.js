@@ -166,9 +166,16 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       
       console.log(`[getBalance] Current escrow balance: ${wallet.escrowBalance} (preserved from order logic)`);
 
+      // Calculate total balance correctly (mainBalance + promoBalance)
+      const mainBalance = parseFloat(wallet.mainBalance || 0);
+      const promoBalance = parseFloat(wallet.promoBalance || 0);
+      const totalBalance = mainBalance + promoBalance;
+
       return {
         data: {
-          balance: parseFloat(wallet.balance || 0),
+          balance: totalBalance, // Return calculated total balance for transaction history
+          mainBalance: mainBalance,
+          promoBalance: promoBalance,
           escrowBalance: parseFloat(wallet.escrowBalance || 0), // ✅ Return as number, not string
           currency: wallet.currency || "USD"
         }
@@ -194,9 +201,11 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
        // Use separate balance tracking - only mainBalance is withdrawable
        const mainBalance = parseFloat(wallet.mainBalance || 0);
        const promoBalance = parseFloat(wallet.promoBalance || 0);
-       const totalBalance = parseFloat(wallet.balance || 0);
        const storedEscrowBalance = parseFloat(wallet.escrowBalance || 0);
        const pendingWithdrawalBalance = parseFloat(wallet.pendingWithdrawalBalance || 0);
+       
+       // Calculate total balance correctly (mainBalance + promoBalance)
+       const totalBalance = mainBalance + promoBalance;
        
        // Available balance = mainBalance - pendingWithdrawalBalance (only main balance can be withdrawn)
        const walletBalance = mainBalance;
