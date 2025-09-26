@@ -877,46 +877,31 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }
       });
 
-      // Create transaction records for spending
-      if (promoSpent > 0) {
-        await strapi.entityService.create('api::transaction.transaction', {
-          data: {
-            type: 'payment',
-            amount: promoSpent,
-            netAmount: promoSpent,
-            transactionStatus: 'success',
-            gateway: 'system',
-            gatewayTransactionId: `spend_promo_${Date.now()}`,
-            fund_source: 'promo_fund',
-            description: transactionData.description || 'Purchase payment (promo funds)',
-            user_wallet: wallet.id,
-            users_permissions_user: userId,
-            order: orderId,
-            metadata: { ...transactionData.metadata, spent_from: 'promo' },
-            publishedAt: new Date()
-          }
-        });
-      }
-
-      if (mainSpent > 0) {
-        await strapi.entityService.create('api::transaction.transaction', {
-          data: {
-            type: 'payment',
-            amount: mainSpent,
-            netAmount: mainSpent,
-            transactionStatus: 'success',
-            gateway: 'system',
-            gatewayTransactionId: `spend_main_${Date.now()}`,
-            fund_source: 'main_fund',
-            description: transactionData.description || 'Purchase payment (main funds)',
-            user_wallet: wallet.id,
-            users_permissions_user: userId,
-            order: orderId,
-            metadata: { ...transactionData.metadata, spent_from: 'main' },
-            publishedAt: new Date()
-          }
-        });
-      }
+      // Create single consolidated transaction record for spending
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'payment',
+          amount: spendAmount, // Total amount spent
+          netAmount: spendAmount,
+          transactionStatus: 'success',
+          gateway: 'system',
+          gatewayTransactionId: `spend_${Date.now()}`,
+          fund_source: promoSpent > mainSpent ? 'promo_fund' : 'main_fund', // Use the dominant fund source
+          description: transactionData.description || `Purchase payment (${promoSpent > 0 && mainSpent > 0 ? 'mixed funds' : promoSpent > 0 ? 'promo funds' : 'main funds'})`,
+          user_wallet: wallet.id,
+          users_permissions_user: userId,
+          order: orderId,
+          metadata: { 
+            ...transactionData.metadata, 
+            spendingBreakdown: {
+              promoSpent: promoSpent,
+              mainSpent: mainSpent,
+              totalSpent: spendAmount
+            }
+          },
+          publishedAt: new Date()
+        }
+      });
 
       console.log(`Spent ${amount} from wallet for user ${userId} (Promo: ${promoSpent}, Main: ${mainSpent})`);
       return { 

@@ -402,55 +402,40 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         const newTotalBalance = newMainBalance + newPromoBalance;
         
         // Update wallet balances directly
-        await strapi.db.query('api::user-wallet.user-wallet').update({
-          where: { id: advertiserWallet.id },
-          data: {
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: advertiserWallet.id },
+        data: {
             mainBalance: newMainBalance,
             promoBalance: newPromoBalance,
             balance: newTotalBalance
           }
         });
         
-        // Create refund transactions for each balance type
-        if (mainRefund > 0) {
-          await strapi.entityService.create('api::transaction.transaction', {
-            data: {
-              type: 'refund',
-              amount: mainRefund,
-              netAmount: mainRefund,
-              transactionStatus: 'success',
-              gateway: 'system',
-              gatewayTransactionId: `refund_main_${order.id}_${Date.now()}`,
-              fund_source: 'main_fund',
-              description: `Main balance refund for rejected order #${order.id}`,
-              user_wallet: advertiserWallet.id,
-              users_permissions_user: advertiserId,
-              order: order.id,
-              metadata: { refund_type: 'main_balance', original_order: order.id },
-              publishedAt: new Date()
-            }
-          });
-        }
-        
-        if (promoRefund > 0) {
-          await strapi.entityService.create('api::transaction.transaction', {
-            data: {
-              type: 'refund',
-              amount: promoRefund,
-              netAmount: promoRefund,
-              transactionStatus: 'success',
-              gateway: 'system',
-              gatewayTransactionId: `refund_promo_${order.id}_${Date.now()}`,
-              fund_source: 'promo_fund',
-              description: `Promo balance refund for rejected order #${order.id}`,
-              user_wallet: advertiserWallet.id,
-              users_permissions_user: advertiserId,
-              order: order.id,
-              metadata: { refund_type: 'promo_balance', original_order: order.id },
-              publishedAt: new Date()
-            }
-          });
-        }
+        // Create single consolidated refund transaction
+        await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            type: 'refund',
+            amount: refundAmount, // Total refund amount
+            netAmount: refundAmount,
+            transactionStatus: 'success',
+            gateway: 'system',
+            gatewayTransactionId: `refund_${order.id}_${Date.now()}`,
+            fund_source: promoRefund > mainRefund ? 'promo_fund' : 'main_fund', // Use the dominant fund source
+            description: `Refund for rejected order #${order.id} (${promoRefund > 0 && mainRefund > 0 ? 'mixed funds' : promoRefund > 0 ? 'promo funds' : 'main funds'})`,
+            user_wallet: advertiserWallet.id,
+            users_permissions_user: advertiserId,
+            order: order.id,
+            metadata: { 
+              refundBreakdown: {
+                promoRefund: promoRefund,
+                mainRefund: mainRefund,
+                totalRefund: refundAmount
+              },
+              original_order: order.id 
+            },
+            publishedAt: new Date()
+          }
+        });
         
         console.log(`Refunded ${mainRefund} to main balance and ${promoRefund} to promo balance`);
       } else {
