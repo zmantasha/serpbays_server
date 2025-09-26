@@ -264,29 +264,29 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               
               console.log(`💵 Updating wallet balance: ${currentBalance} + ${transactionAmount} = ${newBalance}`);
               
-               try {
+              try {
                  // Update wallet balance directly (don't create new transaction since we already have one)
                  const currentMainBalance = parseFloat(wallet.mainBalance || 0);
                  const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
                  const newMainBalance = currentMainBalance + transactionAmount;
                  const newTotalBalance = newMainBalance + currentPromoBalance;
                  
-                 await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+                await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
                    data: {
                      mainBalance: newMainBalance,
                      balance: newTotalBalance
                    }
-                 });
-                 
+                });
+                
                  console.log(`✅ Wallet balance updated successfully: Main=${newMainBalance}, Total=${newTotalBalance}`);
-                 
+                
                  // Update the transaction to link it to the wallet and set fund_source
-                 await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
+                await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
                    data: { 
                      user_wallet: wallet.id,
                      fund_source: 'main_fund' // Direct payments go to main balance
                    }
-                 });
+                });
 
                 // Create invoice for successful deposit
                 if (existingTransaction.type === 'deposit') {

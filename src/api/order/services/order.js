@@ -115,6 +115,19 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         console.log(`  - Spent ${escrowHeld} using priority: Promo ${spendResult.promoSpent}, Main ${spendResult.mainSpent}`);
         console.log(`  - Adding ${escrowHeld} to escrow: ${currentWallet.escrowBalance} → ${newEscrowBalance}`);
         
+        // Store spending breakdown in order metadata for accurate refunds
+        await strapi.entityService.update('api::order.order', order.id, {
+          data: {
+            metadata: {
+              spendingBreakdown: {
+                promoSpent: spendResult.promoSpent,
+                mainSpent: spendResult.mainSpent,
+                totalSpent: escrowHeld
+              }
+            }
+          }
+        });
+        
         // Update escrow balance
         await strapi.db.query('api::user-wallet.user-wallet').update({
           where: { id: currentWallet.id },
@@ -364,20 +377,82 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.log("Refunding escrow:", {
         escrowHeld: order.escrowHeld,
         currentBalance: advertiserWallet.balance,
-        currentEscrow: advertiserWallet.escrowBalance
+        currentEscrow: advertiserWallet.escrowBalance,
+        orderMetadata: order.metadata
       });
       
-      // Refund escrow funds back to advertiser MAIN balance (since escrow was held from main/promo spending)
+      // Check if we have spending breakdown from order metadata
+      const spendingBreakdown = order.metadata?.spendingBreakdown;
       const refundAmount = parseFloat(order.escrowHeld);
-      const result = await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
-        advertiserId,
-        refundAmount,
-        { 
-          description: `Refund for rejected order #${order.id}`,
-          gateway: 'system',
-          gatewayTransactionId: `refund_${order.id}_${Date.now()}`
-        }
-      );
+      
+      if (spendingBreakdown && (spendingBreakdown.promoSpent > 0 || spendingBreakdown.mainSpent > 0)) {
+        console.log("Using spending breakdown for accurate refund:", spendingBreakdown);
+        
+        // Refund to the correct balance types based on original spending
+        const promoRefund = parseFloat(spendingBreakdown.promoSpent || 0);
+        const mainRefund = parseFloat(spendingBreakdown.mainSpent || 0);
+        
+        // Get current wallet balances
+        const currentMainBalance = parseFloat(advertiserWallet.mainBalance || 0);
+        const currentPromoBalance = parseFloat(advertiserWallet.promoBalance || 0);
+        
+        // Calculate new balances
+        const newMainBalance = currentMainBalance + mainRefund;
+        const newPromoBalance = currentPromoBalance + promoRefund;
+        const newTotalBalance = newMainBalance + newPromoBalance;
+        
+        // Update wallet balances directly
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: advertiserWallet.id },
+        data: {
+            mainBalance: newMainBalance,
+            promoBalance: newPromoBalance,
+            balance: newTotalBalance
+          }
+        });
+        
+        // Create single consolidated refund transaction
+        await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            type: 'refund',
+            amount: refundAmount, // Total refund amount
+            netAmount: refundAmount,
+            transactionStatus: 'success',
+            gateway: 'system',
+            gatewayTransactionId: `refund_${order.id}_${Date.now()}`,
+            fund_source: promoRefund > mainRefund ? 'promo_fund' : 'main_fund', // Use the dominant fund source
+            description: `Refund for rejected order #${order.id} (${promoRefund > 0 && mainRefund > 0 ? 'mixed funds' : promoRefund > 0 ? 'promo funds' : 'main funds'})`,
+            user_wallet: advertiserWallet.id,
+            users_permissions_user: advertiserId,
+            order: order.id,
+            metadata: { 
+              refundBreakdown: {
+                promoRefund: promoRefund,
+                mainRefund: mainRefund,
+                totalRefund: refundAmount
+              },
+              original_order: order.id 
+            },
+            publishedAt: new Date()
+          }
+        });
+        
+        console.log(`Refunded ${mainRefund} to main balance and ${promoRefund} to promo balance`);
+      } else {
+        console.log("No spending breakdown found, using fallback refund to main balance");
+        
+        // Fallback: Refund entire amount to main balance (old behavior)
+        const result = await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
+          advertiserId,
+          refundAmount,
+          { 
+            type: 'refund',
+            description: `Refund for rejected order #${order.id}`,
+            gateway: 'system',
+            gatewayTransactionId: `refund_${order.id}_${Date.now()}`
+          }
+        );
+      }
       
       // Reduce escrow balance
       await strapi.db.query('api::user-wallet.user-wallet').update({
@@ -387,9 +462,9 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
       
-      console.log("Refund transaction created via addMainFunds method");
+      console.log("Refund transactions created successfully");
       
-      console.log(`Order ${id} rejected and escrow refunded successfully`);
+      console.log(`Order ${id} rejected and escrow refunded to correct balance types`);
       return order;
     });
   },

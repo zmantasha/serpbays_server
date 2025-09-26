@@ -255,6 +255,10 @@
     "linkInsertionDescription": {
       "type": "text",
       "description": "Additional instructions or context for the link insertion"
+    },
+    "metadata": {
+      "type": "json",
+      "description": "Additional metadata for the order (e.g., spending breakdown for refunds)"
     }
   }
 }
