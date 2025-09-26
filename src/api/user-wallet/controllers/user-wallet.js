@@ -767,17 +767,19 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }
       });
 
+      // Determine transaction type based on context
+      const transactionType = transactionData.type || 'deposit';
       // Create transaction record
       await strapi.entityService.create('api::transaction.transaction', {
         data: {
-          type: 'deposit',
+          type: transactionType,
           amount: parseFloat(amount),
           netAmount: parseFloat(amount),
           transactionStatus: 'success',
           gateway: transactionData.gateway || 'system',
           gatewayTransactionId: transactionData.gatewayTransactionId || `main_${Date.now()}`,
           fund_source: 'main_fund',
-          description: transactionData.description || 'Direct payment deposit',
+          description: transactionData.description || (transactionType === 'refund' ? 'Refund to main balance' : 'Direct payment deposit'),
           user_wallet: wallet.id,
           users_permissions_user: userId,
           metadata: transactionData.metadata,

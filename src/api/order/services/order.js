@@ -373,6 +373,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         advertiserId,
         refundAmount,
         { 
+          type: 'refund',
           description: `Refund for rejected order #${order.id}`,
           gateway: 'system',
           gatewayTransactionId: `refund_${order.id}_${Date.now()}`
