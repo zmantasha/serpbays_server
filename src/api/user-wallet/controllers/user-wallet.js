@@ -477,21 +477,33 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       }
 
       // Now that validation passed, proceed with the transaction
-      const currentBalance = parseFloat(wallet.balance) || 0;
       const codeAmount = parseFloat(codeData.amount) || 0;
-      const newBalance = currentBalance + codeAmount;
+      
+      // Use the separate balance tracking system
+      const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+      const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+      const currentTotalBalance = parseFloat(wallet.balance || 0);
+      
+      // Add to promo balance (both promo codes and vouchers go to promo balance)
+      const newPromoBalance = currentPromoBalance + codeAmount;
+      const newTotalBalance = currentMainBalance + newPromoBalance;
 
-      console.log(`[${codeType.toUpperCase()}] Updating balance for user ${userId}: ${currentBalance} + ${codeAmount} = ${newBalance}`);
+      console.log(`[${codeType.toUpperCase()}] Updating balances for user ${userId}:`);
+      console.log(`  Main: $${currentMainBalance} (unchanged)`);
+      console.log(`  Promo: $${currentPromoBalance} + $${codeAmount} = $${newPromoBalance}`);
+      console.log(`  Total: $${currentTotalBalance} + $${codeAmount} = $${newTotalBalance}`);
 
-      // Update wallet balance
+      // Update wallet balances using separate balance tracking
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: wallet.id },
         data: {
-          balance: newBalance
+          mainBalance: currentMainBalance,
+          promoBalance: newPromoBalance,
+          balance: newTotalBalance
         }
       });
 
-      console.log(`[${codeType.toUpperCase()}] Balance updated successfully for wallet ${wallet.id}`);
+      console.log(`[${codeType.toUpperCase()}] Balances updated successfully for wallet ${wallet.id}`);
 
       // Create transaction record
       const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
@@ -502,6 +514,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           transactionStatus: 'success',
           gateway: 'promo', // Use 'promo' gateway for both voucher and promo codes
           gatewayTransactionId: `${codeType.toUpperCase()}_${promoCode}_${Date.now()}`,
+          fund_source: 'promo_fund', // Set fund source for proper tracking
           description: `${codeType === 'voucher' ? 'Voucher' : 'Promo'} code redemption: ${promoCode}`,
           user_wallet: wallet.id,
           users_permissions_user: userId,
