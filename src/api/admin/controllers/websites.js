@@ -2201,6 +2201,239 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.error('Error in exportFiltered:', error);
       return ctx.badRequest(`Error exporting data: ${error.message}`);
     }
+  },
+
+  /**
+   * Delete website
+   */
+  async delete(ctx) {
+    try {
+      const { id } = ctx.params;
+
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} deleting website ${id}`);
+
+      // Check if website exists
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      if (!website) {
+        return ctx.notFound('Website not found');
+      }
+
+      // Delete the website
+      await strapi.entityService.delete('api::publisher-website.publisher-website', id);
+
+      console.log(`[ADMIN ACTION] Successfully deleted website ${id}`);
+
+      ctx.send({
+        message: 'Website deleted successfully'
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WEBSITE DELETE ERROR]', error);
+      return ctx.internalServerError('Failed to delete website');
+    }
+  },
+
+  /**
+   * Bulk approve websites
+   */
+  async bulkApprove(ctx) {
+    try {
+      const { websiteIds } = ctx.request.body;
+
+      if (!websiteIds || !Array.isArray(websiteIds) || websiteIds.length === 0) {
+        return ctx.badRequest('Website IDs are required');
+      }
+
+      console.log(`[ADMIN BULK ACTION] Admin ${ctx.state.user.id} bulk approving ${websiteIds.length} websites`);
+
+      const results = [];
+      const errors = [];
+
+      for (const id of websiteIds) {
+        try {
+          // Check if website exists and has required metrics
+          const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+          
+          if (!website) {
+            errors.push({ id, error: `Website with ID ${id} not found` });
+            continue;
+          }
+
+          // Policy validation: Check if website has metrics
+          if (!website.moz_da && !website.ahrefsDR) {
+            errors.push({ 
+              id, 
+              error: `Website "${website.url}" does not have required metrics (DA/DR). Please update metrics first.` 
+            });
+            continue;
+          }
+
+          // Approve the website
+          const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+            data: { 
+              submissionStatus: 'approved',
+              approvedAt: new Date(),
+              approvedBy: ctx.state.user.id
+            }
+          });
+
+          results.push({ id, status: 'approved' });
+
+          // Add to marketplace if not already there
+          if (updatedWebsite.url) {
+            try {
+              const existingMarketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
+                filters: { url: updatedWebsite.url },
+                limit: 1
+              });
+
+              if (!existingMarketplaceRecord || existingMarketplaceRecord.length === 0) {
+                await strapi.entityService.create('api::marketplace.marketplace', {
+                  data: {
+                    url: updatedWebsite.url,
+                    status: 'active',
+                    publisherWebsite: updatedWebsite.id,
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                  }
+                });
+              }
+            } catch (marketplaceError) {
+              console.error(`Error adding website ${updatedWebsite.url} to marketplace:`, marketplaceError);
+            }
+          }
+
+        } catch (error) {
+          console.error(`Error approving website ${id}:`, error);
+          errors.push({ id, error: `Failed to approve website: ${error.message}` });
+        }
+      }
+
+      console.log(`[ADMIN BULK ACTION] Bulk approval completed: ${results.length} successful, ${errors.length} failed`);
+
+      ctx.send({
+        message: `Bulk approval completed: ${results.length} successful, ${errors.length} failed`,
+        results,
+        errors
+      });
+
+    } catch (error) {
+      console.error('[ADMIN BULK APPROVE ERROR]', error);
+      return ctx.internalServerError('Failed to bulk approve websites');
+    }
+  },
+
+  /**
+   * Bulk reject websites
+   */
+  async bulkReject(ctx) {
+    try {
+      const { websiteIds, reason } = ctx.request.body;
+
+      if (!websiteIds || !Array.isArray(websiteIds) || websiteIds.length === 0) {
+        return ctx.badRequest('Website IDs are required');
+      }
+
+      if (!reason || reason.trim() === '') {
+        return ctx.badRequest('Rejection reason is required');
+      }
+
+      console.log(`[ADMIN BULK ACTION] Admin ${ctx.state.user.id} bulk rejecting ${websiteIds.length} websites`);
+
+      const results = [];
+      const errors = [];
+
+      for (const id of websiteIds) {
+        try {
+          // Check if website exists
+          const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+          
+          if (!website) {
+            errors.push({ id, error: `Website with ID ${id} not found` });
+            continue;
+          }
+
+          // Reject the website
+          await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+            data: { 
+              submissionStatus: 'rejected',
+              rejectionReason: reason.trim(),
+              rejectedAt: new Date(),
+              rejectedBy: ctx.state.user.id
+            }
+          });
+
+          results.push({ id, status: 'rejected' });
+
+        } catch (error) {
+          console.error(`Error rejecting website ${id}:`, error);
+          errors.push({ id, error: `Failed to reject website: ${error.message}` });
+        }
+      }
+
+      console.log(`[ADMIN BULK ACTION] Bulk rejection completed: ${results.length} successful, ${errors.length} failed`);
+
+      ctx.send({
+        message: `Bulk rejection completed: ${results.length} successful, ${errors.length} failed`,
+        results,
+        errors
+      });
+
+    } catch (error) {
+      console.error('[ADMIN BULK REJECT ERROR]', error);
+      return ctx.internalServerError('Failed to bulk reject websites');
+    }
+  },
+
+  /**
+   * Bulk delete websites
+   */
+  async bulkDelete(ctx) {
+    try {
+      const { websiteIds } = ctx.request.body;
+
+      if (!websiteIds || !Array.isArray(websiteIds) || websiteIds.length === 0) {
+        return ctx.badRequest('Website IDs are required');
+      }
+
+      console.log(`[ADMIN BULK ACTION] Admin ${ctx.state.user.id} bulk deleting ${websiteIds.length} websites`);
+
+      const results = [];
+      const errors = [];
+
+      for (const id of websiteIds) {
+        try {
+          // Check if website exists
+          const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+          
+          if (!website) {
+            errors.push({ id, error: `Website with ID ${id} not found` });
+            continue;
+          }
+
+          // Delete the website
+          await strapi.entityService.delete('api::publisher-website.publisher-website', id);
+
+          results.push({ id, status: 'deleted' });
+
+        } catch (error) {
+          console.error(`Error deleting website ${id}:`, error);
+          errors.push({ id, error: `Failed to delete website: ${error.message}` });
+        }
+      }
+
+      console.log(`[ADMIN BULK ACTION] Bulk deletion completed: ${results.length} successful, ${errors.length} failed`);
+
+      ctx.send({
+        message: `Bulk deletion completed: ${results.length} successful, ${errors.length} failed`,
+        results,
+        errors
+      });
+
+    } catch (error) {
+      console.error('[ADMIN BULK DELETE ERROR]', error);
+      return ctx.internalServerError('Failed to bulk delete websites');
+    }
   }
 
 }));

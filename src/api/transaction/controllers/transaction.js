@@ -14,7 +14,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const { amount, currency = 'USD', gateway } = ctx.request.body;
       const userId = ctx.state?.user?.id;
       let wallet;
-
+       console.log("paypal server amount",amount)
+         console.log("paypal server currency",currency)
+           console.log("paypal server gateway",gateway)
       // Validate required fields
       if (!amount || !gateway) {
         return ctx.badRequest('Amount and gateway are required');
@@ -51,6 +53,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       if (!wallet || !wallet.id) {
         return ctx.notFound('Wallet not found');
       }
+      console.log("wallet", wallet)
 
       let paymentData;
       try {

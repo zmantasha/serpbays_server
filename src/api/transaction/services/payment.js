@@ -31,7 +31,7 @@ module.exports = {
   },
 
   // Create Razorpay order
-  async createRazorpayOrder(amount, currency = 'INR') {
+  async createRazorpayOrder(amount, currency = 'USD') {
     try {
       const options = {
         amount: Math.round(amount * 100), // Convert to paise

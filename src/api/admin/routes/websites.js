@@ -105,6 +105,50 @@ module.exports = {
       }
     },
 
+    // Delete website
+    {
+      method: 'DELETE',
+      path: '/api/admin/websites/:id',
+      handler: 'websites.delete',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Bulk approve websites
+    {
+      method: 'POST',
+      path: '/api/admin/websites/bulk-approve',
+      handler: 'websites.bulkApprove',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Bulk reject websites
+    {
+      method: 'POST',
+      path: '/api/admin/websites/bulk-reject',
+      handler: 'websites.bulkReject',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Bulk delete websites
+    {
+      method: 'POST',
+      path: '/api/admin/websites/bulk-delete',
+      handler: 'websites.bulkDelete',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
     // Update website metrics
     {
       method: 'PUT',
