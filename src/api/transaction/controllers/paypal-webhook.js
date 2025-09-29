@@ -149,14 +149,21 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return;
       }
 
-      // Update wallet balance
-      const currentBalance = parseFloat(wallet.balance) || 0;
-      const newBalance = currentBalance + amount;
+      // Update wallet balance using the same logic as other payment methods
+      const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+      const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+      const newMainBalance = currentMainBalance + amount;
+      const newTotalBalance = newMainBalance + currentPromoBalance;
 
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: walletId },
-        data: { balance: newBalance }
+        data: { 
+          mainBalance: newMainBalance,
+          balance: newTotalBalance
+        }
       });
+
+      console.log(`[PAYPAL WEBHOOK] 💵 Updated wallet balance: Main=${currentMainBalance} + ${amount} = ${newMainBalance}, Total=${newTotalBalance}`);
 
       // Create transaction record
       await strapi.entityService.create('api::transaction.transaction', {
@@ -170,6 +177,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           description: `PayPal payment - Order ${orderId}`,
           user_wallet: walletId,
           users_permissions_user: wallet.users_permissions_user,
+          fund_source: 'main_fund', // Direct payments go to main balance
           fee: 0,
           metadata: {
             orderId: orderId,

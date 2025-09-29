@@ -161,13 +161,5 @@ module.exports = {
         auth: false // PayPal webhooks must be public
       }
     },
-    {
-      method: 'POST',
-      path: '/api/api/transactions/paypal-webhook',
-      handler: 'paypal-webhook.handleWebhook',
-      config: {
-        auth: false // PayPal webhooks must be public
-      }
-    }
   ]
 };
