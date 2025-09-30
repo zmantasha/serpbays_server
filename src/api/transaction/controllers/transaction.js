@@ -498,6 +498,110 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     }
   },
 
+  // Manual PayPal payment verification (fallback if webhook fails)
+  async verifyPayPalPayment(ctx) {
+    try {
+      const { orderId, walletId } = ctx.request.body;
+      
+      if (!orderId || !walletId) {
+        return ctx.badRequest('Order ID and Wallet ID are required');
+      }
+
+      console.log(`[MANUAL PAYPAL VERIFY] Checking PayPal order: ${orderId} for wallet: ${walletId}`);
+
+      // Get PayPal order details
+      const orderDetails = await strapi.service('api::transaction.payment').getPayPalOrderDetails(orderId);
+      
+      if (!orderDetails.success) {
+        return ctx.badRequest('Failed to get PayPal order details');
+      }
+
+      const order = orderDetails.order;
+      
+      // Check if order is completed
+      if (order.status !== 'COMPLETED') {
+        return ctx.badRequest('PayPal order is not completed');
+      }
+
+      const purchaseUnit = order.purchase_units[0];
+      const amount = parseFloat(purchaseUnit.amount.value);
+      
+      // Check if transaction already exists
+      const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: {
+          gatewayTransactionId: orderId,
+          user_wallet: walletId
+        }
+      });
+
+      if (existingTransaction) {
+        return ctx.send({
+          success: true,
+          message: 'Transaction already processed',
+          transaction: existingTransaction
+        });
+      }
+
+      // Find the wallet
+      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { id: walletId }
+      });
+
+      if (!wallet) {
+        return ctx.badRequest('Wallet not found');
+      }
+
+      // Update wallet balance
+      const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+      const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+      const newMainBalance = currentMainBalance + amount;
+      const newTotalBalance = newMainBalance + currentPromoBalance;
+
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: walletId },
+        data: { 
+          mainBalance: newMainBalance,
+          balance: newTotalBalance
+        }
+      });
+
+      // Create transaction record
+      const transaction = await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'deposit',
+          amount: amount,
+          netAmount: amount,
+          transactionStatus: 'success',
+          gateway: 'paypal',
+          gatewayTransactionId: orderId,
+          description: `PayPal payment - Manual verification`,
+          user_wallet: walletId,
+          users_permissions_user: wallet.users_permissions_user,
+          fund_source: 'main_fund',
+          fee: 0,
+          metadata: {
+            orderId: orderId,
+            manualVerification: true
+          },
+          publishedAt: new Date()
+        }
+      });
+
+      console.log(`[MANUAL PAYPAL VERIFY] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amount}`);
+
+      return ctx.send({
+        success: true,
+        message: 'Payment verified and wallet updated',
+        transaction: transaction,
+        newBalance: newTotalBalance
+      });
+
+    } catch (error) {
+      console.error('[MANUAL PAYPAL VERIFY ERROR]', error);
+      return ctx.internalServerError('Failed to verify PayPal payment');
+    }
+  },
+
   // Approve transaction via email (Admin only)
   async approveTransaction(ctx) {
     try {
