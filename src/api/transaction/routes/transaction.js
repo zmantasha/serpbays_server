@@ -152,6 +152,17 @@ module.exports = {
         }
       }
     },
+    // PayPal payment verification (fallback)
+    {
+      method: 'POST',
+      path: '/api/transactions/verify-paypal',
+      handler: 'transaction.verifyPayPalPayment',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.create']
+        }
+      }
+    },
     // PayPal specific webhook
     {
       method: 'POST',

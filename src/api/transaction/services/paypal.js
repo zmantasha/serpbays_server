@@ -62,7 +62,7 @@ module.exports = {
           brand_name: process.env.PAYPAL_BRAND_NAME || 'Serpbays',
           landing_page: 'NO_PREFERENCE',
           user_action: 'PAY_NOW',
-          return_url: `${process.env.CLIENT_URL}/wallet?payment=success`,
+          return_url: `${process.env.CLIENT_URL}/wallet?paymentSuccess=true&gateway=paypal`,
           cancel_url: `${process.env.CLIENT_URL}/wallet?payment=cancelled`
         }
       };
