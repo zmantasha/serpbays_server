@@ -49,14 +49,14 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
 
       // 🛡️ ENHANCED DUPLICATE PREVENTION: Check with shorter window and add request ID uniqueness
-      const oneMinuteAgo = new Date(Date.now() - 1 * 60 * 1000); // Reduced from 5 to 1 minute
+      const tenSecondsAgo = new Date(Date.now() - 10 * 1000);// Reduced from 10 sec
       const recentDuplicate = await strapi.db.query('api::withdrawal-request.withdrawal-request').findOne({
         where: {
           publisher: ctx.state.user.id,
           amount: requestAmount,
           method: method,
           createdAt: {
-            $gte: oneMinuteAgo
+            $gte: tenSecondsAgo
           }
         }
       });
