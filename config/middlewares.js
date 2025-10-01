@@ -17,8 +17,8 @@ module.exports = [
   {
     name: 'strapi::cors',
     config: {
-      
-      origin: ['https://staging.serpbays.com', 'http://staging.serpbays.com','http://localhost:3000','http://localhost:3001'],
+      enabled: true,
+      origin: ['https://staging.serpbays.com', 'http://staging.serpbays.com','http://localhost:3000','https://panel20.serpbays.com'],
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
       headers: ['Content-Type', 'Authorization', 'Origin', 'Accept', 'X-Requested-With'],
       keepHeaderOnError: true,
