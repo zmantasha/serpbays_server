@@ -110,7 +110,75 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         populate: '*'
       });
 
-      return { data: submissions };
+      // Get order counts for each website
+      const submissionsWithOrders = await Promise.all(
+        submissions.map(async (website) => {
+          try {
+            // Get marketplace ID for this publisher website by matching URL
+            const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { 
+                url: website.url,
+                publisher_email: user.email
+              }
+            });
+
+            if (!marketplace) {
+              return {
+                ...website,
+                orders: 0,
+                resellerOrders: 0,
+                originalPublisherOrders: 0
+              };
+            }
+
+            // Get all orders for this marketplace website
+            const orders = await strapi.db.query('api::order.order').findMany({
+              where: { 
+                website: marketplace.id,
+                orderStatus: { $in: ['completed', 'delivered', 'accepted', 'in_progress'] }
+              }
+            });
+
+            const totalOrders = orders.length;
+
+            // Get reseller vs original publisher order split
+            let resellerOrders = 0;
+            let originalPublisherOrders = 0;
+
+            if (website.ownershipTransferredAt) {
+              const transferDate = new Date(website.ownershipTransferredAt);
+              
+              orders.forEach(order => {
+                const orderDate = new Date(order.createdAt);
+                if (orderDate < transferDate) {
+                  resellerOrders++;
+                } else {
+                  originalPublisherOrders++;
+                }
+              });
+            }
+
+            return {
+              ...website,
+              orders: totalOrders,
+              resellerOrders: website.ownershipTransferredAt ? resellerOrders : 0,
+              originalPublisherOrders: website.ownershipTransferredAt ? originalPublisherOrders : 0,
+              marketplaceId: marketplace.id
+            };
+          } catch (error) {
+            console.error(`Error fetching orders for website ${website.url}:`, error);
+            // Return website with zero orders if there's an error
+            return {
+              ...website,
+              orders: 0,
+              resellerOrders: 0,
+              originalPublisherOrders: 0
+            };
+          }
+        })
+      );
+
+      return { data: submissionsWithOrders };
     } catch (error) {
       console.error('Error fetching publisher websites:', error);
       return ctx.internalServerError('Failed to fetch websites');
