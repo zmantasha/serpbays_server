@@ -37,10 +37,16 @@ module.exports = {
         amount: Math.round(amount * 100), // Convert to paise
         currency: currency.toUpperCase(),
         receipt: `receipt_${Date.now()}`,
+        notes: {
+          source: 'serpbays_wallet',
+          created_at: new Date().toISOString()
+        }
       };
       const order = await razorpay.orders.create(options);
+      console.log(`[RAZORPAY] Created order ${order.id} for amount ${amount} ${currency}`);
       return order;
     } catch (error) {
+      console.error('[RAZORPAY] Order creation failed:', error);
       throw new Error(`Razorpay order creation failed: ${error.message}`);
     }
   },

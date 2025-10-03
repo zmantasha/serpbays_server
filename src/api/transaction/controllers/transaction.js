@@ -87,7 +87,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           throw new Error('Failed to create payment data');
         }
 
-        // For Stripe and PayPal, don't create a transaction yet
+        // For Stripe and PayPal, don't create a transaction yet (handled by webhooks)
         if (gateway.toLowerCase() === 'stripe' || gateway.toLowerCase() === 'paypal') {
           return { 
             data: { 
@@ -97,7 +97,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           };
         }
         
-        // For other payment methods, create a pending transaction
+        // For Razorpay, create a pending transaction
         const transaction = await strapi.entityService.create('api::transaction.transaction', {
           data: {
             type: 'deposit',

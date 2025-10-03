@@ -172,5 +172,25 @@ module.exports = {
         auth: false // PayPal webhooks must be public
       }
     },
+    // Razorpay specific webhook
+    {
+      method: 'POST',
+      path: '/api/transactions/razorpay-webhook',
+      handler: 'razorpay-webhook.handleWebhook',
+      config: {
+        auth: false // Razorpay webhooks must be public
+      }
+    },
+    // Razorpay payment verification endpoint
+    {
+      method: 'POST',
+      path: '/api/transactions/verify-razorpay',
+      handler: 'razorpay-webhook.verifyPayment',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.create']
+        }
+      }
+    },
   ]
 };
