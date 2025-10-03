@@ -187,9 +187,7 @@ module.exports = {
       path: '/api/transactions/verify-razorpay',
       handler: 'razorpay-webhook.verifyPayment',
       config: {
-        auth: {
-          scope: ['api::transaction.transaction.create']
-        }
+        auth: false // Payment verification should be public
       }
     },
   ]
