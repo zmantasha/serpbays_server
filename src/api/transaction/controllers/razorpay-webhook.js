@@ -238,6 +238,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
   /**
    * Verify payment signature manually (for client-side verification)
+   * This endpoint ONLY verifies the signature - does NOT update wallet
+   * Wallet updates are handled by webhooks for reliability
    */
   async verifyPayment(ctx) {
     try {
@@ -247,6 +249,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return ctx.badRequest('Missing required parameters');
       }
 
+      // Only verify the signature - don't update wallet here
       const isValid = await strapi.service('api::transaction.payment').verifyRazorpayPayment(
         order_id,
         payment_id,
@@ -254,31 +257,27 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       );
 
       if (isValid) {
-        // Find and update transaction
+        // Check if transaction exists and its current status
         const transaction = await strapi.db.query('api::transaction.transaction').findOne({
           where: { gatewayTransactionId: order_id },
           populate: ['user_wallet']
         });
 
-        if (transaction && transaction.transactionStatus !== 'success') {
-          // Update transaction status
-          await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-            data: { 
-              transactionStatus: 'success',
-              external_transaction_id: payment_id,
-              updatedAt: new Date()
-            }
+        if (transaction) {
+          // Return verification status and transaction info
+          return ctx.send({ 
+            verified: true, 
+            message: 'Payment verified successfully',
+            transactionStatus: transaction.transactionStatus,
+            isProcessed: transaction.transactionStatus === 'success'
           });
-
-          // Update wallet balance
-          await this.updateWalletBalance(
-            transaction.user_wallet.id, 
-            transaction.amount, 
-            transaction.currency
-          );
+        } else {
+          return ctx.send({ 
+            verified: true, 
+            message: 'Payment verified but transaction not found',
+            transactionStatus: 'not_found'
+          });
         }
-
-        return ctx.send({ verified: true, message: 'Payment verified successfully' });
       } else {
         return ctx.badRequest('Invalid signature');
       }
