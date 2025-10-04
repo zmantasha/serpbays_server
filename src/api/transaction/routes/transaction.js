@@ -190,5 +190,41 @@ module.exports = {
         auth: false // Payment verification should be public
       }
     },
+    // PhonePe callback endpoint
+    {
+      method: 'POST',
+      path: '/api/transactions/phonepe-callback',
+      handler: 'phonepe-webhook.handleCallback',
+      config: {
+        auth: false // PhonePe callbacks must be public
+      }
+    },
+    // PhonePe status check endpoint
+    {
+      method: 'POST',
+      path: '/api/transactions/phonepe-status',
+      handler: 'phonepe-webhook.checkStatus',
+      config: {
+        auth: false // Status check should be public for client polling
+      }
+    },
+    // PhonePe redirect handler
+    {
+      method: 'POST',
+      path: '/api/transactions/phonepe-redirect',
+      handler: 'phonepe-webhook.handleRedirect',
+      config: {
+        auth: false // PhonePe redirects must be public
+      }
+    },
+    // Manual Razorpay transaction update (for admin use)
+    {
+      method: 'POST',
+      path: '/api/transactions/manual-update-razorpay',
+      handler: 'razorpay-webhook.manualUpdate',
+      config: {
+        auth: true // Requires authentication for admin use
+      }
+    },
   ]
 };

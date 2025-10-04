@@ -3,6 +3,7 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const Razorpay = require('razorpay');
 const paypalService = require('./paypal');
+const phonepeService = require('./phonepe');
 const crypto = require('crypto');
 
 // Initialize Razorpay
@@ -57,6 +58,15 @@ module.exports = {
       return await paypalService.createOrder(amount, currency, metadata);
     } catch (error) {
       throw new Error(`PayPal order creation failed: ${error.message}`);
+    }
+  },
+
+  // Create PhonePe transaction
+  async createPhonePeTransaction(amount, currency = 'INR', metadata = {}) {
+    try {
+      return await phonepeService.createTransaction(amount, currency, metadata);
+    } catch (error) {
+      throw new Error(`PhonePe transaction creation failed: ${error.message}`);
     }
   },
 

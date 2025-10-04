@@ -93,7 +93,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Check if already processed
       if (transaction.transactionStatus === 'success') {
-        console.log(`[RAZORPAY WEBHOOK] Transaction ${transaction.id} already processed`);
+        console.log(`[RAZORPAY WEBHOOK] Transaction ${transaction.id} already processed by verify endpoint`);
         return;
       }
 
@@ -237,9 +237,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   },
 
   /**
-   * Verify payment signature manually (for client-side verification)
-   * This endpoint ONLY verifies the signature - does NOT update wallet
-   * Wallet updates are handled by webhooks for reliability
+   * Verify payment signature and update transaction status immediately
+   * This endpoint verifies the signature AND updates wallet if payment is successful
+   * This provides immediate feedback while webhooks serve as backup
    */
   async verifyPayment(ctx) {
     try {
@@ -249,42 +249,142 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return ctx.badRequest('Missing required parameters');
       }
 
-      // Only verify the signature - don't update wallet here
+      console.log(`[RAZORPAY VERIFY] Verifying payment: ${payment_id} for order: ${order_id}`);
+
+      // Verify the signature
       const isValid = await strapi.service('api::transaction.payment').verifyRazorpayPayment(
         order_id,
         payment_id,
         razorpay_signature
       );
 
-      if (isValid) {
-        // Check if transaction exists and its current status
-        const transaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: { gatewayTransactionId: order_id },
-          populate: ['user_wallet']
-        });
-
-        if (transaction) {
-          // Return verification status and transaction info
-          return ctx.send({ 
-            verified: true, 
-            message: 'Payment verified successfully',
-            transactionStatus: transaction.transactionStatus,
-            isProcessed: transaction.transactionStatus === 'success'
-          });
-        } else {
-          return ctx.send({ 
-            verified: true, 
-            message: 'Payment verified but transaction not found',
-            transactionStatus: 'not_found'
-          });
-        }
-      } else {
+      if (!isValid) {
+        console.error(`[RAZORPAY VERIFY] Invalid signature for payment: ${payment_id}`);
         return ctx.badRequest('Invalid signature');
       }
 
+      // Find the transaction
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: order_id },
+        populate: ['user_wallet']
+      });
+
+      if (!transaction) {
+        console.error(`[RAZORPAY VERIFY] Transaction not found for order: ${order_id}`);
+        return ctx.send({ 
+          verified: true, 
+          message: 'Payment verified but transaction not found',
+          transactionStatus: 'not_found'
+        });
+      }
+
+      console.log(`[RAZORPAY VERIFY] Found transaction ${transaction.id} with status: ${transaction.transactionStatus}`);
+
+      // If already processed, return current status
+      if (transaction.transactionStatus === 'success') {
+        console.log(`[RAZORPAY VERIFY] Transaction ${transaction.id} already processed`);
+        return ctx.send({ 
+          verified: true, 
+          message: 'Payment already processed',
+          transactionStatus: 'success',
+          isProcessed: true
+        });
+      }
+
+      // Update transaction status immediately since payment is verified
+      if (transaction.transactionStatus === 'pending') {
+        console.log(`[RAZORPAY VERIFY] Updating transaction ${transaction.id} to success`);
+        
+        // Update transaction status
+        await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+          data: { 
+            transactionStatus: 'success',
+            external_transaction_id: payment_id,
+            updatedAt: new Date()
+          }
+        });
+
+        // Update wallet balance
+        const amount = transaction.amount;
+        const currency = transaction.currency;
+        await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
+        
+        console.log(`[RAZORPAY VERIFY] ✅ Successfully updated transaction ${transaction.id} and wallet ${transaction.user_wallet.id}`);
+
+        return ctx.send({ 
+          verified: true, 
+          message: 'Payment verified and processed successfully',
+          transactionStatus: 'success',
+          isProcessed: true
+        });
+      }
+
+      // Return current status if not pending
+      return ctx.send({ 
+        verified: true, 
+        message: 'Payment verified successfully',
+        transactionStatus: transaction.transactionStatus,
+        isProcessed: transaction.transactionStatus === 'success'
+      });
+
     } catch (error) {
-      console.error('Error verifying payment:', error);
+      console.error('[RAZORPAY VERIFY] Error verifying payment:', error);
       return ctx.internalServerError('Payment verification failed');
+    }
+  },
+
+  /**
+   * Manually update transaction status (for admin use)
+   * POST /api/transactions/manual-update-razorpay
+   */
+  async manualUpdate(ctx) {
+    try {
+      const { order_id, payment_id, status } = ctx.request.body;
+
+      if (!order_id || !status) {
+        return ctx.badRequest('Missing required parameters: order_id, status');
+      }
+
+      console.log(`[RAZORPAY MANUAL] Manual update for order: ${order_id}, status: ${status}`);
+
+      // Find the transaction
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: order_id },
+        populate: ['user_wallet']
+      });
+
+      if (!transaction) {
+        return ctx.notFound('Transaction not found');
+      }
+
+      // Update transaction status
+      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+        data: { 
+          transactionStatus: status,
+          external_transaction_id: payment_id || transaction.external_transaction_id,
+          updatedAt: new Date()
+        }
+      });
+
+      // Update wallet balance if status is success
+      if (status === 'success' && transaction.user_wallet) {
+        const amount = transaction.amount;
+        const currency = transaction.currency;
+        await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
+        
+        console.log(`[RAZORPAY MANUAL] ✅ Updated transaction ${transaction.id} and wallet ${transaction.user_wallet.id}`);
+      }
+
+      return ctx.send({ 
+        success: true,
+        message: `Transaction ${transaction.id} updated to ${status}`,
+        transactionId: transaction.id,
+        status: status
+      });
+
+    } catch (error) {
+      console.error('[RAZORPAY MANUAL] Error:', error);
+      return ctx.internalServerError('Manual update failed');
     }
   }
 }));

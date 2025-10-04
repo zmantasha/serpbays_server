@@ -79,6 +79,14 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               userId: userId
             });
             break;
+          case 'phonepe':
+            paymentData = await strapi.service('api::transaction.payment').createPhonePeTransaction(parsedAmount, currency, {
+              walletId: wallet.id,
+              userId: userId,
+              redirectUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/wallet?phonepe_return=true`,
+              mobileNumber: '' // Optional: can be passed from client
+            });
+            break;
           default:
             return ctx.badRequest('Invalid payment gateway');
         }
@@ -93,6 +101,42 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             data: { 
               walletId: wallet.id,
               paymentData: paymentData 
+            }
+          };
+        }
+        
+        // For PhonePe, return redirect URL
+        if (gateway.toLowerCase() === 'phonepe') {
+          // Create pending transaction for PhonePe
+          const transaction = await strapi.entityService.create('api::transaction.transaction', {
+            data: {
+              type: 'deposit',
+              amount: parsedAmount,
+              netAmount: parsedAmount,
+              currency: currency,
+              gateway: gateway,
+              gatewayTransactionId: paymentData.transactionId,
+              transactionStatus: 'pending',
+              user_wallet: wallet.id,
+              users_permissions_user: userId || wallet.users_permissions_user,
+              metadata: {
+                phonepeData: paymentData,
+                walletId: wallet.id,
+                userId: userId
+              },
+              publishedAt: new Date()
+            },
+            populate: ['user_wallet']
+          });
+
+          console.log(`✅ Created PhonePe transaction ${transaction.id} for ${parsedAmount} ${currency}`);
+
+          return {
+            data: {
+              transaction: transaction,
+              walletId: wallet.id,
+              paymentData: paymentData,
+              redirectUrl: paymentData.redirectUrl // PhonePe checkout URL
             }
           };
         }
