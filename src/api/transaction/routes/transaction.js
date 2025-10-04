@@ -223,7 +223,9 @@ module.exports = {
       path: '/api/transactions/manual-update-razorpay',
       handler: 'razorpay-webhook.manualUpdate',
       config: {
-        auth: true // Requires authentication for admin use
+        auth: {
+          strategies: ['jwt']
+        }
       }
     },
   ]
