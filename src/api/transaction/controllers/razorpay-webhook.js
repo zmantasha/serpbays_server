@@ -409,22 +409,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return ctx.badRequest('Invalid signature');
       }
 
-      // Find the transaction - prioritize pending transactions for retries
-      let transaction = await strapi.db.query('api::transaction.transaction').findOne({
-        where: { 
-          gatewayTransactionId: order_id,
-          transactionStatus: 'pending'
-        },
+      // Find the transaction
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: order_id },
         populate: ['user_wallet']
       });
-      
-      // If no pending transaction found, look for any transaction with this order ID
-      if (!transaction) {
-        transaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: { gatewayTransactionId: order_id },
-          populate: ['user_wallet']
-        });
-      }
 
       if (!transaction) {
         console.error(`[RAZORPAY VERIFY] Transaction not found for order: ${order_id}`);
