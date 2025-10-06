@@ -141,27 +141,92 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           };
         }
         
-        // For Razorpay, create a pending transaction
-        const transaction = await strapi.entityService.create('api::transaction.transaction', {
-          data: {
-            type: 'deposit',
-            amount: parsedAmount,
-            netAmount: parsedAmount,
-            currency: currency,
-            gateway: gateway,
-            gatewayTransactionId: paymentData.id,
-            transactionStatus: 'pending',
-            user_wallet: wallet.id,
-            users_permissions_user: userId || wallet.users_permissions_user,
-            metadata: {
-              paymentData: paymentData,
-              walletId: wallet.id,
-              userId: userId
+        // For Razorpay, check for existing failed transactions before creating new ones
+        let transaction;
+        
+        if (gateway.toLowerCase() === 'razorpay') {
+          // Check if there's an existing failed transaction for this wallet and amount
+          const existingFailedTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              user_wallet: wallet.id,
+              amount: parsedAmount,
+              currency: currency,
+              gateway: gateway,
+              transactionStatus: 'failed',
+              type: 'deposit'
             },
-            publishedAt: new Date()
-          },
-          populate: ['user_wallet']
-        });
+            orderBy: { createdAt: 'desc' }
+          });
+          
+          if (existingFailedTransaction) {
+            console.log(`[RAZORPAY RETRY] Found existing failed transaction ${existingFailedTransaction.id} - reusing for retry`);
+            
+            // Update the existing failed transaction to pending and new order ID
+            transaction = await strapi.entityService.update('api::transaction.transaction', existingFailedTransaction.id, {
+              data: {
+                gatewayTransactionId: paymentData.id,
+                transactionStatus: 'pending',
+                updatedAt: new Date(),
+                metadata: {
+                  ...existingFailedTransaction.metadata,
+                  paymentData: paymentData,
+                  retryAttempt: (existingFailedTransaction.metadata?.retryAttempt || 0) + 1,
+                  originalOrderId: existingFailedTransaction.gatewayTransactionId
+                }
+              },
+              populate: ['user_wallet']
+            });
+            
+            console.log(`[RAZORPAY RETRY] Updated transaction ${transaction.id} for retry with new order ${paymentData.id}`);
+          } else {
+            // No existing failed transaction, create new one
+            transaction = await strapi.entityService.create('api::transaction.transaction', {
+              data: {
+                type: 'deposit',
+                amount: parsedAmount,
+                netAmount: parsedAmount,
+                currency: currency,
+                gateway: gateway,
+                gatewayTransactionId: paymentData.id,
+                transactionStatus: 'pending',
+                user_wallet: wallet.id,
+                users_permissions_user: userId || wallet.users_permissions_user,
+                metadata: {
+                  paymentData: paymentData,
+                  walletId: wallet.id,
+                  userId: userId,
+                  retryAttempt: 0
+                },
+                publishedAt: new Date()
+              },
+              populate: ['user_wallet']
+            });
+            
+            console.log(`[RAZORPAY NEW] Created new transaction ${transaction.id} for order ${paymentData.id}`);
+          }
+        } else {
+          // For other gateways, create new transaction as before
+          transaction = await strapi.entityService.create('api::transaction.transaction', {
+            data: {
+              type: 'deposit',
+              amount: parsedAmount,
+              netAmount: parsedAmount,
+              currency: currency,
+              gateway: gateway,
+              gatewayTransactionId: paymentData.id,
+              transactionStatus: 'pending',
+              user_wallet: wallet.id,
+              users_permissions_user: userId || wallet.users_permissions_user,
+              metadata: {
+                paymentData: paymentData,
+                walletId: wallet.id,
+                userId: userId
+              },
+              publishedAt: new Date()
+            },
+            populate: ['user_wallet']
+          });
+        }
 
         return { data: { transaction, paymentData } };
       } catch (error) {
