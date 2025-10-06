@@ -150,7 +150,6 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             where: {
               user_wallet: wallet.id,
               amount: parsedAmount,
-              currency: currency,
               gateway: gateway,
               transactionStatus: 'failed',
               type: 'deposit'
