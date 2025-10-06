@@ -228,5 +228,14 @@ module.exports = {
         }
       }
     },
+      // Cleanup old pending Razorpay transactions
+    {
+      method: 'POST',
+      path: '/api/transactions/cleanup-pending-razorpay',
+      handler: 'razorpay-webhook.cleanupPendingTransactions',
+      config: {
+        auth: false // Can be called by cron job or admin
+      }
+    },
   ]
 };
