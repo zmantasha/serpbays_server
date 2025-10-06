@@ -294,13 +294,17 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         console.log(`[RAZORPAY VERIFY] Found ${payments.items.length} payment(s) for order ${order_id}`);
 
         if (payments.items.length === 0) {
-          // No payments - user dismissed
-          console.log(`[RAZORPAY VERIFY] No payments found - marking as failed`);
-          await this.updateTransactionStatus(transaction, 'failed', '', 'Payment dismissed by user');
+          // No payments - user dismissed or never attempted
+          console.log(`[RAZORPAY VERIFY] No payments found - user never attempted payment`);
+          
+          // Only mark as failed if transaction is pending (not already failed)
+          if (transaction.transactionStatus === 'pending') {
+            await this.updateTransactionStatus(transaction, 'failed', '', 'Payment not attempted - user closed payment window');
+          }
           
           return ctx.send({ 
             verified: true, 
-            message: 'Payment dismissed by user',
+            message: 'Payment not attempted',
             transactionStatus: 'failed',
             isProcessed: true
           });
@@ -354,15 +358,47 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           const paymentStatus = latestPayment.status;
           const paymentId = latestPayment.id;
           
-          console.log(`[RAZORPAY VERIFY] Payment ${paymentId} status: ${paymentStatus} - keeping as ${transaction.transactionStatus}`);
+          console.log(`[RAZORPAY VERIFY] Payment ${paymentId} status: ${paymentStatus}`);
           
-          return ctx.send({ 
-            verified: true, 
-            message: `Payment status: ${paymentStatus}`,
-            transactionStatus: transaction.transactionStatus, // Keep current status
-            paymentId: paymentId,
-            isProcessed: false
-          });
+          // Handle different payment statuses
+          if (paymentStatus === 'authorized') {
+            // Payment authorized but not captured - keep as pending
+            console.log(`[RAZORPAY VERIFY] Payment authorized but not captured - keeping as pending`);
+            
+            return ctx.send({ 
+              verified: true, 
+              message: 'Payment authorized, awaiting capture',
+              transactionStatus: 'pending',
+              paymentId: paymentId,
+              isProcessed: false
+            });
+            
+          } else if (paymentStatus === 'created') {
+            // Payment created but not completed
+            console.log(`[RAZORPAY VERIFY] Payment created but not completed`);
+            
+            // If transaction is already failed, keep it failed
+            // Otherwise keep as pending (user might still be completing it)
+            return ctx.send({ 
+              verified: true, 
+              message: 'Payment initiated but not completed',
+              transactionStatus: transaction.transactionStatus,
+              paymentId: paymentId,
+              isProcessed: false
+            });
+            
+          } else {
+            // Unknown status - keep current transaction status
+            console.log(`[RAZORPAY VERIFY] Unknown payment status: ${paymentStatus} - keeping as ${transaction.transactionStatus}`);
+            
+            return ctx.send({ 
+              verified: true, 
+              message: `Payment status: ${paymentStatus}`,
+              transactionStatus: transaction.transactionStatus,
+              paymentId: paymentId,
+              isProcessed: false
+            });
+          }
         }
 
       } catch (error) {
@@ -433,6 +469,92 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     } catch (error) {
       console.error(`[RAZORPAY VERIFY] Error updating transaction to ${status}:`, error);
       throw error;
+    }
+  },
+
+  /**
+   * Clean up old pending transactions
+   * This should be called periodically (e.g., via cron job)
+   * Marks transactions pending for > 30 minutes as failed
+   */
+  async cleanupPendingTransactions(ctx) {
+    try {
+      console.log('[RAZORPAY CLEANUP] Starting cleanup of old pending transactions');
+      
+      // Find all pending Razorpay transactions older than 30 minutes
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      
+      const pendingTransactions = await strapi.db.query('api::transaction.transaction').findMany({
+        where: {
+          transactionStatus: 'pending',
+          gateway: 'razorpay',
+          createdAt: {
+            $lt: thirtyMinutesAgo
+          }
+        },
+        populate: ['user_wallet']
+      });
+      
+      console.log(`[RAZORPAY CLEANUP] Found ${pendingTransactions.length} old pending transactions`);
+      
+      let cleanedCount = 0;
+      
+      for (const transaction of pendingTransactions) {
+        try {
+          // Check actual payment status with Razorpay
+          const payments = await razorpay.orders.fetchPayments(transaction.gatewayTransactionId);
+          
+          if (payments.items.length === 0) {
+            // No payments - mark as failed
+            await this.updateTransactionStatus(transaction, 'failed', '', 'Transaction expired - no payment attempt');
+            cleanedCount++;
+            console.log(`[RAZORPAY CLEANUP] Marked transaction ${transaction.id} as failed (no payments)`);
+          } else {
+            // Has payments - check if any are successful
+            let hasSuccess = false;
+            let hasFailed = false;
+            
+            for (const payment of payments.items) {
+              if (payment.status === 'captured') {
+                hasSuccess = true;
+                break;
+              } else if (payment.status === 'failed') {
+                hasFailed = true;
+              }
+            }
+            
+            if (hasSuccess) {
+              // Should have been marked as success - update now
+              await this.updateTransactionStatus(transaction, 'success', payments.items[0].id);
+              cleanedCount++;
+              console.log(`[RAZORPAY CLEANUP] Marked transaction ${transaction.id} as success (found successful payment)`);
+            } else if (hasFailed) {
+              // All payments failed - mark as failed
+              await this.updateTransactionStatus(transaction, 'failed', payments.items[0].id, 'Payment failed');
+              cleanedCount++;
+              console.log(`[RAZORPAY CLEANUP] Marked transaction ${transaction.id} as failed (all payments failed)`);
+            } else {
+              // Payments still in progress or authorized - leave pending for now
+              console.log(`[RAZORPAY CLEANUP] Transaction ${transaction.id} still in progress - leaving as pending`);
+            }
+          }
+        } catch (error) {
+          console.error(`[RAZORPAY CLEANUP] Error processing transaction ${transaction.id}:`, error);
+        }
+      }
+      
+      console.log(`[RAZORPAY CLEANUP] Completed cleanup - ${cleanedCount} transactions updated`);
+      
+      return ctx.send({
+        success: true,
+        message: `Cleaned up ${cleanedCount} old pending transactions`,
+        totalFound: pendingTransactions.length,
+        totalCleaned: cleanedCount
+      });
+      
+    } catch (error) {
+      console.error('[RAZORPAY CLEANUP] Error during cleanup:', error);
+      return ctx.internalServerError('Cleanup failed');
     }
   },
 
