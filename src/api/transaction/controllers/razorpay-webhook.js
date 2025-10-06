@@ -244,170 +244,18 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   },
 
   /**
-   * Verify payment signature and update transaction status immediately
-   * This endpoint verifies the signature AND updates wallet if payment is successful
-   * This provides immediate feedback while webhooks serve as backup
+   * Simple payment verification - just check payment status for order ID
+   * POST /api/transactions/verify-razorpay
    */
   async verifyPayment(ctx) {
     try {
-      const { order_id, payment_id, razorpay_signature } = ctx.request.body;
+      const { order_id } = ctx.request.body;
 
       if (!order_id) {
         return ctx.badRequest('Missing required parameter: order_id');
       }
 
-      console.log(`[RAZORPAY VERIFY] Verifying payment: ${payment_id || 'N/A'} for order: ${order_id}`);
-
-      // Handle failed/dismissed payments (no payment_id or signature)
-      if (!payment_id || !razorpay_signature) {
-        console.log(`[RAZORPAY VERIFY] No payment_id or signature provided - checking order status directly`);
-        
-        // Find the transaction
-        const transaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: { gatewayTransactionId: order_id },
-          populate: ['user_wallet']
-        });
-
-        if (!transaction) {
-          console.error(`[RAZORPAY VERIFY] Transaction not found for order: ${order_id}`);
-          return ctx.send({ 
-            verified: true, 
-            message: 'Transaction not found',
-            transactionStatus: 'not_found'
-          });
-        }
-
-        // If transaction is already processed, return current status
-        if (transaction.transactionStatus !== 'pending') {
-          console.log(`[RAZORPAY VERIFY] Transaction ${transaction.id} already processed with status: ${transaction.transactionStatus}`);
-          return ctx.send({ 
-            verified: true, 
-            message: `Transaction already processed with status: ${transaction.transactionStatus}`,
-            transactionStatus: transaction.transactionStatus,
-            isProcessed: true
-          });
-        }
-
-        // For failed/dismissed payments, check with Razorpay API to get actual payment status
-        try {
-          console.log(`[RAZORPAY VERIFY] Checking payments for order: ${order_id}`);
-          
-          // Get all payments associated with this order
-          const payments = await razorpay.orders.fetchPayments(order_id);
-          
-          console.log(`[RAZORPAY VERIFY] Found ${payments.items.length} payment(s) for order ${order_id}`);
-          
-          if (payments.items.length === 0) {
-            // No payments found - user never attempted payment (dismissed)
-            console.log(`[RAZORPAY VERIFY] No payments found - user dismissed payment modal`);
-            
-            await this.updateTransactionToFailed(transaction, '', 'Payment dismissed by user');
-            
-            return ctx.send({ 
-              verified: true, 
-              message: 'Payment dismissed by user',
-              transactionStatus: 'failed',
-              paymentStatus: 'dismissed',
-              isProcessed: true
-            });
-          }
-          
-          // Check each payment's status
-          let hasSuccessfulPayment = false;
-          let hasFailedPayment = false;
-          let lastPaymentId = '';
-          let lastPaymentStatus = '';
-          let lastErrorDescription = '';
-          
-          for (const payment of payments.items) {
-            console.log(`[RAZORPAY VERIFY] Payment ${payment.id} status: ${payment.status}`);
-            
-            lastPaymentId = payment.id;
-            lastPaymentStatus = payment.status;
-            
-            if (payment.status === 'captured') {
-              hasSuccessfulPayment = true;
-              break; // Success takes priority
-            } else if (payment.status === 'failed') {
-              hasFailedPayment = true;
-              lastErrorDescription = payment.error_description || 'Payment failed';
-            }
-          }
-          
-          // Update transaction based on payment status
-          if (hasSuccessfulPayment) {
-            console.log(`[RAZORPAY VERIFY] Found successful payment: ${lastPaymentId}`);
-            
-            await this.updateTransactionToSuccess(transaction, lastPaymentId);
-            
-            return ctx.send({ 
-              verified: true, 
-              message: 'Payment verified and processed successfully',
-              transactionStatus: 'success',
-              paymentStatus: lastPaymentStatus,
-              paymentId: lastPaymentId,
-              isProcessed: true
-            });
-            
-          } else if (hasFailedPayment) {
-            console.log(`[RAZORPAY VERIFY] Found failed payment: ${lastPaymentId} - ${lastErrorDescription}`);
-            
-            await this.updateTransactionToFailed(transaction, lastPaymentId, lastErrorDescription);
-            
-            return ctx.send({ 
-              verified: true, 
-              message: `Payment failed: ${lastErrorDescription}`,
-              transactionStatus: 'failed',
-              paymentStatus: lastPaymentStatus,
-              paymentId: lastPaymentId,
-              isProcessed: true
-            });
-            
-          } else {
-            // Payments exist but none are captured or failed (might be authorized, created, etc.)
-            console.log(`[RAZORPAY VERIFY] Payments exist but status is: ${lastPaymentStatus} - keeping as pending`);
-            
-            return ctx.send({ 
-              verified: true, 
-              message: `Payment status: ${lastPaymentStatus}`,
-              transactionStatus: 'pending',
-              paymentStatus: lastPaymentStatus,
-              paymentId: lastPaymentId,
-              isProcessed: false
-            });
-          }
-          
-        } catch (error) {
-          console.error('[RAZORPAY VERIFY] Error fetching payments from Razorpay:', error);
-          
-          // If we can't fetch payments, assume payment failed
-          console.log(`[RAZORPAY VERIFY] Fallback: Marking transaction ${transaction.id} as failed`);
-          
-          await this.updateTransactionToFailed(transaction, '', 'Unable to verify payment status');
-          
-          return ctx.send({ 
-            verified: true, 
-            message: 'Payment verification failed - marked as failed',
-            transactionStatus: 'failed',
-            isProcessed: true
-          });
-        }
-      }
-
-      // Handle successful payments with signature verification
-      console.log(`[RAZORPAY VERIFY] Verifying signature for successful payment: ${payment_id}`);
-
-      // Verify the signature
-      const isValid = await strapi.service('api::transaction.payment').verifyRazorpayPayment(
-        order_id,
-        payment_id,
-        razorpay_signature
-      );
-
-      if (!isValid) {
-        console.error(`[RAZORPAY VERIFY] Invalid signature for payment: ${payment_id}`);
-        return ctx.badRequest('Invalid signature');
-      }
+      console.log(`[RAZORPAY VERIFY] Checking payment status for order: ${order_id}`);
 
       // Find the transaction
       const transaction = await strapi.db.query('api::transaction.transaction').findOne({
@@ -419,94 +267,97 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         console.error(`[RAZORPAY VERIFY] Transaction not found for order: ${order_id}`);
         return ctx.send({ 
           verified: true, 
-          message: 'Payment verified but transaction not found',
+          message: 'Transaction not found',
           transactionStatus: 'not_found'
         });
       }
 
-      console.log(`[RAZORPAY VERIFY] Found transaction ${transaction.id} with status: ${transaction.transactionStatus}`);
-
       // If already processed, return current status
-      if (transaction.transactionStatus === 'success') {
-        console.log(`[RAZORPAY VERIFY] Transaction ${transaction.id} already processed`);
+      if (transaction.transactionStatus !== 'pending') {
+        console.log(`[RAZORPAY VERIFY] Transaction ${transaction.id} already processed with status: ${transaction.transactionStatus}`);
         return ctx.send({ 
           verified: true, 
-          message: 'Payment already processed',
-          transactionStatus: 'success',
+          message: `Transaction already processed`,
+          transactionStatus: transaction.transactionStatus,
           isProcessed: true
         });
       }
 
-      // Check actual payment status with Razorpay API
-      if (transaction.transactionStatus === 'pending') {
-        try {
-          console.log(`[RAZORPAY VERIFY] Checking payment status with Razorpay API for: ${payment_id}`);
-          
-          const payment = await razorpay.payments.fetch(payment_id);
-          const paymentStatus = payment.status;
-          
-          console.log(`[RAZORPAY VERIFY] Payment ${payment_id} status: ${paymentStatus}`);
-          
-          // Update transaction based on actual payment status
-          if (paymentStatus === 'captured') {
-            await this.updateTransactionToSuccess(transaction, payment_id);
-            
-            return ctx.send({ 
-              verified: true, 
-              message: 'Payment verified and processed successfully',
-              transactionStatus: 'success',
-              paymentStatus: paymentStatus,
-              isProcessed: true
-            });
-            
-          } else if (paymentStatus === 'failed') {
-            await this.updateTransactionToFailed(transaction, payment_id);
-            
-            return ctx.send({ 
-              verified: true, 
-              message: 'Payment failed',
-              transactionStatus: 'failed',
-              paymentStatus: paymentStatus,
-              isProcessed: true
-            });
-            
-          } else {
-            // Keep as pending for other statuses (authorized, created, etc.)
-            console.log(`[RAZORPAY VERIFY] Payment status: ${paymentStatus} - keeping transaction as pending`);
-            
-            return ctx.send({ 
-              verified: true, 
-              message: `Payment status: ${paymentStatus}`,
-              transactionStatus: 'pending',
-              paymentStatus: paymentStatus,
-              isProcessed: false
-            });
-          }
-          
-        } catch (error) {
-          console.error('[RAZORPAY VERIFY] Error fetching payment status from Razorpay:', error);
-          
-          // Fallback: Update to success based on signature verification only
-          console.log(`[RAZORPAY VERIFY] Fallback: Updating transaction ${transaction.id} to success based on signature verification`);
-          
-          await this.updateTransactionToSuccess(transaction, payment_id);
+      // Get all payments for this order
+      try {
+        const payments = await razorpay.orders.fetchPayments(order_id);
+        console.log(`[RAZORPAY VERIFY] Found ${payments.items.length} payment(s) for order ${order_id}`);
+
+        if (payments.items.length === 0) {
+          // No payments - user dismissed
+          console.log(`[RAZORPAY VERIFY] No payments found - marking as failed`);
+          await this.updateTransactionStatus(transaction, 'failed', '', 'Payment dismissed by user');
           
           return ctx.send({ 
             verified: true, 
-            message: 'Payment verified and processed (fallback mode)',
-            transactionStatus: 'success',
+            message: 'Payment dismissed by user',
+            transactionStatus: 'failed',
             isProcessed: true
           });
         }
-      }
 
-      // Return current status if not pending
-      return ctx.send({ 
-        verified: true, 
-        message: 'Payment verified successfully',
-        transactionStatus: transaction.transactionStatus,
-        isProcessed: transaction.transactionStatus === 'success'
-      });
+        // Check the latest payment status
+        const latestPayment = payments.items[0]; // Razorpay returns in reverse chronological order
+        const paymentStatus = latestPayment.status;
+        const paymentId = latestPayment.id;
+        
+        console.log(`[RAZORPAY VERIFY] Latest payment ${paymentId} status: ${paymentStatus}`);
+
+        // Update transaction based on payment status
+        if (paymentStatus === 'captured') {
+          await this.updateTransactionStatus(transaction, 'success', paymentId);
+          
+          return ctx.send({ 
+            verified: true, 
+            message: 'Payment successful',
+            transactionStatus: 'success',
+            paymentId: paymentId,
+            isProcessed: true
+          });
+          
+        } else if (paymentStatus === 'failed') {
+          const errorDescription = latestPayment.error_description || 'Payment failed';
+          await this.updateTransactionStatus(transaction, 'failed', paymentId, errorDescription);
+          
+          return ctx.send({ 
+            verified: true, 
+            message: `Payment failed: ${errorDescription}`,
+            transactionStatus: 'failed',
+            paymentId: paymentId,
+            isProcessed: true
+          });
+          
+        } else {
+          // Other statuses (authorized, created, etc.) - keep pending
+          console.log(`[RAZORPAY VERIFY] Payment status: ${paymentStatus} - keeping as pending`);
+          
+          return ctx.send({ 
+            verified: true, 
+            message: `Payment status: ${paymentStatus}`,
+            transactionStatus: 'pending',
+            paymentId: paymentId,
+            isProcessed: false
+          });
+        }
+
+      } catch (error) {
+        console.error('[RAZORPAY VERIFY] Error fetching payments from Razorpay:', error);
+        
+        // If we can't fetch payments, assume failed
+        await this.updateTransactionStatus(transaction, 'failed', '', 'Unable to verify payment status');
+        
+        return ctx.send({ 
+          verified: true, 
+          message: 'Payment verification failed',
+          transactionStatus: 'failed',
+          isProcessed: true
+        });
+      }
 
     } catch (error) {
       console.error('[RAZORPAY VERIFY] Error verifying payment:', error);
@@ -515,64 +366,44 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   },
 
   /**
-   * Update transaction to success status
+   * Simple method to update transaction status
    */
-  async updateTransactionToSuccess(transaction, paymentId) {
+  async updateTransactionStatus(transaction, status, paymentId = '', errorDescription = '') {
     try {
-      console.log(`[RAZORPAY VERIFY] Updating transaction ${transaction.id} to success`);
-      
-      // Update transaction status
-      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-        data: { 
-          transactionStatus: 'success',
-          external_transaction_id: paymentId,
-          updatedAt: new Date()
-        }
-      });
-
-      // Update wallet balance
-      const amount = transaction.amount;
-      const currency = transaction.currency;
-      await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
-      
-      console.log(`[RAZORPAY VERIFY] ✅ Successfully updated transaction ${transaction.id} and wallet ${transaction.user_wallet.id}`);
-    } catch (error) {
-      console.error('[RAZORPAY VERIFY] Error updating transaction to success:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Update transaction to failed status
-   */
-  async updateTransactionToFailed(transaction, paymentId, errorDescription = '') {
-    try {
-      console.log(`[RAZORPAY VERIFY] Updating transaction ${transaction.id} to failed`);
+      console.log(`[RAZORPAY VERIFY] Updating transaction ${transaction.id} to ${status}`);
       
       // Prepare update data
       const updateData = { 
-        transactionStatus: 'failed',
+        transactionStatus: status,
         updatedAt: new Date()
       };
       
-      // Only update external_transaction_id if paymentId is provided
+      // Add payment ID if provided
       if (paymentId && paymentId.trim() !== '') {
         updateData.external_transaction_id = paymentId;
       }
       
       // Add error description if provided
       if (errorDescription && errorDescription.trim() !== '') {
-        updateData.payment_notes = `Payment failed: ${errorDescription}`;
+        updateData.payment_notes = errorDescription;
       }
       
       // Update transaction status
       await strapi.entityService.update('api::transaction.transaction', transaction.id, {
         data: updateData
       });
+
+      // Update wallet balance only for successful payments
+      if (status === 'success' && transaction.user_wallet) {
+        const amount = transaction.amount;
+        const currency = transaction.currency;
+        await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
+        console.log(`[RAZORPAY VERIFY] ✅ Updated wallet balance for transaction ${transaction.id}`);
+      }
       
-      console.log(`[RAZORPAY VERIFY] ❌ Successfully updated transaction ${transaction.id} to failed`);
+      console.log(`[RAZORPAY VERIFY] ✅ Successfully updated transaction ${transaction.id} to ${status}`);
     } catch (error) {
-      console.error('[RAZORPAY VERIFY] Error updating transaction to failed:', error);
+      console.error(`[RAZORPAY VERIFY] Error updating transaction to ${status}:`, error);
       throw error;
     }
   },
