@@ -245,23 +245,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
         console.log(`[ADMIN WEBSITES RECORD RANGE] Raw query: offset=${offset}, limit=${limit}, results=${websites.length}`);
       } else {
-        // Use normal pagination
-        websites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-        filters,
-          sort: sortObj,
-        pagination: {
-            page: currentPage,
-            pageSize: limit
-        },
-        populate: {
-          currentPublisherId: {
-            fields: ['id', 'username', 'email']
-          },
-          originalPublisherId: {
-            fields: ['id', 'username', 'email']
-          }
-        }
-      });
+        // Use normal pagination with raw database query for better control
+        console.log(`[ADMIN WEBSITES PAGINATION] Page: ${currentPage}, PageSize: ${limit}`);
+        const offset = (currentPage - 1) * limit;
+        
+        websites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+          where: filters,
+          orderBy: sortObj,
+          limit: limit,
+          offset: offset,
+          populate: ['currentPublisherId', 'originalPublisherId']
+        });
+        
+        console.log(`[ADMIN WEBSITES PAGINATION RESULT] Received ${websites.length} websites (offset: ${offset}, limit: ${limit})`);
       }
 
       // Get total count for pagination
@@ -491,6 +487,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         samplePosts: website.samplePosts || [],
         // Guidelines
         guidelines: website.guidelines || 'No guidelines provided',
+        rejectionReason: website.rejectionReason || null,
+        rejectedBy: website.rejectedBy || null,
         // Additional metadata
         protocol: website.protocol || 'https',
         resellerCode: website.resellerCode,
@@ -1271,27 +1269,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       for (const websiteData of websites) {
         try {
-          const { id, ...metricsData } = websiteData;
+          const { id, domain, notes, ...metricsData } = websiteData;
           
           if (!id) {
             errors.push({ id: 'unknown', error: 'Missing website ID' });
             continue;
           }
-          console.log("id",id)
+          console.log("id", id)
+          console.log("Metrics data to update:", metricsData)
+
+          // Fetch existing website to get current metrics_update_count
+          const existingWebsite = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+          
+          if (!existingWebsite) {
+            errors.push({ id, error: 'Website not found' });
+            continue;
+          }
 
           // Add metrics update tracking
           const updateData = {
             ...metricsData,
             metrics_last_updated: new Date(),
-            metrics_update_count: (metricsData.metrics_update_count || 0) + 1,
+            metrics_update_count: (existingWebsite.metrics_update_count || 0) + 1,
             metrics_update_method: 'bulk_import'
           };
-          console.log("update", updateData)
+          console.log("Update data:", updateData)
 
           const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
             data: updateData
           });
-          console.log("updateedWebsite",updatedWebsite)
+          console.log("Updated website:", updatedWebsite)
 
           // Also update the corresponding marketplace record with ownership transfer logic
           const websiteUrl = updatedWebsite.url;
@@ -1386,6 +1393,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             status: 'updated'
           });
         } catch (error) {
+          console.error(`[ADMIN ACTION] Error updating website ${websiteData.id}:`, error);
           errors.push({ 
             id: websiteData.id || 'unknown', 
             error: error.message 
@@ -1393,12 +1401,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
+      console.log(`[ADMIN ACTION] Bulk update completed: ${results.length} successful, ${errors.length} errors`);
+
      return ctx.send({
         success: true,
         updated: results.length,
         errors: errors.length,
         results,
-        errors
+        errorDetails: errors
       });
 
     } catch (error) {
