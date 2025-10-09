@@ -61,7 +61,15 @@ module.exports = {
           break;
 
         case 'payment_intent.payment_failed':
-          await handlePaymentFailed(event.data.object);
+          console.log(`[STRIPE WEBHOOK] 🔥 Processing payment_intent.payment_failed for: ${event.data.object.id}`);
+          try {
+            await handlePaymentFailed(event.data.object);
+            console.log(`[STRIPE WEBHOOK] ✅ Successfully processed payment_intent.payment_failed for: ${event.data.object.id}`);
+          } catch (error) {
+            console.error(`[STRIPE WEBHOOK] ❌ Error processing payment_intent.payment_failed for: ${event.data.object.id}`);
+            console.error(`[STRIPE WEBHOOK] Error details:`, error);
+            // Don't throw - we want to return 200 to Stripe
+          }
           break;
 
         case 'payment_intent.canceled':
@@ -289,6 +297,68 @@ module.exports = {
       console.error('[STRIPE CHECK] ❌ Error checking transaction status:', error);
       return ctx.badRequest(error.message);
     }
+  },
+
+  /**
+   * Test endpoint to manually trigger payment failure handling
+   */
+  async testPaymentFailure(ctx) {
+    try {
+      const { paymentIntentId } = ctx.request.body;
+      
+      if (!paymentIntentId) {
+        return ctx.badRequest('Payment Intent ID is required');
+      }
+
+      console.log(`[STRIPE TEST] Testing payment failure handling for: ${paymentIntentId}`);
+
+      // Find the transaction
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: paymentIntentId },
+        populate: ['user_wallet']
+      });
+
+      if (!transaction) {
+        return ctx.notFound('Transaction not found');
+      }
+
+      console.log(`[STRIPE TEST] Found transaction ${transaction.id}, current status: ${transaction.transactionStatus}`);
+
+      // Create a mock payment intent object
+      const mockPaymentIntent = {
+        id: paymentIntentId,
+        status: 'requires_payment_method',
+        last_payment_error: {
+          message: 'Test failure - 3D Secure authentication failed',
+          code: 'authentication_required',
+          type: 'card_error'
+        }
+      };
+
+      // Call the failure handler
+      await handlePaymentFailed(mockPaymentIntent);
+
+      // Check the updated transaction
+      const updatedTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { id: transaction.id }
+      });
+
+      return ctx.send({
+        success: true,
+        message: 'Payment failure handling tested',
+        originalStatus: transaction.transactionStatus,
+        updatedStatus: updatedTransaction.transactionStatus,
+        transaction: {
+          id: transaction.id,
+          status: updatedTransaction.transactionStatus,
+          paymentIntentId: paymentIntentId
+        }
+      });
+
+    } catch (error) {
+      console.error('[STRIPE TEST] ❌ Error testing payment failure:', error);
+      return ctx.badRequest(error.message);
+    }
   }
 };
 
@@ -433,20 +503,50 @@ async function handlePaymentFailed(paymentIntent) {
     console.log(`[STRIPE] Payment Intent status: ${paymentIntent.status}`);
     console.log(`[STRIPE] Last payment error:`, paymentIntent.last_payment_error);
 
+    // First, let's search for the transaction more broadly
+    console.log(`[STRIPE] 🔍 Searching for transaction with gatewayTransactionId: ${paymentIntent.id}`);
+    
     const transaction = await strapi.db.query('api::transaction.transaction').findOne({
       where: { gatewayTransactionId: paymentIntent.id },
       populate: ['user_wallet']
     });
 
     if (!transaction) {
-      console.error(`[STRIPE] Transaction not found for failed Payment Intent: ${paymentIntent.id}`);
-      console.error(`[STRIPE] Available transactions with gatewayTransactionId:`, await strapi.db.query('api::transaction.transaction').findMany({
-        where: { gatewayTransactionId: paymentIntent.id }
-      }));
+      console.error(`[STRIPE] ❌ Transaction not found for failed Payment Intent: ${paymentIntent.id}`);
+      
+      // Let's search more broadly to debug
+      const allTransactions = await strapi.db.query('api::transaction.transaction').findMany({
+        where: { gateway: 'stripe' },
+        orderBy: { createdAt: 'desc' },
+        limit: 5
+      });
+      
+      console.error(`[STRIPE] 🔍 Recent Stripe transactions:`, allTransactions.map(t => ({
+        id: t.id,
+        gatewayTransactionId: t.gatewayTransactionId,
+        status: t.transactionStatus,
+        createdAt: t.createdAt
+      })));
+      
+      // Try to find by partial match
+      const partialMatch = await strapi.db.query('api::transaction.transaction').findMany({
+        where: {
+          gatewayTransactionId: { $containsi: paymentIntent.id.substring(0, 20) }
+        }
+      });
+      
+      if (partialMatch.length > 0) {
+        console.error(`[STRIPE] 🔍 Found partial matches:`, partialMatch.map(t => ({
+          id: t.id,
+          gatewayTransactionId: t.gatewayTransactionId,
+          status: t.transactionStatus
+        })));
+      }
+      
       return;
     }
 
-    console.log(`[STRIPE] Found transaction ${transaction.id}, current status: ${transaction.transactionStatus}`);
+    console.log(`[STRIPE] ✅ Found transaction ${transaction.id}, current status: ${transaction.transactionStatus}`);
 
     // Check if already processed (idempotency)
     if (transaction.transactionStatus === 'failed') {
@@ -455,27 +555,34 @@ async function handlePaymentFailed(paymentIntent) {
     }
 
     // Update transaction status
-    await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-      data: {
-        transactionStatus: 'failed',
-        failedAt: new Date(),
-        metadata: {
-          ...transaction.metadata,
-          failureReason: paymentIntent.last_payment_error?.message || 'Payment failed',
-          failureCode: paymentIntent.last_payment_error?.code,
-          failureType: paymentIntent.last_payment_error?.type,
-          stripePaymentIntent: {
-            id: paymentIntent.id,
-            status: paymentIntent.status,
-            lastPaymentError: paymentIntent.last_payment_error
-          },
-          processedAt: new Date().toISOString()
-        }
+    console.log(`[STRIPE] 🔄 Updating transaction ${transaction.id} to failed status...`);
+    
+    const updateData = {
+      transactionStatus: 'failed',
+      failedAt: new Date(),
+      metadata: {
+        ...transaction.metadata,
+        failureReason: paymentIntent.last_payment_error?.message || 'Payment failed',
+        failureCode: paymentIntent.last_payment_error?.code,
+        failureType: paymentIntent.last_payment_error?.type,
+        stripePaymentIntent: {
+          id: paymentIntent.id,
+          status: paymentIntent.status,
+          lastPaymentError: paymentIntent.last_payment_error
+        },
+        processedAt: new Date().toISOString()
       }
+    };
+    
+    console.log(`[STRIPE] 📝 Update data:`, JSON.stringify(updateData, null, 2));
+    
+    const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+      data: updateData
     });
 
     console.log(`[STRIPE] ✅ Successfully marked transaction ${transaction.id} as failed`);
-    console.log(`[STRIPE] Failure reason: ${paymentIntent.last_payment_error?.message || 'Unknown error'}`);
+    console.log(`[STRIPE] ✅ Updated transaction status: ${updatedTransaction.transactionStatus}`);
+    console.log(`[STRIPE] ✅ Failure reason: ${paymentIntent.last_payment_error?.message || 'Unknown error'}`);
 
   } catch (error) {
     console.error('[STRIPE] ❌ Error handling payment failure:', error);
