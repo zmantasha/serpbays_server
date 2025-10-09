@@ -80,8 +80,19 @@ module.exports = {
           console.log(`[STRIPE WEBHOOK] ℹ️ Payment requires action: ${event.data.object.id}`);
           break;
 
+        case 'payment_method.attached':
+          console.log(`[STRIPE WEBHOOK] ℹ️ Payment method attached: ${event.data.object.id}`);
+          break;
+
+        case 'payment_intent.requires_payment_method':
+          console.log(`[STRIPE WEBHOOK] ℹ️ Payment requires payment method: ${event.data.object.id}`);
+          // This might happen when 3D Secure fails
+          await handlePaymentFailed(event.data.object);
+          break;
+
         default:
           console.log(`[STRIPE WEBHOOK] ℹ️ Unhandled event type: ${event.type}`);
+          console.log(`[STRIPE WEBHOOK] Event data:`, JSON.stringify(event, null, 2));
       }
 
       // Always return 200 to acknowledge receipt
@@ -95,6 +106,64 @@ module.exports = {
       console.error('[STRIPE WEBHOOK] ❌ Webhook processing failed:', error);
       // Return 400 for signature verification failures
       // This tells Stripe not to retry
+      return ctx.badRequest(error.message);
+    }
+  },
+
+  /**
+   * Manually mark a transaction as failed (for cases where webhook wasn't received)
+   */
+  async markTransactionFailed(ctx) {
+    try {
+      const { paymentIntentId } = ctx.request.body;
+      
+      if (!paymentIntentId) {
+        return ctx.badRequest('Payment Intent ID is required');
+      }
+
+      console.log(`[STRIPE MANUAL] Manually marking payment intent ${paymentIntentId} as failed`);
+
+      // Find the transaction
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: paymentIntentId },
+        populate: ['user_wallet']
+      });
+
+      if (!transaction) {
+        return ctx.notFound('Transaction not found');
+      }
+
+      console.log(`[STRIPE MANUAL] Found transaction ${transaction.id}, current status: ${transaction.transactionStatus}`);
+
+      // Update transaction status
+      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+        data: {
+          transactionStatus: 'failed',
+          failedAt: new Date(),
+          metadata: {
+            ...transaction.metadata,
+            failureReason: 'Manually marked as failed',
+            failureCode: 'manual_failure',
+            manualFailure: true,
+            processedAt: new Date().toISOString()
+          }
+        }
+      });
+
+      console.log(`[STRIPE MANUAL] ✅ Successfully marked transaction ${transaction.id} as failed`);
+
+      return ctx.send({
+        success: true,
+        message: 'Transaction marked as failed',
+        transaction: {
+          id: transaction.id,
+          status: 'failed',
+          paymentIntentId: paymentIntentId
+        }
+      });
+
+    } catch (error) {
+      console.error('[STRIPE MANUAL] ❌ Error marking transaction as failed:', error);
       return ctx.badRequest(error.message);
     }
   }
@@ -238,13 +307,27 @@ async function handlePaymentSucceeded(paymentIntent) {
 async function handlePaymentFailed(paymentIntent) {
   try {
     console.log(`[STRIPE] ❌ Payment failed: ${paymentIntent.id}`);
+    console.log(`[STRIPE] Payment Intent status: ${paymentIntent.status}`);
+    console.log(`[STRIPE] Last payment error:`, paymentIntent.last_payment_error);
 
     const transaction = await strapi.db.query('api::transaction.transaction').findOne({
-      where: { gatewayTransactionId: paymentIntent.id }
+      where: { gatewayTransactionId: paymentIntent.id },
+      populate: ['user_wallet']
     });
 
     if (!transaction) {
       console.error(`[STRIPE] Transaction not found for failed Payment Intent: ${paymentIntent.id}`);
+      console.error(`[STRIPE] Available transactions with gatewayTransactionId:`, await strapi.db.query('api::transaction.transaction').findMany({
+        where: { gatewayTransactionId: paymentIntent.id }
+      }));
+      return;
+    }
+
+    console.log(`[STRIPE] Found transaction ${transaction.id}, current status: ${transaction.transactionStatus}`);
+
+    // Check if already processed (idempotency)
+    if (transaction.transactionStatus === 'failed') {
+      console.log(`[STRIPE] ℹ️ Transaction ${transaction.id} already marked as failed, skipping`);
       return;
     }
 
@@ -257,19 +340,27 @@ async function handlePaymentFailed(paymentIntent) {
           ...transaction.metadata,
           failureReason: paymentIntent.last_payment_error?.message || 'Payment failed',
           failureCode: paymentIntent.last_payment_error?.code,
+          failureType: paymentIntent.last_payment_error?.type,
           stripePaymentIntent: {
             id: paymentIntent.id,
-            status: paymentIntent.status
+            status: paymentIntent.status,
+            lastPaymentError: paymentIntent.last_payment_error
           },
           processedAt: new Date().toISOString()
         }
       }
     });
 
-    console.log(`[STRIPE] ✅ Marked transaction ${transaction.id} as failed`);
+    console.log(`[STRIPE] ✅ Successfully marked transaction ${transaction.id} as failed`);
+    console.log(`[STRIPE] Failure reason: ${paymentIntent.last_payment_error?.message || 'Unknown error'}`);
 
   } catch (error) {
     console.error('[STRIPE] ❌ Error handling payment failure:', error);
+    console.error('[STRIPE] Error details:', {
+      message: error.message,
+      stack: error.stack,
+      paymentIntentId: paymentIntent.id
+    });
   }
 }
 

@@ -226,6 +226,17 @@ module.exports = {
         auth: false // Stripe webhooks must be public
       }
     },
+    // Manual Stripe transaction failure (for debugging)
+    {
+      method: 'POST',
+      path: '/api/transactions/stripe-mark-failed',
+      handler: 'stripe-webhook.markTransactionFailed',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.update']
+        }
+      }
+    },
     // Manual Razorpay transaction update (for admin use)
     {
       method: 'POST',
