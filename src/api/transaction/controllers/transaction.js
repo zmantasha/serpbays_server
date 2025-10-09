@@ -197,11 +197,23 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           
           if (process.env.NODE_ENV === 'development') {
             // Skip signature verification in development
+            console.warn('[STRIPE WEBHOOK] ⚠️ Development mode: Skipping signature verification');
             event = payload;
           } else {
+            // Get raw body for signature verification
+            const rawBody = ctx.request.body[Symbol.for('unparsedBody')] || 
+                           ctx.request.body._unparsedBody || 
+                           ctx.request.rawBody ||
+                           payload;
+            
+            if (!rawBody) {
+              console.error('[STRIPE WEBHOOK] ❌ No raw body available for signature verification');
+              return ctx.badRequest('Raw body required for webhook verification');
+            }
+            
             // Verify signature in production
             event = stripe.webhooks.constructEvent(
-              payload,
+              rawBody,
               stripeSignature,
               process.env.STRIPE_WEBHOOK_SECRET
             );
