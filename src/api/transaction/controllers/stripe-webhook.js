@@ -86,8 +86,13 @@ module.exports = {
 
         case 'payment_intent.requires_payment_method':
           console.log(`[STRIPE WEBHOOK] ℹ️ Payment requires payment method: ${event.data.object.id}`);
-          // This might happen when 3D Secure fails
+          // This happens when 3D Secure fails or payment method is invalid
           await handlePaymentFailed(event.data.object);
+          break;
+
+        case 'payment_intent.created':
+          console.log(`[STRIPE WEBHOOK] ℹ️ Payment intent created: ${event.data.object.id}`);
+          // Just log, no action needed
           break;
 
         default:
@@ -135,6 +140,19 @@ module.exports = {
 
       console.log(`[STRIPE MANUAL] Found transaction ${transaction.id}, current status: ${transaction.transactionStatus}`);
 
+      // Check if already processed
+      if (transaction.transactionStatus === 'failed') {
+        return ctx.send({
+          success: true,
+          message: 'Transaction already marked as failed',
+          transaction: {
+            id: transaction.id,
+            status: 'failed',
+            paymentIntentId: paymentIntentId
+          }
+        });
+      }
+
       // Update transaction status
       await strapi.entityService.update('api::transaction.transaction', transaction.id, {
         data: {
@@ -142,7 +160,7 @@ module.exports = {
           failedAt: new Date(),
           metadata: {
             ...transaction.metadata,
-            failureReason: 'Manually marked as failed',
+            failureReason: 'Manually marked as failed - 3D Secure authentication failed',
             failureCode: 'manual_failure',
             manualFailure: true,
             processedAt: new Date().toISOString()
@@ -164,6 +182,111 @@ module.exports = {
 
     } catch (error) {
       console.error('[STRIPE MANUAL] ❌ Error marking transaction as failed:', error);
+      return ctx.badRequest(error.message);
+    }
+  },
+
+  /**
+   * Check and update transaction status from Stripe (for pending transactions)
+   */
+  async checkTransactionStatus(ctx) {
+    try {
+      const { paymentIntentId } = ctx.request.body;
+      
+      if (!paymentIntentId) {
+        return ctx.badRequest('Payment Intent ID is required');
+      }
+
+      console.log(`[STRIPE CHECK] Checking status for payment intent ${paymentIntentId}`);
+
+      // Find the transaction
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: paymentIntentId },
+        populate: ['user_wallet']
+      });
+
+      if (!transaction) {
+        return ctx.notFound('Transaction not found');
+      }
+
+      console.log(`[STRIPE CHECK] Found transaction ${transaction.id}, current status: ${transaction.transactionStatus}`);
+
+      // If already processed, return current status
+      if (transaction.transactionStatus !== 'pending') {
+        return ctx.send({
+          success: true,
+          message: 'Transaction already processed',
+          transaction: {
+            id: transaction.id,
+            status: transaction.transactionStatus,
+            paymentIntentId: paymentIntentId
+          }
+        });
+      }
+
+      // Check with Stripe API
+      const stripeService = strapi.service('api::transaction.stripe-service');
+      const paymentIntent = await stripeService.retrievePaymentIntent(paymentIntentId);
+
+      console.log(`[STRIPE CHECK] Stripe payment intent status: ${paymentIntent.status}`);
+
+      let newStatus = transaction.transactionStatus;
+      let updateData = {};
+
+      switch (paymentIntent.status) {
+        case 'succeeded':
+          newStatus = 'success';
+          // Handle success (update wallet balance, etc.)
+          await handlePaymentSucceeded(paymentIntent);
+          break;
+
+        case 'requires_payment_method':
+        case 'canceled':
+          newStatus = 'failed';
+          updateData = {
+            transactionStatus: 'failed',
+            failedAt: new Date(),
+            metadata: {
+              ...transaction.metadata,
+              failureReason: `Payment ${paymentIntent.status}`,
+              failureCode: paymentIntent.status,
+              stripeStatus: paymentIntent.status,
+              processedAt: new Date().toISOString()
+            }
+          };
+          break;
+
+        case 'processing':
+          newStatus = 'pending';
+          console.log(`[STRIPE CHECK] Payment still processing`);
+          break;
+
+        default:
+          console.log(`[STRIPE CHECK] Unknown payment intent status: ${paymentIntent.status}`);
+          newStatus = 'pending';
+      }
+
+      // Update transaction if status changed
+      if (newStatus !== transaction.transactionStatus && Object.keys(updateData).length > 0) {
+        await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+          data: updateData
+        });
+        console.log(`[STRIPE CHECK] ✅ Updated transaction ${transaction.id} to ${newStatus}`);
+      }
+
+      return ctx.send({
+        success: true,
+        message: `Transaction status checked: ${newStatus}`,
+        transaction: {
+          id: transaction.id,
+          status: newStatus,
+          paymentIntentId: paymentIntentId,
+          stripeStatus: paymentIntent.status
+        }
+      });
+
+    } catch (error) {
+      console.error('[STRIPE CHECK] ❌ Error checking transaction status:', error);
       return ctx.badRequest(error.message);
     }
   }
