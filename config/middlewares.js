@@ -27,7 +27,12 @@ module.exports = [
   'strapi::poweredBy',
   'strapi::logger',
   'strapi::query',
-  'strapi::body',
+  {
+    name: 'strapi::body',
+    config: {
+      includeUnparsed: true, // This preserves the raw body for webhook verification
+    },
+  },
   'strapi::session',
   'strapi::favicon',
   'strapi::public',
