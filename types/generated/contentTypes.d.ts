@@ -676,6 +676,30 @@ export interface ApiGlobalConfigGlobalConfig
     minPayoutAmount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<10>;
+    paymentGateways: Schema.Attribute.JSON &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<{
+        paypal: {
+          description: 'PayPal payments';
+          displayName: 'PayPal';
+          enabled: true;
+        };
+        phonepe: {
+          description: 'PhonePe UPI payments';
+          displayName: 'PhonePe';
+          enabled: true;
+        };
+        razorpay: {
+          description: 'Razorpay payment gateway';
+          displayName: 'Razorpay';
+          enabled: true;
+        };
+        stripe: {
+          description: 'Credit card payments via Stripe';
+          displayName: 'Stripe';
+          enabled: true;
+        };
+      }>;
     publishedAt: Schema.Attribute.DateTime;
     supportedCurrencies: Schema.Attribute.JSON &
       Schema.Attribute.Required &

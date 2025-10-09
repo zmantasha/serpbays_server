@@ -14,7 +14,8 @@ module.exports = {
       'http://localhost:3800',
       'http://staging.serpbays.com',
       'https://staging.serpbays.com',
-      'https://cms.serpbays.com'
+      'https://cms.serpbays.com',
+      'http://localhost:3009'
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],

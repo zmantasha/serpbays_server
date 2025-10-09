@@ -17,6 +17,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         page = 1, 
         pageSize = 20, 
         sort = 'createdAt:desc',
+        sortField = '',
+        sortDirection = 'asc',
         search = '',
         status = '',
         userId = '',
@@ -48,7 +50,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       
       // Convert sort string to proper format for Strapi
       let sortObj = { createdAt: 'desc' }; // Default sort
-      if (sort && typeof sort === 'string') {
+      
+      // Handle new sortField and sortDirection parameters
+      if (sortField && sortDirection) {
+        // Map frontend field names to database field names
+        const fieldMapping = {
+          'domain': 'url',
+          'owner': 'currentPublisherId.username',
+          'metrics': 'moz_da',
+          'metrics_last_updated': 'metrics_last_updated',
+          'status': 'submissionStatus',
+          'price': 'generalGuestPostPrice',
+          'addedDate': 'createdAt'
+        };
+        
+        const dbField = fieldMapping[sortField] || sortField;
+        sortObj = { [dbField]: sortDirection };
+        console.log(`[ADMIN WEBSITES SORTING] Field: ${sortField} -> ${dbField}, Direction: ${sortDirection}`);
+      } else if (sort && typeof sort === 'string') {
+        // Fallback to old sort parameter
         if (sort.includes(':')) {
           const [field, direction] = sort.split(':');
           sortObj = { [field]: direction };
