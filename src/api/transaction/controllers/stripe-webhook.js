@@ -1,0 +1,403 @@
+'use strict';
+
+/**
+ * Stripe Webhook Controller
+ * Handles all Stripe webhook events with proper security and error handling
+ */
+
+module.exports = {
+  /**
+   * Handle Stripe Webhook Events
+   */
+  async handleWebhook(ctx) {
+    const signature = ctx.request.headers['stripe-signature'];
+    
+    // Get raw body for signature verification
+    const rawBody = ctx.request.body[Symbol.for('unparsedBody')];
+
+    if (!rawBody) {
+      console.error('[STRIPE WEBHOOK] ❌ No raw body found in request');
+      return ctx.badRequest('Invalid request body');
+    }
+
+    if (!signature) {
+      console.error('[STRIPE WEBHOOK] ❌ No signature header found');
+      return ctx.badRequest('Missing signature header');
+    }
+
+    try {
+      // Verify webhook signature
+      const stripeService = strapi.service('api::transaction.stripe-service');
+      const event = stripeService.verifyWebhookSignature(
+        rawBody,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+
+      console.log(`[STRIPE WEBHOOK] 📣 Received event: ${event.type}, ID: ${event.id}`);
+
+      // Handle different event types
+      switch (event.type) {
+        case 'payment_intent.succeeded':
+          await handlePaymentSucceeded(event.data.object);
+          break;
+
+        case 'payment_intent.payment_failed':
+          await handlePaymentFailed(event.data.object);
+          break;
+
+        case 'payment_intent.canceled':
+          await handlePaymentCanceled(event.data.object);
+          break;
+
+        case 'charge.refunded':
+          await handleChargeRefunded(event.data.object);
+          break;
+
+        case 'payment_intent.processing':
+          console.log(`[STRIPE WEBHOOK] ℹ️ Payment processing: ${event.data.object.id}`);
+          break;
+
+        case 'payment_intent.requires_action':
+          console.log(`[STRIPE WEBHOOK] ℹ️ Payment requires action: ${event.data.object.id}`);
+          break;
+
+        default:
+          console.log(`[STRIPE WEBHOOK] ℹ️ Unhandled event type: ${event.type}`);
+      }
+
+      // Always return 200 to acknowledge receipt
+      return ctx.send({ 
+        received: true, 
+        eventType: event.type,
+        eventId: event.id
+      });
+
+    } catch (error) {
+      console.error('[STRIPE WEBHOOK] ❌ Webhook processing failed:', error);
+      // Return 400 for signature verification failures
+      // This tells Stripe not to retry
+      return ctx.badRequest(error.message);
+    }
+  }
+};
+
+/**
+ * Handle successful payment
+ */
+async function handlePaymentSucceeded(paymentIntent) {
+  try {
+    console.log(`[STRIPE] 💰 Payment succeeded: ${paymentIntent.id}`);
+
+    // Find transaction by gatewayTransactionId
+    const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+      where: { gatewayTransactionId: paymentIntent.id },
+      populate: ['user_wallet', 'users_permissions_user']
+    });
+
+    if (!transaction) {
+      console.error(`[STRIPE] ❌ Transaction not found for Payment Intent: ${paymentIntent.id}`);
+      // This might be a payment not initiated by us, just log and return
+      return;
+    }
+
+    // Check if already processed (idempotency)
+    if (transaction.transactionStatus === 'success') {
+      console.log(`[STRIPE] ℹ️ Transaction ${transaction.id} already processed, skipping (idempotent)`);
+      return;
+    }
+
+    console.log(`[STRIPE] Processing transaction ${transaction.id} for Payment Intent ${paymentIntent.id}`);
+
+    // Get wallet ID from metadata or transaction
+    const walletId = paymentIntent.metadata?.walletId || transaction.user_wallet?.id;
+
+    if (!walletId) {
+      console.error(`[STRIPE] ❌ No wallet ID found for Payment Intent ${paymentIntent.id}`);
+      // Mark transaction as failed
+      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+        data: {
+          transactionStatus: 'failed',
+          metadata: {
+            ...transaction.metadata,
+            error: 'No wallet ID found',
+            processedAt: new Date().toISOString()
+          }
+        }
+      });
+      return;
+    }
+
+    // Use database transaction for atomic updates
+    try {
+      // Find the wallet
+      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { id: walletId },
+        populate: ['users_permissions_user']
+      });
+
+      if (!wallet) {
+        throw new Error(`Wallet ${walletId} not found`);
+      }
+
+      // Calculate new balance
+      const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+      const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+      const transactionAmount = parseFloat(transaction.amount);
+      const newMainBalance = currentMainBalance + transactionAmount;
+      const newTotalBalance = newMainBalance + currentPromoBalance;
+
+      console.log(`[STRIPE] 💵 Updating wallet ${walletId}: $${currentMainBalance} + $${transactionAmount} = $${newMainBalance}`);
+
+      // Update wallet balance
+      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+        data: {
+          mainBalance: newMainBalance,
+          balance: newTotalBalance
+        }
+      });
+
+      // Update transaction status
+      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+        data: {
+          transactionStatus: 'success',
+          completedAt: new Date(),
+          metadata: {
+            ...transaction.metadata,
+            stripePaymentIntent: {
+              id: paymentIntent.id,
+              amount: paymentIntent.amount,
+              currency: paymentIntent.currency,
+              status: paymentIntent.status
+            },
+            processedAt: new Date().toISOString(),
+            balanceBefore: currentMainBalance,
+            balanceAfter: newMainBalance
+          }
+        }
+      });
+
+      console.log(`[STRIPE] ✅ Transaction ${transaction.id} completed successfully`);
+
+      // Create invoice (in background, don't block webhook)
+      createInvoiceForTransaction(transaction, wallet.users_permissions_user)
+        .then(() => {
+          console.log(`[STRIPE] ✅ Invoice created for transaction ${transaction.id}`);
+        })
+        .catch((invoiceError) => {
+          console.error(`[STRIPE] ⚠️ Invoice creation failed for transaction ${transaction.id}:`, invoiceError);
+          // Don't throw error - invoice can be created later
+        });
+
+    } catch (error) {
+      console.error('[STRIPE] ❌ Error updating wallet balance:', error);
+      
+      // Mark transaction as failed
+      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+        data: {
+          transactionStatus: 'failed',
+          failedAt: new Date(),
+          metadata: {
+            ...transaction.metadata,
+            error: error.message,
+            processedAt: new Date().toISOString()
+          }
+        }
+      });
+      
+      throw error;
+    }
+
+  } catch (error) {
+    console.error('[STRIPE] ❌ Error handling payment success:', error);
+    // Don't throw - we already logged the error
+  }
+}
+
+/**
+ * Handle failed payment
+ */
+async function handlePaymentFailed(paymentIntent) {
+  try {
+    console.log(`[STRIPE] ❌ Payment failed: ${paymentIntent.id}`);
+
+    const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+      where: { gatewayTransactionId: paymentIntent.id }
+    });
+
+    if (!transaction) {
+      console.error(`[STRIPE] Transaction not found for failed Payment Intent: ${paymentIntent.id}`);
+      return;
+    }
+
+    // Update transaction status
+    await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+      data: {
+        transactionStatus: 'failed',
+        failedAt: new Date(),
+        metadata: {
+          ...transaction.metadata,
+          failureReason: paymentIntent.last_payment_error?.message || 'Payment failed',
+          failureCode: paymentIntent.last_payment_error?.code,
+          stripePaymentIntent: {
+            id: paymentIntent.id,
+            status: paymentIntent.status
+          },
+          processedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    console.log(`[STRIPE] ✅ Marked transaction ${transaction.id} as failed`);
+
+  } catch (error) {
+    console.error('[STRIPE] ❌ Error handling payment failure:', error);
+  }
+}
+
+/**
+ * Handle canceled payment
+ */
+async function handlePaymentCanceled(paymentIntent) {
+  try {
+    console.log(`[STRIPE] 🚫 Payment canceled: ${paymentIntent.id}`);
+
+    const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+      where: { gatewayTransactionId: paymentIntent.id }
+    });
+
+    if (!transaction) {
+      console.error(`[STRIPE] Transaction not found for canceled Payment Intent: ${paymentIntent.id}`);
+      return;
+    }
+
+    await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+      data: {
+        transactionStatus: 'canceled',
+        canceledAt: new Date(),
+        metadata: {
+          ...transaction.metadata,
+          processedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    console.log(`[STRIPE] ✅ Marked transaction ${transaction.id} as canceled`);
+
+  } catch (error) {
+    console.error('[STRIPE] ❌ Error handling payment cancellation:', error);
+  }
+}
+
+/**
+ * Handle refunded charge
+ */
+async function handleChargeRefunded(charge) {
+  try {
+    console.log(`[STRIPE] 🔄 Charge refunded: ${charge.id}`);
+
+    const paymentIntentId = charge.payment_intent;
+    const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+      where: { gatewayTransactionId: paymentIntentId },
+      populate: ['user_wallet']
+    });
+
+    if (!transaction) {
+      console.error(`[STRIPE] Transaction not found for refunded charge: ${charge.id}`);
+      return;
+    }
+
+    // Create refund transaction
+    const refundAmount = charge.amount_refunded / 100;
+    await strapi.entityService.create('api::transaction.transaction', {
+      data: {
+        type: 'refund',
+        amount: refundAmount,
+        netAmount: refundAmount,
+        currency: charge.currency.toUpperCase(),
+        gateway: 'stripe',
+        gatewayTransactionId: charge.id,
+        transactionStatus: 'success',
+        user_wallet: transaction.user_wallet?.id,
+        users_permissions_user: transaction.users_permissions_user,
+        fund_source: 'main_fund',
+        metadata: {
+          originalTransactionId: transaction.id,
+          chargeId: charge.id,
+          refundReason: 'Charge refunded',
+          processedAt: new Date().toISOString()
+        },
+        publishedAt: new Date()
+      }
+    });
+
+    // Update wallet balance
+    const wallet = transaction.user_wallet;
+    if (wallet) {
+      const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+      const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+      const newMainBalance = Math.max(0, currentMainBalance - refundAmount);
+      const newTotalBalance = newMainBalance + currentPromoBalance;
+
+      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+        data: {
+          mainBalance: newMainBalance,
+          balance: newTotalBalance
+        }
+      });
+
+      console.log(`[STRIPE] ✅ Refund processed: $${refundAmount} deducted from wallet ${wallet.id}`);
+    }
+
+  } catch (error) {
+    console.error('[STRIPE] ❌ Error handling refund:', error);
+  }
+}
+
+/**
+ * Create invoice for successful transaction
+ */
+async function createInvoiceForTransaction(transaction, user) {
+  try {
+    const invoiceNumber = `INV-${Date.now()}-${transaction.id}`;
+
+    const invoice = await strapi.entityService.create('api::invoice.invoice', {
+      data: {
+        invoiceNumber,
+        invoiceDate: new Date(),
+        user: user?.id,
+        transactionId: transaction.id.toString(),
+        billingName: user?.username || 'Customer',
+        billingAddress: 'Address on file',
+        billingCity: 'City',
+        billingCountry: 'Country',
+        billingPincode: '000000',
+        lineItems: [{
+          description: 'Wallet Deposit via Stripe',
+          amount: transaction.amount,
+          quantity: 1
+        }],
+        subtotal: transaction.amount,
+        taxAmount: 0,
+        totalAmount: transaction.amount,
+        currency: transaction.currency || 'USD',
+        status: 'paid',
+        pdfUrl: `/invoices/${invoiceNumber}.pdf`,
+        notes: `Stripe payment - Transaction ${transaction.id}`,
+        publishedAt: new Date()
+      }
+    });
+
+    // Link invoice to transaction
+    await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+      data: { invoice: invoice.id }
+    });
+
+    console.log(`[STRIPE] ✅ Invoice created: ${invoice.invoiceNumber}`);
+    return invoice;
+  } catch (error) {
+    console.error('[STRIPE] ❌ Invoice creation failed:', error);
+    throw error;
+  }
+}
+

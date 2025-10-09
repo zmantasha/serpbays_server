@@ -59,16 +59,20 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       try {
         switch (gateway.toLowerCase()) {
           case 'stripe':
-            paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(parsedAmount, currency);
-            // Store userId and walletId in metadata for the webhook to use
-            if (paymentData && paymentData.id) {
-              await stripe.paymentIntents.update(paymentData.id, {
-                metadata: { 
-                  walletId: wallet.id.toString(),
-                  userId: userId ? userId.toString() : 'demo'
-                }
-              });
-            }
+            // Create metadata for the payment intent
+            const stripeMetadata = {
+              walletId: wallet.id.toString(),
+              userId: userId ? userId.toString() : 'demo',
+              email: wallet.users_permissions_user?.email || 'no-email',
+              username: wallet.users_permissions_user?.username || 'unknown'
+            };
+            
+            // Use the enhanced payment service with metadata
+            paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(
+              parsedAmount, 
+              currency,
+              stripeMetadata
+            );
             break;
           case 'razorpay':
             paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(parsedAmount, currency);

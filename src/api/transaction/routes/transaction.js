@@ -217,6 +217,15 @@ module.exports = {
         auth: false // PhonePe redirects must be public
       }
     },
+    // Stripe specific webhook (recommended)
+    {
+      method: 'POST',
+      path: '/api/transactions/stripe-webhook',
+      handler: 'stripe-webhook.handleWebhook',
+      config: {
+        auth: false // Stripe webhooks must be public
+      }
+    },
     // Manual Razorpay transaction update (for admin use)
     {
       method: 'POST',
