@@ -16,16 +16,30 @@ const razorpay = new Razorpay({
 
 module.exports = {
   // Create payment intent for Stripe
-  async createStripePaymentIntent(amount, currency = 'usd') {
+  async createStripePaymentIntent(amount, currency = 'usd', metadata = {}) {
     try {
+      // Use the dedicated Stripe service if available
+      const stripeService = strapi.service('api::transaction.stripe-service');
+      if (stripeService) {
+        return await stripeService.createPaymentIntent(amount, currency, metadata);
+      }
+      
+      // Fallback to basic implementation
       const paymentIntent = await stripe.paymentIntents.create({
         amount: Math.round(amount * 100), // Convert to cents
         currency: currency.toLowerCase(),
         automatic_payment_methods: {
           enabled: true,
         },
+        metadata
       });
-      return paymentIntent;
+      return {
+        id: paymentIntent.id,
+        client_secret: paymentIntent.client_secret,
+        amount: paymentIntent.amount,
+        currency: paymentIntent.currency,
+        status: paymentIntent.status
+      };
     } catch (error) {
       throw new Error(`Stripe payment intent creation failed: ${error.message}`);
     }
