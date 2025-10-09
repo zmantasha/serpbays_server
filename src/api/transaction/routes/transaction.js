@@ -237,6 +237,17 @@ module.exports = {
         }
       }
     },
+    // Check Stripe transaction status (for pending transactions)
+    {
+      method: 'POST',
+      path: '/api/transactions/stripe-check-status',
+      handler: 'stripe-webhook.checkTransactionStatus',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.find']
+        }
+      }
+    },
     // Manual Razorpay transaction update (for admin use)
     {
       method: 'POST',
