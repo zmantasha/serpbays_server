@@ -248,17 +248,6 @@ module.exports = {
         }
       }
     },
-    // Test Stripe payment failure handling (for debugging)
-    {
-      method: 'POST',
-      path: '/api/transactions/stripe-test-failure',
-      handler: 'stripe-webhook.testPaymentFailure',
-      config: {
-        auth: {
-          scope: ['api::transaction.transaction.update']
-        }
-      }
-    },
     // Manual Razorpay transaction update (for admin use)
     {
       method: 'POST',
