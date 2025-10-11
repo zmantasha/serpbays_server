@@ -38,6 +38,7 @@
         "success",
         "failed",
         "cancelled",
+        "approved",
         "refunded",
         "denied",
         "paid"

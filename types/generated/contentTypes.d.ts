@@ -2058,6 +2058,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
         'success',
         'failed',
         'cancelled',
+        'approved',
         'refunded',
         'denied',
         'paid',
