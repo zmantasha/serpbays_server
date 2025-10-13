@@ -2248,6 +2248,32 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Website not found');
       }
 
+      // CASCADE DELETE: Also delete from marketplace if it exists
+      if (website.url) {
+        try {
+          console.log(`[ADMIN ACTION] Checking for marketplace entry with URL: ${website.url}`);
+          
+          // Find marketplace entry with the same URL
+          const marketplaceEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { url: website.url }
+          });
+
+          if (marketplaceEntry) {
+            console.log(`[ADMIN ACTION] Found marketplace entry ${marketplaceEntry.id} for URL ${website.url}, deleting it`);
+            
+            // Delete the marketplace entry
+            await strapi.entityService.delete('api::marketplace.marketplace', marketplaceEntry.id);
+            
+            console.log(`[ADMIN ACTION] Successfully deleted marketplace entry ${marketplaceEntry.id} for URL ${website.url}`);
+          } else {
+            console.log(`[ADMIN ACTION] No marketplace entry found for URL ${website.url}`);
+          }
+        } catch (marketplaceError) {
+          console.error(`[ADMIN ACTION] Error deleting marketplace entry for URL ${website.url}:`, marketplaceError);
+          // Don't fail the website deletion if marketplace deletion fails
+        }
+      }
+
       // Delete the website
       await strapi.entityService.delete('api::publisher-website.publisher-website', id);
 
@@ -2439,6 +2465,32 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           if (!website) {
             errors.push({ id, error: `Website with ID ${id} not found` });
             continue;
+          }
+
+          // CASCADE DELETE: Also delete from marketplace if it exists
+          if (website.url) {
+            try {
+              console.log(`[ADMIN BULK ACTION] Checking for marketplace entry with URL: ${website.url}`);
+              
+              // Find marketplace entry with the same URL
+              const marketplaceEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
+                where: { url: website.url }
+              });
+
+              if (marketplaceEntry) {
+                console.log(`[ADMIN BULK ACTION] Found marketplace entry ${marketplaceEntry.id} for URL ${website.url}, deleting it`);
+                
+                // Delete the marketplace entry
+                await strapi.entityService.delete('api::marketplace.marketplace', marketplaceEntry.id);
+                
+                console.log(`[ADMIN BULK ACTION] Successfully deleted marketplace entry ${marketplaceEntry.id} for URL ${website.url}`);
+              } else {
+                console.log(`[ADMIN BULK ACTION] No marketplace entry found for URL ${website.url}`);
+              }
+            } catch (marketplaceError) {
+              console.error(`[ADMIN BULK ACTION] Error deleting marketplace entry for URL ${website.url}:`, marketplaceError);
+              // Don't fail the website deletion if marketplace deletion fails
+            }
           }
 
           // Delete the website
