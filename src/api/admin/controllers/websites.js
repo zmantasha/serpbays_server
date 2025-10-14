@@ -17,6 +17,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         page = 1, 
         pageSize = 20, 
         sort = 'createdAt:desc',
+        sortField = '',
+        sortDirection = 'asc',
         search = '',
         status = '',
         userId = '',
@@ -48,7 +50,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       
       // Convert sort string to proper format for Strapi
       let sortObj = { createdAt: 'desc' }; // Default sort
-      if (sort && typeof sort === 'string') {
+      
+      // Handle new sortField and sortDirection parameters
+      if (sortField && sortDirection) {
+        // Map frontend field names to database field names
+        const fieldMapping = {
+          'domain': 'url',
+          'owner': 'currentPublisherId.username',
+          'metrics': 'moz_da',
+          'metrics_last_updated': 'metrics_last_updated',
+          'status': 'submissionStatus',
+          'price': 'generalGuestPostPrice',
+          'addedDate': 'createdAt'
+        };
+        
+        const dbField = fieldMapping[sortField] || sortField;
+        sortObj = { [dbField]: sortDirection };
+        console.log(`[ADMIN WEBSITES SORTING] Field: ${sortField} -> ${dbField}, Direction: ${sortDirection}`);
+      } else if (sort && typeof sort === 'string') {
+        // Fallback to old sort parameter
         if (sort.includes(':')) {
           const [field, direction] = sort.split(':');
           sortObj = { [field]: direction };
@@ -245,23 +265,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
         console.log(`[ADMIN WEBSITES RECORD RANGE] Raw query: offset=${offset}, limit=${limit}, results=${websites.length}`);
       } else {
-        // Use normal pagination
-        websites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-        filters,
-          sort: sortObj,
-        pagination: {
-            page: currentPage,
-            pageSize: limit
-        },
-        populate: {
-          currentPublisherId: {
-            fields: ['id', 'username', 'email']
-          },
-          originalPublisherId: {
-            fields: ['id', 'username', 'email']
-          }
-        }
-      });
+        // Use normal pagination with raw database query for better control
+        console.log(`[ADMIN WEBSITES PAGINATION] Page: ${currentPage}, PageSize: ${limit}`);
+        const offset = (currentPage - 1) * limit;
+        
+        websites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+          where: filters,
+          orderBy: sortObj,
+          limit: limit,
+          offset: offset,
+          populate: ['currentPublisherId', 'originalPublisherId']
+        });
+        
+        console.log(`[ADMIN WEBSITES PAGINATION RESULT] Received ${websites.length} websites (offset: ${offset}, limit: ${limit})`);
       }
 
       // Get total count for pagination
@@ -491,6 +507,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         samplePosts: website.samplePosts || [],
         // Guidelines
         guidelines: website.guidelines || 'No guidelines provided',
+        rejectionReason: website.rejectionReason || null,
+        rejectedBy: website.rejectedBy || null,
         // Additional metadata
         protocol: website.protocol || 'https',
         resellerCode: website.resellerCode,
@@ -1271,27 +1289,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       for (const websiteData of websites) {
         try {
-          const { id, ...metricsData } = websiteData;
+          const { id, domain, notes, ...metricsData } = websiteData;
           
           if (!id) {
             errors.push({ id: 'unknown', error: 'Missing website ID' });
             continue;
           }
-          console.log("id",id)
+          console.log("id", id)
+          console.log("Metrics data to update:", metricsData)
+
+          // Fetch existing website to get current metrics_update_count
+          const existingWebsite = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+          
+          if (!existingWebsite) {
+            errors.push({ id, error: 'Website not found' });
+            continue;
+          }
 
           // Add metrics update tracking
           const updateData = {
             ...metricsData,
             metrics_last_updated: new Date(),
-            metrics_update_count: (metricsData.metrics_update_count || 0) + 1,
+            metrics_update_count: (existingWebsite.metrics_update_count || 0) + 1,
             metrics_update_method: 'bulk_import'
           };
-          console.log("update", updateData)
+          console.log("Update data:", updateData)
 
           const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
             data: updateData
           });
-          console.log("updateedWebsite",updatedWebsite)
+          console.log("Updated website:", updatedWebsite)
 
           // Also update the corresponding marketplace record with ownership transfer logic
           const websiteUrl = updatedWebsite.url;
@@ -1386,6 +1413,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             status: 'updated'
           });
         } catch (error) {
+          console.error(`[ADMIN ACTION] Error updating website ${websiteData.id}:`, error);
           errors.push({ 
             id: websiteData.id || 'unknown', 
             error: error.message 
@@ -1393,12 +1421,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
+      console.log(`[ADMIN ACTION] Bulk update completed: ${results.length} successful, ${errors.length} errors`);
+
      return ctx.send({
         success: true,
         updated: results.length,
         errors: errors.length,
         results,
-        errors
+        errorDetails: errors
       });
 
     } catch (error) {
@@ -2218,6 +2248,32 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Website not found');
       }
 
+      // CASCADE DELETE: Also delete from marketplace if it exists
+      if (website.url) {
+        try {
+          console.log(`[ADMIN ACTION] Checking for marketplace entry with URL: ${website.url}`);
+          
+          // Find marketplace entry with the same URL
+          const marketplaceEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { url: website.url }
+          });
+
+          if (marketplaceEntry) {
+            console.log(`[ADMIN ACTION] Found marketplace entry ${marketplaceEntry.id} for URL ${website.url}, deleting it`);
+            
+            // Delete the marketplace entry
+            await strapi.entityService.delete('api::marketplace.marketplace', marketplaceEntry.id);
+            
+            console.log(`[ADMIN ACTION] Successfully deleted marketplace entry ${marketplaceEntry.id} for URL ${website.url}`);
+          } else {
+            console.log(`[ADMIN ACTION] No marketplace entry found for URL ${website.url}`);
+          }
+        } catch (marketplaceError) {
+          console.error(`[ADMIN ACTION] Error deleting marketplace entry for URL ${website.url}:`, marketplaceError);
+          // Don't fail the website deletion if marketplace deletion fails
+        }
+      }
+
       // Delete the website
       await strapi.entityService.delete('api::publisher-website.publisher-website', id);
 
@@ -2409,6 +2465,32 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           if (!website) {
             errors.push({ id, error: `Website with ID ${id} not found` });
             continue;
+          }
+
+          // CASCADE DELETE: Also delete from marketplace if it exists
+          if (website.url) {
+            try {
+              console.log(`[ADMIN BULK ACTION] Checking for marketplace entry with URL: ${website.url}`);
+              
+              // Find marketplace entry with the same URL
+              const marketplaceEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
+                where: { url: website.url }
+              });
+
+              if (marketplaceEntry) {
+                console.log(`[ADMIN BULK ACTION] Found marketplace entry ${marketplaceEntry.id} for URL ${website.url}, deleting it`);
+                
+                // Delete the marketplace entry
+                await strapi.entityService.delete('api::marketplace.marketplace', marketplaceEntry.id);
+                
+                console.log(`[ADMIN BULK ACTION] Successfully deleted marketplace entry ${marketplaceEntry.id} for URL ${website.url}`);
+              } else {
+                console.log(`[ADMIN BULK ACTION] No marketplace entry found for URL ${website.url}`);
+              }
+            } catch (marketplaceError) {
+              console.error(`[ADMIN BULK ACTION] Error deleting marketplace entry for URL ${website.url}:`, marketplaceError);
+              // Don't fail the website deletion if marketplace deletion fails
+            }
           }
 
           // Delete the website
