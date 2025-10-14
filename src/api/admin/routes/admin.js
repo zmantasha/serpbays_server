@@ -4,12 +4,6 @@
  * Admin routes for admin panel
  */
 
-'use strict';
-
-/**
- * admin router
- */
-
 
 module.exports = {
   routes: [

@@ -70,6 +70,17 @@ module.exports = {
         policies: ['global::is-admin'],
         middlewares: []
       }
+    },
+
+    // Wallet operations (add funds, remove funds, set balance, transfer)
+    {
+      method: 'POST',
+      path: '/api/admin/wallets/:walletId/operations',
+      handler: 'wallets.walletOperation',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
     }
   ]
 };

@@ -4,7 +4,9 @@
  * Admin Wallet Management Controller
  */
 
-module.exports = {
+const { createCoreController } = require('@strapi/strapi').factories;
+
+module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi }) => ({
 
   /**
    * Get all users wallet information with pagination and filters
@@ -403,6 +405,332 @@ module.exports = {
       console.error('[ADMIN WALLET TRANSACTION ERROR]', error);
       return ctx.internalServerError('Failed to create transaction');
     }
+  },
+
+  /**
+   * Handle wallet operations (add funds, remove funds, set balance, transfer)
+   */
+  async walletOperation(ctx) {
+    try {
+      const { walletId } = ctx.params;
+      const { 
+        type, 
+        amount, 
+        transactionType, 
+        transactionId, 
+        reason, 
+        notes, 
+        targetUserId,
+        fundSource = 'main'
+      } = ctx.request.body;
+
+      console.log(`[ADMIN WALLET OPERATION] Admin ${ctx.state.user.id} performing ${type} operation on wallet ${walletId}`);
+
+      // Validate required fields
+      if (!type || !amount || !transactionType || !transactionId || !reason) {
+        return ctx.badRequest('Missing required fields: type, amount, transactionType, transactionId, reason');
+      }
+
+      // Validate amount
+      if (amount <= 0) {
+        return ctx.badRequest('Amount must be greater than 0');
+      }
+
+      // Validate operation type
+      const validTypes = ['add_funds', 'remove_funds', 'set_balance', 'transfer_funds'];
+      if (!validTypes.includes(type)) {
+        return ctx.badRequest('Invalid operation type');
+      }
+
+      // Get the wallet
+      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { id: walletId },
+        populate: ['users_permissions_user']
+      });
+
+      if (!wallet) {
+        return ctx.notFound('Wallet not found');
+      }
+
+      // Get admin user info for logging
+      const adminUser = ctx.state.user;
+      if (!adminUser) {
+        return ctx.unauthorized('Admin authentication required');
+      }
+
+      // Start database transaction
+      const result = await strapi.db.transaction(async (trx) => {
+        let updatedWallet;
+        let transactionRecord;
+        let targetWallet = null;
+
+        switch (type) {
+          case 'add_funds':
+            // Add funds to specified balance type
+            const addUpdateData = {};
+            addUpdateData[`${fundSource}Balance`] = wallet[`${fundSource}Balance`] + amount;
+            addUpdateData.balance = wallet.balance + amount;
+
+            updatedWallet = await strapi.entityService.update('api::user-wallet.user-wallet', walletId, {
+              data: addUpdateData
+            });
+
+            // Create transaction record
+            transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
+              data: {
+                type: 'deposit', // Use valid enum value
+                amount: amount,
+                netAmount: amount, // Required field
+                transactionStatus: 'success',
+                gateway: 'system', // Use valid enum value
+                gatewayTransactionId: transactionId,
+                fund_source: 'main_fund', // Use valid enum value
+                description: `Admin added funds: ${reason}`,
+                external_transaction_id: transactionId,
+                payment_notes: `Admin: ${adminUser.username} | Type: ${transactionType} | Notes: ${notes || 'N/A'}`,
+                user_wallet: walletId,
+                users_permissions_user: wallet.users_permissions_user.id,
+                fee: 0,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }
+            });
+            break;
+
+          case 'remove_funds':
+            // Check sufficient balance
+            if (wallet[`${fundSource}Balance`] < amount) {
+              throw new Error(`Insufficient ${fundSource} balance`);
+            }
+
+            // Remove funds from specified balance type
+            const removeUpdateData = {};
+            removeUpdateData[`${fundSource}Balance`] = wallet[`${fundSource}Balance`] - amount;
+            removeUpdateData.balance = wallet.balance - amount;
+
+            updatedWallet = await strapi.entityService.update('api::user-wallet.user-wallet', walletId, {
+              data: removeUpdateData
+            });
+
+            // Create transaction record
+            transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
+              data: {
+                type: 'withdrawal', // Use valid enum value
+                amount: amount,
+                netAmount: amount, // Required field
+                transactionStatus: 'success',
+                gateway: 'system', // Use valid enum value
+                gatewayTransactionId: transactionId,
+                fund_source: fundSource === 'main' ? 'main_fund' : 'promo_fund', // Use valid enum value
+                description: `Admin removed funds: ${reason}`,
+                external_transaction_id: transactionId,
+                payment_notes: `Admin: ${adminUser.username} | Type: ${transactionType} | Notes: ${notes || 'N/A'}`,
+                user_wallet: walletId,
+                users_permissions_user: wallet.users_permissions_user.id,
+                fee: 0,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }
+            });
+            break;
+
+          case 'set_balance':
+            // Set specific balance amounts
+            const setUpdateData = {
+              mainBalance: fundSource === 'main' ? amount : wallet.mainBalance,
+              promoBalance: fundSource === 'promo' ? amount : wallet.promoBalance,
+              escrowBalance: fundSource === 'escrow' ? amount : wallet.escrowBalance,
+              balance: 0 // Will be recalculated
+            };
+
+            // Recalculate total balance
+            setUpdateData.balance = setUpdateData.mainBalance + setUpdateData.promoBalance + setUpdateData.escrowBalance;
+
+            updatedWallet = await strapi.entityService.update('api::user-wallet.user-wallet', walletId, {
+              data: setUpdateData
+            });
+
+            // Create transaction record
+            transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
+              data: {
+                type: 'deposit', // Use valid enum value for balance setting
+                amount: amount,
+                netAmount: amount, // Required field
+                transactionStatus: 'success',
+                gateway: 'system', // Use valid enum value
+                gatewayTransactionId: transactionId,
+                fund_source: fundSource === 'main' ? 'main_fund' : 'promo_fund', // Use valid enum value
+                description: `Admin set ${fundSource} balance: ${reason}`,
+                external_transaction_id: transactionId,
+                payment_notes: `Notes: ${notes || 'N/A'}`,
+                user_wallet: walletId,
+                users_permissions_user: wallet.users_permissions_user.id,
+                fee: 0,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }
+            });
+            break;
+
+          case 'transfer_funds':
+            if (!targetUserId) {
+              throw new Error('Target user ID required for transfer');
+            }
+
+            // Check sufficient balance
+            if (wallet[`${fundSource}Balance`] < amount) {
+              throw new Error(`Insufficient ${fundSource} balance for transfer`);
+            }
+
+            // Get target wallet
+            targetWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+              where: { users_permissions_user: targetUserId }
+            });
+
+            if (!targetWallet) {
+              throw new Error('Target user wallet not found');
+            }
+
+            // Update source wallet
+            const sourceUpdateData = {};
+            sourceUpdateData[`${fundSource}Balance`] = wallet[`${fundSource}Balance`] - amount;
+            sourceUpdateData.balance = wallet.balance - amount;
+
+            await strapi.entityService.update('api::user-wallet.user-wallet', walletId, {
+              data: sourceUpdateData
+            });
+
+            // Update target wallet
+            const targetUpdateData = {};
+            targetUpdateData[`${fundSource}Balance`] = targetWallet[`${fundSource}Balance`] + amount;
+            targetUpdateData.balance = targetWallet.balance + amount;
+
+            await strapi.entityService.update('api::user-wallet.user-wallet', targetWallet.id, {
+              data: targetUpdateData
+            });
+
+            // Create transaction records for both wallets
+            const sourceTransaction = await strapi.entityService.create('api::transaction.transaction', {
+              data: {
+                type: 'withdrawal', // Use valid enum value
+                amount: amount,
+                netAmount: amount, // Required field
+                transactionStatus: 'success',
+                gateway: 'system', // Use valid enum value
+                gatewayTransactionId: transactionId,
+                fund_source: fundSource === 'main' ? 'main_fund' : 'promo_fund', // Use valid enum value
+                description: `Transfer to user ${targetUserId}: ${reason}`,
+                external_transaction_id: transactionId,
+                payment_notes: `Admin: ${adminUser.username} | Type: ${transactionType} | Notes: ${notes || 'N/A'}`,
+                user_wallet: walletId,
+                users_permissions_user: wallet.users_permissions_user.id,
+                fee: 0,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }
+            });
+
+            const targetTransaction = await strapi.entityService.create('api::transaction.transaction', {
+              data: {
+                type: 'deposit', // Use valid enum value
+                amount: amount,
+                netAmount: amount, // Required field
+                transactionStatus: 'success',
+                gateway: 'system', // Use valid enum value
+                gatewayTransactionId: transactionId,
+                fund_source: fundSource === 'main' ? 'main_fund' : 'promo_fund', // Use valid enum value
+                description: `Transfer from user ${wallet.users_permissions_user.id}: ${reason}`,
+                external_transaction_id: transactionId,
+                payment_notes: `Admin: ${adminUser.username} | Type: ${transactionType} | Notes: ${notes || 'N/A'}`,
+                user_wallet: targetWallet.id,
+                users_permissions_user: targetUserId,
+                fee: 0,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }
+            });
+
+            updatedWallet = await strapi.entityService.findOne('api::user-wallet.user-wallet', walletId);
+            transactionRecord = sourceTransaction;
+            break;
+
+          default:
+            throw new Error('Invalid operation type');
+        }
+
+        // Create admin audit log
+        await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+          data: {
+            adminUser: adminUser.id,
+            action: `wallet_${type}`,
+            targetUser: wallet.users_permissions_user.id,
+            details: {
+              walletId: walletId,
+              operation: type,
+              amount: amount,
+              transactionType: transactionType,
+              transactionId: transactionId,
+              reason: reason,
+              notes: notes,
+              fundSource: fundSource,
+              targetUserId: targetUserId,
+              previousBalance: wallet.balance,
+              newBalance: updatedWallet.balance,
+              transactionRecordId: transactionRecord.id
+            },
+            ipAddress: ctx.request.ip,
+            userAgent: ctx.request.headers['user-agent'],
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }
+        });
+
+        return {
+          wallet: updatedWallet,
+          transaction: transactionRecord,
+          targetWallet: targetWallet
+        };
+      });
+
+      // Send notification to user
+      try {
+        await strapi.service('api::notification.notification').create({
+          data: {
+            user: wallet.users_permissions_user.id,
+            type: 'wallet_operation',
+            title: 'Wallet Updated',
+            message: `Your wallet has been updated by admin. ${type.replace('_', ' ')}: $${amount}`,
+            data: {
+              operation: type,
+              amount: amount,
+              transactionId: transactionId,
+              reason: reason
+            },
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }
+        });
+      } catch (notificationError) {
+        console.error('Failed to send notification:', notificationError);
+        // Don't fail the operation if notification fails
+      }
+
+      console.log(`[ADMIN WALLET OPERATION] Successfully completed ${type} operation on wallet ${walletId}`);
+
+      ctx.body = {
+        success: true,
+        message: 'Wallet operation completed successfully',
+        data: {
+          wallet: result.wallet,
+          transaction: result.transaction,
+          targetWallet: result.targetWallet
+        }
+      };
+
+    } catch (error) {
+      console.error('[ADMIN WALLET OPERATION ERROR]', error);
+      ctx.internalServerError('Failed to perform wallet operation: ' + error.message);
+    }
   }
 
-};
+}));
