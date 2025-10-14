@@ -18,7 +18,7 @@ module.exports = [
     name: 'strapi::cors',
     config: {
       enabled: true,
-      origin: ['https://staging.serpbays.com', 'http://staging.serpbays.com','http://localhost:3000','https://panel20.serpbays.com'],
+      origin: ['https://staging.serpbays.com', 'http://staging.serpbays.com','http://localhost:3000','https://panel20.serpbays.com','http://localhost:3009'],
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
       headers: ['Content-Type', 'Authorization', 'Origin', 'Accept', 'X-Requested-With'],
       keepHeaderOnError: true,
@@ -27,7 +27,12 @@ module.exports = [
   'strapi::poweredBy',
   'strapi::logger',
   'strapi::query',
-  'strapi::body',
+  {
+    name: 'strapi::body',
+    config: {
+      includeUnparsed: true, // This preserves the raw body for webhook verification
+    },
+  },
   'strapi::session',
   'strapi::favicon',
   'strapi::public',

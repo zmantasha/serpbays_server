@@ -217,6 +217,37 @@ module.exports = {
         auth: false // PhonePe redirects must be public
       }
     },
+    // Stripe specific webhook (recommended)
+    {
+      method: 'POST',
+      path: '/api/transactions/stripe-webhook',
+      handler: 'stripe-webhook.handleWebhook',
+      config: {
+        auth: false // Stripe webhooks must be public
+      }
+    },
+    // Manual Stripe transaction failure (for debugging)
+    {
+      method: 'POST',
+      path: '/api/transactions/stripe-mark-failed',
+      handler: 'stripe-webhook.markTransactionFailed',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.update']
+        }
+      }
+    },
+    // Check Stripe transaction status (for pending transactions)
+    {
+      method: 'POST',
+      path: '/api/transactions/stripe-check-status',
+      handler: 'stripe-webhook.checkTransactionStatus',
+      config: {
+        auth: {
+          scope: ['api::transaction.transaction.find']
+        }
+      }
+    },
     // Manual Razorpay transaction update (for admin use)
     {
       method: 'POST',

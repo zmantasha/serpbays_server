@@ -145,32 +145,12 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         populate: ['publisher']
       });
 
-      // Update user wallet - move from pending to completed
-      const wallet = await strapi.controller('api::user-wallet.user-wallet')
-        .getOrCreateWallet(withdrawal.publisher.id);
+      // NOTE: Wallet balance is not modified here during approval.
+      // The pendingWithdrawalBalance will only be reduced when the withdrawal is marked as paid.
+      // Approval is just an internal admin confirmation step.
 
-      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-        data: {
-          pendingWithdrawalBalance: parseFloat(wallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount),
-          // Note: balance has already been deducted when request was created
-        }
-      });
-
-      // Create transaction record for the withdrawal
-      await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          users_permissions_user: withdrawal.publisher.id,
-          type: 'withdrawal',
-          transactionStatus: 'success',
-          amount: parseFloat(withdrawal.amount),
-          netAmount: parseFloat(withdrawal.amount),
-          gateway: 'system',
-          gatewayTransactionId: `WD-${id}-${Date.now()}`,
-          description: `Withdrawal approved - ${paymentReference || 'No reference'}`,
-          fee: 0,
-          user_wallet: wallet.id
-        }
-      });
+      // NOTE: No transaction created here. Transaction will only be created when marked as paid.
+      // Approval is an internal admin action, not a financial transaction.
 
       ctx.send({
         data: updatedWithdrawal
@@ -331,8 +311,10 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.badRequest('Withdrawal request must be approved before marking as paid');
       }
 
-      // Check if there's sufficient pending withdrawal balance
-      const publisherWallet = await strapi.entityService.findOne('api::user-wallet.user-wallet', withdrawal.publisher.id);
+      // Get or create the publisher's wallet using the correct method
+      const publisherWallet = await strapi.controller('api::user-wallet.user-wallet')
+        .getOrCreateWallet(withdrawal.publisher.id);
+      
       if (!publisherWallet) {
         return ctx.badRequest('Publisher wallet not found');
       }
@@ -361,21 +343,54 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           populate: ['publisher']
         });
 
-        // Create transaction record for the payment
-        await strapi.entityService.create('api::transaction.transaction', {
+        // Update wallet - reduce pending withdrawal balance
+        await strapi.entityService.update('api::user-wallet.user-wallet', publisherWallet.id, {
           data: {
-            users_permissions_user: withdrawal.publisher.id,
-            type: 'payout',
-            transactionStatus: 'paid',
-            amount: parseFloat(withdrawal.amount),
-            netAmount: parseFloat(withdrawal.amount),
-            gateway: 'system',
-            gatewayTransactionId: `WP-${id}-${Date.now()}`,
-            description: `Withdrawal payment completed - ${paymentReference || 'No reference'}`,
-            fee: 0,
-            user_wallet: publisherWallet.id
+            pendingWithdrawalBalance: parseFloat(publisherWallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount)
           }
         });
+
+        // Update the existing withdrawal transaction instead of creating a new one
+        const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+          where: {
+            users_permissions_user: withdrawal.publisher.id,
+            type: 'withdrawal',
+            description: { $contains: `Withdrawal request #${id}` }
+          },
+          orderBy: { id: 'desc' }
+        });
+
+        if (existingTransaction) {
+          // Update the existing withdrawal transaction to paid status
+          await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
+            data: {
+              transactionStatus: 'paid',
+              external_transaction_id: paymentReference,
+              payment_notes: paymentNotes,
+              description: `${existingTransaction.description} - Payment completed via ${withdrawal.method || 'Manual'}`
+            }
+          });
+          console.log(`✅ Updated existing withdrawal transaction ${existingTransaction.id} to paid status`);
+        } else {
+          console.log(`⚠️ No existing withdrawal transaction found for withdrawal #${id}, creating new one`);
+          // Fallback: create a new transaction if none exists (shouldn't happen in normal flow)
+          await strapi.entityService.create('api::transaction.transaction', {
+            data: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              transactionStatus: 'paid',
+              amount: parseFloat(withdrawal.amount),
+              netAmount: parseFloat(withdrawal.amount),
+              gateway: withdrawal.method || 'system',
+              gatewayTransactionId: paymentReference || `WP-${id}-${Date.now()}`,
+              description: `Withdrawal request #${id} - Payment completed via ${withdrawal.method || 'Manual'}`,
+              fee: 0,
+              user_wallet: publisherWallet.id,
+              external_transaction_id: paymentReference,
+              payment_notes: paymentNotes
+            }
+          });
+        }
 
         // Commit the transaction
         await trx.commit();

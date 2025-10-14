@@ -58,7 +58,7 @@ async function handlePaidWithdrawal(result) {
             console.error(`[Lifecycle] ❌ Failed to send withdrawal paid email:`, emailError);
           }
           
-          // Also update the corresponding transaction status
+          // Update the corresponding transaction status (only if not already updated by admin)
           console.log(`[Lifecycle] Looking for transaction with withdrawal request #${result.id}...`);
           
           // Try multiple approaches to find the transaction
@@ -66,25 +66,12 @@ async function handlePaidWithdrawal(result) {
             where: {
               users_permissions_user: withdrawalRequest.publisher.id,
               type: 'withdrawal',
-              transactionStatus: 'pending',
               description: { $contains: `Withdrawal request #${result.id}` }
-            }
+            },
+            orderBy: { id: 'desc' }
           });
           
-          // If not found, try without pending status filter (in case it was already updated)
-          if (!escrowHoldTransaction) {
-            console.log(`[Lifecycle] Transaction not found with pending status, trying without status filter...`);
-            escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
-              where: {
-                users_permissions_user: withdrawalRequest.publisher.id,
-                type: 'withdrawal',
-                description: { $contains: `Withdrawal request #${result.id}` }
-              },
-              orderBy: { id: 'desc' }
-            });
-          }
-          
-          // If still not found, try with amount matching
+          // If not found, try with amount matching as fallback
           if (!escrowHoldTransaction) {
             console.log(`[Lifecycle] Transaction not found by description, trying by amount and user...`);
             escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
@@ -100,30 +87,30 @@ async function handlePaidWithdrawal(result) {
           if (escrowHoldTransaction) {
             console.log(`[Lifecycle] Found transaction #${escrowHoldTransaction.id} with status: ${escrowHoldTransaction.transactionStatus}`);
             
-            // Only update if not already success
+            // Only update if not already paid (prevent duplicate updates)
             if (escrowHoldTransaction.transactionStatus !== 'paid') {
               // Prepare update data
               const updateData = {
                 transactionStatus: 'paid',
-                description: `${escrowHoldTransaction.description} - Payment completed`
+                description: `${escrowHoldTransaction.description} - Payment completed via lifecycle`
               };
 
-              // Add external transaction ID if available
-              if (withdrawalRequest.external_transaction_id) {
+              // Add external transaction ID if available (only if not already set)
+              if (withdrawalRequest.external_transaction_id && !escrowHoldTransaction.external_transaction_id) {
                 updateData.external_transaction_id = withdrawalRequest.external_transaction_id;
               }
 
-              // Add payment notes if available  
-              if (withdrawalRequest.payment_notes) {
+              // Add payment notes if available (only if not already set)
+              if (withdrawalRequest.payment_notes && !escrowHoldTransaction.payment_notes) {
                 updateData.payment_notes = withdrawalRequest.payment_notes;
               }
 
               await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
                 data: updateData
               });
-              console.log(`[Lifecycle] ✅ Updated transaction ${escrowHoldTransaction.id} to success with external ID: ${withdrawalRequest.external_transaction_id || 'none'}`);
+              console.log(`[Lifecycle] ✅ Updated transaction ${escrowHoldTransaction.id} to paid status`);
             } else {
-              console.log(`[Lifecycle] ℹ️ Transaction ${escrowHoldTransaction.id} already marked as success`);
+              console.log(`[Lifecycle] ℹ️ Transaction ${escrowHoldTransaction.id} already marked as paid (skipping update)`);
             }
           } else {
             console.log(`[Lifecycle] ⚠️ No matching escrow_hold transaction found for withdrawal #${result.id}`);
@@ -314,7 +301,7 @@ async function handleApprovedWithdrawal(result) {
     if (escrowHoldTransaction && escrowHoldTransaction.transactionStatus === 'pending') {
       await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
         data: {
-          transactionStatus: 'success',
+          transactionStatus: 'approved',
           description: `${escrowHoldTransaction.description} - Approved by admin`
         }
       });

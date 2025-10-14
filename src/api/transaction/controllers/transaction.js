@@ -59,16 +59,20 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       try {
         switch (gateway.toLowerCase()) {
           case 'stripe':
-            paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(parsedAmount, currency);
-            // Store userId and walletId in metadata for the webhook to use
-            if (paymentData && paymentData.id) {
-              await stripe.paymentIntents.update(paymentData.id, {
-                metadata: { 
-                  walletId: wallet.id.toString(),
-                  userId: userId ? userId.toString() : 'demo'
-                }
-              });
-            }
+            // Create metadata for the payment intent
+            const stripeMetadata = {
+              walletId: wallet.id.toString(),
+              userId: userId ? userId.toString() : 'demo',
+              email: wallet.users_permissions_user?.email || 'no-email',
+              username: wallet.users_permissions_user?.username || 'unknown'
+            };
+            
+            // Use the enhanced payment service with metadata
+            paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(
+              parsedAmount, 
+              currency,
+              stripeMetadata
+            );
             break;
           case 'razorpay':
             paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(parsedAmount, currency);
@@ -193,11 +197,23 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           
           if (process.env.NODE_ENV === 'development') {
             // Skip signature verification in development
+            console.warn('[STRIPE WEBHOOK] ⚠️ Development mode: Skipping signature verification');
             event = payload;
           } else {
+            // Get raw body for signature verification
+            const rawBody = ctx.request.body[Symbol.for('unparsedBody')] || 
+                           ctx.request.body._unparsedBody || 
+                           ctx.request.rawBody ||
+                           payload;
+            
+            if (!rawBody) {
+              console.error('[STRIPE WEBHOOK] ❌ No raw body available for signature verification');
+              return ctx.badRequest('Raw body required for webhook verification');
+            }
+            
             // Verify signature in production
             event = stripe.webhooks.constructEvent(
-              payload,
+              rawBody,
               stripeSignature,
               process.env.STRIPE_WEBHOOK_SECRET
             );
