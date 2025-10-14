@@ -330,7 +330,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       const transactions = await strapi.db.query('api::transaction.transaction').findMany({
         where: { user_wallet: wallet.id },
         orderBy: { createdAt: 'DESC' },
-        populate: ['invoice']
+        populate: ['invoice', 'order']
       });
 
       // Transform the data to include invoice information
