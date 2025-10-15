@@ -72,6 +72,28 @@ module.exports = {
       }
     },
 
+    // Bulk import (MUST come before :id routes)
+    {
+      method: 'POST',
+      path: '/api/admin/websites/bulk-import',
+      handler: 'websites.bulkImport',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
+    // Get bulk import progress (MUST come before :id routes)
+    {
+      method: 'GET',
+      path: '/api/admin/websites/bulk-import-progress',
+      handler: 'websites.getBulkImportProgress',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: []
+      }
+    },
+
     // Get single website
     {
       method: 'GET',
@@ -165,15 +187,6 @@ module.exports = {
       method: 'PUT',
       path: '/api/admin/websites/:id/replace',
       handler: 'websites.replaceWebsite',
-      config: {
-        policies: ['global::is-admin'],
-        middlewares: []
-      }
-    },
-    {
-      method: 'POST',
-      path: '/api/admin/websites/bulk-import',
-      handler: 'websites.bulkImport',
       config: {
         policies: ['global::is-admin'],
         middlewares: []
