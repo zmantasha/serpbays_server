@@ -623,10 +623,28 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           if (existingMarketplaceRecord && existingMarketplaceRecord.length > 0) {
             console.log(`[ADMIN ACTION] Marketplace record already exists for website ${updatedWebsite.url}, updating it`);
             
-            // Update existing marketplace record
+            // Update existing marketplace record and sync metrics/details
             await strapi.entityService.update('api::marketplace.marketplace', existingMarketplaceRecord[0].id, {
               data: {
                 status: 'active',
+                // Sync commonly used marketplace fields from publisher website
+                moz_da: updatedWebsite.moz_da ?? null,
+                ahrefs_dr: updatedWebsite.ahrefs_dr ?? null,
+                ahrefs_traffic: updatedWebsite.ahrefs_traffic ?? null,
+                ahrefs_rank: updatedWebsite.ahrefs_rank ?? null,
+                semrush_authority_score: updatedWebsite.semrush_authority_score ?? null,
+                semrush_traffic: updatedWebsite.semrush_traffic ?? null,
+                moz_spam_score: updatedWebsite.moz_spam_score ?? null,
+                placement_speed: updatedWebsite.placement_speed ?? updatedWebsite.expectedTATHours ?? null,
+                fast_placement_status: updatedWebsite.fast_placement_status ?? null,
+                category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category[0] : updatedWebsite.category ?? null,
+                other_category: Array.isArray(updatedWebsite.category) && updatedWebsite.category.length > 1 ? updatedWebsite.category[1] : updatedWebsite.other_category ?? null,
+                language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language[0] : updatedWebsite.language ?? null,
+                countries: Array.isArray(updatedWebsite.countries) ? updatedWebsite.countries[0] : updatedWebsite.countries ?? null,
+                price: updatedWebsite.generalGuestPostPrice ?? updatedWebsite.price ?? null,
+                publisher_price: updatedWebsite.publisher_price ?? updatedWebsite.generalLinkInsertionPrice ?? null,
+                publisher_name: updatedWebsite.publisherName ?? updatedWebsite.publisher_name ?? null,
+                publisher_email: updatedWebsite.publisherEmail ?? updatedWebsite.publisher_email ?? null,
                 updatedAt: new Date()
               }
             });
@@ -639,6 +657,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 url: updatedWebsite.url,
                 status: 'active',
                 publisherWebsite: updatedWebsite.id,
+                // Initial metrics/details snapshot
+                moz_da: updatedWebsite.moz_da ?? null,
+                ahrefs_dr: updatedWebsite.ahrefs_dr ?? null,
+                ahrefs_traffic: updatedWebsite.ahrefs_traffic ?? null,
+                ahrefs_rank: updatedWebsite.ahrefs_rank ?? null,
+                semrush_authority_score: updatedWebsite.semrush_authority_score ?? null,
+                semrush_traffic: updatedWebsite.semrush_traffic ?? null,
+                moz_spam_score: updatedWebsite.moz_spam_score ?? null,
+                placement_speed: updatedWebsite.placement_speed ?? updatedWebsite.expectedTATHours ?? null,
+                fast_placement_status: updatedWebsite.fast_placement_status ?? null,
+                category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category[0] : updatedWebsite.category ?? null,
+                other_category: Array.isArray(updatedWebsite.category) && updatedWebsite.category.length > 1 ? updatedWebsite.category[1] : updatedWebsite.other_category ?? null,
+                language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language[0] : updatedWebsite.language ?? null,
+                countries: Array.isArray(updatedWebsite.countries) ? updatedWebsite.countries[0] : updatedWebsite.countries ?? null,
+                price: updatedWebsite.generalGuestPostPrice ?? updatedWebsite.price ?? null,
+                publisher_price: updatedWebsite.publisher_price ?? updatedWebsite.generalLinkInsertionPrice ?? null,
+                publisher_name: updatedWebsite.publisherName ?? updatedWebsite.publisher_name ?? null,
+                publisher_email: updatedWebsite.publisherEmail ?? updatedWebsite.publisher_email ?? null,
                 createdAt: new Date(),
                 updatedAt: new Date()
               }
