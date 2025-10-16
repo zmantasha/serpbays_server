@@ -1718,7 +1718,7 @@ export interface ApiPublisherWebsitePublisherWebsite
   attributes: {
     addedByReseller: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
-    ahrefs_dr: Schema.Attribute.Integer &
+    ahrefs_dr: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1932,7 +1932,7 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<500>;
-    moz_da: Schema.Attribute.Integer &
+    moz_da: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1975,7 +1975,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     reviewNotes: Schema.Attribute.Text;
     reviewStartedAt: Schema.Attribute.DateTime;
     samplePosts: Schema.Attribute.JSON;
-    semrush_authority_score: Schema.Attribute.Integer &
+    semrush_authority_score: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 1000;
