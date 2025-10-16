@@ -753,4 +753,39 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       return ctx.internalServerError('Failed to perform bulk import');
     }
   }
+  ,
+  /**
+   * Bulk delete marketplace websites (admin action)
+   * POST /api/admin/marketplace/bulk-delete
+   * Body: { ids: number[] }
+   */
+  async bulkDelete(ctx) {
+    try {
+      const { ids } = ctx.request.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return ctx.badRequest('No ids provided');
+      }
+
+      const results = [];
+      const errors = [];
+
+      for (const id of ids) {
+        try {
+          await strapi.entityService.delete('api::marketplace.marketplace', id);
+          results.push({ id, status: 'deleted' });
+        } catch (e) {
+          errors.push({ id, error: e.message });
+        }
+      }
+
+      ctx.send({
+        message: 'Bulk delete processed',
+        results,
+        errors
+      });
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE BULK DELETE ERROR]', error);
+      return ctx.internalServerError('Failed to bulk delete marketplace websites');
+    }
+  }
 }));

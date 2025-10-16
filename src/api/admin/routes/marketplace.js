@@ -69,6 +69,15 @@ module.exports = {
         policies: ['global::is-admin'],
         middlewares: ['global::admin-logger']
       }
+    },
+    {
+      method: 'POST',
+      path: '/api/admin/marketplace/bulk-delete',
+      handler: 'marketplace.bulkDelete',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
     }
   ]
 };
