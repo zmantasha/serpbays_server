@@ -398,6 +398,55 @@ export interface ApiAboutAbout extends Struct.SingleTypeSchema {
   };
 }
 
+export interface ApiAdminAuditLogAdminAuditLog
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'admin_audit_logs';
+  info: {
+    description: 'Track all admin operations for security and compliance';
+    displayName: 'Admin Audit Log';
+    pluralName: 'admin-audit-logs';
+    singularName: 'admin-audit-log';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    action: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    adminUser: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    > &
+      Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    details: Schema.Attribute.JSON & Schema.Attribute.Required;
+    ipAddress: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 45;
+      }>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::admin-audit-log.admin-audit-log'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    targetUser: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    userAgent: Schema.Attribute.Text;
+  };
+}
+
 export interface ApiArticleArticle extends Struct.CollectionTypeSchema {
   collectionName: 'articles';
   info: {
@@ -493,6 +542,67 @@ export interface ApiAuthorAuthor extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+  };
+}
+
+export interface ApiBankTransferRequestBankTransferRequest
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'bank_transfer_requests';
+  info: {
+    description: 'Bank transfer requests from users';
+    displayName: 'Bank Transfer Request';
+    pluralName: 'bank-transfer-requests';
+    singularName: 'bank-transfer-request';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: true;
+    };
+  };
+  attributes: {
+    adminNotes: Schema.Attribute.Text;
+    amount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::bank-transfer-request.bank-transfer-request'
+    > &
+      Schema.Attribute.Private;
+    notes: Schema.Attribute.Text;
+    proofOfPayment: Schema.Attribute.Media<'images'> &
+      Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    referenceNumber: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    status: Schema.Attribute.Enumeration<
+      ['pending', 'processing', 'completed', 'rejected']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
+    transactionId: Schema.Attribute.String & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    userEmail: Schema.Attribute.Email & Schema.Attribute.Required;
+    userId: Schema.Attribute.Integer & Schema.Attribute.Required;
+    userName: Schema.Attribute.String & Schema.Attribute.Required;
   };
 }
 
@@ -1387,6 +1497,66 @@ export interface ApiOutsourcedContentOutsourcedContent
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+  };
+}
+
+export interface ApiPaymentGatewaysPaymentGatewaySetting
+  extends Struct.SingleTypeSchema {
+  collectionName: 'payment_gateway_settings';
+  info: {
+    description: 'Payment gateway configuration settings';
+    displayName: 'Payment Gateway Settings';
+    pluralName: 'payment-gateway-settings';
+    singularName: 'payment-gateway-setting';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: false;
+    };
+    'content-type-builder': {
+      visible: false;
+    };
+  };
+  attributes: {
+    bankTransferEnabled: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<true>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::payment-gateways.payment-gateway-setting'
+    > &
+      Schema.Attribute.Private;
+    paypalEnabled: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    paypalFeePercentage: Schema.Attribute.Decimal &
+      Schema.Attribute.DefaultTo<3.49>;
+    paypalFixedFee: Schema.Attribute.Decimal & Schema.Attribute.DefaultTo<0.49>;
+    phonepeEnabled: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    phonepeFeePercentage: Schema.Attribute.Decimal &
+      Schema.Attribute.DefaultTo<2>;
+    phonepeGstPercentage: Schema.Attribute.Decimal &
+      Schema.Attribute.DefaultTo<18>;
+    publishedAt: Schema.Attribute.DateTime;
+    razorpayEnabled: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    razorpayFeePercentage: Schema.Attribute.Decimal &
+      Schema.Attribute.DefaultTo<2>;
+    razorpayGstPercentage: Schema.Attribute.Decimal &
+      Schema.Attribute.DefaultTo<18>;
+    stripeEnabled: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    stripeFeePercentage: Schema.Attribute.Decimal &
+      Schema.Attribute.DefaultTo<2.9>;
+    stripeFixedFee: Schema.Attribute.Decimal & Schema.Attribute.DefaultTo<0.3>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    usdToInrRate: Schema.Attribute.Decimal & Schema.Attribute.DefaultTo<83.25>;
   };
 }
 
@@ -3035,9 +3205,11 @@ declare module '@strapi/strapi' {
       'admin::transfer-token-permission': AdminTransferTokenPermission;
       'admin::user': AdminUser;
       'api::about.about': ApiAboutAbout;
+      'api::admin-audit-log.admin-audit-log': ApiAdminAuditLogAdminAuditLog;
       'api::article.article': ApiArticleArticle;
       'api::auth.auth': ApiAuthAuth;
       'api::author.author': ApiAuthorAuthor;
+      'api::bank-transfer-request.bank-transfer-request': ApiBankTransferRequestBankTransferRequest;
       'api::cart.cart': ApiCartCart;
       'api::category.category': ApiCategoryCategory;
       'api::chatroom.chatroom': ApiChatroomChatroom;
@@ -3050,6 +3222,7 @@ declare module '@strapi/strapi' {
       'api::order-content.order-content': ApiOrderContentOrderContent;
       'api::order.order': ApiOrderOrder;
       'api::outsourced-content.outsourced-content': ApiOutsourcedContentOutsourcedContent;
+      'api::payment-gateways.payment-gateway-setting': ApiPaymentGatewaysPaymentGatewaySetting;
       'api::project.project': ApiProjectProject;
       'api::promo-code.promo-code': ApiPromoCodePromoCode;
       'api::promo-redemption.promo-redemption': ApiPromoRedemptionPromoRedemption;

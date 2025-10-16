@@ -1,0 +1,72 @@
+{
+  "kind": "collectionType",
+  "collectionName": "bank_transfer_requests",
+  "info": {
+    "singularName": "bank-transfer-request",
+    "pluralName": "bank-transfer-requests",
+    "displayName": "Bank Transfer Request",
+    "description": "Bank transfer requests from users"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": true
+    }
+  },
+  "attributes": {
+    "amount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "referenceNumber": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "notes": {
+      "type": "text"
+    },
+    "transactionId": {
+      "type": "string",
+      "required": true
+    },
+    "proofOfPayment": {
+      "type": "media",
+      "multiple": false,
+      "required": true,
+      "allowedTypes": ["images"]
+    },
+    "adminNotes": {
+      "type": "text"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "processing",
+        "completed",
+        "rejected"
+      ],
+      "default": "pending",
+      "required": true
+    },
+    "userEmail": {
+      "type": "email",
+      "required": true
+    },
+    "userName": {
+      "type": "string",
+      "required": true
+    },
+    "userId": {
+      "type": "integer",
+      "required": true
+    }
+  }
+}

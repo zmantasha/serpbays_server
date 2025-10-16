@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pagination Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .result { background: #f5f5f5; padding: 10px; margin: 10px 0; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Admin Panel Pagination Test</h1>
+    
+    <div class="test-section">
+        <h2>Test Instructions</h2>
+        <p>1. Open the admin panel at <a href="http://localhost:3009" target="_blank">http://localhost:3009</a></p>
+        <p>2. Login with admin credentials</p>
+        <p>3. Navigate to the Websites page</p>
+        <p>4. Open browser developer tools (F12)</p>
+        <p>5. Go to the Console tab</p>
+        <p>6. Copy and paste the test code below into the console</p>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Code (Copy to Browser Console)</h2>
+        <textarea id="testCode" style="width: 100%; height: 200px; font-family: monospace;">
+// Test pagination functionality
+async function testPagination() {
+    console.log('🧪 Starting pagination test...');
+    
+    try {
+        // Test page 1 with pageSize 10
+        console.log('📄 Testing Page 1, PageSize 10...');
+        const response1 = await fetch('/api/api/admin/websites?page=1&pageSize=10');
+        const data1 = await response1.json();
+        
+        console.log('Page 1 Response:', {
+            status: response1.status,
+            pagination: data1.meta?.pagination,
+            first3Ids: data1.data?.slice(0, 3).map(w => w.id),
+            totalReturned: data1.data?.length
+        });
+        
+        // Test page 2 with pageSize 10
+        console.log('📄 Testing Page 2, PageSize 10...');
+        const response2 = await fetch('/api/api/admin/websites?page=2&pageSize=10');
+        const data2 = await response2.json();
+        
+        console.log('Page 2 Response:', {
+            status: response2.status,
+            pagination: data2.meta?.pagination,
+            first3Ids: data2.data?.slice(0, 3).map(w => w.id),
+            totalReturned: data2.data?.length
+        });
+        
+        // Test page 1 with pageSize 50
+        console.log('📄 Testing Page 1, PageSize 50...');
+        const response3 = await fetch('/api/api/admin/websites?page=1&pageSize=50');
+        const data3 = await response3.json();
+        
+        console.log('Page 1 (size 50) Response:', {
+            status: response3.status,
+            pagination: data3.meta?.pagination,
+            first3Ids: data3.data?.slice(0, 3).map(w => w.id),
+            totalReturned: data3.data?.length
+        });
+        
+        // Compare results
+        const page1Ids = data1.data?.map(w => w.id) || [];
+        const page2Ids = data2.data?.map(w => w.id) || [];
+        const page1Size50Ids = data3.data?.slice(0, 10).map(w => w.id) || [];
+        
+        console.log('🔍 Comparison Results:');
+        console.log('Page 1 IDs:', page1Ids);
+        console.log('Page 2 IDs:', page2Ids);
+        console.log('Page 1 (size 50) first 10 IDs:', page1Size50Ids);
+        
+        const isPage1DifferentFromPage2 = !page1Ids.every(id => page2Ids.includes(id));
+        const isPage1Size50SameAsPage1 = page1Ids.every(id => page1Size50Ids.includes(id));
+        
+        console.log('📊 Analysis:');
+        console.log('✅ Page 1 and Page 2 have different data:', isPage1DifferentFromPage2);
+        console.log('✅ Page 1 (size 50) contains Page 1 (size 10) data:', isPage1Size50SameAsPage1);
+        
+        if (isPage1DifferentFromPage2 && isPage1Size50SameAsPage1) {
+            console.log('🎉 SUCCESS: Pagination is working correctly!');
+        } else {
+            console.log('❌ FAILURE: Pagination has issues!');
+        }
+        
+    } catch (error) {
+        console.error('❌ Test failed:', error);
+    }
+}
+
+// Run the test
+testPagination();
+        </textarea>
+        <button onclick="copyToClipboard()">Copy to Clipboard</button>
+    </div>
+
+    <div class="test-section">
+        <h2>Expected Results</h2>
+        <ul>
+            <li>✅ Page 1 and Page 2 should return different website IDs</li>
+            <li>✅ Page 1 (size 50) should contain all websites from Page 1 (size 10)</li>
+            <li>✅ Pagination metadata should show correct page numbers and totals</li>
+            <li>✅ Each page should return the correct number of items</li>
+        </ul>
+    </div>
+
+    <script>
+        function copyToClipboard() {
+            const textarea = document.getElementById('testCode');
+            textarea.select();
+            document.execCommand('copy');
+            alert('Test code copied to clipboard!');
+        }
+    </script>
+</body>
+</html>

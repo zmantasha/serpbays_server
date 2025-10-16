@@ -6,6 +6,9 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// In-memory storage for bulk import progress (since cache might not be available)
+const bulkImportProgress = new Map();
+
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
 
   /**
@@ -15,7 +18,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     try {
       const { 
         page = 1, 
-        pageSize = 20, 
+        pageSize = 10, // Default page size to match frontend
         sort = 'createdAt:desc',
         sortField = '',
         sortDirection = 'asc',
@@ -44,6 +47,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         recordRangeMin = '',
         recordRangeMax = ''
       } = ctx.query;
+
+      // Debug: Log all query parameters
+      console.log('[ADMIN WEBSITES DEBUG] Query parameters:', {
+        page,
+        pageSize,
+        search,
+        status,
+        category,
+        sortField,
+        sortDirection,
+        allQueryParams: ctx.query
+      });
 
       // Build filters
       const filters = {};
@@ -239,6 +254,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       let currentPage = parseInt(page);
       let useRecordRange = false;
       
+      // Debug: Log pagination parameters before processing
+      console.log('[ADMIN WEBSITES PAGINATION DEBUG]', {
+        originalPage: page,
+        originalPageSize: pageSize,
+        parsedPage: currentPage,
+        parsedPageSize: limit,
+        recordRangeMin,
+        recordRangeMax
+      });
+      
       if (recordRangeMin && recordRangeMax) {
         const min = parseInt(recordRangeMin);
         const max = parseInt(recordRangeMax);
@@ -266,8 +291,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         console.log(`[ADMIN WEBSITES RECORD RANGE] Raw query: offset=${offset}, limit=${limit}, results=${websites.length}`);
       } else {
         // Use normal pagination with raw database query for better control
-        console.log(`[ADMIN WEBSITES PAGINATION] Page: ${currentPage}, PageSize: ${limit}`);
         const offset = (currentPage - 1) * limit;
+        
+        console.log(`[ADMIN WEBSITES PAGINATION] Page: ${currentPage}, PageSize: ${limit}, Offset: ${offset}`);
+        console.log(`[ADMIN WEBSITES PAGINATION] Query filters:`, JSON.stringify(filters, null, 2));
+        console.log(`[ADMIN WEBSITES PAGINATION] Sort object:`, JSON.stringify(sortObj, null, 2));
         
         websites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
           where: filters,
@@ -278,6 +306,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
         
         console.log(`[ADMIN WEBSITES PAGINATION RESULT] Received ${websites.length} websites (offset: ${offset}, limit: ${limit})`);
+        
+        // Debug: Log first few website IDs to verify different pages
+        if (websites.length > 0) {
+          console.log(`[ADMIN WEBSITES PAGINATION RESULT] First 3 website IDs:`, websites.slice(0, 3).map(w => w.id));
+        }
       }
 
       // Get total count for pagination
@@ -397,7 +430,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         sampleWebsite: transformedWebsites[0]
       });
 
-      ctx.send({
+      const responseData = {
         data: transformedWebsites,
         meta: {
           pagination: {
@@ -407,7 +440,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             total
           }
         }
+      };
+
+      // Debug: Log response pagination metadata
+      console.log('[ADMIN WEBSITES RESPONSE] Pagination metadata:', {
+        page: parseInt(page),
+        pageSize: parseInt(pageSize),
+        pageCount: Math.ceil(total / pageSize),
+        total,
+        actualDataLength: transformedWebsites.length
       });
+
+      ctx.send(responseData);
 
     } catch (error) {
       console.error('[ADMIN WEBSITES FIND ERROR]', error);
@@ -1194,48 +1238,32 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
    */
   async getStats(ctx) {
     try {
-      console.log('[ADMIN WEBSITE STATS] Method called with params:', ctx.params);
-      console.log('[ADMIN WEBSITE STATS] Method called with query:', ctx.query);
+      console.log('[ADMIN WEBSITE STATS] Method called');
       
-      // Declare variables at function level
-      let total, pending, approved, rejected;
+      // Check cache first (5-minute cache)
+      const cacheKey = 'website-stats-cache'
+      const cachedStats = await strapi.cache?.get(cacheKey)
       
-      // Check if collection exists
-      try {
-        total = await strapi.db.query('api::publisher-website.publisher-website').count();
-        console.log('[ADMIN WEBSITE STATS] Total count:', total);
-        
-        pending = await strapi.db.query('api::publisher-website.publisher-website').count({
-          where: { submissionStatus: 'approval_pending' }
-        });
-        console.log('[ADMIN WEBSITE STATS] Pending count:', pending);
-        
-        approved = await strapi.db.query('api::publisher-website.publisher-website').count({
-          where: { submissionStatus: 'approved' }
-        });
-        console.log('[ADMIN WEBSITE STATS] Approved count:', approved);
-        
-        rejected = await strapi.db.query('api::publisher-website.publisher-website').count({
-          where: { submissionStatus: 'rejected' }
-        });
-        console.log('[ADMIN WEBSITE STATS] Rejected count:', rejected);
-      } catch (dbError) {
-        console.error('[ADMIN WEBSITE STATS] Database query error:', dbError);
-        throw dbError;
+      if (cachedStats) {
+        console.log('[ADMIN WEBSITE STATS] Returning cached stats')
+        return ctx.send(cachedStats)
       }
       
-      // Debug: Check all statuses in database
-      const allStatuses = await strapi.db.query('api::publisher-website.publisher-website').findMany({
-        fields: ['id', 'submissionStatus']
-      });
+      // Get counts by status in parallel for better performance
+      const [total, pending, approved, rejected] = await Promise.all([
+        strapi.db.query('api::publisher-website.publisher-website').count(),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: { submissionStatus: 'approval_pending' }
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: { submissionStatus: 'approved' }
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: { submissionStatus: 'rejected' }
+        })
+      ]);
       
-      console.log('[ADMIN WEBSITE STATS DEBUG]', {
-        total,
-        pending,
-        approved,
-        rejected,
-        allStatuses: allStatuses.map(w => ({ id: w.id, status: w.submissionStatus }))
-      });
+      console.log('[ADMIN WEBSITE STATS] Counts:', { total, pending, approved, rejected });
 
       // Get new websites this month
       const thisMonth = new Date();
@@ -1259,6 +1287,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       };
       
       console.log('[ADMIN WEBSITE STATS]', statsData);
+      
+      // Cache the results for 5 minutes
+      if (strapi.cache) {
+        await strapi.cache.set(cacheKey, { data: statsData }, { ttl: 300 }) // 5 minutes
+      }
       
       ctx.send({
         data: statsData
@@ -1646,6 +1679,50 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   },
 
   /**
+   * Get bulk import progress for current user
+   */
+  async getBulkImportProgress(ctx) {
+    try {
+      // Check authentication
+      if (!ctx.state.user || !ctx.state.user.id) {
+        console.log('[BULK IMPORT PROGRESS] Unauthenticated request')
+        return ctx.send({
+          total: 0,
+          processed: 0,
+          percent: 0,
+          active: false
+        })
+      }
+      
+      const userId = ctx.state.user.id
+      const progress = bulkImportProgress.get(`user-${userId}`)
+      
+      if (!progress) {
+        return ctx.send({
+          total: 0,
+          processed: 0,
+          percent: 0,
+          active: false
+        })
+      }
+      
+      return ctx.send({
+        ...progress,
+        active: true
+      })
+    } catch (error) {
+      console.error('[GET BULK IMPORT PROGRESS ERROR]', error)
+      // Return empty progress instead of error to prevent breaking the frontend
+      return ctx.send({
+        total: 0,
+        processed: 0,
+        percent: 0,
+        active: false
+      })
+    }
+  },
+
+  /**
    * Bulk import websites from CSV data
    */
   async bulkImport(ctx) {
@@ -1663,6 +1740,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         successful: 0,
         errors: 0,
         conflicts: 0,
+        duplicates: 0,
         details: []
       }
 
@@ -1723,7 +1801,73 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               continue
             }
 
-            // Check for conflicts using the same logic as single import
+            // Duplicate detection: if URL already exists in DB (any status), mark as duplicate and skip
+            const existingAny = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
+              filters: { url: normalizedUrl },
+              populate: {
+                currentPublisherId: {
+                  fields: ['id', 'username', 'email', 'firstName', 'lastName']
+                },
+                originalPublisherId: {
+                  fields: ['id', 'username', 'email', 'firstName', 'lastName']
+                }
+              }
+            })
+
+            if (Array.isArray(existingAny) && existingAny.length > 0) {
+              const ex = existingAny[0]
+              results.duplicates++
+              results.details.push({
+                url: normalizedUrl,
+                status: 'duplicate',
+                message: 'Website already exists. Skipped importing.',
+                existing: {
+                  id: ex.id,
+                  url: ex.url,
+                  submissionStatus: ex.submissionStatus,
+                  publisherType: ex.publisherType,
+                  verificationMethod: ex.verificationMethod,
+                  addedByReseller: ex.addedByReseller,
+                  publisherEmail: ex.publisherEmail,
+                  publisherName: ex.publisherName,
+                  description: ex.description,
+                  generalGuestPostPrice: ex.generalGuestPostPrice,
+                  generalLinkInsertionPrice: ex.generalLinkInsertionPrice,
+                  expectedTATHours: ex.expectedTATHours,
+                  minWordCount: ex.minWordCount,
+                  category: ex.category,
+                  countries: ex.countries,
+                  language: ex.language,
+                  backlinkType: ex.backlinkType,
+                  backlinkValidity: ex.backlinkValidity,
+                  allowedLinks: ex.allowedLinks,
+                  sponsored: ex.sponsored,
+                  ugc: ex.ugc,
+                  isPRSite: ex.isPRSite,
+                  doCopywriting: ex.doCopywriting,
+                  copywritingPrice: ex.copywritingPrice,
+                  casinoAccepted: ex.casinoAccepted,
+                  casinoGuestPostPrice: ex.casinoGuestPostPrice,
+                  casinoLinkInsertionPrice: ex.casinoLinkInsertionPrice,
+                  cryptoAccepted: ex.cryptoAccepted,
+                  cryptoGuestPostPrice: ex.cryptoGuestPostPrice,
+                  cryptoLinkInsertionPrice: ex.cryptoLinkInsertionPrice,
+                  cbdAccepted: ex.cbdAccepted,
+                  cbdGuestPostPrice: ex.cbdGuestPostPrice,
+                  cbdLinkInsertionPrice: ex.cbdLinkInsertionPrice,
+                  datingAccepted: ex.datingAccepted,
+                  datingGuestPostPrice: ex.datingGuestPostPrice,
+                  datingLinkInsertionPrice: ex.datingLinkInsertionPrice,
+                  samplePosts: ex.samplePosts,
+                  guidelines: ex.guidelines,
+                  createdAt: ex.createdAt,
+                  updatedAt: ex.updatedAt
+                }
+              })
+              continue
+            }
+
+            // Check for conflicts using the same logic as single import (approved-only replacement policy)
             const publisherType = websiteData.publisherType || 'reseller'
             const existingWebsite = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
               filters: { 
@@ -1810,21 +1954,45 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           } catch (error) {
             console.error(`[BULK IMPORT] Error processing website ${websiteData.url}:`, error)
             results.errors++
+            
+            // Extract more detailed error information
+            let errorMessage = error.message || 'Unknown error occurred'
+            if (error.details && error.details.errors && Array.isArray(error.details.errors)) {
+              const validationErrors = error.details.errors.map(e => `${e.path?.join('.') || 'field'}: ${e.message}`).join(', ')
+              errorMessage = `Validation error: ${validationErrors}`
+            }
+            
             results.details.push({
               url: websiteData.url || 'N/A',
               status: 'error',
-              message: error.message || 'Unknown error occurred'
+              message: errorMessage
             })
           }
         }
         
-        // Log progress
+        // Log progress and store in memory map
         const processed = (batchIndex + 1) * batchSize
         const totalProcessed = Math.min(processed, websites.length)
-        console.log(`[BULK IMPORT] Progress: ${totalProcessed}/${websites.length} (${Math.round((totalProcessed / websites.length) * 100)}%)`)
+        const progressPercent = Math.round((totalProcessed / websites.length) * 100)
+        console.log(`[BULK IMPORT] Progress: ${totalProcessed}/${websites.length} (${progressPercent}%)`)
+        
+        // Store progress in memory map
+        if (ctx.state.user && ctx.state.user.id) {
+          bulkImportProgress.set(`user-${ctx.state.user.id}`, {
+            total: websites.length,
+            processed: totalProcessed,
+            percent: progressPercent,
+            timestamp: Date.now()
+          })
+        }
       }
 
       console.log(`[BULK IMPORT] Completed: ${results.successful} successful, ${results.errors} errors, ${results.conflicts} conflicts`)
+
+      // Clear progress from memory map
+      if (ctx.state.user && ctx.state.user.id) {
+        bulkImportProgress.delete(`user-${ctx.state.user.id}`)
+      }
 
       return ctx.send(results)
 
@@ -1837,6 +2005,26 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   // Helper method to prepare website data (extracted from create method)
   prepareWebsiteData(websiteData, normalizedUrl) {
     const publisherType = websiteData.publisherType || 'reseller'
+    
+    // Normalize backlinkType to match schema enum values
+    const normalizeBacklinkType = (value) => {
+      if (!value) return 'Do follow' // Default value
+      
+      const normalized = String(value).trim().toLowerCase()
+      
+      // Handle various input formats
+      if (normalized === 'dofollow' || normalized === 'do follow' || normalized === 'do_follow' || 
+          normalized === 'follow' || normalized === '1' || normalized === 'true' || normalized === 'yes') {
+        return 'Do follow'
+      } else if (normalized === 'nofollow' || normalized === 'no follow' || normalized === 'no_follow' || 
+                 normalized === '0' || normalized === 'false' || normalized === 'no') {
+        return 'No follow'
+      }
+      
+      // If it doesn't match any known pattern, default to 'Do follow'
+      console.warn(`Unknown backlinkType value: "${value}", defaulting to "Do follow"`)
+      return 'Do follow'
+    }
     
     return {
       url: normalizedUrl,
@@ -1857,7 +2045,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       category: websiteData.category ? websiteData.category.split(',').map(c => c.trim()) : ['General'],
       countries: websiteData.countries ? websiteData.countries.split(',').map(c => c.trim()) : ['United States'],
       language: websiteData.language ? websiteData.language.split(',').map(l => l.trim()) : ['English'],
-      backlinkType: websiteData.backlinkType || 'Do follow',
+      backlinkType: normalizeBacklinkType(websiteData.backlinkType),
       backlinkValidity: websiteData.backlinkValidity || 'three_years',
       allowedLinks: parseInt(websiteData.allowedLinks) || 1,
       sponsored: websiteData.sponsored === 'true' || websiteData.sponsored === true,
