@@ -48,6 +48,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         recordRangeMax = ''
       } = ctx.query;
 
+      // Debug: Log all query parameters
+      console.log('[ADMIN WEBSITES DEBUG] Query parameters:', {
+        page,
+        pageSize,
+        search,
+        status,
+        category,
+        sortField,
+        sortDirection,
+        allQueryParams: ctx.query
+      });
+
       // Build filters
       const filters = {};
       
@@ -242,6 +254,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       let currentPage = parseInt(page);
       let useRecordRange = false;
       
+      // Debug: Log pagination parameters before processing
+      console.log('[ADMIN WEBSITES PAGINATION DEBUG]', {
+        originalPage: page,
+        originalPageSize: pageSize,
+        parsedPage: currentPage,
+        parsedPageSize: limit,
+        recordRangeMin,
+        recordRangeMax
+      });
+      
       if (recordRangeMin && recordRangeMax) {
         const min = parseInt(recordRangeMin);
         const max = parseInt(recordRangeMax);
@@ -269,8 +291,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         console.log(`[ADMIN WEBSITES RECORD RANGE] Raw query: offset=${offset}, limit=${limit}, results=${websites.length}`);
       } else {
         // Use normal pagination with raw database query for better control
-        console.log(`[ADMIN WEBSITES PAGINATION] Page: ${currentPage}, PageSize: ${limit}`);
         const offset = (currentPage - 1) * limit;
+        
+        console.log(`[ADMIN WEBSITES PAGINATION] Page: ${currentPage}, PageSize: ${limit}, Offset: ${offset}`);
+        console.log(`[ADMIN WEBSITES PAGINATION] Query filters:`, JSON.stringify(filters, null, 2));
+        console.log(`[ADMIN WEBSITES PAGINATION] Sort object:`, JSON.stringify(sortObj, null, 2));
         
         websites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
           where: filters,
@@ -281,6 +306,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
         
         console.log(`[ADMIN WEBSITES PAGINATION RESULT] Received ${websites.length} websites (offset: ${offset}, limit: ${limit})`);
+        
+        // Debug: Log first few website IDs to verify different pages
+        if (websites.length > 0) {
+          console.log(`[ADMIN WEBSITES PAGINATION RESULT] First 3 website IDs:`, websites.slice(0, 3).map(w => w.id));
+        }
       }
 
       // Get total count for pagination
@@ -400,7 +430,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         sampleWebsite: transformedWebsites[0]
       });
 
-      ctx.send({
+      const responseData = {
         data: transformedWebsites,
         meta: {
           pagination: {
@@ -410,7 +440,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             total
           }
         }
+      };
+
+      // Debug: Log response pagination metadata
+      console.log('[ADMIN WEBSITES RESPONSE] Pagination metadata:', {
+        page: parseInt(page),
+        pageSize: parseInt(pageSize),
+        pageCount: Math.ceil(total / pageSize),
+        total,
+        actualDataLength: transformedWebsites.length
       });
+
+      ctx.send(responseData);
 
     } catch (error) {
       console.error('[ADMIN WEBSITES FIND ERROR]', error);
