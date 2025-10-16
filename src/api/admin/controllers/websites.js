@@ -18,7 +18,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     try {
       const { 
         page = 1, 
-        pageSize = 50, // Increased from 20 to reduce API calls
+        pageSize = 10, // Default page size to match frontend
         sort = 'createdAt:desc',
         sortField = '',
         sortDirection = 'asc',
@@ -1782,12 +1782,45 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 message: 'Website already exists. Skipped importing.',
                 existing: {
                   id: ex.id,
+                  url: ex.url,
                   submissionStatus: ex.submissionStatus,
                   publisherType: ex.publisherType,
                   verificationMethod: ex.verificationMethod,
                   addedByReseller: ex.addedByReseller,
                   publisherEmail: ex.publisherEmail,
-                  publisherName: ex.publisherName
+                  publisherName: ex.publisherName,
+                  description: ex.description,
+                  generalGuestPostPrice: ex.generalGuestPostPrice,
+                  generalLinkInsertionPrice: ex.generalLinkInsertionPrice,
+                  expectedTATHours: ex.expectedTATHours,
+                  minWordCount: ex.minWordCount,
+                  category: ex.category,
+                  countries: ex.countries,
+                  language: ex.language,
+                  backlinkType: ex.backlinkType,
+                  backlinkValidity: ex.backlinkValidity,
+                  allowedLinks: ex.allowedLinks,
+                  sponsored: ex.sponsored,
+                  ugc: ex.ugc,
+                  isPRSite: ex.isPRSite,
+                  doCopywriting: ex.doCopywriting,
+                  copywritingPrice: ex.copywritingPrice,
+                  casinoAccepted: ex.casinoAccepted,
+                  casinoGuestPostPrice: ex.casinoGuestPostPrice,
+                  casinoLinkInsertionPrice: ex.casinoLinkInsertionPrice,
+                  cryptoAccepted: ex.cryptoAccepted,
+                  cryptoGuestPostPrice: ex.cryptoGuestPostPrice,
+                  cryptoLinkInsertionPrice: ex.cryptoLinkInsertionPrice,
+                  cbdAccepted: ex.cbdAccepted,
+                  cbdGuestPostPrice: ex.cbdGuestPostPrice,
+                  cbdLinkInsertionPrice: ex.cbdLinkInsertionPrice,
+                  datingAccepted: ex.datingAccepted,
+                  datingGuestPostPrice: ex.datingGuestPostPrice,
+                  datingLinkInsertionPrice: ex.datingLinkInsertionPrice,
+                  samplePosts: ex.samplePosts,
+                  guidelines: ex.guidelines,
+                  createdAt: ex.createdAt,
+                  updatedAt: ex.updatedAt
                 }
               })
               continue
