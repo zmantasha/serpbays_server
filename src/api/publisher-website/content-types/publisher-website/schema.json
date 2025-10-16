@@ -17,7 +17,6 @@
       "required": true,
       "description": "Website URL without protocol"
     },
-
     "protocol": {
       "type": "enumeration",
       "enum": [
@@ -319,7 +318,7 @@
       "description": "When the listing was paused"
     },
     "resumedAt": {
-      "type": "datetime", 
+      "type": "datetime",
       "description": "When the listing was last resumed"
     },
     "resellerCode": {
@@ -340,7 +339,7 @@
     },
     "currentPublisherId": {
       "type": "relation",
-      "relation": "manyToOne", 
+      "relation": "manyToOne",
       "target": "plugin::users-permissions.user",
       "description": "Current publisher who owns the website"
     },
@@ -350,7 +349,11 @@
     },
     "ownershipTransferReason": {
       "type": "enumeration",
-      "enum": ["claimed_by_owner", "admin_transfer", "other"],
+      "enum": [
+        "claimed_by_owner",
+        "admin_transfer",
+        "other"
+      ],
       "description": "Reason for ownership transfer"
     },
     "claimingInProgress": {
@@ -385,7 +388,7 @@
       "description": "ID of the new website entry created for the new owner (for original websites that were claimed)"
     },
     "ahrefs_dr": {
-      "type": "integer",
+      "type": "decimal",
       "min": 0,
       "max": 100,
       "description": "Ahrefs Domain Rating (0-100)"
@@ -401,13 +404,13 @@
       "description": "Ahrefs global rank"
     },
     "moz_da": {
-      "type": "integer",
+      "type": "decimal",
       "min": 0,
       "max": 100,
       "description": "Moz Domain Authority (0-100)"
     },
     "semrush_authority_score": {
-      "type": "integer",
+      "type": "decimal",
       "min": 0,
       "max": 1000,
       "description": "Semrush Authority Score (0-1000)"
@@ -445,7 +448,11 @@
     },
     "metrics_update_method": {
       "type": "enumeration",
-      "enum": ["manual", "api", "bulk_import"],
+      "enum": [
+        "manual",
+        "api",
+        "bulk_import"
+      ],
       "description": "Method used for last metrics update"
     }
   }
