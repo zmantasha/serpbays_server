@@ -159,6 +159,33 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Transform data for admin panel with real order counts
       const transformedWebsites = await Promise.all(websites.map(async (website) => {
+        // Best-effort metrics hydration from publisher-website if marketplace metrics are missing
+        let metricsSource = { ...website };
+        if (
+          (metricsSource.moz_da == null || metricsSource.moz_da === 0) ||
+          (metricsSource.ahrefs_dr == null || metricsSource.ahrefs_dr === 0) ||
+          (metricsSource.ahrefs_traffic == null || metricsSource.ahrefs_traffic === 0)
+        ) {
+          try {
+            const publisherWebsite = await strapi.db.query('api::publisher-website.publisher-website').findOne({
+              where: { url: website.url }
+            });
+            if (publisherWebsite) {
+              metricsSource = {
+                ...metricsSource,
+                moz_da: metricsSource.moz_da ?? publisherWebsite.moz_da ?? 0,
+                ahrefs_dr: metricsSource.ahrefs_dr ?? publisherWebsite.ahrefs_dr ?? 0,
+                ahrefs_traffic: metricsSource.ahrefs_traffic ?? publisherWebsite.ahrefs_traffic ?? 0,
+                ahrefs_rank: metricsSource.ahrefs_rank ?? publisherWebsite.ahrefs_rank ?? 0,
+                semrush_authority_score: metricsSource.semrush_authority_score ?? publisherWebsite.semrush_authority_score ?? 0,
+                semrush_traffic: metricsSource.semrush_traffic ?? publisherWebsite.semrush_traffic ?? 0,
+                moz_spam_score: metricsSource.moz_spam_score ?? publisherWebsite.moz_spam_score ?? 0,
+              };
+            }
+          } catch (e) {
+            console.warn('[MARKETPLACE] Failed to hydrate metrics from publisher-website for', website.url, e.message);
+          }
+        }
         // Get orders for this website
         const orders = await strapi.db.query('api::order.order').findMany({
           where: { website: website.id }
@@ -184,11 +211,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           category: website.category,
           subcategory: website.other_category,
           metrics: {
-            da: website.moz_da,
-            dr: website.ahrefs_dr,
-            traffic: website.ahrefs_traffic,
-            backlinks: website.ahrefs_rank,
-            organicKeywords: website.semrush_authority_score,
+            da: metricsSource.moz_da,
+            dr: metricsSource.ahrefs_dr,
+            traffic: metricsSource.ahrefs_traffic,
+            backlinks: metricsSource.ahrefs_rank,
+            organicKeywords: metricsSource.semrush_authority_score,
             pageSpeed: website.placement_speed,
             mobileFriendly: website.fast_placement_status,
             ssl: true // Default to true since there's no SSL field in schema
