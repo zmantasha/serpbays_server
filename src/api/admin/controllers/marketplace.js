@@ -144,18 +144,28 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Sort options
       const sort = { createdAt: 'desc' };
 
-      // Get marketplace websites with pagination
-      const websites = await strapi.entityService.findMany('api::marketplace.marketplace', {
-        filters,
-        sort,
-        pagination: {
-          page: parseInt(page),
-          pageSize: parseInt(pageSize)
-        }
+      // Calculate offset and limit for proper pagination
+      const pageNum = parseInt(page);
+      const pageSizeNum = parseInt(pageSize);
+      const offset = (pageNum - 1) * pageSizeNum;
+      const limit = pageSizeNum;
+
+      console.log('[MARKETPLACE FIND] Pagination params:', { page: pageNum, pageSize: pageSizeNum, offset, limit });
+
+      // Get marketplace websites with pagination using query API for proper limit/offset
+      const websites = await strapi.db.query('api::marketplace.marketplace').findMany({
+        where: filters,
+        orderBy: sort,
+        limit,
+        offset
       });
+
+      console.log('[MARKETPLACE FIND] Fetched websites count:', websites.length);
 
       // Get total count for pagination
       const total = await strapi.db.query('api::marketplace.marketplace').count({ where: filters });
+      
+      console.log('[MARKETPLACE FIND] Total count:', total);
 
       // Transform data for admin panel with real order counts
       const transformedWebsites = await Promise.all(websites.map(async (website) => {
@@ -174,12 +184,14 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
               metricsSource = {
                 ...metricsSource,
                 moz_da: metricsSource.moz_da ?? publisherWebsite.moz_da ?? 0,
+                moz_spam_score: metricsSource.moz_spam_score ?? publisherWebsite.moz_spam_score ?? 0,
                 ahrefs_dr: metricsSource.ahrefs_dr ?? publisherWebsite.ahrefs_dr ?? 0,
                 ahrefs_traffic: metricsSource.ahrefs_traffic ?? publisherWebsite.ahrefs_traffic ?? 0,
                 ahrefs_rank: metricsSource.ahrefs_rank ?? publisherWebsite.ahrefs_rank ?? 0,
-                semrush_authority_score: metricsSource.semrush_authority_score ?? publisherWebsite.semrush_authority_score ?? 0,
+                ahrefs_referring_domain: metricsSource.ahrefs_referring_domain ?? publisherWebsite.ahrefs_referring_domain ?? 0,
+                ahrefs_keywords: metricsSource.ahrefs_keywords ?? publisherWebsite.ahrefs_keywords ?? 0,
                 semrush_traffic: metricsSource.semrush_traffic ?? publisherWebsite.semrush_traffic ?? 0,
-                moz_spam_score: metricsSource.moz_spam_score ?? publisherWebsite.moz_spam_score ?? 0,
+                semrush_authority_score: metricsSource.semrush_authority_score ?? publisherWebsite.semrush_authority_score ?? 0,
               };
             }
           } catch (e) {
@@ -211,11 +223,19 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           category: website.category,
           subcategory: website.other_category,
           metrics: {
-            da: metricsSource.moz_da,
+            // Ahrefs
             dr: metricsSource.ahrefs_dr,
-            traffic: metricsSource.ahrefs_traffic,
-            backlinks: metricsSource.ahrefs_rank,
-            organicKeywords: metricsSource.semrush_authority_score,
+            ahrefsTraffic: metricsSource.ahrefs_traffic,
+            ahrefsRank: metricsSource.ahrefs_rank,
+            ahrefsRefDomains: metricsSource.ahrefs_referring_domain,
+            ahrefsKeywords: metricsSource.ahrefs_keywords,
+            // Moz
+            da: metricsSource.moz_da,
+            mozSpamScore: metricsSource.moz_spam_score,
+            // Semrush
+            semrushTraffic: metricsSource.semrush_traffic,
+            semrushAuthorityScore: metricsSource.semrush_authority_score,
+            // UI helpers
             pageSpeed: website.placement_speed,
             mobileFriendly: website.fast_placement_status,
             ssl: true // Default to true since there's no SSL field in schema
@@ -297,8 +317,55 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         where: { website: website.id }
       });
       
+      // Hydrate metrics/prices from publisher-website when missing on marketplace
+      let metricsSource = { ...website };
+      let pricingSource = { ...website };
+      try {
+        const publisherWebsite = await strapi.db.query('api::publisher-website.publisher-website').findOne({
+          where: { url: website.url }
+        });
+        if (publisherWebsite) {
+          // Prefer marketplace values; fallback to publisher-website
+          metricsSource = {
+            ...metricsSource,
+            moz_da: metricsSource.moz_da ?? publisherWebsite.moz_da ?? 0,
+            ahrefs_dr: metricsSource.ahrefs_dr ?? publisherWebsite.ahrefs_dr ?? 0,
+            ahrefs_traffic: metricsSource.ahrefs_traffic ?? publisherWebsite.ahrefs_traffic ?? 0,
+            ahrefs_rank: metricsSource.ahrefs_rank ?? publisherWebsite.ahrefs_rank ?? 0,
+            semrush_authority_score: metricsSource.semrush_authority_score ?? publisherWebsite.semrush_authority_score ?? 0,
+            semrush_traffic: metricsSource.semrush_traffic ?? publisherWebsite.semrush_traffic ?? 0,
+            moz_spam_score: metricsSource.moz_spam_score ?? publisherWebsite.moz_spam_score ?? 0,
+            ahrefs_referring_domain: metricsSource.ahrefs_referring_domain ?? publisherWebsite.ahrefs_referring_domain ?? 0,
+            ahrefs_keywords: metricsSource.ahrefs_keywords ?? publisherWebsite.ahrefs_keywords ?? 0,
+          };
+          pricingSource = {
+            ...pricingSource,
+            generalLinkInsertionPrice: pricingSource.generalLinkInsertionPrice ?? publisherWebsite.generalLinkInsertionPrice ?? publisherWebsite.link_insertion_price ?? null,
+            casinoLinkInsertionPrice: pricingSource.casinoLinkInsertionPrice ?? publisherWebsite.casinoLinkInsertionPrice ?? publisherWebsite.adv_li_casino_pricing ?? null,
+            cryptoAccepted: pricingSource.cryptoAccepted ?? publisherWebsite.cryptoAccepted ?? false,
+            cryptoGuestPostPrice: pricingSource.cryptoGuestPostPrice ?? publisherWebsite.cryptoGuestPostPrice ?? publisherWebsite.adv_crypto_pricing ?? null,
+            cryptoLinkInsertionPrice: pricingSource.cryptoLinkInsertionPrice ?? publisherWebsite.cryptoLinkInsertionPrice ?? publisherWebsite.adv_li_crypto_pricing ?? null,
+            cbdAccepted: pricingSource.cbdAccepted ?? publisherWebsite.cbdAccepted ?? false,
+            cbdGuestPostPrice: pricingSource.cbdGuestPostPrice ?? publisherWebsite.cbdGuestPostPrice ?? publisherWebsite.adv_cbd_pricing ?? null,
+            cbdLinkInsertionPrice: pricingSource.cbdLinkInsertionPrice ?? publisherWebsite.cbdLinkInsertionPrice ?? publisherWebsite.adv_li_cbd_pricing ?? null,
+            datingLinkInsertionPrice: pricingSource.datingLinkInsertionPrice ?? publisherWebsite.datingLinkInsertionPrice ?? publisherWebsite.adv_li_dating_pricing ?? null,
+          };
+        }
+      } catch (e) {
+        console.warn('[MARKETPLACE:findOne] Failed to hydrate from publisher-website for', website.url, e.message);
+      }
+
       // Calculate order counts for this website
       const totalOrders = orders.length;
+      const statusCounts = orders.reduce((acc, o) => {
+        const status = (o.orderStatus || o.status || 'unknown').toString().toLowerCase();
+        if (status.includes('pend')) acc.pending++;
+        else if (status.includes('progress') || status.includes('process')) acc.processing++;
+        else if (status.includes('complete') || status === 'done') acc.completed++;
+        else if (status.includes('cancel') || status.includes('reject') || status.includes('failed')) acc.cancelled++;
+        else acc.other++;
+        return acc;
+      }, { pending: 0, processing: 0, completed: 0, cancelled: 0, other: 0 });
       
       // Calculate last month orders
       const lastMonth = new Date();
@@ -319,11 +386,19 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         category: website.category,
         subcategory: website.other_category,
         metrics: {
-          da: website.moz_da,
-          dr: website.ahrefs_dr,
-          traffic: website.ahrefs_traffic,
-          backlinks: website.ahrefs_rank,
-          organicKeywords: website.semrush_authority_score,
+          // Ahrefs
+          dr: metricsSource.ahrefs_dr,
+          ahrefsTraffic: metricsSource.ahrefs_traffic,
+          ahrefsRank: metricsSource.ahrefs_rank,
+          ahrefsRefDomains: metricsSource.ahrefs_referring_domain,
+          ahrefsKeywords: metricsSource.ahrefs_keywords,
+          // Moz
+          da: metricsSource.moz_da,
+          mozSpamScore: metricsSource.moz_spam_score,
+          // Semrush
+          semrushTraffic: metricsSource.semrush_traffic,
+          semrushAuthorityScore: metricsSource.semrush_authority_score,
+          // UI helpers
           pageSpeed: website.placement_speed,
           mobileFriendly: website.fast_placement_status,
           ssl: true, // Default to true since there's no SSL field in schema
@@ -356,13 +431,45 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           averageRating: 4.5, // Default since not in schema
           completionRate: 100, // Default since not in schema
           responseTime: '24h', // Default since not in schema
-          revenue: 0 // Default since not in schema
+          revenue: 0, // Default since not in schema
+          byStatus: statusCounts
+        },
+        services: {
+          backlinkType: website.backlink_type || 'Do follow',
+          backlinkValidity: website.backlink_validity || 'lifetime',
+          minWordCount: website.min_word_count || 500,
+          dofollow: website.dofollow_link === 1 || website.dofollow_link === true,
+          fastPlacement: Boolean(website.fast_placement_status),
+          tat: website.tat || 0,
+          linkInsertionBase: parseFloat(website.link_insertion_price || pricingSource.generalLinkInsertionPrice || 0) || 0
         },
         financial: {
           price: parseFloat(website.price || 0),
           currency: 'USD', // Default since not in schema
           commission: parseFloat(website.publisher_price || 0),
-          netAmount: parseFloat(website.price || 0) - parseFloat(website.publisher_price || 0)
+          netAmount: parseFloat(website.price || 0) - parseFloat(website.publisher_price || 0),
+          pricing: {
+            general: {
+              guestPost: parseFloat(website.price || 0) || 0,
+              linkInsertion: parseFloat(pricingSource.generalLinkInsertionPrice || pricingSource.link_insertion_price || 0) || 0
+            },
+            casino: {
+              linkInsertion: parseFloat(pricingSource.casinoLinkInsertionPrice || 0) || 0
+            },
+            crypto: {
+              accepted: Boolean(pricingSource.cryptoAccepted) || false,
+              guestPost: parseFloat(pricingSource.cryptoGuestPostPrice || 0) || 0,
+              linkInsertion: parseFloat(pricingSource.cryptoLinkInsertionPrice || 0) || 0
+            },
+            cbd: {
+              accepted: Boolean(pricingSource.cbdAccepted) || false,
+              guestPost: parseFloat(pricingSource.cbdGuestPostPrice || 0) || 0,
+              linkInsertion: parseFloat(pricingSource.cbdLinkInsertionPrice || 0) || 0
+            },
+            dating: {
+              linkInsertion: parseFloat(pricingSource.datingLinkInsertionPrice || 0) || 0
+            }
+          }
         },
         contact: {
           email: website.publisher_email,
