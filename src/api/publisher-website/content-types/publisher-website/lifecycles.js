@@ -85,6 +85,131 @@ module.exports = {
       }
       
       console.log(`✅ Ownership transfer process completed for URL: ${updatedWebsiteUrl}`);
+
+      // After first approval, ensure marketplace metrics are hydrated immediately
+      try {
+        const marketplaceList = await strapi.entityService.findMany('api::marketplace.marketplace', {
+          filters: { url: updatedWebsiteUrl },
+          limit: 1
+        });
+
+        if (Array.isArray(marketplaceList) && marketplaceList.length > 0) {
+          const marketplaceId = marketplaceList[0].id;
+
+          // Normalize placement_speed to allowed enum values
+          const resolvePlacementSpeed = () => {
+            const val = result.placement_speed;
+            if (val === 'Ultra Fast' || val === 'Fast' || val === 'Normal' || val === 'Slow') return val;
+            const tat = typeof result.expectedTATHours === 'number' ? result.expectedTATHours : null;
+            if (tat != null) {
+              if (tat <= 24) return 'Ultra Fast';
+              if (tat <= 72) return 'Fast';
+              if (tat <= 168) return 'Normal';
+              return 'Slow';
+            }
+            return 'Normal';
+          };
+
+          const updateDataMarketplace = {
+            ahrefs_dr: result.ahrefs_dr ?? null,
+            ahrefs_traffic: result.ahrefs_traffic ?? null,
+            ahrefs_rank: result.ahrefs_rank ?? null,
+            moz_da: result.moz_da ?? null,
+            moz_spam_score: result.moz_spam_score ?? null,
+            semrush_traffic: result.semrush_traffic ?? null,
+            semrush_authority_score: result.semrush_authority_score ?? null,
+            ahrefs_referring_domain: result.ahrefs_referring_domain ?? null,
+            ahrefs_keywords: result.ahrefs_keywords ?? null,
+            placement_speed: resolvePlacementSpeed(),
+            fast_placement_status: Boolean(result.fast_placement_status),
+            metrics_last_updated: new Date(),
+            metrics_update_method: 'lifecycle_approved_seed'
+          };
+
+          await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+            data: updateDataMarketplace
+          });
+
+          console.log(`🧩 Seeded marketplace metrics for newly approved website ${updatedWebsiteId} (${updatedWebsiteUrl})`);
+        }
+      } catch (seedErr) {
+        console.error('⚠️ Failed to seed marketplace metrics after approval:', seedErr);
+      }
+    }
+
+    // Auto-sync metrics to marketplace when an approved website's metrics change
+    try {
+      const metricsFields = [
+        'ahrefs_dr',
+        'ahrefs_traffic',
+        'ahrefs_rank',
+        'moz_da',
+        'moz_spam_score',
+        'semrush_traffic',
+        'semrush_authority_score',
+        'ahrefs_referring_domain',
+        'ahrefs_keywords',
+        'placement_speed',
+        'fast_placement_status'
+      ];
+
+      const dataUpdated = params?.data || {};
+      const anyMetricsChanged = metricsFields.some((f) => Object.prototype.hasOwnProperty.call(dataUpdated, f));
+
+      if (result?.submissionStatus === 'approved' && anyMetricsChanged && result?.url) {
+        const marketplaceList = await strapi.entityService.findMany('api::marketplace.marketplace', {
+          filters: { url: result.url },
+          limit: 1
+        });
+
+        if (Array.isArray(marketplaceList) && marketplaceList.length > 0) {
+          const marketplaceId = marketplaceList[0].id;
+
+          // Normalize placement_speed to allowed enum values
+          const normalizePlacementSpeed = (value, tat) => {
+            if (value === 'Ultra Fast' || value === 'Fast' || value === 'Normal' || value === 'Slow') return value;
+            const t = typeof tat === 'number' ? tat : null;
+            if (t != null) {
+              if (t <= 24) return 'Ultra Fast';
+              if (t <= 72) return 'Fast';
+              if (t <= 168) return 'Normal';
+              return 'Slow';
+            }
+            return 'Normal';
+          };
+
+          const updateDataMarketplace = {
+            // Prefer freshly updated values from params.data falling back to result
+            ahrefs_dr: dataUpdated.ahrefs_dr ?? result.ahrefs_dr ?? null,
+            ahrefs_traffic: dataUpdated.ahrefs_traffic ?? result.ahrefs_traffic ?? null,
+            ahrefs_rank: dataUpdated.ahrefs_rank ?? result.ahrefs_rank ?? null,
+            moz_da: dataUpdated.moz_da ?? result.moz_da ?? null,
+            moz_spam_score: dataUpdated.moz_spam_score ?? result.moz_spam_score ?? null,
+            semrush_traffic: dataUpdated.semrush_traffic ?? result.semrush_traffic ?? null,
+            semrush_authority_score: dataUpdated.semrush_authority_score ?? result.semrush_authority_score ?? null,
+            ahrefs_referring_domain: dataUpdated.ahrefs_referring_domain ?? result.ahrefs_referring_domain ?? null,
+            ahrefs_keywords: dataUpdated.ahrefs_keywords ?? result.ahrefs_keywords ?? null,
+            placement_speed: normalizePlacementSpeed(
+              dataUpdated.placement_speed ?? result.placement_speed,
+              dataUpdated.expectedTATHours ?? result.expectedTATHours
+            ),
+            fast_placement_status: Boolean(dataUpdated.fast_placement_status ?? result.fast_placement_status),
+            metrics_last_updated: new Date(),
+            metrics_update_method: 'lifecycle_auto'
+          };
+
+          await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+            data: updateDataMarketplace
+          });
+
+          console.log(`🔁 Synced metrics to marketplace (${marketplaceId}) for approved website ${result.id} (${result.url})`);
+        } else {
+          console.log(`ℹ️ No marketplace entry found to sync metrics for ${result.url}`);
+        }
+      }
+    } catch (syncError) {
+      console.error('⚠️ Metrics sync to marketplace failed in lifecycle afterUpdate:', syncError);
+      // Non-blocking: do not throw to avoid interrupting the original update
     }
   },
 
