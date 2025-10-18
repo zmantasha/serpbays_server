@@ -137,7 +137,7 @@ module.exports = {
       }
     }
 
-    // Auto-sync metrics to marketplace when an approved website's metrics change
+    // Auto-sync metrics and pricing to marketplace when an approved website's data changes
     try {
       const metricsFields = [
         'ahrefs_dr',
@@ -153,10 +153,28 @@ module.exports = {
         'fast_placement_status'
       ];
 
+      const pricingFields = [
+        'generalGuestPostPrice',
+        'generalLinkInsertionPrice',
+        'casinoGuestPostPrice',
+        'casinoLinkInsertionPrice',
+        'cryptoGuestPostPrice',
+        'cryptoLinkInsertionPrice',
+        'cbdGuestPostPrice',
+        'cbdLinkInsertionPrice',
+        'datingGuestPostPrice',
+        'datingLinkInsertionPrice',
+        'casinoAccepted',
+        'cryptoAccepted',
+        'cbdAccepted',
+        'datingAccepted'
+      ];
+
       const dataUpdated = params?.data || {};
       const anyMetricsChanged = metricsFields.some((f) => Object.prototype.hasOwnProperty.call(dataUpdated, f));
+      const anyPricingChanged = pricingFields.some((f) => Object.prototype.hasOwnProperty.call(dataUpdated, f));
 
-      if (result?.submissionStatus === 'approved' && anyMetricsChanged && result?.url) {
+      if (result?.submissionStatus === 'approved' && (anyMetricsChanged || anyPricingChanged) && result?.url) {
         const marketplaceList = await strapi.entityService.findMany('api::marketplace.marketplace', {
           filters: { url: result.url },
           limit: 1
@@ -179,7 +197,7 @@ module.exports = {
           };
 
           const updateDataMarketplace = {
-            // Prefer freshly updated values from params.data falling back to result
+            // METRICS: Prefer freshly updated values from params.data falling back to result
             ahrefs_dr: dataUpdated.ahrefs_dr ?? result.ahrefs_dr ?? null,
             ahrefs_traffic: dataUpdated.ahrefs_traffic ?? result.ahrefs_traffic ?? null,
             ahrefs_rank: dataUpdated.ahrefs_rank ?? result.ahrefs_rank ?? null,
@@ -194,6 +212,48 @@ module.exports = {
               dataUpdated.expectedTATHours ?? result.expectedTATHours
             ),
             fast_placement_status: Boolean(dataUpdated.fast_placement_status ?? result.fast_placement_status),
+            
+            // PRICING: Sync pricing changes to marketplace
+            // Advertiser pricing (what advertisers pay)
+            price: dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice ?? null,
+            link_insertion_price: dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? null,
+            adv_casino_pricing: dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice ?? null,
+            adv_li_casino_pricing: dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice ?? null,
+            adv_crypto_pricing: dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice ?? null,
+            adv_li_crypto_pricing: dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice ?? null,
+            adv_cbd_pricing: dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice ?? null,
+            adv_li_cbd_pricing: dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice ?? null,
+            adv_dating_pricing: dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice ?? null,
+            adv_li_dating_pricing: dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? null,
+            
+            // Publisher earnings (80% of advertiser price)
+            publisher_price: Math.floor(Math.max(
+              (dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice ?? 0) * 0.8,
+              (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? 0) * 0.8
+            )) || 1,
+            publisher_link_insertion_price: Math.floor((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? 0) * 0.8),
+            publisher_casino_pricing: Math.floor(Math.max(
+              (dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice ?? 0) * 0.8,
+              (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice ?? 0) * 0.8
+            )),
+            publisher_crypto_pricing: Math.floor(Math.max(
+              (dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice ?? 0) * 0.8,
+              (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice ?? 0) * 0.8
+            )),
+            publisher_cbd_pricing: Math.floor(Math.max(
+              (dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice ?? 0) * 0.8,
+              (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice ?? 0) * 0.8
+            )),
+            publisher_dating_pricing: Math.floor(Math.max(
+              (dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice ?? 0) * 0.8,
+              (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? 0) * 0.8
+            )),
+            publisher_li_casino_pricing: Math.floor((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice ?? 0) * 0.8),
+            publisher_li_crypto_pricing: Math.floor((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice ?? 0) * 0.8),
+            publisher_li_cbd_pricing: Math.floor((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice ?? 0) * 0.8),
+            publisher_li_dating_pricing: Math.floor((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? 0) * 0.8),
+            
+            // Update timestamps
             metrics_last_updated: new Date(),
             metrics_update_method: 'lifecycle_auto'
           };
@@ -202,13 +262,13 @@ module.exports = {
             data: updateDataMarketplace
           });
 
-          console.log(`🔁 Synced metrics to marketplace (${marketplaceId}) for approved website ${result.id} (${result.url})`);
+          console.log(`🔁 Synced metrics and pricing to marketplace (${marketplaceId}) for approved website ${result.id} (${result.url})`);
         } else {
           console.log(`ℹ️ No marketplace entry found to sync metrics for ${result.url}`);
         }
       }
     } catch (syncError) {
-      console.error('⚠️ Metrics sync to marketplace failed in lifecycle afterUpdate:', syncError);
+      console.error('⚠️ Metrics and pricing sync to marketplace failed in lifecycle afterUpdate:', syncError);
       // Non-blocking: do not throw to avoid interrupting the original update
     }
   },

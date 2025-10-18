@@ -307,7 +307,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const { id } = ctx.params;
 
       const website = await strapi.entityService.findOne('api::marketplace.marketplace', id);
-
+ console.log("websites", website)
       if (!website) {
         return ctx.notFound('Marketplace website not found');
       }
@@ -338,18 +338,18 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             ahrefs_referring_domain: metricsSource.ahrefs_referring_domain ?? publisherWebsite.ahrefs_referring_domain ?? 0,
             ahrefs_keywords: metricsSource.ahrefs_keywords ?? publisherWebsite.ahrefs_keywords ?? 0,
           };
-          pricingSource = {
-            ...pricingSource,
-            generalLinkInsertionPrice: pricingSource.generalLinkInsertionPrice ?? publisherWebsite.generalLinkInsertionPrice ?? publisherWebsite.link_insertion_price ?? null,
-            casinoLinkInsertionPrice: pricingSource.casinoLinkInsertionPrice ?? publisherWebsite.casinoLinkInsertionPrice ?? publisherWebsite.adv_li_casino_pricing ?? null,
-            cryptoAccepted: pricingSource.cryptoAccepted ?? publisherWebsite.cryptoAccepted ?? false,
-            cryptoGuestPostPrice: pricingSource.cryptoGuestPostPrice ?? publisherWebsite.cryptoGuestPostPrice ?? publisherWebsite.adv_crypto_pricing ?? null,
-            cryptoLinkInsertionPrice: pricingSource.cryptoLinkInsertionPrice ?? publisherWebsite.cryptoLinkInsertionPrice ?? publisherWebsite.adv_li_crypto_pricing ?? null,
-            cbdAccepted: pricingSource.cbdAccepted ?? publisherWebsite.cbdAccepted ?? false,
-            cbdGuestPostPrice: pricingSource.cbdGuestPostPrice ?? publisherWebsite.cbdGuestPostPrice ?? publisherWebsite.adv_cbd_pricing ?? null,
-            cbdLinkInsertionPrice: pricingSource.cbdLinkInsertionPrice ?? publisherWebsite.cbdLinkInsertionPrice ?? publisherWebsite.adv_li_cbd_pricing ?? null,
-            datingLinkInsertionPrice: pricingSource.datingLinkInsertionPrice ?? publisherWebsite.datingLinkInsertionPrice ?? publisherWebsite.adv_li_dating_pricing ?? null,
-          };
+          // pricingSource = {
+          //   ...pricingSource,
+          //   generalLinkInsertionPrice: pricingSource.generalLinkInsertionPrice ?? publisherWebsite.generalLinkInsertionPrice ?? publisherWebsite.link_insertion_price ?? null,
+          //   casinoLinkInsertionPrice: pricingSource.casinoLinkInsertionPrice ?? publisherWebsite.casinoLinkInsertionPrice ?? publisherWebsite.adv_li_casino_pricing ?? null,
+          //   cryptoAccepted: pricingSource.cryptoAccepted ?? publisherWebsite.cryptoAccepted ?? false,
+          //   cryptoGuestPostPrice: pricingSource.cryptoGuestPostPrice ?? publisherWebsite.cryptoGuestPostPrice ?? publisherWebsite.adv_crypto_pricing ?? null,
+          //   cryptoLinkInsertionPrice: pricingSource.cryptoLinkInsertionPrice ?? publisherWebsite.cryptoLinkInsertionPrice ?? publisherWebsite.adv_li_crypto_pricing ?? null,
+          //   cbdAccepted: pricingSource.cbdAccepted ?? publisherWebsite.cbdAccepted ?? false,
+          //   cbdGuestPostPrice: pricingSource.cbdGuestPostPrice ?? publisherWebsite.cbdGuestPostPrice ?? publisherWebsite.adv_cbd_pricing ?? null,
+          //   cbdLinkInsertionPrice: pricingSource.cbdLinkInsertionPrice ?? publisherWebsite.cbdLinkInsertionPrice ?? publisherWebsite.adv_li_cbd_pricing ?? null,
+          //   datingLinkInsertionPrice: pricingSource.datingLinkInsertionPrice ?? publisherWebsite.datingLinkInsertionPrice ?? publisherWebsite.adv_li_dating_pricing ?? null,
+          // };
         }
       } catch (e) {
         console.warn('[MARKETPLACE:findOne] Failed to hydrate from publisher-website for', website.url, e.message);
@@ -441,7 +441,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           dofollow: website.dofollow_link === 1 || website.dofollow_link === true,
           fastPlacement: Boolean(website.fast_placement_status),
           tat: website.tat || 0,
-          linkInsertionBase: parseFloat(website.link_insertion_price || pricingSource.generalLinkInsertionPrice || 0) || 0
+          linkInsertionBase: parseFloat(website.link_insertion_price || 0) || 0
         },
         financial: {
           price: parseFloat(website.price || 0),
@@ -451,23 +451,25 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           pricing: {
             general: {
               guestPost: parseFloat(website.price || 0) || 0,
-              linkInsertion: parseFloat(pricingSource.generalLinkInsertionPrice || pricingSource.link_insertion_price || 0) || 0
+              linkInsertion: parseFloat(website.link_insertion_price || 0) || 0
             },
             casino: {
-              linkInsertion: parseFloat(pricingSource.casinoLinkInsertionPrice || 0) || 0
+              guestPost: parseFloat(website.adv_casino_pricing || 0) || 0,
+              linkInsertion: parseFloat(website.adv_li_casino_pricing || 0) || 0
             },
             crypto: {
-              accepted: Boolean(pricingSource.cryptoAccepted) || false,
-              guestPost: parseFloat(pricingSource.cryptoGuestPostPrice || 0) || 0,
-              linkInsertion: parseFloat(pricingSource.cryptoLinkInsertionPrice || 0) || 0
+              accepted: Boolean(website.adv_crypto_pricing && website.adv_crypto_pricing > 0) || false,
+              guestPost: parseFloat(website.adv_crypto_pricing || 0) || 0,
+              linkInsertion: parseFloat(website.adv_li_crypto_pricing || 0) || 0
             },
             cbd: {
-              accepted: Boolean(pricingSource.cbdAccepted) || false,
-              guestPost: parseFloat(pricingSource.cbdGuestPostPrice || 0) || 0,
-              linkInsertion: parseFloat(pricingSource.cbdLinkInsertionPrice || 0) || 0
+              accepted: Boolean(website.adv_cbd_pricing && website.adv_cbd_pricing > 0) || false,
+              guestPost: parseFloat(website.adv_cbd_pricing || 0) || 0,
+              linkInsertion: parseFloat(website.adv_li_cbd_pricing || 0) || 0
             },
             dating: {
-              linkInsertion: parseFloat(pricingSource.datingLinkInsertionPrice || 0) || 0
+              guestPost: parseFloat(website.adv_dating_pricing || 0) || 0,
+              linkInsertion: parseFloat(website.adv_li_dating_pricing || 0) || 0
             }
           }
         },
@@ -896,3 +898,4 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     }
   }
 }));
+
