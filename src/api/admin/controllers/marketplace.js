@@ -145,20 +145,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const sort = { createdAt: 'desc' };
 
       // Calculate offset and limit for proper pagination
-      // Ensure page is at least 1 and pageSize is positive
-      const pageNum = Math.max(1, parseInt(page) || 1);
-      const pageSizeNum = Math.max(1, parseInt(pageSize) || 20);
+      const pageNum = parseInt(page);
+      const pageSizeNum = parseInt(pageSize);
       const offset = (pageNum - 1) * pageSizeNum;
       const limit = pageSizeNum;
 
-      console.log('[MARKETPLACE FIND] Pagination params:', { 
-        originalPage: page, 
-        originalPageSize: pageSize,
-        page: pageNum, 
-        pageSize: pageSizeNum, 
-        offset, 
-        limit 
-      });
+      console.log('[MARKETPLACE FIND] Pagination params:', { page: pageNum, pageSize: pageSizeNum, offset, limit });
 
       // Get marketplace websites with pagination using query API for proper limit/offset
       const websites = await strapi.db.query('api::marketplace.marketplace').findMany({
@@ -169,10 +161,6 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       });
 
       console.log('[MARKETPLACE FIND] Fetched websites count:', websites.length);
-      if (websites.length > 0) {
-        console.log('[MARKETPLACE FIND] First website ID:', websites[0].id, 'CreatedAt:', websites[0].createdAt);
-        console.log('[MARKETPLACE FIND] Last website ID:', websites[websites.length - 1].id, 'CreatedAt:', websites[websites.length - 1].createdAt);
-      }
 
       // Get total count for pagination
       const total = await strapi.db.query('api::marketplace.marketplace').count({ where: filters });
@@ -297,9 +285,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         data: transformedWebsites,
         meta: {
           pagination: {
-            page: pageNum,
-            pageSize: pageSizeNum,
-            pageCount: Math.ceil(total / pageSizeNum),
+            page: parseInt(page),
+            pageSize: parseInt(pageSize),
+            pageCount: Math.ceil(total / pageSize),
             total
           }
         }

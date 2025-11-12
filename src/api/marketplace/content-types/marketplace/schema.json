@@ -321,6 +321,27 @@
     "delistedAt": {
       "type": "datetime",
       "description": "When the listing was delisted"
+    },
+    "approvalStatus": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "default": "approved",
+      "description": "Manual approval gate for marketplace visibility"
+    },
+    "dataVersion": {
+      "type": "integer",
+      "default": 0,
+      "description": "Incremental version for concurrency control"
+    },
+    "updateRequests": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::website-update-request.website-update-request",
+      "mappedBy": "marketplace"
     }
   }
 }

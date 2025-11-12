@@ -609,81 +609,146 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         populate: ['currentPublisherId', 'originalPublisherId']
       });
 
-      // Add the approved website to the marketplace
+      // Add the approved website to the marketplace using the proper mapping function
       if (updatedWebsite.url) {
         console.log(`[ADMIN ACTION] Adding approved website ${updatedWebsite.url} to marketplace`);
         
         try {
-          // Check if marketplace record already exists
-          const existingMarketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
-            filters: { url: updatedWebsite.url },
-            limit: 1
-          });
+          // Use the createMarketplaceListing helper from publisher-website controller for proper field mapping
+          try {
+            const publisherWebsiteController = strapi.controller('api::publisher-website.publisher-website');
+            
+            if (publisherWebsiteController && typeof publisherWebsiteController.createMarketplaceListing === 'function') {
+              console.log(`[ADMIN ACTION] Using createMarketplaceListing helper for proper field mapping`);
+              const marketplaceListing = await publisherWebsiteController.createMarketplaceListing(updatedWebsite);
+              
+              // Store marketplace ID in publisher website
+              if (marketplaceListing && marketplaceListing.id) {
+                await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+                  data: { marketplaceId: marketplaceListing.id }
+                });
+                console.log(`[ADMIN ACTION] Successfully synced website ${updatedWebsite.url} to marketplace (ID: ${marketplaceListing.id})`);
+                // Success - skip fallback, continue to return transformed data
+              } else {
+                throw new Error('Marketplace listing was not created/updated');
+              }
+            }
+          } catch (controllerError) {
+            console.warn(`[ADMIN ACTION] Error using createMarketplaceListing helper:`, controllerError.message);
+          }
+          
+          // Fallback: Manual marketplace update if helper not available or failed
+          {
+            console.warn(`[ADMIN ACTION] createMarketplaceListing helper not found, falling back to manual mapping`);
+            
+            // Fallback: Manual marketplace update if helper not available
+            const existingMarketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
+              filters: { url: updatedWebsite.url },
+              limit: 1
+            });
 
-          if (existingMarketplaceRecord && existingMarketplaceRecord.length > 0) {
-            console.log(`[ADMIN ACTION] Marketplace record already exists for website ${updatedWebsite.url}, updating it`);
-            
-            // Update existing marketplace record and sync metrics/details
-            await strapi.entityService.update('api::marketplace.marketplace', existingMarketplaceRecord[0].id, {
-              data: {
-                status: 'active',
-                // Sync commonly used marketplace fields from publisher website
-                moz_da: updatedWebsite.moz_da ?? null,
-                ahrefs_dr: updatedWebsite.ahrefs_dr ?? null,
-                ahrefs_traffic: updatedWebsite.ahrefs_traffic ?? null,
-                ahrefs_rank: updatedWebsite.ahrefs_rank ?? null,
-                semrush_authority_score: updatedWebsite.semrush_authority_score ?? null,
-                semrush_traffic: updatedWebsite.semrush_traffic ?? null,
-                moz_spam_score: updatedWebsite.moz_spam_score ?? null,
-                placement_speed: updatedWebsite.placement_speed ?? updatedWebsite.expectedTATHours ?? null,
-                fast_placement_status: updatedWebsite.fast_placement_status ?? null,
-                category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category[0] : updatedWebsite.category ?? null,
-                other_category: Array.isArray(updatedWebsite.category) && updatedWebsite.category.length > 1 ? updatedWebsite.category[1] : updatedWebsite.other_category ?? null,
-                language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language[0] : updatedWebsite.language ?? null,
-                countries: Array.isArray(updatedWebsite.countries) ? updatedWebsite.countries[0] : updatedWebsite.countries ?? null,
-                price: updatedWebsite.generalGuestPostPrice ?? updatedWebsite.price ?? null,
-                publisher_price: updatedWebsite.publisher_price ?? updatedWebsite.generalLinkInsertionPrice ?? null,
-                publisher_name: updatedWebsite.publisherName ?? updatedWebsite.publisher_name ?? null,
-                publisher_email: updatedWebsite.publisherEmail ?? updatedWebsite.publisher_email ?? null,
-                updatedAt: new Date()
+            if (existingMarketplaceRecord && existingMarketplaceRecord.length > 0) {
+              console.log(`[ADMIN ACTION] Marketplace record already exists for website ${updatedWebsite.url}, updating it`);
+              
+              // Use database query API for more reliable updates
+              await strapi.db.query('api::marketplace.marketplace').update({
+                where: { id: existingMarketplaceRecord[0].id },
+                data: {
+                  status: 'active',
+                  publishedAt: new Date(),
+                  approvalStatus: 'approved',
+                  // Sync all pricing fields
+                  price: updatedWebsite.generalGuestPostPrice || 0,
+                  link_insertion_price: updatedWebsite.generalLinkInsertionPrice || 0,
+                  adv_casino_pricing: updatedWebsite.casinoGuestPostPrice || 0,
+                  adv_li_casino_pricing: updatedWebsite.casinoLinkInsertionPrice || 0,
+                  adv_crypto_pricing: updatedWebsite.cryptoGuestPostPrice || 0,
+                  adv_li_crypto_pricing: updatedWebsite.cryptoLinkInsertionPrice || 0,
+                  adv_cbd_pricing: updatedWebsite.cbdGuestPostPrice || 0,
+                  adv_li_cbd_pricing: updatedWebsite.cbdLinkInsertionPrice || 0,
+                  adv_dating_pricing: updatedWebsite.datingGuestPostPrice || 0,
+                  adv_li_dating_pricing: updatedWebsite.datingLinkInsertionPrice || 0,
+                  // Publisher earnings (80% of advertiser prices)
+                  publisher_price: Math.floor(Math.max(
+                    (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
+                    (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+                  )) || 1,
+                  publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * 0.8),
+                  publisher_casino_pricing: Math.floor(Math.max(
+                    (updatedWebsite.casinoGuestPostPrice || 0) * 0.8,
+                    (updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8
+                  )),
+                  publisher_crypto_pricing: Math.floor(Math.max(
+                    (updatedWebsite.cryptoGuestPostPrice || 0) * 0.8,
+                    (updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8
+                  )),
+                  publisher_cbd_pricing: Math.floor(Math.max(
+                    (updatedWebsite.cbdGuestPostPrice || 0) * 0.8,
+                    (updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8
+                  )),
+                  publisher_dating_pricing: Math.floor(Math.max(
+                    (updatedWebsite.datingGuestPostPrice || 0) * 0.8,
+                    (updatedWebsite.datingLinkInsertionPrice || 0) * 0.8
+                  )),
+                  publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8),
+                  publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8),
+                  publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8),
+                  publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * 0.8),
+                  // Other fields
+                  min_word_count: updatedWebsite.minWordCount || 500,
+                  backlink_type: updatedWebsite.backlinkType || 'Do follow',
+                  backlink_validity: updatedWebsite.backlinkValidity || 'lifetime',
+                  category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category : [updatedWebsite.category].filter(Boolean),
+                  language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language : [updatedWebsite.language].filter(Boolean),
+                  countries: updatedWebsite.countries,
+                  guidelines: updatedWebsite.guidelines,
+                  sponsored: updatedWebsite.sponsored || false,
+                  ugc: updatedWebsite.ugc || false,
+                  publisher_writing_price: updatedWebsite.copywritingPrice || 0,
+                  tat: Math.ceil((updatedWebsite.expectedTATHours || 0) / 24),
+                  placement_speed: (updatedWebsite.expectedTATHours || 0) <= 72 ? 'Fast' : 'Normal',
+                  publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
+                  publisher_email: updatedWebsite.publisherEmail,
+                  updatedAt: new Date()
+                }
+              });
+              
+              // Store marketplace ID
+              await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+                data: { marketplaceId: existingMarketplaceRecord[0].id }
+              });
+            } else {
+              console.log(`[ADMIN ACTION] Creating new marketplace record for website ${updatedWebsite.url}`);
+              // For new records, use entityService.create with all fields
+              const newMarketplace = await strapi.entityService.create('api::marketplace.marketplace', {
+                data: {
+                  url: updatedWebsite.url,
+                  status: 'active',
+                  publishedAt: new Date(),
+                  approvalStatus: 'approved',
+                  price: updatedWebsite.generalGuestPostPrice || 0,
+                  link_insertion_price: updatedWebsite.generalLinkInsertionPrice || 0,
+                  publisher_price: Math.floor(Math.max(
+                    (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
+                    (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+                  )) || 1,
+                  publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
+                  publisher_email: updatedWebsite.publisherEmail
+                }
+              });
+              
+              if (newMarketplace && newMarketplace.id) {
+                await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+                  data: { marketplaceId: newMarketplace.id }
+                });
               }
-            });
-          } else {
-            console.log(`[ADMIN ACTION] Creating new marketplace record for website ${updatedWebsite.url}`);
-            
-            // Create new marketplace record
-            await strapi.entityService.create('api::marketplace.marketplace', {
-              data: {
-                url: updatedWebsite.url,
-                status: 'active',
-                publisherWebsite: updatedWebsite.id,
-                // Initial metrics/details snapshot
-                moz_da: updatedWebsite.moz_da ?? null,
-                ahrefs_dr: updatedWebsite.ahrefs_dr ?? null,
-                ahrefs_traffic: updatedWebsite.ahrefs_traffic ?? null,
-                ahrefs_rank: updatedWebsite.ahrefs_rank ?? null,
-                semrush_authority_score: updatedWebsite.semrush_authority_score ?? null,
-                semrush_traffic: updatedWebsite.semrush_traffic ?? null,
-                moz_spam_score: updatedWebsite.moz_spam_score ?? null,
-                placement_speed: updatedWebsite.placement_speed ?? updatedWebsite.expectedTATHours ?? null,
-                fast_placement_status: updatedWebsite.fast_placement_status ?? null,
-                category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category[0] : updatedWebsite.category ?? null,
-                other_category: Array.isArray(updatedWebsite.category) && updatedWebsite.category.length > 1 ? updatedWebsite.category[1] : updatedWebsite.other_category ?? null,
-                language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language[0] : updatedWebsite.language ?? null,
-                countries: Array.isArray(updatedWebsite.countries) ? updatedWebsite.countries[0] : updatedWebsite.countries ?? null,
-                price: updatedWebsite.generalGuestPostPrice ?? updatedWebsite.price ?? null,
-                publisher_price: updatedWebsite.publisher_price ?? updatedWebsite.generalLinkInsertionPrice ?? null,
-                publisher_name: updatedWebsite.publisherName ?? updatedWebsite.publisher_name ?? null,
-                publisher_email: updatedWebsite.publisherEmail ?? updatedWebsite.publisher_email ?? null,
-                createdAt: new Date(),
-                updatedAt: new Date()
-              }
-            });
+            }
           }
           
           console.log(`[ADMIN ACTION] Successfully added website ${updatedWebsite.url} to marketplace`);
         } catch (marketplaceError) {
           console.error(`[ADMIN ACTION] Error adding website ${updatedWebsite.url} to marketplace:`, marketplaceError);
+          console.error(`[ADMIN ACTION] Error details:`, marketplaceError.message, marketplaceError.stack);
           // Don't fail the approval if marketplace creation fails
         }
       }

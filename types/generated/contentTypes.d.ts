@@ -1003,6 +1003,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    approvalStatus: Schema.Attribute.Enumeration<
+      ['pending', 'approved', 'rejected']
+    > &
+      Schema.Attribute.DefaultTo<'approved'>;
     backlink_type: Schema.Attribute.Enumeration<['Do follow', 'No follow']> &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'Do follow'>;
@@ -1014,6 +1018,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    dataVersion: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
     delistedAt: Schema.Attribute.DateTime;
     delistedReason: Schema.Attribute.Enumeration<
       ['ownership_transferred', 'admin_action', 'violation', 'other']
@@ -1223,6 +1228,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    updateRequests: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::website-update-request.website-update-request'
+    >;
     url: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique;
@@ -2017,6 +2026,10 @@ export interface ApiPublisherWebsitePublisherWebsite
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    updateRequests: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::website-update-request.website-update-request'
+    >;
     url: Schema.Attribute.String & Schema.Attribute.Required;
     urlAddedAt: Schema.Attribute.DateTime;
     verificationMethod: Schema.Attribute.Enumeration<
@@ -2553,6 +2566,59 @@ export interface ApiWebsiteRequestWebsiteRequest
       'plugin::users-permissions.user'
     >;
     userEmail: Schema.Attribute.Email & Schema.Attribute.Required;
+  };
+}
+
+export interface ApiWebsiteUpdateRequestWebsiteUpdateRequest
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'website_update_requests';
+  info: {
+    description: 'Pending changes submitted for a marketplace website';
+    displayName: 'Website Update Request';
+    pluralName: 'website-update-requests';
+    singularName: 'website-update-request';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    baseSnapshot: Schema.Attribute.JSON;
+    changes: Schema.Attribute.JSON & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    dataVersion: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::website-update-request.website-update-request'
+    > &
+      Schema.Attribute.Private;
+    marketplace: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::marketplace.marketplace'
+    >;
+    notes: Schema.Attribute.Text;
+    publishedAt: Schema.Attribute.DateTime;
+    publisherWebsite: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::publisher-website.publisher-website'
+    >;
+    reviewedAt: Schema.Attribute.DateTime;
+    reviewedBy: Schema.Attribute.String;
+    source: Schema.Attribute.Enumeration<['publisher', 'admin']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'publisher'>;
+    status: Schema.Attribute.Enumeration<
+      ['pending', 'approved', 'rejected', 'superseded']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
+    submittedAt: Schema.Attribute.DateTime;
+    submittedBy: Schema.Attribute.String;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
   };
 }
 
@@ -3234,6 +3300,7 @@ declare module '@strapi/strapi' {
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
       'api::voucher-code.voucher-code': ApiVoucherCodeVoucherCode;
       'api::website-request.website-request': ApiWebsiteRequestWebsiteRequest;
+      'api::website-update-request.website-update-request': ApiWebsiteUpdateRequestWebsiteUpdateRequest;
       'api::withdrawal-request.withdrawal-request': ApiWithdrawalRequestWithdrawalRequest;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
