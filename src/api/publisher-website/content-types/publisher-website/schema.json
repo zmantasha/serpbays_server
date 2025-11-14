@@ -454,6 +454,12 @@
         "bulk_import"
       ],
       "description": "Method used for last metrics update"
+    },
+    "updateRequests": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::website-update-request.website-update-request",
+      "mappedBy": "publisherWebsite"
     }
   }
 }
