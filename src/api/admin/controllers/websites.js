@@ -1095,11 +1095,197 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       console.log(`[ADMIN ACTION] Mapped update data:`, mappedData);
 
+      // Get the website before update to check if it's approved
+      const websiteBeforeUpdate = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const wasApproved = websiteBeforeUpdate?.submissionStatus === 'approved';
+      const marketplaceId = websiteBeforeUpdate?.marketplaceId;
+
       // Update the website
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: mappedData,
         populate: ['currentPublisherId', 'originalPublisherId']
       });
+
+      // If website is approved, sync changes directly to marketplace (super admin updates go live immediately)
+      if (wasApproved && (updatedWebsite.submissionStatus === 'approved' || mappedData.submissionStatus === undefined)) {
+        console.log(`[ADMIN ACTION] Website ${id} is approved, syncing changes to marketplace`);
+        
+        try {
+          let marketplaceListing = null;
+          
+          // Find marketplace by ID if available
+          if (marketplaceId) {
+            marketplaceListing = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: marketplaceId }
+            });
+          }
+          
+          // Fallback: Find by URL if ID not found
+          if (!marketplaceListing && updatedWebsite.url) {
+            marketplaceListing = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { url: updatedWebsite.url }
+            });
+          }
+
+          if (marketplaceListing) {
+            console.log(`[ADMIN ACTION] Found marketplace listing ${marketplaceListing.id}, syncing all fields`);
+            
+            // Helper to convert backlink validity
+            const convertBacklinkValidity = (value) => {
+              const validityMap = {
+                'one_year': '1 Year',
+                'three_years': '3 Years',
+                'five_years': '5 Years',
+                'lifetime': 'Lifetime'
+              };
+              return validityMap[value] || value || 'Lifetime';
+            };
+
+            // Map all fields from publisher-website to marketplace
+            const marketplaceUpdateData = {
+              // Pricing fields
+              price: updatedWebsite.generalGuestPostPrice || 0,
+              link_insertion_price: updatedWebsite.generalLinkInsertionPrice || 0,
+              adv_casino_pricing: updatedWebsite.casinoGuestPostPrice || 0,
+              adv_li_casino_pricing: updatedWebsite.casinoLinkInsertionPrice || 0,
+              adv_crypto_pricing: updatedWebsite.cryptoGuestPostPrice || 0,
+              adv_li_crypto_pricing: updatedWebsite.cryptoLinkInsertionPrice || 0,
+              adv_cbd_pricing: updatedWebsite.cbdGuestPostPrice || 0,
+              adv_li_cbd_pricing: updatedWebsite.cbdLinkInsertionPrice || 0,
+              adv_dating_pricing: updatedWebsite.datingGuestPostPrice || 0,
+              adv_li_dating_pricing: updatedWebsite.datingLinkInsertionPrice || 0,
+              
+              // Publisher earnings (80% of advertiser prices)
+              publisher_price: Math.floor(Math.max(
+                (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
+                (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+              )) || 1,
+              publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * 0.8),
+              publisher_casino_pricing: Math.floor(Math.max(
+                (updatedWebsite.casinoGuestPostPrice || 0) * 0.8,
+                (updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8
+              )),
+              publisher_crypto_pricing: Math.floor(Math.max(
+                (updatedWebsite.cryptoGuestPostPrice || 0) * 0.8,
+                (updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8
+              )),
+              publisher_cbd_pricing: Math.floor(Math.max(
+                (updatedWebsite.cbdGuestPostPrice || 0) * 0.8,
+                (updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8
+              )),
+              publisher_dating_pricing: Math.floor(Math.max(
+                (updatedWebsite.datingGuestPostPrice || 0) * 0.8,
+                (updatedWebsite.datingLinkInsertionPrice || 0) * 0.8
+              )),
+              publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8),
+              publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8),
+              publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8),
+              publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * 0.8),
+              
+              // Content requirements
+              min_word_count: updatedWebsite.minWordCount || 500,
+              backlink_type: updatedWebsite.backlinkType || 'Do follow',
+              backlink_validity: convertBacklinkValidity(updatedWebsite.backlinkValidity),
+              guidelines: updatedWebsite.guidelines || null,
+              // dofollow_link: (updatedWebsite.backlinkType === 'Do follow' || updatedWebsite.backlinkType === 'Do Follow' || updatedWebsite.backlinkType === 'dofollow') ? 1 : 0,
+              dofollow_link: updatedWebsite.allowedLinks || 1,
+
+              
+              // Content options
+              sponsored: updatedWebsite.sponsored || false,
+              ugc: updatedWebsite.ugc || false,
+              digital_pr: updatedWebsite.isPRSite || false,
+              publisher_writing_price: updatedWebsite.copywritingPrice || 0,
+              
+              // Delivery
+              tat: Math.ceil((updatedWebsite.expectedTATHours || 0) / 24),
+              placement_speed: (updatedWebsite.expectedTATHours || 0) <= 72 ? 'Fast' : 'Normal',
+              sample_links: JSON.stringify(updatedWebsite.samplePosts || []),
+              
+              // Categories and targeting
+              category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category : [updatedWebsite.category].filter(Boolean),
+              language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language : [updatedWebsite.language].filter(Boolean),
+              countries: updatedWebsite.countries || null,
+              
+              // Publisher info
+              publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
+              publisher_email: updatedWebsite.publisherEmail,
+              
+              // Metrics (if updated)
+              moz_da: updatedWebsite.moz_da ?? marketplaceListing.moz_da,
+              ahrefs_dr: updatedWebsite.ahrefs_dr ?? marketplaceListing.ahrefs_dr,
+              ahrefs_traffic: updatedWebsite.ahrefs_traffic ?? marketplaceListing.ahrefs_traffic,
+              ahrefs_rank: updatedWebsite.ahrefs_rank ?? marketplaceListing.ahrefs_rank,
+              semrush_authority_score: updatedWebsite.semrush_authority_score ?? marketplaceListing.semrush_authority_score,
+              semrush_traffic: updatedWebsite.semrush_traffic ?? marketplaceListing.semrush_traffic,
+              moz_spam_score: updatedWebsite.moz_spam_score ?? marketplaceListing.moz_spam_score,
+              ahrefs_referring_domain: updatedWebsite.ahrefs_referring_domain ?? marketplaceListing.ahrefs_referring_domain,
+              ahrefs_keywords: updatedWebsite.ahrefs_keywords ?? marketplaceListing.ahrefs_keywords,
+              
+              // Ensure visibility
+              publishedAt: marketplaceListing.publishedAt || new Date(),
+              approvalStatus: 'approved',
+              status: 'active',
+              updatedAt: new Date()
+            };
+
+            // Clean up undefined values
+            Object.keys(marketplaceUpdateData).forEach(key => {
+              if (marketplaceUpdateData[key] === undefined) {
+                delete marketplaceUpdateData[key];
+              }
+            });
+
+            // Update marketplace using database query API
+            const updatedMarketplace = await strapi.db.query('api::marketplace.marketplace').update({
+              where: { id: marketplaceListing.id },
+              data: marketplaceUpdateData
+            });
+
+            console.log(`[ADMIN ACTION] Successfully synced all fields to marketplace ${marketplaceListing.id}:`, {
+              price: updatedMarketplace.price,
+              link_insertion_price: updatedMarketplace.link_insertion_price,
+              min_word_count: updatedMarketplace.min_word_count,
+              backlink_type: updatedMarketplace.backlink_type,
+              backlink_validity: updatedMarketplace.backlink_validity,
+              dofollow_link: updatedMarketplace.dofollow_link,
+              tat: updatedMarketplace.tat,
+              placement_speed: updatedMarketplace.placement_speed,
+              sponsored: updatedMarketplace.sponsored,
+              ugc: updatedMarketplace.ugc,
+              category: updatedMarketplace.category,
+              language: updatedMarketplace.language
+            });
+
+            // Verify the update
+            const verified = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: marketplaceListing.id }
+            });
+            
+            if (verified) {
+              console.log(`[ADMIN ACTION] Verification - Marketplace updated:`, {
+                id: verified.id,
+                price: verified.price,
+                link_insertion_price: verified.link_insertion_price,
+                min_word_count: verified.min_word_count,
+                backlink_type: verified.backlink_type,
+                backlink_validity: verified.backlink_validity,
+                dofollow_link: verified.dofollow_link,
+                tat: verified.tat,
+                placement_speed: verified.placement_speed,
+                category: verified.category,
+                language: verified.language,
+                countries: verified.countries
+              });
+            }
+          } else {
+            console.warn(`[ADMIN ACTION] No marketplace listing found for approved website ${id}, cannot sync changes`);
+          }
+        } catch (marketplaceSyncError) {
+          console.error(`[ADMIN ACTION] Error syncing to marketplace:`, marketplaceSyncError);
+          // Don't fail the update if marketplace sync fails
+        }
+      }
 
       // Transform data to match frontend expectations
       const transformedWebsite = {
