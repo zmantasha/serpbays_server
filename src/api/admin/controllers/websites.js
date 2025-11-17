@@ -93,12 +93,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
       
       // Search filter - search by domain (url), title/description, or publisher
-      if (search) {
+      // Trim whitespace from search term
+      const trimmedSearch = search ? String(search).trim() : '';
+      if (trimmedSearch) {
         filters.$or = [
-          { url: { $containsi: search } },
-          { publisherName: { $containsi: search } },
-          { description: { $containsi: search } },
-          { id: { $eq: parseInt(search) || 0 } }
+          { url: { $containsi: trimmedSearch } },
+          { publisherName: { $containsi: trimmedSearch } },
+          { description: { $containsi: trimmedSearch } },
+          { id: { $eq: parseInt(trimmedSearch) || 0 } }
         ];
       }
 
