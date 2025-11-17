@@ -92,11 +92,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
       
-      // Search filter
+      // Search filter - search by domain (url), title/description, or publisher
       if (search) {
         filters.$or = [
           { url: { $containsi: search } },
           { publisherName: { $containsi: search } },
+          { description: { $containsi: search } },
           { id: { $eq: parseInt(search) || 0 } }
         ];
       }
