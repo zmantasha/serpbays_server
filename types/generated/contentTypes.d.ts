@@ -1798,6 +1798,9 @@ export interface ApiPublisherWebsitePublisherWebsite
       > &
       Schema.Attribute.DefaultTo<0>;
     category: Schema.Attribute.JSON;
+    category_search: Schema.Attribute.Text &
+      Schema.Attribute.Private &
+      Schema.Attribute.DefaultTo<''>;
     cbdAccepted: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     cbdGuestPostPrice: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<

@@ -1,3 +1,32 @@
+const buildCategorySearchValue = (categoryValue) => {
+  if (!categoryValue) {
+    return '';
+  }
+
+  let values = [];
+  if (Array.isArray(categoryValue)) {
+    values = categoryValue;
+  } else if (typeof categoryValue === 'string') {
+    try {
+      // If it's a JSON string, parse it; otherwise treat as comma separated string
+      const parsed = JSON.parse(categoryValue);
+      if (Array.isArray(parsed)) {
+        values = parsed;
+      } else {
+        values = categoryValue.split(',').map((item) => item.trim());
+      }
+    } catch {
+      values = categoryValue.split(',').map((item) => item.trim());
+    }
+  }
+
+  const normalized = values
+    .map((value) => (typeof value === 'string' ? value.trim().toLowerCase() : ''))
+    .filter(Boolean);
+
+  return normalized.length > 0 ? `|${normalized.join('|')}|` : '';
+};
+
 module.exports = {
   /**
    * After updating a website, handle marketplace creation/updates for approved websites
@@ -279,5 +308,18 @@ module.exports = {
   async beforeCreate(event) {
     const { data } = event.params;
     console.log(`🆕 Creating new website entry for URL: ${data.url} by ${data.publisherEmail}`);
+
+     const categorySearchValue = buildCategorySearchValue(data?.category);
+     data.category_search = categorySearchValue;
+  },
+
+  /**
+   * Before updating a website, ensure derived search fields stay in sync
+   */
+  async beforeUpdate(event) {
+    const { data } = event.params;
+    if (data && Object.prototype.hasOwnProperty.call(data, 'category')) {
+      data.category_search = buildCategorySearchValue(data.category);
+    }
   }
 };

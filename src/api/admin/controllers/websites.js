@@ -9,6 +9,53 @@ const { createCoreController } = require('@strapi/strapi').factories;
 // In-memory storage for bulk import progress (since cache might not be available)
 const bulkImportProgress = new Map();
 
+let categorySearchBackfillPromise = null;
+
+const ensureCategorySearchIndex = async (strapi) => {
+  if (!categorySearchBackfillPromise) {
+    categorySearchBackfillPromise = (async () => {
+      try {
+        await strapi.db.connection.raw(`
+          UPDATE "publisher_websites"
+          SET category_search = COALESCE(
+            (
+              '|' || array_to_string(
+                ARRAY(
+                  SELECT lower(trim(value::text, '"'))
+                  FROM jsonb_array_elements_text(COALESCE(category, '[]'::jsonb)) AS value
+                  WHERE value IS NOT NULL AND value <> ''
+                ),
+                '|'
+              ) || '|'
+            ),
+            ''
+          )
+          WHERE category_search IS NULL OR category_search = '';
+        `);
+      } catch (error) {
+        console.error('[ADMIN WEBSITES] Failed to backfill category_search index:', error);
+      }
+    })();
+  }
+
+  return categorySearchBackfillPromise;
+};
+
+const buildCategorySearchCondition = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.toString().trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  return {
+    category_search: { $contains: `|${normalized}|` }
+  };
+};
+
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
 
   /**
@@ -61,8 +108,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
       }
 
+      // Ensure the derived category_search column is populated (one-time backfill)
+      await ensureCategorySearchIndex(strapi);
+
       // Build filters
       const filters = {};
+
+      // Helper to safely append AND conditions without overwriting other filters
+      const addAndFilter = (condition) => {
+        if (!filters.$and) {
+          filters.$and = [];
+        }
+        filters.$and.push(condition);
+      };
       
       // Convert sort string to proper format for Strapi
       let sortObj = { createdAt: 'desc' }; // Default sort
@@ -121,9 +179,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Category filter
       if (category && category !== 'All Categories') {
         if (Array.isArray(category)) {
-          filters.$or = category.map(cat => ({ category: { $contains: cat } }));
+          const categoryClauses = category
+            .map(buildCategorySearchCondition)
+            .filter(Boolean);
+
+          if (categoryClauses.length > 0) {
+            addAndFilter({ $or: categoryClauses });
+          }
         } else {
-          filters.category = { $contains: category };
+          const clause = buildCategorySearchCondition(category);
+          if (clause) {
+            addAndFilter(clause);
+          }
         }
       }
 
@@ -2412,9 +2479,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Category filter
       if (category && category !== 'All Categories') {
         if (Array.isArray(category)) {
-          filters.$or = category.map(cat => ({ category: { $contains: cat } }));
+          const categoryClauses = category
+            .map(buildCategorySearchCondition)
+            .filter(Boolean);
+
+          if (categoryClauses.length > 0) {
+            addAndFilter({ $or: categoryClauses });
+          }
         } else {
-          filters.category = { $contains: category };
+          const clause = buildCategorySearchCondition(category);
+          if (clause) {
+            addAndFilter(clause);
+          }
         }
       }
 

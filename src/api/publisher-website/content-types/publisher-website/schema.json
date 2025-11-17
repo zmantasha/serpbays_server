@@ -192,6 +192,13 @@
       "required": false,
       "description": "Primary website category"
     },
+    "category_search": {
+      "type": "text",
+      "default": "",
+      "private": true,
+      "configurable": false,
+      "description": "Lowercased pipe-delimited categories for fast text filtering"
+    },
     "minWordCount": {
       "type": "integer",
       "required": false,
