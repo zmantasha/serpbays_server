@@ -48,17 +48,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         recordRangeMax = ''
       } = ctx.query;
 
-      // Debug: Log all query parameters
-      console.log('[ADMIN WEBSITES DEBUG] Query parameters:', {
-        page,
-        pageSize,
-        search,
-        status,
-        category,
-        sortField,
-        sortDirection,
-        allQueryParams: ctx.query
-      });
+      // Debug: Log query parameters (only in development)
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[ADMIN WEBSITES DEBUG] Query parameters:', {
+          page,
+          pageSize,
+          search,
+          status,
+          category,
+          sortField,
+          sortDirection
+        });
+      }
 
       // Build filters
       const filters = {};
@@ -250,22 +251,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      console.log('[ADMIN WEBSITES FILTERS]', JSON.stringify(filters, null, 2));
+      // Only log filters in development mode
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[ADMIN WEBSITES FILTERS]', JSON.stringify(filters, null, 2));
+      }
 
       // Handle record range for limiting results
       let limit = parseInt(pageSize);
       let currentPage = parseInt(page);
       let useRecordRange = false;
       
-      // Debug: Log pagination parameters before processing
-      console.log('[ADMIN WEBSITES PAGINATION DEBUG]', {
-        originalPage: page,
-        originalPageSize: pageSize,
-        parsedPage: currentPage,
-        parsedPageSize: limit,
-        recordRangeMin,
-        recordRangeMax
-      });
+      // Debug: Log pagination parameters (only in development)
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[ADMIN WEBSITES PAGINATION DEBUG]', {
+          originalPage: page,
+          originalPageSize: pageSize,
+          parsedPage: currentPage,
+          parsedPageSize: limit
+        });
+      }
       
       if (recordRangeMin && recordRangeMax) {
         const min = parseInt(recordRangeMin);
@@ -275,7 +279,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           limit = max - min + 1;
           currentPage = Math.floor((min - 1) / limit) + 1;
           useRecordRange = true;
-          console.log(`[ADMIN WEBSITES RECORD RANGE] Applied: ${min} to ${max}, Limit: ${limit}, Page: ${currentPage}`);
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[ADMIN WEBSITES RECORD RANGE] Applied: ${min} to ${max}, Limit: ${limit}, Page: ${currentPage}`);
+          }
         }
       }
 
@@ -291,14 +297,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           offset: offset,
           populate: ['currentPublisherId', 'originalPublisherId']
         });
-        console.log(`[ADMIN WEBSITES RECORD RANGE] Raw query: offset=${offset}, limit=${limit}, results=${websites.length}`);
       } else {
         // Use normal pagination with raw database query for better control
         const offset = (currentPage - 1) * limit;
-        
-        console.log(`[ADMIN WEBSITES PAGINATION] Page: ${currentPage}, PageSize: ${limit}, Offset: ${offset}`);
-        console.log(`[ADMIN WEBSITES PAGINATION] Query filters:`, JSON.stringify(filters, null, 2));
-        console.log(`[ADMIN WEBSITES PAGINATION] Sort object:`, JSON.stringify(sortObj, null, 2));
         
         websites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
           where: filters,
@@ -307,28 +308,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           offset: offset,
           populate: ['currentPublisherId', 'originalPublisherId']
         });
-        
-        console.log(`[ADMIN WEBSITES PAGINATION RESULT] Received ${websites.length} websites (offset: ${offset}, limit: ${limit})`);
-        
-        // Debug: Log first few website IDs to verify different pages
-        if (websites.length > 0) {
-          console.log(`[ADMIN WEBSITES PAGINATION RESULT] First 3 website IDs:`, websites.slice(0, 3).map(w => w.id));
-        }
       }
 
-      // Get total count for pagination
+      // Get total count for pagination (optimized - only count, no data fetch)
       const total = await strapi.db.query('api::publisher-website.publisher-website').count({ where: filters });
-
-      // Debug: Check what's actually in the database
-      const allWebsites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
-        populate: ['currentPublisherId', 'originalPublisherId']
-      });
-      
-      console.log('[ADMIN WEBSITES DEBUG]', {
-        total,
-        websitesCount: websites.length,
-        filtersApplied: Object.keys(filters).length
-      });
 
       // Transform data to match frontend expectations with comprehensive fields
       const transformedWebsites = websites.map(website => ({
@@ -445,14 +428,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       };
 
-      // Debug: Log response pagination metadata
-      console.log('[ADMIN WEBSITES RESPONSE] Pagination metadata:', {
-        page: parseInt(page),
-        pageSize: parseInt(pageSize),
-        pageCount: Math.ceil(total / pageSize),
-        total,
-        actualDataLength: transformedWebsites.length
-      });
+      // Debug: Log response pagination metadata (only in development)
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[ADMIN WEBSITES RESPONSE] Pagination metadata:', {
+          page: parseInt(page),
+          pageSize: parseInt(pageSize),
+          pageCount: Math.ceil(total / pageSize),
+          total,
+          actualDataLength: transformedWebsites.length
+        });
+      }
 
       ctx.send(responseData);
 
