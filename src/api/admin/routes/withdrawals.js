@@ -9,7 +9,7 @@ module.exports = {
     // Withdrawal requests CRUD
     {
       method: 'GET',
-      path: '/api/admin/withdrawals',
+      path: '/admin/withdrawals',
       handler: 'withdrawals.find',
       config: {
         policies: ['global::is-admin'],
@@ -18,7 +18,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/withdrawals/stats',
+      path: '/admin/withdrawals/stats',
       handler: 'withdrawals.getStats',
       config: {
         policies: ['global::is-admin'],
@@ -27,7 +27,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/withdrawals/:id',
+      path: '/admin/withdrawals/:id',
       handler: 'withdrawals.findOne',
       config: {
         policies: ['global::is-admin'],
@@ -36,7 +36,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/withdrawals/:id/approve',
+      path: '/admin/withdrawals/:id/approve',
       handler: 'withdrawals.approve',
       config: {
         policies: ['global::is-admin'],
@@ -45,7 +45,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/withdrawals/:id/reject',
+      path: '/admin/withdrawals/:id/reject',
       handler: 'withdrawals.reject',
       config: {
         policies: ['global::is-admin'],
@@ -54,7 +54,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/withdrawals/:id/mark-as-paid',
+      path: '/admin/withdrawals/:id/mark-as-paid',
       handler: 'withdrawals.markAsPaid',
       config: {
         policies: ['global::is-admin'],
@@ -63,7 +63,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/admin/withdrawals/bulk-process',
+      path: '/admin/withdrawals/bulk-process',
       handler: 'withdrawals.bulkProcess',
       config: {
         policies: ['global::is-admin'],

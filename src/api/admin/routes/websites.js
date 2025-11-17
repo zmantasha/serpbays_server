@@ -9,7 +9,7 @@ module.exports = {
     // Get all websites with pagination and filters
     {
       method: 'GET',
-      path: '/api/admin/websites',
+      path: '/admin/websites',
       handler: 'websites.find',
       config: {
         policies: ['global::is-admin'],
@@ -20,7 +20,7 @@ module.exports = {
     // Create new website
     {
       method: 'POST',
-      path: '/api/admin/websites',
+      path: '/admin/websites',
       handler: 'websites.create',
       config: {
         policies: ['global::is-admin'],
@@ -31,7 +31,7 @@ module.exports = {
     // Get website statistics
     {
       method: 'GET',
-      path: '/api/admin/websites/stats',
+      path: '/admin/websites/stats',
       handler: 'websites.getStats',
       config: {
         policies: ['global::is-admin'],
@@ -42,7 +42,7 @@ module.exports = {
     // Bulk update metrics from CSV (MUST come before :id routes)
     {
       method: 'POST',
-      path: '/api/admin/websites/bulk-update-metrics',
+      path: '/admin/websites/bulk-update-metrics',
       handler: 'websites.bulkUpdateMetrics',
       config: {
         policies: ['global::is-admin'],
@@ -53,7 +53,7 @@ module.exports = {
     // Export websites with filters
     {
       method: 'GET',
-      path: '/api/admin/websites/export',
+      path: '/admin/websites/export',
       handler: 'websites.exportFiltered',
       config: {
         policies: ['global::is-admin'],
@@ -64,7 +64,7 @@ module.exports = {
     // Check website conflicts
     {
       method: 'GET',
-      path: '/api/admin/websites/check-conflict',
+      path: '/admin/websites/check-conflict',
       handler: 'websites.checkConflict',
       config: {
         policies: ['global::is-admin'],
@@ -75,7 +75,7 @@ module.exports = {
     // Bulk import (MUST come before :id routes)
     {
       method: 'POST',
-      path: '/api/admin/websites/bulk-import',
+      path: '/admin/websites/bulk-import',
       handler: 'websites.bulkImport',
       config: {
         policies: ['global::is-admin'],
@@ -86,7 +86,7 @@ module.exports = {
     // Get bulk import progress (MUST come before :id routes)
     {
       method: 'GET',
-      path: '/api/admin/websites/bulk-import-progress',
+      path: '/admin/websites/bulk-import-progress',
       handler: 'websites.getBulkImportProgress',
       config: {
         policies: ['global::is-admin'],
@@ -97,7 +97,7 @@ module.exports = {
     // Get single website
     {
       method: 'GET',
-      path: '/api/admin/websites/:id',
+      path: '/admin/websites/:id',
       handler: 'websites.findOne',
       config: {
         policies: ['global::is-admin'],
@@ -108,7 +108,7 @@ module.exports = {
     // Approve website
     {
       method: 'PUT',
-      path: '/api/admin/websites/:id/approve',
+      path: '/admin/websites/:id/approve',
       handler: 'websites.approve',
       config: {
         policies: ['global::is-admin'],
@@ -119,7 +119,7 @@ module.exports = {
     // Reject website
     {
       method: 'PUT',
-      path: '/api/admin/websites/:id/reject',
+      path: '/admin/websites/:id/reject',
       handler: 'websites.reject',
       config: {
         policies: ['global::is-admin'],
@@ -130,7 +130,7 @@ module.exports = {
     // Delete website
     {
       method: 'DELETE',
-      path: '/api/admin/websites/:id',
+      path: '/admin/websites/:id',
       handler: 'websites.delete',
       config: {
         policies: ['global::is-admin'],
@@ -141,7 +141,7 @@ module.exports = {
     // Bulk approve websites
     {
       method: 'POST',
-      path: '/api/admin/websites/bulk-approve',
+      path: '/admin/websites/bulk-approve',
       handler: 'websites.bulkApprove',
       config: {
         policies: ['global::is-admin'],
@@ -152,7 +152,7 @@ module.exports = {
     // Bulk reject websites
     {
       method: 'POST',
-      path: '/api/admin/websites/bulk-reject',
+      path: '/admin/websites/bulk-reject',
       handler: 'websites.bulkReject',
       config: {
         policies: ['global::is-admin'],
@@ -163,7 +163,7 @@ module.exports = {
     // Bulk delete websites
     {
       method: 'POST',
-      path: '/api/admin/websites/bulk-delete',
+      path: '/admin/websites/bulk-delete',
       handler: 'websites.bulkDelete',
       config: {
         policies: ['global::is-admin'],
@@ -174,7 +174,7 @@ module.exports = {
     // Update website metrics
     {
       method: 'PUT',
-      path: '/api/admin/websites/:id/metrics',
+      path: '/admin/websites/:id/metrics',
       handler: 'websites.updateMetrics',
       config: {
         policies: ['global::is-admin'],
@@ -185,7 +185,7 @@ module.exports = {
     // Replace website
     {
       method: 'PUT',
-      path: '/api/admin/websites/:id/replace',
+      path: '/admin/websites/:id/replace',
       handler: 'websites.replaceWebsite',
       config: {
         policies: ['global::is-admin'],
@@ -196,7 +196,7 @@ module.exports = {
     // Update website (general update)
     {
       method: 'PUT',
-      path: '/api/admin/websites/:id',
+      path: '/admin/websites/:id',
       handler: 'websites.update',
       config: {
         policies: ['global::is-admin'],

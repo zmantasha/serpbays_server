@@ -8,7 +8,7 @@ module.exports = {
   routes: [
     {
       method: 'GET',
-      path: '/api/admin/website-requests',
+      path: '/admin/website-requests',
       handler: 'website-requests.getWebsiteRequests',
       config: {
         policies: ['global::is-admin']
@@ -16,7 +16,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/website-requests/stats',
+      path: '/admin/website-requests/stats',
       handler: 'website-requests.getWebsiteRequestStats',
       config: {
         policies: ['global::is-admin']
@@ -24,7 +24,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/website-requests/:id',
+      path: '/admin/website-requests/:id',
       handler: 'website-requests.getWebsiteRequestById',
       config: {
         policies: ['global::is-admin']
@@ -32,7 +32,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/website-requests/:id/approve',
+      path: '/admin/website-requests/:id/approve',
       handler: 'website-requests.approveWebsiteRequest',
       config: {
         policies: ['global::is-admin']
@@ -40,7 +40,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/website-requests/:id/reject',
+      path: '/admin/website-requests/:id/reject',
       handler: 'website-requests.rejectWebsiteRequest',
       config: {
         policies: ['global::is-admin']
@@ -48,7 +48,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/admin/website-requests/bulk-process',
+      path: '/admin/website-requests/bulk-process',
       handler: 'website-requests.bulkProcessWebsiteRequests',
       config: {
         policies: ['global::is-admin']

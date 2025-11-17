@@ -21,7 +21,7 @@ async function testPagination() {
     // Try with different endpoint structure
     console.log('\n=== Testing with different endpoint ===');
     try {
-      const response2 = await axios.get(`http://localhost:1337/api/api/admin/websites?page=1&pageSize=10`);
+      const response2 = await axios.get(`http://localhost:1337/api/admin/websites?page=1&pageSize=10`);
       console.log('Response status:', response2.status);
       console.log('Pagination meta:', response2.data.meta?.pagination);
       console.log('First 3 website IDs:', response2.data.data?.slice(0, 3).map(w => w.id));

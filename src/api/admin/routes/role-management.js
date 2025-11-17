@@ -10,7 +10,7 @@ module.exports = {
     // Create new admin role (Super Admin only)
     {
       method: 'POST',
-      path: '/api/admin/roles',
+      path: '/admin/roles',
       handler: 'role-management.createRole',
       config: {
         policies: ['global::is-super-admin'],
@@ -21,7 +21,7 @@ module.exports = {
     // List all admin roles (Super Admin only)
     {
       method: 'GET',
-      path: '/api/admin/roles',
+      path: '/admin/roles',
       handler: 'role-management.listRoles',
       config: {
         policies: ['global::is-super-admin'],
@@ -32,7 +32,7 @@ module.exports = {
     // Update admin role (Super Admin only)
     {
       method: 'PUT',
-      path: '/api/admin/roles/:id',
+      path: '/admin/roles/:id',
       handler: 'role-management.updateRole',
       config: {
         policies: ['global::is-super-admin'],
@@ -43,7 +43,7 @@ module.exports = {
     // Delete admin role (Super Admin only)
     {
       method: 'DELETE',
-      path: '/api/admin/roles/:id',
+      path: '/admin/roles/:id',
       handler: 'role-management.deleteRole',
       config: {
         policies: ['global::is-super-admin'],
@@ -54,7 +54,7 @@ module.exports = {
     // Assign role to user (Super Admin only)
     {
       method: 'POST',
-      path: '/api/admin/roles/assign',
+      path: '/admin/roles/assign',
       handler: 'role-management.assignRole',
       config: {
         policies: ['global::is-super-admin'],
@@ -65,7 +65,7 @@ module.exports = {
     // Remove role from user (Super Admin only)
     {
       method: 'POST',
-      path: '/api/admin/roles/remove',
+      path: '/admin/roles/remove',
       handler: 'role-management.removeRole',
       config: {
         policies: ['global::is-super-admin'],

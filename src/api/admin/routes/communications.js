@@ -9,7 +9,7 @@ module.exports = {
     // Communications CRUD
     {
       method: 'GET',
-      path: '/api/admin/communications',
+      path: '/admin/communications',
       handler: 'communications.find',
       config: {
         policies: ['global::is-admin'],
@@ -18,7 +18,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/communications/stats',
+      path: '/admin/communications/stats',
       handler: 'communications.getStats',
       config: {
         policies: ['global::is-admin'],
@@ -27,7 +27,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/communications/flagged',
+      path: '/admin/communications/flagged',
       handler: 'communications.getFlagged',
       config: {
         policies: ['global::is-admin'],
@@ -36,7 +36,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/communications/:id',
+      path: '/admin/communications/:id',
       handler: 'communications.findOne',
       config: {
         policies: ['global::is-admin'],
@@ -45,7 +45,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/admin/communications/send',
+      path: '/admin/communications/send',
       handler: 'communications.sendMessage',
       config: {
         policies: ['global::is-admin'],
@@ -54,7 +54,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/communications/:id/flag',
+      path: '/admin/communications/:id/flag',
       handler: 'communications.flag',
       config: {
         policies: ['global::is-admin'],
@@ -63,7 +63,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/communications/:id/unflag',
+      path: '/admin/communications/:id/unflag',
       handler: 'communications.unflag',
       config: {
         policies: ['global::is-admin'],
@@ -72,7 +72,7 @@ module.exports = {
     },
     {
       method: 'DELETE',
-      path: '/api/admin/communications/:id',
+      path: '/admin/communications/:id',
       handler: 'communications.delete',
       config: {
         policies: ['global::is-admin'],

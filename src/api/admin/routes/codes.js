@@ -10,7 +10,7 @@ module.exports = {
     // Get all codes with filtering and pagination
     {
       method: 'GET',
-      path: '/api/admin/codes',
+      path: '/admin/codes',
       handler: 'codes.find',
       config: {
         auth: false, // Temporarily disable auth for testing
@@ -22,7 +22,7 @@ module.exports = {
     // Get code statistics
     {
       method: 'GET',
-      path: '/api/admin/codes/stats',
+      path: '/admin/codes/stats',
       handler: 'codes.getStats',
       config: {
         auth: false, // Temporarily disable auth for testing
@@ -34,7 +34,7 @@ module.exports = {
     // Generate a new code
     {
       method: 'POST',
-      path: '/api/admin/codes/generate',
+      path: '/admin/codes/generate',
       handler: 'codes.generateCode',
       config: {
         auth: false, // Temporarily disable auth for testing
@@ -46,7 +46,7 @@ module.exports = {
     // Bulk generate codes
     {
       method: 'POST',
-      path: '/api/admin/codes/bulk-generate',
+      path: '/admin/codes/bulk-generate',
       handler: 'codes.bulkGenerateCodes',
       config: {
         auth: false, // Temporarily disable auth for testing
@@ -58,7 +58,7 @@ module.exports = {
     // Update code status
     {
       method: 'PUT',
-      path: '/api/admin/codes/:id/status',
+      path: '/admin/codes/:id/status',
       handler: 'codes.updateStatus',
       config: {
         auth: false, // Temporarily disable auth for testing
@@ -70,7 +70,7 @@ module.exports = {
     // Delete a code
     {
       method: 'DELETE',
-      path: '/api/admin/codes/:id',
+      path: '/admin/codes/:id',
       handler: 'codes.deleteCode',
       config: {
         auth: false, // Temporarily disable auth for testing

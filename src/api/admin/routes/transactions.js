@@ -9,7 +9,7 @@ module.exports = {
     // Transactions CRUD
     {
       method: 'GET',
-      path: '/api/admin/transactions',
+      path: '/admin/transactions',
       handler: 'transactions.find',
       config: {
         policies: ['global::is-admin'],
@@ -18,7 +18,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/transactions/stats',
+      path: '/admin/transactions/stats',
       handler: 'transactions.getStats',
       config: {
         policies: ['global::is-admin'],
@@ -27,7 +27,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/transactions/report',
+      path: '/admin/transactions/report',
       handler: 'transactions.generateReport',
       config: {
         policies: ['global::is-admin'],
@@ -36,7 +36,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/transactions/:id',
+      path: '/admin/transactions/:id',
       handler: 'transactions.findOne',
       config: {
         policies: ['global::is-admin'],
@@ -45,7 +45,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/transactions/:id/status',
+      path: '/admin/transactions/:id/status',
       handler: 'transactions.updateStatus',
       config: {
         policies: ['global::is-admin'],
@@ -54,7 +54,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/transactions/:id/approve',
+      path: '/admin/transactions/:id/approve',
       handler: 'transactions.approve',
       config: {
         policies: ['global::is-admin'],
@@ -63,7 +63,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/transactions/:id/reject',
+      path: '/admin/transactions/:id/reject',
       handler: 'transactions.reject',
       config: {
         policies: ['global::is-admin'],

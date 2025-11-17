@@ -29,7 +29,7 @@ module.exports = {
     // Core routes
     {
       method: 'GET',
-      path: '/api/projects',
+      path: '/projects',
       handler: 'api::project.project.find',
       config: {
         policies: ['api::project.is-authenticated'],
@@ -38,7 +38,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/projects/:id',
+      path: '/projects/:id',
       handler: 'api::project.project.findOne',
       config: {
         policies: ['api::project.is-authenticated'],
@@ -47,7 +47,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/projects',
+      path: '/projects',
       handler: 'api::project.project.create',
       config: {
         policies: ['api::project.is-authenticated'],
@@ -56,7 +56,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/projects/:id',
+      path: '/projects/:id',
       handler: 'api::project.project.update',
       config: {
         policies: ['api::project.is-authenticated'],
@@ -65,7 +65,7 @@ module.exports = {
     },
     {
       method: 'DELETE',
-      path: '/api/projects/:id',
+      path: '/projects/:id',
       handler: 'api::project.project.delete',
       config: {
         policies: ['api::project.is-authenticated'],
@@ -75,7 +75,7 @@ module.exports = {
     // Custom routes
     {
       method: 'GET',
-      path: '/api/projects/my/all',
+      path: '/projects/my/all',
       handler: 'api::project.project.getMyProjects',
       config: {
         policies: ['api::project.is-authenticated'],
@@ -84,7 +84,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/projects/:id/team',
+      path: '/projects/:id/team',
       handler: 'api::project.project.addTeamMembers',
       config: {
         policies: ['api::project.is-authenticated'],

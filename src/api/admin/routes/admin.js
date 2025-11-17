@@ -10,7 +10,7 @@ module.exports = {
     // Admin Authentication
     {
       method: 'POST',
-      path: '/api/admin/login',
+      path: '/admin/login',
       handler: 'admin.adminLogin',
       config: {
         auth: false, // No auth required for login
@@ -20,7 +20,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/me',
+      path: '/admin/me',
       handler: 'admin.me',
       config: {
         policies: ['global::is-admin'],
@@ -31,7 +31,7 @@ module.exports = {
     // Admin Dashboard
     {
       method: 'GET',
-      path: '/api/admin/dashboard/stats',
+      path: '/admin/dashboard/stats',
       handler: 'admin.getDashboardStats',
       config: {
         policies: ['global::is-admin'],
@@ -40,7 +40,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/dashboard/activities',
+      path: '/admin/dashboard/activities',
       handler: 'admin.getRecentActivities',
       config: {
         policies: ['global::is-admin'],

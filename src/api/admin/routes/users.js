@@ -9,7 +9,7 @@ module.exports = {
     // Users CRUD
     {
       method: 'GET',
-      path: '/api/admin/users',
+      path: '/admin/users',
       handler: 'users.find',
       config: {
         policies: ['global::is-admin'],
@@ -18,7 +18,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/users/stats',
+      path: '/admin/users/stats',
       handler: 'users.getStats',
       config: {
         policies: ['global::is-admin'],
@@ -27,7 +27,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/users/:id',
+      path: '/admin/users/:id',
       handler: 'users.findOne',
       config: {
         policies: ['global::is-admin'],
@@ -36,7 +36,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/users/:id',
+      path: '/admin/users/:id',
       handler: 'users.update',
       config: {
         policies: ['global::is-admin'],
@@ -45,7 +45,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/users/:id/block',
+      path: '/admin/users/:id/block',
       handler: 'users.toggleBlock',
       config: {
         policies: ['global::is-admin'],
@@ -54,7 +54,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/users/:id/confirm',
+      path: '/admin/users/:id/confirm',
       handler: 'users.confirmUser',
       config: {
         policies: ['global::is-admin'],
@@ -63,7 +63,7 @@ module.exports = {
     },
     {
       method: 'DELETE',
-      path: '/api/admin/users/:id',
+      path: '/admin/users/:id',
       handler: 'users.delete',
       config: {
         policies: ['global::is-admin'],

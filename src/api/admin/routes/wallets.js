@@ -9,7 +9,7 @@ module.exports = {
     // Get all users wallet information
     {
       method: 'GET',
-      path: '/api/admin/wallets',
+      path: '/admin/wallets',
       handler: 'wallets.getAllWallets',
       config: {
         policies: ['global::is-admin'],
@@ -20,7 +20,7 @@ module.exports = {
     // Get wallet statistics
     {
       method: 'GET',
-      path: '/api/admin/wallets/stats',
+      path: '/admin/wallets/stats',
       handler: 'wallets.getWalletStats',
       config: {
         policies: ['global::is-admin'],
@@ -31,7 +31,7 @@ module.exports = {
     // Get specific user wallet details
     {
       method: 'GET',
-      path: '/api/admin/wallets/:userId',
+      path: '/admin/wallets/:userId',
       handler: 'wallets.getUserWallet',
       config: {
         policies: ['global::is-admin'],
@@ -42,7 +42,7 @@ module.exports = {
     // Get user wallet transactions
     {
       method: 'GET',
-      path: '/api/admin/wallets/:userId/transactions',
+      path: '/admin/wallets/:userId/transactions',
       handler: 'wallets.getUserTransactions',
       config: {
         policies: ['global::is-admin'],
@@ -53,7 +53,7 @@ module.exports = {
     // Update user wallet balance (admin action)
     {
       method: 'PUT',
-      path: '/api/admin/wallets/:userId/balance',
+      path: '/admin/wallets/:userId/balance',
       handler: 'wallets.updateWalletBalance',
       config: {
         policies: ['global::is-admin'],
@@ -64,7 +64,7 @@ module.exports = {
     // Create manual transaction (admin action)
     {
       method: 'POST',
-      path: '/api/admin/wallets/:userId/transactions',
+      path: '/admin/wallets/:userId/transactions',
       handler: 'wallets.createTransaction',
       config: {
         policies: ['global::is-admin'],
@@ -75,7 +75,7 @@ module.exports = {
     // Wallet operations (add funds, remove funds, set balance, transfer)
     {
       method: 'POST',
-      path: '/api/admin/wallets/:walletId/operations',
+      path: '/admin/wallets/:walletId/operations',
       handler: 'wallets.walletOperation',
       config: {
         policies: ['global::is-admin'],

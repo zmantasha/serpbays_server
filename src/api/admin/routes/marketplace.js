@@ -9,7 +9,7 @@ module.exports = {
     // Marketplace CRUD
     {
       method: 'GET',
-      path: '/api/admin/marketplace',
+      path: '/admin/marketplace',
       handler: 'marketplace.find',
       config: {
         policies: ['global::is-admin'],
@@ -18,7 +18,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/marketplace/stats',
+      path: '/admin/marketplace/stats',
       handler: 'marketplace.getStats',
       config: {
         policies: ['global::is-admin'],
@@ -27,7 +27,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/marketplace/:id',
+      path: '/admin/marketplace/:id',
       handler: 'marketplace.findOne',
       config: {
         policies: ['global::is-admin'],
@@ -36,7 +36,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/marketplace/:id',
+      path: '/admin/marketplace/:id',
       handler: 'marketplace.update',
       config: {
         policies: ['global::is-admin'],
@@ -45,7 +45,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/marketplace/:id/status',
+      path: '/admin/marketplace/:id/status',
       handler: 'marketplace.toggleStatus',
       config: {
         policies: ['global::is-admin'],
@@ -54,7 +54,7 @@ module.exports = {
     },
     {
       method: 'DELETE',
-      path: '/api/admin/marketplace/:id',
+      path: '/admin/marketplace/:id',
       handler: 'marketplace.delete',
       config: {
         policies: ['global::is-admin'],
@@ -63,7 +63,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/admin/marketplace/bulk-import',
+      path: '/admin/marketplace/bulk-import',
       handler: 'marketplace.bulkImport',
       config: {
         policies: ['global::is-admin'],
@@ -72,7 +72,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/admin/marketplace/bulk-delete',
+      path: '/admin/marketplace/bulk-delete',
       handler: 'marketplace.bulkDelete',
       config: {
         policies: ['global::is-admin'],

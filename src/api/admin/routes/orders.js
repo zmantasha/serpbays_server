@@ -9,7 +9,7 @@ module.exports = {
     // Orders CRUD
     {
       method: 'GET',
-      path: '/api/admin/orders',
+      path: '/admin/orders',
       handler: 'orders.find',
       config: {
         policies: ['global::is-admin'],
@@ -18,7 +18,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/orders/stats',
+      path: '/admin/orders/stats',
       handler: 'orders.getStats',
       config: {
         policies: ['global::is-admin'],
@@ -27,7 +27,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/orders/:id',
+      path: '/admin/orders/:id',
       handler: 'orders.findOne',
       config: {
         policies: ['global::is-admin'],
@@ -36,7 +36,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/orders/:id/status',
+      path: '/admin/orders/:id/status',
       handler: 'orders.updateStatus',
       config: {
         policies: ['global::is-admin'],
@@ -45,7 +45,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/orders/:id/assign',
+      path: '/admin/orders/:id/assign',
       handler: 'orders.assignPublisher',
       config: {
         policies: ['global::is-admin'],
@@ -54,7 +54,7 @@ module.exports = {
     },
     {
       method: 'PUT',
-      path: '/api/admin/orders/:id/cancel',
+      path: '/admin/orders/:id/cancel',
       handler: 'orders.cancelOrder',
       config: {
         policies: ['global::is-admin'],
@@ -63,7 +63,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/orders/:id/content',
+      path: '/admin/orders/:id/content',
       handler: 'orders.getOrderContent',
       config: {
         policies: ['global::is-admin'],
@@ -72,7 +72,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/admin/orders/:id/chatroom',
+      path: '/admin/orders/:id/chatroom',
       handler: 'orders.getOrderChatroom',
       config: {
         policies: ['global::is-admin'],
@@ -81,7 +81,7 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/api/admin/orders/:id/chatroom/message',
+      path: '/admin/orders/:id/chatroom/message',
       handler: 'orders.sendMessage',
       config: {
         policies: ['global::is-admin'],

@@ -9,7 +9,7 @@ module.exports = {
     // Get payment gateway settings (admin only)
     {
       method: 'GET',
-      path: '/api/admin/payment-gateways',
+      path: '/admin/payment-gateways',
       handler: 'payment-gateways.getPaymentGateways',
       config: {
         policies: ['global::is-super-admin'],
@@ -20,7 +20,7 @@ module.exports = {
     // Update payment gateway settings (admin only)
     {
       method: 'PUT',
-      path: '/api/admin/payment-gateways',
+      path: '/admin/payment-gateways',
       handler: 'payment-gateways.updatePaymentGateways',
       config: {
         policies: ['global::is-super-admin'],
@@ -31,7 +31,7 @@ module.exports = {
     // Get enabled payment gateways (public endpoint for client)
     {
       method: 'GET',
-      path: '/api/payment-gateways/enabled',
+      path: '/payment-gateways/enabled',
       handler: 'payment-gateways.getEnabledPaymentGateways',
       config: {
         auth: false,

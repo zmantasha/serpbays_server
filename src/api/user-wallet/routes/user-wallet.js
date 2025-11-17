@@ -20,7 +20,7 @@ module.exports = {
     },
     {
       method: 'GET',
-      path: '/api/api/wallet/balance',
+      path: '/api/wallet/balance',
       handler: 'user-wallet.getBalance',
       config: {
         auth: {
