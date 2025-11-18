@@ -390,9 +390,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         traffic: website.moz_da || 'N/A',
         addedDate: website.createdAt,
         owner: {
-          id: website.currentPublisherId?.id || website.originalPublisherId?.id || 0,
-          username: website.currentPublisherId?.username || website.originalPublisherId?.username || 'Unknown',
-          email: website.currentPublisherId?.email || website.originalPublisherId?.email || 'N/A'
+          id: website.currentPublisherId?.id || website.originalPublisherId?.id ||website.publisherId|| 0,
+          username: website.currentPublisherId?.username || website.originalPublisherId?.username  ||website.publisherName|| 'Unknown',
+          email: website.currentPublisherId?.email || website.originalPublisherId?.email ||website.publisherEmail
+||          'N/A'
         },
         // SEO Metrics
         metrics: {
@@ -546,9 +547,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         traffic: website.moz_da || 'N/A',
         addedDate: website.createdAt,
         owner: {
-          id: website.currentPublisherId?.id || website.originalPublisherId?.id || 0,
-          username: website.currentPublisherId?.username || website.originalPublisherId?.username || 'Unknown',
-          email: website.currentPublisherId?.email || website.originalPublisherId?.email || 'N/A'
+          id: website.currentPublisherId?.id || website.originalPublisherId?.id ||website.publisherId|| 0,
+          username: website.currentPublisherId?.username || website.originalPublisherId?.username  ||website.publisherName|| 'Unknown',
+          email: website.currentPublisherId?.email || website.originalPublisherId?.email ||website.publisherEmail
+||          'N/A'
         },
         // Pricing information
         pricing: {
