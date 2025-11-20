@@ -376,6 +376,26 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       }).length;
 
       console.log(`[DEBUG] Website ${website.id} (${website.url}): totalOrders=${totalOrders}, lastMonthOrders=${lastMonthOrders}`);
+      console.log("websitesssss", website)
+      const normalizeField = (value) => {
+        if (!value) return undefined;
+        if (Array.isArray(value)) return value;
+        if (typeof value === 'string') {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) return parsed;
+          } catch (err) {
+            // not JSON
+          }
+          return value.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        return value;
+      };
+
+      const category = normalizeField(website.category);
+      const subcategory = normalizeField(website.other_category);
+      const countries = normalizeField(website.country) || normalizeField(website.countries);
+      const languages = normalizeField(website.language) || normalizeField(website.languages);
 
       // Transform data for admin panel
       const transformedWebsite = {
@@ -383,8 +403,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         domain: website.url,
         title: website.publisher_name || website.url,
         description: website.description,
-        category: website.category,
-        subcategory: website.other_category,
+        category,
+        subcategory,
         metrics: {
           // Ahrefs
           dr: metricsSource.ahrefs_dr,
@@ -409,8 +429,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           }
         },
         content: {
-          language: website.language, // Default since not in schema
-          country: website.country, // Default since not in schema
+          language: languages,
+          country: countries,
           updateFrequency: website.placement_speed || 'Normal',
           contentType: 'Blog Articles', // Default since not in schema
           topics: [], // Default since not in schema
