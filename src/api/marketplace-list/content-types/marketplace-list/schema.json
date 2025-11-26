@@ -1,0 +1,41 @@
+{
+  "kind": "collectionType",
+  "collectionName": "marketplace_lists",
+  "info": {
+    "singularName": "marketplace-list",
+    "pluralName": "marketplace-lists",
+    "displayName": "Marketplace List",
+    "description": "User-created lists of marketplace items"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": true
+    }
+  },
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "marketplaces": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::marketplace.marketplace"
+    },
+    "owner": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "description": {
+      "type": "text"
+    }
+  }
+}
+

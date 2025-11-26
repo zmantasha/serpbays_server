@@ -906,6 +906,53 @@ export interface ApiInvoiceInvoice extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiMarketplaceListMarketplaceList
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'marketplace_lists';
+  info: {
+    description: 'User-created lists of marketplace items';
+    displayName: 'Marketplace List';
+    pluralName: 'marketplace-lists';
+    singularName: 'marketplace-list';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::marketplace-list.marketplace-list'
+    > &
+      Schema.Attribute.Private;
+    marketplaces: Schema.Attribute.Relation<
+      'manyToMany',
+      'api::marketplace.marketplace'
+    >;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    owner: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
   collectionName: 'marketplaces';
   info: {
@@ -3286,6 +3333,7 @@ declare module '@strapi/strapi' {
       'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;
       'api::invoice.invoice': ApiInvoiceInvoice;
+      'api::marketplace-list.marketplace-list': ApiMarketplaceListMarketplaceList;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
       'api::notification.notification': ApiNotificationNotification;
       'api::order-content.order-content': ApiOrderContentOrderContent;
