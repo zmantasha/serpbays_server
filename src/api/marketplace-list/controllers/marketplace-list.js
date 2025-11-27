@@ -39,6 +39,8 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
   async find(ctx) {
     const { user } = ctx.state;
 
+    console.log('📋 FIND request received for user:', user?.id);
+
     if (!user) {
       return ctx.unauthorized('You must be logged in to view lists.');
     }
@@ -53,6 +55,8 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    console.log('📋 Found lists:', entities.map(e => ({ id: e.id, name: e.name })));
 
     const sanitizedEntities = await this.sanitizeOutput(entities, ctx);
     return this.transformResponse(sanitizedEntities);
@@ -121,24 +125,49 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
     const { user } = ctx.state;
     const { id } = ctx.params;
 
+    console.log('🗑️ DELETE request received:', { id, userId: user?.id });
+
     if (!user) {
+      console.log('❌ User not authenticated');
       return ctx.unauthorized('You must be logged in to delete a list.');
     }
 
     // Check if list exists and belongs to user
     const existingList = await strapi.db.query('api::marketplace-list.marketplace-list').findOne({
       where: {
-        id,
+        id: parseInt(id),
         owner: user.id,
       },
     });
 
+    console.log('📋 Existing list found:', existingList);
+
     if (!existingList) {
+      console.log('❌ List not found or permission denied');
       return ctx.notFound('List not found or you do not have permission to delete it.');
     }
 
-    await strapi.service('api::marketplace-list.marketplace-list').delete(id);
-    return ctx.send({ message: 'List deleted successfully' });
+    try {
+      // Delete using database query directly
+      const result = await strapi.db.query('api::marketplace-list.marketplace-list').delete({
+        where: {
+          id: parseInt(id),
+        },
+      });
+      
+      console.log('✅ Delete result:', result);
+      console.log('✅ List deleted successfully from database');
+      
+      return ctx.send({ 
+        data: { 
+          message: 'List deleted successfully',
+          deletedId: parseInt(id)
+        } 
+      });
+    } catch (error) {
+      console.error('❌ Error deleting list:', error);
+      return ctx.internalServerError('Failed to delete list');
+    }
   },
 }));
 
