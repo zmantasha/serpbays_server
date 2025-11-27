@@ -49,9 +49,7 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
         owner: user.id,
       },
       populate: {
-        marketplaces: {
-          populate: '*',
-        },
+        marketplaces: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -74,9 +72,7 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
         owner: user.id,
       },
       populate: {
-        marketplaces: {
-          populate: '*',
-        },
+        marketplaces: true,
       },
     });
 
