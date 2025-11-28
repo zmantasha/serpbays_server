@@ -66,13 +66,16 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
     const { user } = ctx.state;
     const { id } = ctx.params;
 
+    console.log('📋 FINDONE request received:', { id, userId: user?.id });
+
     if (!user) {
+      console.log('❌ User not authenticated');
       return ctx.unauthorized('You must be logged in to view lists.');
     }
 
     const entity = await strapi.db.query('api::marketplace-list.marketplace-list').findOne({
       where: {
-        id,
+        id: parseInt(id),
         owner: user.id,
       },
       populate: {
@@ -80,7 +83,10 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
       },
     });
 
+    console.log('📋 Found entity:', entity ? { id: entity.id, name: entity.name } : null);
+
     if (!entity) {
+      console.log('❌ List not found or permission denied');
       return ctx.notFound('List not found or you do not have permission to access it.');
     }
 
@@ -93,32 +99,44 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
     const { id } = ctx.params;
     const { name, marketplaces, description } = ctx.request.body.data;
 
+    console.log('📝 UPDATE request received:', { id, userId: user?.id, data: ctx.request.body.data });
+
     if (!user) {
+      console.log('❌ User not authenticated');
       return ctx.unauthorized('You must be logged in to update a list.');
     }
 
     // Check if list exists and belongs to user
     const existingList = await strapi.db.query('api::marketplace-list.marketplace-list').findOne({
       where: {
-        id,
+        id: parseInt(id),
         owner: user.id,
       },
     });
 
+    console.log('📋 Existing list:', existingList);
+
     if (!existingList) {
+      console.log('❌ List not found or permission denied');
       return ctx.notFound('List not found or you do not have permission to update it.');
     }
 
-    const entity = await strapi.service('api::marketplace-list.marketplace-list').update(id, {
-      data: {
-        name: name || existingList.name,
-        marketplaces: marketplaces !== undefined ? marketplaces : undefined,
-        description: description !== undefined ? description : existingList.description,
-      },
-    });
+    try {
+      const entity = await strapi.service('api::marketplace-list.marketplace-list').update(parseInt(id), {
+        data: {
+          name: name !== undefined ? name : existingList.name,
+          marketplaces: marketplaces !== undefined ? marketplaces : undefined,
+          description: description !== undefined ? description : existingList.description,
+        },
+      });
 
-    const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
-    return this.transformResponse(sanitizedEntity);
+      console.log('✅ List updated successfully');
+      const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
+      return this.transformResponse(sanitizedEntity);
+    } catch (error) {
+      console.error('❌ Error updating list:', error);
+      return ctx.internalServerError('Failed to update list');
+    }
   },
 
   async delete(ctx) {
