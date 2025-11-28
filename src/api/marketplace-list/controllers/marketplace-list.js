@@ -23,15 +23,40 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
       return ctx.badRequest('At least one marketplace item is required.');
     }
 
+    // Check if a list with the same name (case-insensitive) already exists for this user
+    const trimmedName = name.trim();
+    const allUserLists = await strapi.db.query('api::marketplace-list.marketplace-list').findMany({
+      where: {
+        owner: user.id,
+      },
+    });
+
+    const existingList = allUserLists.find(list => 
+      list.name && list.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+
+    if (existingList) {
+      console.log('❌ Duplicate list found:', { 
+        requestedName: trimmedName, 
+        existingName: existingList.name,
+        userId: user.id, 
+        existingListId: existingList.id 
+      });
+      return ctx.badRequest(`A list with the name "${trimmedName}" already exists. Please choose a different name.`);
+    }
+
+    console.log('✅ Creating new list:', { name: name.trim(), userId: user.id, marketplaceCount: marketplaces.length });
+
     const entity = await strapi.service('api::marketplace-list.marketplace-list').create({
       data: {
-        name,
+        name: name.trim(),
         marketplaces,
         description: description || '',
         owner: user.id,
       },
     });
 
+    console.log('✅ List created successfully:', { id: entity.id, name: entity.name });
     const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
     return this.transformResponse(sanitizedEntity);
   },
