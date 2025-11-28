@@ -122,20 +122,82 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
     }
 
     try {
-      const entity = await strapi.service('api::marketplace-list.marketplace-list').update(parseInt(id), {
-        data: {
-          name: name !== undefined ? name : existingList.name,
-          marketplaces: marketplaces !== undefined ? marketplaces : undefined,
-          description: description !== undefined ? description : existingList.description,
+      // Build update data object for non-relation fields
+      const updateData = {};
+      
+      if (name !== undefined) {
+        updateData.name = name;
+      }
+      
+      if (description !== undefined) {
+        updateData.description = description;
+      }
+
+      console.log('📝 Update data (non-relations):', updateData);
+      console.log('📝 Marketplaces to set:', marketplaces);
+
+      // Update non-relation fields first
+      if (Object.keys(updateData).length > 0) {
+        await strapi.db.query('api::marketplace-list.marketplace-list').update({
+          where: { id: parseInt(id) },
+          data: updateData,
+        });
+      }
+
+      // Handle marketplaces relation separately - use set to replace entire relation
+      if (marketplaces !== undefined && Array.isArray(marketplaces)) {
+        // Ensure all IDs are valid numbers
+        const validMarketplaceIds = marketplaces
+          .map(mId => parseInt(mId))
+          .filter(mId => !isNaN(mId) && mId > 0);
+        
+        console.log('📝 Setting marketplaces relation:', {
+          input: marketplaces,
+          valid: validMarketplaceIds,
+          count: validMarketplaceIds.length
+        });
+        
+        // Use set to replace the entire relation with the new array
+        // The frontend already merges existing + new IDs, so we just set it
+        await strapi.db.query('api::marketplace-list.marketplace-list').update({
+          where: { id: parseInt(id) },
+          data: {
+            marketplaces: {
+              set: validMarketplaceIds.map(mId => ({ id: mId })),
+            },
+          },
+        });
+        
+        console.log('✅ Marketplaces relation updated with', validMarketplaceIds.length, 'items');
+      }
+
+      // Fetch the updated entity with populated relations
+      const entity = await strapi.db.query('api::marketplace-list.marketplace-list').findOne({
+        where: {
+          id: parseInt(id),
+        },
+        populate: {
+          marketplaces: true,
         },
       });
 
-      console.log('✅ List updated successfully');
+      if (!entity) {
+        console.log('❌ Entity not found after update');
+        return ctx.notFound('List not found after update');
+      }
+
+      console.log('✅ List updated successfully:', { 
+        id: entity.id, 
+        name: entity.name, 
+        marketplacesCount: entity.marketplaces?.length || 0,
+        marketplaceIds: entity.marketplaces?.map(m => m.id) || []
+      });
       const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
       return this.transformResponse(sanitizedEntity);
     } catch (error) {
       console.error('❌ Error updating list:', error);
-      return ctx.internalServerError('Failed to update list');
+      console.error('❌ Error stack:', error.stack);
+      return ctx.internalServerError('Failed to update list: ' + error.message);
     }
   },
 
