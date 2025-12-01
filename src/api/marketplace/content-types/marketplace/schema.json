@@ -93,6 +93,10 @@
       "type": "integer",
       "min": 0
     },
+    "ahrefs_keywords": {
+      "type": "integer",
+      "min": 0
+    },
     "moz_da": {
       "type": "integer",
       "max": 100,

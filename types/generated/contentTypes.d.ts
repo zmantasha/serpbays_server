@@ -1029,6 +1029,13 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    ahrefs_keywords: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
     ahrefs_rank: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
