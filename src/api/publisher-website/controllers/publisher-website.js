@@ -102,72 +102,94 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to view your websites.');
       }
 
-      const submissions = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-        filters: {
-          publisherEmail: user.email
-        },
-        sort: { createdAt: 'desc' },
-        populate: '*'
+      // Extract pagination and filter parameters
+      // Strapi parses nested query params like pagination[page] into ctx.query.pagination.page
+      const pagination = ctx.query.pagination || {};
+      const page = parseInt(pagination.page) || 1;
+      const pageSize = Math.min(parseInt(pagination.pageSize) || 20, 100); // Max 100 per page
+      const offset = (page - 1) * pageSize;
+
+      // Build filters
+      const filters = {
+        publisherEmail: user.email
+      };
+
+      // Add search filter if provided
+      // Strapi parses filters[url][$containsi] into ctx.query.filters.url.$containsi
+      if (ctx.query.filters?.url?.$containsi) {
+        filters.url = { $containsi: ctx.query.filters.url.$containsi };
+      }
+
+      // Add status filter if provided
+      // Strapi parses filters[submissionStatus][$eq] into ctx.query.filters.submissionStatus.$eq
+      if (ctx.query.filters?.submissionStatus?.$eq) {
+        filters.submissionStatus = ctx.query.filters.submissionStatus.$eq;
+      }
+
+      // Get sort parameter
+      const sortParam = ctx.query.sort || 'updatedAt:desc';
+      const [sortField, sortDirection] = sortParam.split(':');
+      const sort = { [sortField]: sortDirection === 'asc' ? 'asc' : 'desc' };
+
+      // Get total count for pagination (before fetching data)
+      const total = await strapi.db.query('api::publisher-website.publisher-website').count({
+        where: filters
       });
 
-      // Get order counts for each website
-      const submissionsWithOrders = await Promise.all(
-        submissions.map(async (website) => {
-          try {
-            // Get marketplace ID for this publisher website by matching URL
-            const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
-              where: { 
-                url: website.url,
-                publisher_email: user.email
-              }
-            });
+      // Fetch paginated submissions using database query API for better performance
+      const submissions = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+        where: filters,
+        orderBy: sort,
+        limit: pageSize,
+        offset: offset,
+        populate: ['currentPublisherId', 'originalPublisherId']
+      });
 
-            if (!marketplace) {
-              return {
-                ...website,
-                orders: 0,
-                resellerOrders: 0,
-                originalPublisherOrders: 0
-              };
-            }
+      // Optimize order count queries - batch fetch all marketplaces at once
+      const websiteUrls = submissions.map(w => w.url);
+      const marketplaces = await strapi.db.query('api::marketplace.marketplace').findMany({
+        where: {
+          url: { $in: websiteUrls },
+          publisher_email: user.email
+        },
+        fields: ['id', 'url']
+      });
 
-            // Get all orders for this marketplace website
-            const orders = await strapi.db.query('api::order.order').findMany({
-              where: { 
-                website: marketplace.id,
-                orderStatus: { $in: ['completed', 'delivered', 'accepted', 'in_progress'] }
-              }
-            });
+      // Create a map of URL to marketplace ID for quick lookup
+      const urlToMarketplaceMap = new Map();
+      marketplaces.forEach(m => {
+        urlToMarketplaceMap.set(m.url, m.id);
+      });
 
-            const totalOrders = orders.length;
+      // Batch fetch all orders for all marketplaces at once
+      const marketplaceIds = Array.from(urlToMarketplaceMap.values());
+      let allOrders = [];
+      if (marketplaceIds.length > 0) {
+        allOrders = await strapi.db.query('api::order.order').findMany({
+          where: {
+            website: { $in: marketplaceIds },
+            orderStatus: { $in: ['completed', 'delivered', 'accepted', 'in_progress'] }
+          },
+          fields: ['id', 'website', 'createdAt']
+        });
+      }
 
-            // Get reseller vs original publisher order split
-            let resellerOrders = 0;
-            let originalPublisherOrders = 0;
+      // Group orders by marketplace ID
+      const ordersByMarketplace = new Map();
+      allOrders.forEach(order => {
+        const marketplaceId = order.website;
+        if (!ordersByMarketplace.has(marketplaceId)) {
+          ordersByMarketplace.set(marketplaceId, []);
+        }
+        ordersByMarketplace.get(marketplaceId).push(order);
+      });
 
-            if (website.ownershipTransferredAt) {
-              const transferDate = new Date(website.ownershipTransferredAt);
-              
-              orders.forEach(order => {
-                const orderDate = new Date(order.createdAt);
-                if (orderDate < transferDate) {
-                  resellerOrders++;
-                } else {
-                  originalPublisherOrders++;
-                }
-              });
-            }
-
-            return {
-              ...website,
-              orders: totalOrders,
-              resellerOrders: website.ownershipTransferredAt ? resellerOrders : 0,
-              originalPublisherOrders: website.ownershipTransferredAt ? originalPublisherOrders : 0,
-              marketplaceId: marketplace.id
-            };
-          } catch (error) {
-            console.error(`Error fetching orders for website ${website.url}:`, error);
-            // Return website with zero orders if there's an error
+      // Process submissions with order counts
+      const submissionsWithOrders = submissions.map((website) => {
+        try {
+          const marketplaceId = urlToMarketplaceMap.get(website.url);
+          
+          if (!marketplaceId) {
             return {
               ...website,
               orders: 0,
@@ -175,10 +197,60 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               originalPublisherOrders: 0
             };
           }
-        })
-      );
 
-      return { data: submissionsWithOrders };
+          const orders = ordersByMarketplace.get(marketplaceId) || [];
+          const totalOrders = orders.length;
+
+          // Get reseller vs original publisher order split
+          let resellerOrders = 0;
+          let originalPublisherOrders = 0;
+
+          if (website.ownershipTransferredAt) {
+            const transferDate = new Date(website.ownershipTransferredAt);
+            
+            orders.forEach(order => {
+              const orderDate = new Date(order.createdAt);
+              if (orderDate < transferDate) {
+                resellerOrders++;
+              } else {
+                originalPublisherOrders++;
+              }
+            });
+          }
+
+          return {
+            ...website,
+            orders: totalOrders,
+            resellerOrders: website.ownershipTransferredAt ? resellerOrders : 0,
+            originalPublisherOrders: website.ownershipTransferredAt ? originalPublisherOrders : 0,
+            marketplaceId: marketplaceId
+          };
+        } catch (error) {
+          console.error(`Error processing orders for website ${website.url}:`, error);
+          // Return website with zero orders if there's an error
+          return {
+            ...website,
+            orders: 0,
+            resellerOrders: 0,
+            originalPublisherOrders: 0
+          };
+        }
+      });
+
+      // Calculate pagination metadata
+      const pageCount = Math.ceil(total / pageSize);
+
+      return {
+        data: submissionsWithOrders,
+        meta: {
+          pagination: {
+            page: page,
+            pageSize: pageSize,
+            pageCount: pageCount,
+            total: total
+          }
+        }
+      };
     } catch (error) {
       console.error('Error fetching publisher websites:', error);
       return ctx.internalServerError('Failed to fetch websites');
