@@ -338,6 +338,8 @@ async function handlePaymentSucceeded(paymentIntent) {
       return;
     }
 
+    
+
     // Use database transaction for atomic updates
     try {
       // Find the wallet
