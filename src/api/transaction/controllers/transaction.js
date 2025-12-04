@@ -11,12 +11,17 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   // Create payment intent
   async createPayment(ctx) {
     try {
-      const { amount, currency = 'USD', gateway } = ctx.request.body;
+      const { amount, baseAmount, currency = 'USD', gateway } = ctx.request.body;
       const userId = ctx.state?.user?.id;
       let wallet;
-       console.log("paypal server amount",amount)
-         console.log("paypal server currency",currency)
-           console.log("paypal server gateway",gateway)
+       console.log("[PAYMENT] Received payment request:", {
+         amount: amount,
+         baseAmount: baseAmount,
+         currency: currency,
+         gateway: gateway,
+         amountType: typeof amount,
+         baseAmountType: typeof baseAmount
+       })
       // Validate required fields
       if (!amount || !gateway) {
         return ctx.badRequest('Amount and gateway are required');
@@ -24,6 +29,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Parse amount to float and validate
       const parsedAmount = parseFloat(amount);
+      const parsedBaseAmount = baseAmount ? parseFloat(baseAmount) : parsedAmount; // Use baseAmount if provided, otherwise use total amount
       if (isNaN(parsedAmount) || parsedAmount <= 0) {
         return ctx.badRequest('Invalid amount');
       }
@@ -59,20 +65,35 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       try {
         switch (gateway.toLowerCase()) {
           case 'stripe':
-            // Create metadata for the payment intent
+            // Create metadata for the payment intent (include baseAmount for wallet credit)
             const stripeMetadata = {
               walletId: wallet.id.toString(),
               userId: userId ? userId.toString() : 'demo',
               email: wallet.users_permissions_user?.email || 'no-email',
-              username: wallet.users_permissions_user?.username || 'unknown'
+              username: wallet.users_permissions_user?.username || 'unknown',
+              baseAmount: parsedBaseAmount.toString(), // Store base amount to credit to wallet
+              totalAmount: parsedAmount.toString() // Store total amount paid
             };
             
             // Use the enhanced payment service with metadata
+            console.log('[STRIPE] Creating payment intent with:', {
+              totalAmount: parsedAmount,
+              baseAmount: parsedBaseAmount,
+              currency: currency,
+              metadata: stripeMetadata
+            });
+            
             paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(
-              parsedAmount, 
+              parsedAmount, // Use total amount (with fees) for payment
               currency,
               stripeMetadata
             );
+            
+            console.log('[STRIPE] Payment intent created:', {
+              id: paymentData.id,
+              amount: paymentData.amount,
+              currency: paymentData.currency
+            });
             break;
           case 'razorpay':
             paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(parsedAmount, currency);
@@ -99,8 +120,46 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           throw new Error('Failed to create payment data');
         }
 
-        // For Stripe and PayPal, don't create a transaction yet (handled by webhooks)
-        if (gateway.toLowerCase() === 'stripe' || gateway.toLowerCase() === 'paypal') {
+        // For Stripe, create transaction record upfront with baseAmount (webhook will update it)
+        if (gateway.toLowerCase() === 'stripe') {
+          // Create pending transaction with baseAmount (amount to credit to wallet)
+          const transaction = await strapi.entityService.create('api::transaction.transaction', {
+            data: {
+              type: 'deposit',
+              amount: parsedBaseAmount, // Store base amount (amount to credit to wallet)
+              netAmount: parsedBaseAmount,
+              currency: currency.toUpperCase(),
+              gateway: 'stripe',
+              gatewayTransactionId: paymentData.id,
+              transactionStatus: 'pending',
+              user_wallet: wallet.id,
+              users_permissions_user: userId || wallet.users_permissions_user?.id,
+              fund_source: 'main_fund',
+              metadata: {
+                paymentIntent: paymentData,
+                walletId: wallet.id,
+                userId: userId || wallet.users_permissions_user?.id,
+                baseAmount: parsedBaseAmount, // Store for reference
+                totalAmount: parsedAmount, // Store total paid for reference
+                createdAt: new Date().toISOString()
+              },
+              publishedAt: new Date()
+            },
+            populate: ['user_wallet']
+          });
+
+          console.log(`[PAYMENT] ✅ Created pending transaction ${transaction.id} for Payment Intent ${paymentData.id} (Base: $${parsedBaseAmount}, Total: $${parsedAmount})`);
+
+          return { 
+            data: { 
+              walletId: wallet.id,
+              paymentData: paymentData 
+            }
+          };
+        }
+
+        // For PayPal, don't create a transaction yet (handled by webhooks)
+        if (gateway.toLowerCase() === 'paypal') {
           return { 
             data: { 
               walletId: wallet.id,
