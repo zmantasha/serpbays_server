@@ -101,7 +101,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           case 'paypal':
             paymentData = await strapi.service('api::transaction.payment').createPayPalOrder(parsedAmount, currency, {
               walletId: wallet.id,
-              userId: userId
+              userId: userId,
+              baseAmount: parsedBaseAmount // Store baseAmount for webhook to use
             });
             break;
           case 'phonepe':

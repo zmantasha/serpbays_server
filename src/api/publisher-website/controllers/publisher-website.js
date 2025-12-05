@@ -148,12 +148,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Optimize order count queries - batch fetch all marketplaces at once
       const websiteUrls = submissions.map(w => w.url);
       const marketplaces = await strapi.db.query('api::marketplace.marketplace').findMany({
-        where: {
+              where: { 
           url: { $in: websiteUrls },
-          publisher_email: user.email
+                publisher_email: user.email
         },
         fields: ['id', 'url']
-      });
+            });
 
       // Create a map of URL to marketplace ID for quick lookup
       const urlToMarketplaceMap = new Map();
@@ -190,6 +190,44 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           const marketplaceId = urlToMarketplaceMap.get(website.url);
           
           if (!marketplaceId) {
+              return {
+                ...website,
+                orders: 0,
+                resellerOrders: 0,
+                originalPublisherOrders: 0
+              };
+            }
+
+          const orders = ordersByMarketplace.get(marketplaceId) || [];
+            const totalOrders = orders.length;
+
+            // Get reseller vs original publisher order split
+            let resellerOrders = 0;
+            let originalPublisherOrders = 0;
+
+            if (website.ownershipTransferredAt) {
+              const transferDate = new Date(website.ownershipTransferredAt);
+              
+              orders.forEach(order => {
+                const orderDate = new Date(order.createdAt);
+                if (orderDate < transferDate) {
+                  resellerOrders++;
+                } else {
+                  originalPublisherOrders++;
+                }
+              });
+            }
+
+            return {
+              ...website,
+              orders: totalOrders,
+              resellerOrders: website.ownershipTransferredAt ? resellerOrders : 0,
+              originalPublisherOrders: website.ownershipTransferredAt ? originalPublisherOrders : 0,
+            marketplaceId: marketplaceId
+            };
+          } catch (error) {
+          console.error(`Error processing orders for website ${website.url}:`, error);
+            // Return website with zero orders if there's an error
             return {
               ...website,
               orders: 0,
@@ -197,44 +235,6 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               originalPublisherOrders: 0
             };
           }
-
-          const orders = ordersByMarketplace.get(marketplaceId) || [];
-          const totalOrders = orders.length;
-
-          // Get reseller vs original publisher order split
-          let resellerOrders = 0;
-          let originalPublisherOrders = 0;
-
-          if (website.ownershipTransferredAt) {
-            const transferDate = new Date(website.ownershipTransferredAt);
-            
-            orders.forEach(order => {
-              const orderDate = new Date(order.createdAt);
-              if (orderDate < transferDate) {
-                resellerOrders++;
-              } else {
-                originalPublisherOrders++;
-              }
-            });
-          }
-
-          return {
-            ...website,
-            orders: totalOrders,
-            resellerOrders: website.ownershipTransferredAt ? resellerOrders : 0,
-            originalPublisherOrders: website.ownershipTransferredAt ? originalPublisherOrders : 0,
-            marketplaceId: marketplaceId
-          };
-        } catch (error) {
-          console.error(`Error processing orders for website ${website.url}:`, error);
-          // Return website with zero orders if there's an error
-          return {
-            ...website,
-            orders: 0,
-            resellerOrders: 0,
-            originalPublisherOrders: 0
-          };
-        }
       });
 
       // Calculate pagination metadata

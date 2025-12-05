@@ -47,6 +47,14 @@ module.exports = {
       const request = new paypal.orders.OrdersCreateRequest();
       request.prefer("return=representation");
       
+      // Store walletId and baseAmount in custom_id as JSON for webhook retrieval
+      const customIdData = {
+        walletId: metadata.walletId || null,
+        baseAmount: metadata.baseAmount ? parseFloat(metadata.baseAmount) : null,
+        totalAmount: amount,
+        userId: metadata.userId || null
+      };
+      
       const orderData = {
         intent: 'CAPTURE',
         purchase_units: [{
@@ -55,7 +63,7 @@ module.exports = {
             value: amount.toString()
           },
           description: `Wallet top-up for ${amount} ${currency}`,
-          custom_id: metadata.walletId || 'wallet-topup',
+          custom_id: JSON.stringify(customIdData),
           invoice_id: `wallet_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         }],
         application_context: {

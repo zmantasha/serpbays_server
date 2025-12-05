@@ -126,12 +126,30 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       
       // Extract metadata from order
       const customId = purchaseUnit.custom_id;
-      const walletId = customId ? parseInt(customId) : null;
+      let walletId = null;
+      let baseAmount = null;
+      
+      // Try to parse custom_id as JSON (new format with baseAmount)
+      try {
+        if (customId) {
+          const customData = JSON.parse(customId);
+          walletId = customData.walletId ? parseInt(customData.walletId) : null;
+          baseAmount = customData.baseAmount ? parseFloat(customData.baseAmount) : null;
+        }
+      } catch (e) {
+        // Fallback: custom_id might be just walletId (old format)
+        walletId = customId ? parseInt(customId) : null;
+      }
 
       if (!walletId) {
         console.error('[PAYPAL WEBHOOK] No wallet ID found in order metadata');
         return;
       }
+      
+      // Use baseAmount if available, otherwise use full PayPal amount (for backward compatibility)
+      const amountToCredit = baseAmount !== null ? baseAmount : amount;
+      
+      console.log(`[PAYPAL WEBHOOK] Amount to credit: ${amountToCredit} (baseAmount: ${baseAmount}, PayPal amount: ${amount})`);
 
       // Find the wallet
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
@@ -162,7 +180,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       // Update wallet balance using the same logic as other payment methods
       const currentMainBalance = parseFloat(wallet.mainBalance || 0);
       const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
-      const newMainBalance = currentMainBalance + amount;
+      const newMainBalance = currentMainBalance + amountToCredit;
       const newTotalBalance = newMainBalance + currentPromoBalance;
 
       await strapi.db.query('api::user-wallet.user-wallet').update({
@@ -173,14 +191,14 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         }
       });
 
-      console.log(`[PAYPAL WEBHOOK] 💵 Updated wallet balance: Main=${currentMainBalance} + ${amount} = ${newMainBalance}, Total=${newTotalBalance}`);
+      console.log(`[PAYPAL WEBHOOK] 💵 Updated wallet balance: Main=${currentMainBalance} + ${amountToCredit} = ${newMainBalance}, Total=${newTotalBalance}`);
 
       // Create transaction record
       await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'deposit',
-          amount: amount,
-          netAmount: amount,
+          amount: amountToCredit, // Use baseAmount (amount to credit to wallet)
+          netAmount: amountToCredit, // Use baseAmount (amount to credit to wallet)
           transactionStatus: 'success',
           gateway: 'paypal',
           gatewayTransactionId: capture.id,
@@ -202,7 +220,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         }
       });
 
-      console.log(`[PAYPAL WEBHOOK] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amount}`);
+      console.log(`[PAYPAL WEBHOOK] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amountToCredit} (PayPal charged $${amount})`);
 
     } catch (error) {
       console.error('[PAYPAL WEBHOOK] Error handling payment completed:', error);
