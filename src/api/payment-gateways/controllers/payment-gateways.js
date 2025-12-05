@@ -1,5 +1,7 @@
 'use strict';
 
+const exchangeRateService = require('../services/exchange-rate');
+
 /**
  * Payment Gateways Controller
  * Handles payment gateway configuration and fee calculations
@@ -133,8 +135,13 @@ module.exports = {
             gstFee: razorpayGstFee
           };
 
-          // USD to INR conversion
-          conversionRate = parseFloat(process.env.USD_TO_INR_RATE || '83.25');
+          // USD to INR conversion using real-time exchange rate
+          try {
+            conversionRate = await exchangeRateService.getExchangeRate('USD', 'INR');
+          } catch (err) {
+            console.error('[PAYMENT GATEWAYS] Failed to get exchange rate, using fallback:', err.message);
+            conversionRate = parseFloat(process.env.USD_TO_INR_RATE || '83.25');
+          }
           convertedAmount = (baseAmount + feeAmount) * conversionRate;
           break;
 
@@ -151,8 +158,13 @@ module.exports = {
             gstFee: phonepeGstFee
           };
 
-          // USD to INR conversion
-          conversionRate = parseFloat(process.env.USD_TO_INR_RATE || '83.25');
+          // USD to INR conversion using real-time exchange rate
+          try {
+            conversionRate = await exchangeRateService.getExchangeRate('USD', 'INR');
+          } catch (err) {
+            console.error('[PAYMENT GATEWAYS] Failed to get exchange rate, using fallback:', err.message);
+            conversionRate = parseFloat(process.env.USD_TO_INR_RATE || '83.25');
+          }
           convertedAmount = (baseAmount + feeAmount) * conversionRate;
           break;
 

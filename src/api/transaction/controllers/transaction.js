@@ -6,6 +6,7 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const exchangeRateService = require('../../payment-gateways/services/exchange-rate');
 
 module.exports = createCoreController('api::transaction.transaction', ({ strapi }) => ({
   // Create payment intent
@@ -96,7 +97,29 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             });
             break;
           case 'razorpay':
-            paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(parsedAmount, currency);
+            // Convert USD to INR for Razorpay (Razorpay requires INR)
+            let razorpayAmountINR = parsedAmount;
+            let razorpayConversionRate = 1;
+            
+            if (currency.toUpperCase() === 'USD') {
+              try {
+                razorpayConversionRate = await exchangeRateService.getExchangeRate('USD', 'INR');
+                razorpayAmountINR = parsedAmount * razorpayConversionRate;
+                console.log(`[RAZORPAY] Converting USD to INR: $${parsedAmount} × ${razorpayConversionRate} = ₹${razorpayAmountINR.toFixed(2)}`);
+              } catch (err) {
+                console.error('[RAZORPAY] Failed to get exchange rate, using fallback:', err.message);
+                razorpayConversionRate = parseFloat(process.env.USD_TO_INR_RATE || '83.25');
+                razorpayAmountINR = parsedAmount * razorpayConversionRate;
+              }
+            }
+            
+            // Create Razorpay order in INR
+            paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(razorpayAmountINR, 'INR');
+            
+            // Store conversion info in paymentData for reference
+            paymentData.originalAmountUSD = parsedAmount;
+            paymentData.conversionRate = razorpayConversionRate;
+            paymentData.amountINR = razorpayAmountINR;
             break;
           case 'paypal':
             paymentData = await strapi.service('api::transaction.payment').createPayPalOrder(parsedAmount, currency, {
@@ -206,12 +229,17 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         }
         
         // For Razorpay, create a pending transaction
+        // Store the base USD amount (what user will get in wallet), but record INR payment details
+        const razorpayBaseAmount = gateway.toLowerCase() === 'razorpay' ? parsedBaseAmount : parsedAmount;
+        const razorpayINRAmount = paymentData.amountINR || parsedAmount;
+        const razorpayRate = paymentData.conversionRate || 1;
+        
         const transaction = await strapi.entityService.create('api::transaction.transaction', {
           data: {
             type: 'deposit',
-            amount: parsedAmount,
-            netAmount: parsedAmount,
-            currency: currency,
+            amount: razorpayBaseAmount, // Store USD amount (what will be credited to wallet)
+            netAmount: razorpayBaseAmount,
+            currency: 'USD', // Wallet is in USD
             gateway: gateway,
             gatewayTransactionId: paymentData.id,
             transactionStatus: 'pending',
@@ -220,12 +248,18 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             metadata: {
               paymentData: paymentData,
               walletId: wallet.id,
-              userId: userId
+              userId: userId,
+              baseAmountUSD: razorpayBaseAmount,
+              paidAmountINR: razorpayINRAmount,
+              conversionRate: razorpayRate,
+              originalAmountUSD: paymentData.originalAmountUSD || parsedAmount
             },
             publishedAt: new Date()
           },
           populate: ['user_wallet']
         });
+        
+        console.log(`[RAZORPAY] ✅ Created pending transaction ${transaction.id}: Base USD $${razorpayBaseAmount}, Paid INR ₹${razorpayINRAmount.toFixed(2)} (Rate: ${razorpayRate})`);
 
         return { data: { transaction, paymentData } };
       } catch (error) {
