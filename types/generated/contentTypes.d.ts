@@ -3226,6 +3226,7 @@ export interface PluginUsersPermissionsUser
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     businessName: Schema.Attribute.String;
     city: Schema.Attribute.String;
+    clerkId: Schema.Attribute.String & Schema.Attribute.Unique;
     communications: Schema.Attribute.Relation<
       'oneToMany',
       'api::communication.communication'

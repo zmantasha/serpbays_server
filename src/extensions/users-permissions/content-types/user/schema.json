@@ -59,6 +59,10 @@
       "default": false,
       "configurable": false
     },
+    "clerkId": {
+      "type": "string",
+      "unique": true
+    },
     "role": {
       "type": "relation",
       "relation": "manyToOne",
