@@ -255,32 +255,57 @@ module.exports = {
             adv_dating_pricing: dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice ?? null,
             adv_li_dating_pricing: dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? null,
             
-            // Publisher earnings (80% of advertiser price)
-            publisher_price: Math.floor(Math.max(
-              (dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? 0) * 0.8
-            )) || 1,
-            publisher_link_insertion_price: Math.floor((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? 0) * 0.8),
-            publisher_casino_pricing: Math.floor(Math.max(
-              (dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice ?? 0) * 0.8
-            )),
-            publisher_crypto_pricing: Math.floor(Math.max(
-              (dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice ?? 0) * 0.8
-            )),
-            publisher_cbd_pricing: Math.floor(Math.max(
-              (dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice ?? 0) * 0.8
-            )),
-            publisher_dating_pricing: Math.floor(Math.max(
-              (dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? 0) * 0.8
-            )),
-            publisher_li_casino_pricing: Math.floor((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice ?? 0) * 0.8),
-            publisher_li_crypto_pricing: Math.floor((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice ?? 0) * 0.8),
-            publisher_li_cbd_pricing: Math.floor((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice ?? 0) * 0.8),
-            publisher_li_dating_pricing: Math.floor((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? 0) * 0.8),
+            // Publisher earnings (80% of advertiser price) - return null if no base price set
+            publisher_price: ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) > 0 || 
+                             (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                  ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) || 0) * 0.8,
+                  ((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) || 0) * 0.8
+                )) || 1
+              : null,
+            publisher_link_insertion_price: (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) * 0.8)
+              : null,
+            publisher_casino_pricing: ((dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice) > 0 || 
+                                       (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                  ((dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice) || 0) * 0.8,
+                  ((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) || 0) * 0.8
+                ))
+              : null,
+            publisher_crypto_pricing: ((dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice) > 0 || 
+                                       (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                  ((dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice) || 0) * 0.8,
+                  ((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) || 0) * 0.8
+                ))
+              : null,
+            publisher_cbd_pricing: ((dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice) > 0 || 
+                                    (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                  ((dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice) || 0) * 0.8,
+                  ((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) || 0) * 0.8
+                ))
+              : null,
+            publisher_dating_pricing: ((dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice) > 0 || 
+                                       (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                  ((dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice) || 0) * 0.8,
+                  ((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) || 0) * 0.8
+                ))
+              : null,
+            publisher_li_casino_pricing: (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) * 0.8)
+              : null,
+            publisher_li_crypto_pricing: (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) * 0.8)
+              : null,
+            publisher_li_cbd_pricing: (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) * 0.8)
+              : null,
+            publisher_li_dating_pricing: (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) * 0.8)
+              : null,
             
             // Update timestamps
             metrics_last_updated: new Date(),

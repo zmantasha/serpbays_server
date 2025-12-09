@@ -33,18 +33,24 @@ module.exports = {
             }
 
             if (user) {
-                // Update existing user
+                // Update existing user - only update fields that are provided
                 strapi.log.info(`Updating existing user: ${user.id}`);
+
+                // Build update data - only include fields that are actually provided
+                const updateData = {
+                    clerkId,
+                    email,
+                    confirmed: true,
+                };
+
+                // Only update these fields if they are provided (not undefined)
+                if (username !== undefined) updateData.username = username;
+                if (firstName !== undefined) updateData.firstName = firstName;
+                if (lastName !== undefined) updateData.lastName = lastName;
+
                 user = await strapi.query('plugin::users-permissions.user').update({
                     where: { id: user.id },
-                    data: {
-                        clerkId,
-                        email,
-                        username: username || user.username,
-                        firstName: firstName || user.firstName,
-                        lastName: lastName || user.lastName,
-                        confirmed: true,
-                    },
+                    data: updateData,
                 });
             } else {
                 // Create new user
@@ -83,14 +89,33 @@ module.exports = {
 
             strapi.log.info(`JWT token generated for user: ${user.id}`);
 
+            // Return COMPLETE user object with all fields to prevent data loss
             return ctx.send({
                 success: true,
                 user: {
                     id: user.id,
                     username: user.username,
                     email: user.email,
+                    provider: user.provider,
+                    confirmed: user.confirmed,
+                    blocked: user.blocked,
+                    createdAt: user.createdAt,
+                    updatedAt: user.updatedAt,
                     firstName: user.firstName,
                     lastName: user.lastName,
+                    displayName: user.displayName,
+                    country: user.country,
+                    phoneNumber: user.phoneNumber,
+                    website: user.website,
+                    identity: user.identity,
+                    businessName: user.businessName,
+                    registrationNumber: user.registrationNumber,
+                    billingAddress: user.billingAddress,
+                    city: user.city,
+                    billingCountry: user.billingCountry,
+                    pincode: user.pincode,
+                    vatGstNumber: user.vatGstNumber,
+                    notificationPreferences: user.notificationPreferences,
                     Advertiser: user.Advertiser,
                     Publisher: user.Publisher,
                 },

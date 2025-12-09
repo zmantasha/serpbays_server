@@ -658,51 +658,74 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       };
 
       // Map publisher-website fields to marketplace fields
+      // IMPORTANT: Price should be null if not provided, never default to 0
       const marketplaceData = {
         url: submission.url,
         
         // ADVERTISER PRICING (what publisher entered - this is what advertisers pay)
-        price: submission.generalGuestPostPrice || 0,
-        link_insertion_price: submission.generalLinkInsertionPrice || 0,
-        adv_casino_pricing: submission.casinoGuestPostPrice || 0,
-        adv_li_casino_pricing: submission.casinoLinkInsertionPrice || 0,
-        adv_crypto_pricing: submission.cryptoGuestPostPrice || 0,
-        adv_li_crypto_pricing: submission.cryptoLinkInsertionPrice || 0,
-        adv_cbd_pricing: submission.cbdGuestPostPrice || 0,
-        adv_li_cbd_pricing: submission.cbdLinkInsertionPrice || 0,
-        adv_dating_pricing: submission.datingGuestPostPrice || 0,
-        adv_li_dating_pricing: submission.datingLinkInsertionPrice || 0,
+        // If price is not provided (null/undefined/0), keep as null
+        price: submission.generalGuestPostPrice > 0 ? submission.generalGuestPostPrice : null,
+        link_insertion_price: submission.generalLinkInsertionPrice > 0 ? submission.generalLinkInsertionPrice : null,
+        adv_casino_pricing: submission.casinoGuestPostPrice > 0 ? submission.casinoGuestPostPrice : null,
+        adv_li_casino_pricing: submission.casinoLinkInsertionPrice > 0 ? submission.casinoLinkInsertionPrice : null,
+        adv_crypto_pricing: submission.cryptoGuestPostPrice > 0 ? submission.cryptoGuestPostPrice : null,
+        adv_li_crypto_pricing: submission.cryptoLinkInsertionPrice > 0 ? submission.cryptoLinkInsertionPrice : null,
+        adv_cbd_pricing: submission.cbdGuestPostPrice > 0 ? submission.cbdGuestPostPrice : null,
+        adv_li_cbd_pricing: submission.cbdLinkInsertionPrice > 0 ? submission.cbdLinkInsertionPrice : null,
+        adv_dating_pricing: submission.datingGuestPostPrice > 0 ? submission.datingGuestPostPrice : null,
+        adv_li_dating_pricing: submission.datingLinkInsertionPrice > 0 ? submission.datingLinkInsertionPrice : null,
 
         // PUBLISHER EARNINGS (advertiser price - 20% = 80% of what they entered)
-        publisher_price: Math.floor(Math.max(
-          (submission.generalGuestPostPrice || 0) * 0.8,
-          (submission.generalLinkInsertionPrice || 0) * 0.8
-        )) || 1, // Ensure it's at least 1 since it's required
-        publisher_link_insertion_price: Math.floor((submission.generalLinkInsertionPrice || 0) * 0.8),
+        // Only calculate if price is provided, otherwise null
+        publisher_price: (submission.generalGuestPostPrice > 0 || submission.generalLinkInsertionPrice > 0) 
+          ? Math.floor(Math.max(
+              (submission.generalGuestPostPrice || 0) * 0.8,
+              (submission.generalLinkInsertionPrice || 0) * 0.8
+            )) || 1
+          : null,
+        publisher_link_insertion_price: submission.generalLinkInsertionPrice > 0 
+          ? Math.floor(submission.generalLinkInsertionPrice * 0.8) 
+          : null,
         
         // Publisher earnings for sensitive categories
-        publisher_casino_pricing: Math.floor(Math.max(
-          (submission.casinoGuestPostPrice || 0) * 0.8,
-          (submission.casinoLinkInsertionPrice || 0) * 0.8
-        )),
-        publisher_crypto_pricing: Math.floor(Math.max(
-          (submission.cryptoGuestPostPrice || 0) * 0.8,
-          (submission.cryptoLinkInsertionPrice || 0) * 0.8
-        )),
-        publisher_cbd_pricing: Math.floor(Math.max(
-          (submission.cbdGuestPostPrice || 0) * 0.8,
-          (submission.cbdLinkInsertionPrice || 0) * 0.8
-        )),
-        publisher_dating_pricing: Math.floor(Math.max(
-          (submission.datingGuestPostPrice || 0) * 0.8,
-          (submission.datingLinkInsertionPrice || 0) * 0.8
-        )),
+        publisher_casino_pricing: (submission.casinoGuestPostPrice > 0 || submission.casinoLinkInsertionPrice > 0)
+          ? Math.floor(Math.max(
+              (submission.casinoGuestPostPrice || 0) * 0.8,
+              (submission.casinoLinkInsertionPrice || 0) * 0.8
+            ))
+          : null,
+        publisher_crypto_pricing: (submission.cryptoGuestPostPrice > 0 || submission.cryptoLinkInsertionPrice > 0)
+          ? Math.floor(Math.max(
+              (submission.cryptoGuestPostPrice || 0) * 0.8,
+              (submission.cryptoLinkInsertionPrice || 0) * 0.8
+            ))
+          : null,
+        publisher_cbd_pricing: (submission.cbdGuestPostPrice > 0 || submission.cbdLinkInsertionPrice > 0)
+          ? Math.floor(Math.max(
+              (submission.cbdGuestPostPrice || 0) * 0.8,
+              (submission.cbdLinkInsertionPrice || 0) * 0.8
+            ))
+          : null,
+        publisher_dating_pricing: (submission.datingGuestPostPrice > 0 || submission.datingLinkInsertionPrice > 0)
+          ? Math.floor(Math.max(
+              (submission.datingGuestPostPrice || 0) * 0.8,
+              (submission.datingLinkInsertionPrice || 0) * 0.8
+            ))
+          : null,
         
         // Publisher earnings for specific Link Insertion sensitive categories
-        publisher_li_casino_pricing: Math.floor((submission.casinoLinkInsertionPrice || 0) * 0.8),
-        publisher_li_crypto_pricing: Math.floor((submission.cryptoLinkInsertionPrice || 0) * 0.8),
-        publisher_li_cbd_pricing: Math.floor((submission.cbdLinkInsertionPrice || 0) * 0.8),
-        publisher_li_dating_pricing: Math.floor((submission.datingLinkInsertionPrice || 0) * 0.8),
+        publisher_li_casino_pricing: submission.casinoLinkInsertionPrice > 0 
+          ? Math.floor(submission.casinoLinkInsertionPrice * 0.8) 
+          : null,
+        publisher_li_crypto_pricing: submission.cryptoLinkInsertionPrice > 0 
+          ? Math.floor(submission.cryptoLinkInsertionPrice * 0.8) 
+          : null,
+        publisher_li_cbd_pricing: submission.cbdLinkInsertionPrice > 0 
+          ? Math.floor(submission.cbdLinkInsertionPrice * 0.8) 
+          : null,
+        publisher_li_dating_pricing: submission.datingLinkInsertionPrice > 0 
+          ? Math.floor(submission.datingLinkInsertionPrice * 0.8) 
+          : null,
 
         min_word_count: submission.minWordCount,
         backlink_type: submission.backlinkType,
@@ -716,7 +739,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         sponsored: submission.sponsored,
         ugc: submission.ugc,
         digital_pr: submission.isPRSite,
-        publisher_writing_price: submission.copywritingPrice || 0,
+        publisher_writing_price: submission.copywritingPrice > 0 ? submission.copywritingPrice : null,
 
         // Map delivery and samples
         tat: Math.ceil(submission.expectedTATHours / 24), // Convert hours to days

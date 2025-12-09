@@ -411,35 +411,35 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           moz_spam_score: website.moz_spam_score || 0,
           semrush_traffic: website.semrush_traffic || 0
         },
-        // Pricing information
+        // Pricing information - return null for empty prices instead of 0
         pricing: {
           general: {
-            guestPost: website.generalGuestPostPrice || 0,
-            linkInsertion: website.generalLinkInsertionPrice || 0
+            guestPost: website.generalGuestPostPrice > 0 ? website.generalGuestPostPrice : null,
+            linkInsertion: website.generalLinkInsertionPrice > 0 ? website.generalLinkInsertionPrice : null
           },
           casino: {
             accepted: website.casinoAccepted || false,
-            guestPost: website.casinoGuestPostPrice || 0,
-            linkInsertion: website.casinoLinkInsertionPrice || 0
+            guestPost: website.casinoGuestPostPrice > 0 ? website.casinoGuestPostPrice : null,
+            linkInsertion: website.casinoLinkInsertionPrice > 0 ? website.casinoLinkInsertionPrice : null
           },
           crypto: {
             accepted: website.cryptoAccepted || false,
-            guestPost: website.cryptoGuestPostPrice || 0,
-            linkInsertion: website.cryptoLinkInsertionPrice || 0
+            guestPost: website.cryptoGuestPostPrice > 0 ? website.cryptoGuestPostPrice : null,
+            linkInsertion: website.cryptoLinkInsertionPrice > 0 ? website.cryptoLinkInsertionPrice : null
           },
           cbd: {
             accepted: website.cbdAccepted || false,
-            guestPost: website.cbdGuestPostPrice || 0,
-            linkInsertion: website.cbdLinkInsertionPrice || 0
+            guestPost: website.cbdGuestPostPrice > 0 ? website.cbdGuestPostPrice : null,
+            linkInsertion: website.cbdLinkInsertionPrice > 0 ? website.cbdLinkInsertionPrice : null
           },
           dating: {
             accepted: website.datingAccepted || false,
-            guestPost: website.datingGuestPostPrice || 0,
-            linkInsertion: website.datingLinkInsertionPrice || 0
+            guestPost: website.datingGuestPostPrice > 0 ? website.datingGuestPostPrice : null,
+            linkInsertion: website.datingLinkInsertionPrice > 0 ? website.datingLinkInsertionPrice : null
           },
           copywriting: {
             offered: website.doCopywriting || false,
-            price: website.copywritingPrice || 0
+            price: website.copywritingPrice > 0 ? website.copywritingPrice : null
           }
         },
         // Content requirements
@@ -552,35 +552,35 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           email: website.currentPublisherId?.email || website.originalPublisherId?.email ||website.publisherEmail
 ||          'N/A'
         },
-        // Pricing information
+        // Pricing information - return null for empty prices instead of 0
         pricing: {
           general: {
-            guestPost: website.generalGuestPostPrice || 0,
-            linkInsertion: website.generalLinkInsertionPrice || 0
+            guestPost: website.generalGuestPostPrice > 0 ? website.generalGuestPostPrice : null,
+            linkInsertion: website.generalLinkInsertionPrice > 0 ? website.generalLinkInsertionPrice : null
           },
           casino: {
             accepted: website.casinoAccepted || false,
-            guestPost: website.casinoGuestPostPrice || 0,
-            linkInsertion: website.casinoLinkInsertionPrice || 0
+            guestPost: website.casinoGuestPostPrice > 0 ? website.casinoGuestPostPrice : null,
+            linkInsertion: website.casinoLinkInsertionPrice > 0 ? website.casinoLinkInsertionPrice : null
           },
           crypto: {
             accepted: website.cryptoAccepted || false,
-            guestPost: website.cryptoGuestPostPrice || 0,
-            linkInsertion: website.cryptoLinkInsertionPrice || 0
+            guestPost: website.cryptoGuestPostPrice > 0 ? website.cryptoGuestPostPrice : null,
+            linkInsertion: website.cryptoLinkInsertionPrice > 0 ? website.cryptoLinkInsertionPrice : null
           },
           cbd: {
             accepted: website.cbdAccepted || false,
-            guestPost: website.cbdGuestPostPrice || 0,
-            linkInsertion: website.cbdLinkInsertionPrice || 0
+            guestPost: website.cbdGuestPostPrice > 0 ? website.cbdGuestPostPrice : null,
+            linkInsertion: website.cbdLinkInsertionPrice > 0 ? website.cbdLinkInsertionPrice : null
           },
           dating: {
             accepted: website.datingAccepted || false,
-            guestPost: website.datingGuestPostPrice || 0,
-            linkInsertion: website.datingLinkInsertionPrice || 0
+            guestPost: website.datingGuestPostPrice > 0 ? website.datingGuestPostPrice : null,
+            linkInsertion: website.datingLinkInsertionPrice > 0 ? website.datingLinkInsertionPrice : null
           },
           copywriting: {
             offered: website.doCopywriting || false,
-            price: website.copywritingPrice || 0
+            price: website.copywritingPrice > 0 ? website.copywritingPrice : null
           }
         },
         // Content requirements

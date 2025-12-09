@@ -272,6 +272,22 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             { website_status: { $null: true } }, // Legacy records
             { website_status: '' } // Legacy records
           ]
+        },
+        // MUST have at least one valid price (greater than 0)
+        // Websites with no prices should not appear in marketplace
+        {
+          $or: [
+            { price: { $gt: 0 } },
+            { link_insertion_price: { $gt: 0 } },
+            { adv_casino_pricing: { $gt: 0 } },
+            { adv_li_casino_pricing: { $gt: 0 } },
+            { adv_crypto_pricing: { $gt: 0 } },
+            { adv_li_crypto_pricing: { $gt: 0 } },
+            { adv_cbd_pricing: { $gt: 0 } },
+            { adv_li_cbd_pricing: { $gt: 0 } },
+            { adv_dating_pricing: { $gt: 0 } },
+            { adv_li_dating_pricing: { $gt: 0 } }
+          ]
         }
       ];
       
