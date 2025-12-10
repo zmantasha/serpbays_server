@@ -27,12 +27,28 @@ module.exports = (plugin) => {
       const { result } = event;
 
       try {
+        strapi.log.info(`[LIFECYCLE afterCreate] User ${result.id} created with:`, {
+          Advertiser: result.Advertiser,
+          Publisher: result.Publisher,
+          AdvertiserType: typeof result.Advertiser,
+          PublisherType: typeof result.Publisher
+        });
+
         // Create unified wallet for ALL users (both advertisers and publishers)
         await ensureAdvertiserWallet(result.id);
         console.log(`[USER REGISTRATION] Created wallet for new user ${result.id}`);
 
         // Ensure Publisher field is set if not explicitly provided during registration
-        if (result.Publisher === undefined && !result.Advertiser) {
+        const shouldSetPublisher = result.Publisher === undefined && !result.Advertiser;
+
+        strapi.log.info(`[LIFECYCLE] Should set Publisher?`, {
+          shouldSetPublisher,
+          PublisherIsUndefined: result.Publisher === undefined,
+          AdvertiserIsFalsy: !result.Advertiser
+        });
+
+        if (shouldSetPublisher) {
+          strapi.log.info(`[LIFECYCLE] Setting Publisher to true for user ${result.id}`);
           await strapi.entityService.update(
             'plugin::users-permissions.user',
             result.id,

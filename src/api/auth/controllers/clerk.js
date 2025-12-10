@@ -48,6 +48,17 @@ module.exports = {
                 if (firstName !== undefined) updateData.firstName = firstName;
                 if (lastName !== undefined) updateData.lastName = lastName;
 
+                // CRITICAL: Only update role fields if explicitly provided
+                // This prevents overwriting user roles on subsequent syncs
+                if (advertiser !== undefined) updateData.Advertiser = advertiser;
+                if (publisher !== undefined) updateData.Publisher = publisher;
+
+                strapi.log.info(`[CLERK SYNC] Updating user ${user.id} with:`, {
+                    providedFields: Object.keys(updateData),
+                    advertiserProvided: advertiser !== undefined,
+                    publisherProvided: publisher !== undefined,
+                });
+
                 user = await strapi.query('plugin::users-permissions.user').update({
                     where: { id: user.id },
                     data: updateData,
@@ -77,6 +88,14 @@ module.exports = {
                         Advertiser: advertiser || false,
                         Publisher: publisher || false,
                     },
+                });
+
+                strapi.log.info(`[CLERK SYNC] User created with roles:`, {
+                    userId: user.id,
+                    advertiser: advertiser,
+                    publisher: publisher,
+                    resultAdvertiser: user.Advertiser,
+                    resultPublisher: user.Publisher
                 });
 
                 strapi.log.info(`User created successfully: ${user.id}`);
