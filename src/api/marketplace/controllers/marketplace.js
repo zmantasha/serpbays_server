@@ -43,7 +43,7 @@ const validateType = (value, type, fieldName, schema) => {
         if (fieldSchema.min !== undefined && num < fieldSchema.min) {
           return { isValid: false, error: `Value ${num} is below minimum allowed value of ${fieldSchema.min}` };
         }
-        
+
         // Check maximum value
         if (fieldSchema.max !== undefined && num > fieldSchema.max) {
           return { isValid: false, error: `Value ${num} exceeds maximum allowed value of ${fieldSchema.max}` };
@@ -139,15 +139,74 @@ const validateType = (value, type, fieldName, schema) => {
 };
 
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
+  // Helper function to sanitize publisher data for advertisers
+  sanitizePublisherData(entries, user) {
+    // Log user info for debugging
+    console.log('🔍 [sanitizePublisherData] User info:', {
+      email: user?.email,
+      Publisher: user?.Publisher,
+      Advertiser: user?.Advertiser,
+      isArray: Array.isArray(entries),
+      entryCount: Array.isArray(entries) ? entries.length : 1
+    });
+
+    // For advertisers and public users, hide sensitive publisher information
+    const sanitize = (entry) => {
+      if (!entry) return entry;
+
+      const sanitized = { ...entry };
+
+      // Check if this is the user's own website
+      // Check ONLY if email matches - don't check current role
+      // User might be in Advertiser mode but still own the website
+      const isOwnWebsite = user && entry.publisher_email === user.email;
+
+      // Debug logging for EVERY website
+      console.log(`🔍 [Ownership Check] ${entry.url}:`, {
+        userEmail: user?.email,
+        publisherEmail: entry.publisher_email,
+        userIsPublisher: user?.Publisher,
+        userIsAdvertiser: user?.Advertiser,
+        emailsMatch: entry.publisher_email === user?.email,
+        isOwnWebsite
+      });
+
+      // Add ownership flag (safe to expose, doesn't reveal publisher identity)
+      sanitized.isOwnWebsite = isOwnWebsite;
+
+      // If user is a publisher viewing their own listing, keep publisher data
+      if (isOwnWebsite) {
+        console.log(`✅ [Ownership] User owns ${entry.url}, keeping publisher data`);
+        return sanitized;
+      }
+
+      // For advertisers and public users, remove ALL publisher-related fields
+      Object.keys(sanitized).forEach(key => {
+        if (key.startsWith('publisher_') || key === 'publisher_email' || key === 'publisher_name') {
+          delete sanitized[key];
+        }
+      });
+
+      return sanitized;
+    };
+
+    // Handle both single entry and array of entries
+    if (Array.isArray(entries)) {
+      return entries.map(sanitize);
+    }
+
+    return sanitize(entries);
+  },
+
   // Helper function to calculate placement speed based on TAT
   calculatePlacementSpeed(tat) {
     if (!tat || tat < 0) return 'Normal';
-    
+
     if (tat >= 0 && tat <= 2) return 'Ultra Fast';
     if (tat >= 3 && tat <= 5) return 'Fast';
     if (tat >= 6 && tat <= 8) return 'Normal';
     if (tat >= 9 && tat <= 20) return 'Slow';
-    
+
     // For TAT > 20 days, consider it Slow
     return 'Slow';
   },
@@ -172,12 +231,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced create with validation
   async create(ctx) {
     const user = ctx.state.user;
-    
+
     // Calculate placement speed if TAT is provided
     if (ctx.request.body.data && ctx.request.body.data.tat !== undefined) {
       ctx.request.body.data.placement_speed = this.calculatePlacementSpeed(ctx.request.body.data.tat);
     }
-    
+
     // Validate input data
     const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
     if (validationErrors.length > 0) {
@@ -196,12 +255,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced update with validation
   async update(ctx) {
     const user = ctx.state.user;
-    
+
     // Calculate placement speed if TAT is provided
     if (ctx.request.body.data && ctx.request.body.data.tat !== undefined) {
       ctx.request.body.data.placement_speed = this.calculatePlacementSpeed(ctx.request.body.data.tat);
     }
-    
+
     // Validate input data
     const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
     if (validationErrors.length > 0) {
@@ -224,7 +283,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced delete with authorization
   async delete(ctx) {
     const user = ctx.state.user;
-    
+
     // Publisher filtering: Publishers can only delete their own listings
     if (user && user.Advertiser === false) {
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
@@ -243,11 +302,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Get authenticated user from context
     const user = ctx.state.user;
     console.log(user)
-    
+
     // Initialize query filters if they don't exist
     if (!ctx.query) ctx.query = {};
     if (!ctx.query.filters) ctx.query.filters = {};
-    
+
     // Advertiser (user.Advertiser === true) can see all active listings
     // Publisher (user.Advertiser === false) only sees their listings
     if (user && user.Advertiser === false && user.Publisher === true) {
@@ -290,11 +349,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           ]
         }
       ];
-      
+
       console.log('🔍 Marketplace filters for public/advertisers:', JSON.stringify(ctx.query.filters, null, 2));
     }
-    
-    
+
+
     // Handle sorting - ensure proper field mapping and default sort
     if (ctx.query.sort) {
       // Map frontend sort fields to backend database fields if needed
@@ -308,23 +367,30 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         'createdAt': 'createdAt',
         'updatedAt': 'updatedAt'
       };
-      
+
       // Parse sort parameter (e.g., "price:desc" or "url:asc")
       const [field, direction] = ctx.query.sort.split(':');
       const mappedField = sortMapping[field] || field;
-      
+
       // Validate direction
       const sortDirection = direction === 'asc' ? 'asc' : 'desc';
-      
+
       // Set the properly formatted sort
       ctx.query.sort = `${mappedField}:${sortDirection}`;
     } else {
       // Default sort if none provided
       ctx.query.sort = 'updatedAt:desc';
     }
-    
+
     // Call the default core action
-    return await super.find(ctx);
+    const result = await super.find(ctx);
+
+    // Sanitize publisher data for advertisers
+    if (result && result.data) {
+      result.data = this.sanitizePublisherData(result.data, user);
+    }
+
+    return result;
   },
 
   async findOne(ctx) {
@@ -333,15 +399,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const user = ctx.state.user;
       console.log('🔍 findOne - User:', user ? { id: user.id, email: user.email, Advertiser: user.Advertiser, Publisher: user.Publisher } : 'No user');
       console.log('🔍 Requesting entry ID:', ctx.params.id);
-      
+
       // Check if entry exists directly
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id);
       console.log('🔍 Direct entry lookup:', entry ? 'Found' : 'Not found');
-      
+
       if (!entry) {
         return ctx.notFound('Marketplace entry not found');
       }
-      
+
       // Check user permissions
       if (user && user.Advertiser === false && user.Publisher === true) {
         console.log('🔍 User is a Publisher, checking ownership...');
@@ -353,9 +419,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       } else {
         console.log('🔍 User is Advertiser or public user, allowing access to all listings');
       }
-      
+
+      // Sanitize publisher data for advertisers
+      const sanitizedEntry = this.sanitizePublisherData(entry, user);
+
       // Return the entry directly
-      return { data: entry };
+      return { data: sanitizedEntry };
     } catch (error) {
       console.error('🔍 Error in findOne:', error.message);
       throw error;
@@ -365,7 +434,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Check if domain exists in marketplace
   async checkDomainExists(ctx) {
     const { domain } = ctx.params;
-    
+
     if (!domain) {
       return ctx.badRequest('Domain parameter is required');
     }
@@ -373,7 +442,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     try {
       // Clean the domain (remove protocol and trailing slashes)
       const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      
+
       // Check if domain exists in marketplace
       const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
         where: { url: cleanDomain },
@@ -405,7 +474,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Check if this is a direct file upload or a confirmation of duplicates
       const { confirmDuplicates } = ctx.request.body;
       let csvContent;
-      
+
       if (ctx.request.files && ctx.request.files.file) {
         // Direct file upload
         const file = ctx.request.files.file;
@@ -414,15 +483,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // File ID provided (legacy support)
         const fileId = ctx.request.body.fileId;
         const uploadedFile = await strapi.plugins.upload.services.upload.findOne(fileId);
-        
+
         if (!uploadedFile) {
           return ctx.badRequest('File not found');
         }
-        
-        const filePath = uploadedFile.url.startsWith('/') 
+
+        const filePath = uploadedFile.url.startsWith('/')
           ? `./public${uploadedFile.url}`
           : uploadedFile.url;
-          
+
         csvContent = fs.readFileSync(filePath, 'utf8');
       } else if (confirmDuplicates) {
         // Just handling duplicate confirmations, no new file
@@ -551,14 +620,14 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // Process already detected duplicates that user has confirmed to update
         // We'll need to fetch them from the database again
         const confirmedEntries = [];
-        
+
         for (const url of confirmDuplicates) {
           try {
             // Find the existing entry by URL
             const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { url: url }
             });
-            
+
             if (existingEntry) {
               // We would normally update with data from the CSV, but since we don't have it anymore,
               // just mark it as processed
@@ -568,13 +637,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             console.error(`Error processing confirmed duplicate ${url}:`, error);
           }
         }
-        
+
         return {
           message: `Successfully processed ${confirmedEntries.length} duplicate entries`,
           confirmedCount: confirmedEntries.length
         };
       }
-      
+
       // If we have duplicates and no confirmation was provided, return them for user decision
       if (duplicates.length > 0 && !confirmDuplicates) {
         return {
@@ -619,7 +688,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const website = await strapi.entityService.findOne('api::marketplace.marketplace', id, {
           fields: ['publisher_email']
         });
-        
+
         if (!website || website.publisher_email !== user.email) {
           return ctx.unauthorized('You are not allowed to update TAT for this website.');
         }
@@ -673,12 +742,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         return ctx.forbidden('Only administrators can perform bulk TAT updates');
       }
 
-      const { 
-        batchSize, 
-        minOrderCount, 
-        lookbackDays, 
+      const {
+        batchSize,
+        minOrderCount,
+        lookbackDays,
         useWeightedAverage,
-        delayBetweenBatches 
+        delayBetweenBatches
       } = ctx.query;
 
       // Prepare options

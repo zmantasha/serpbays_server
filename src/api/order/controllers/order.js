@@ -11,12 +11,12 @@ async function checkPublisherWallet(userId) {
   try {
     // Check if publisher wallet exists
     const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-      where: { 
+      where: {
         users_permissions_user: userId,
         type: 'publisher'
       }
     });
-    
+
     return publisherWallet !== null;
   } catch (error) {
     console.error('Error checking publisher wallet:', error);
@@ -38,16 +38,16 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         return JSON.stringify([links]);
       }
     }
-    
+
     // If links is an array, stringify it
     if (Array.isArray(links)) {
       return JSON.stringify(links);
     }
-    
+
     // If links is some other type, convert to empty array
     return JSON.stringify([]);
   };
-  
+
   return {
     // Custom create method to handle order creation with content
     async create(ctx) {
@@ -56,21 +56,21 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         if (!ctx.state.user) {
           return ctx.unauthorized('You must be logged in to create an order');
         }
-        
+
         // Get authenticated user
         const user = ctx.state.user;
-        
+
         // Extract order data and content data from request body
-        const { 
-          content, 
-          links, 
-          metaDescription, 
-          keywords, 
-          url, 
-          title, 
-          instructions, 
+        const {
+          content,
+          links,
+          metaDescription,
+          keywords,
+          url,
+          title,
+          instructions,
           projectName,
-          projectId, 
+          projectId,
           outsourceLinks,
           // Link Insertion specific fields
           serviceType,
@@ -79,28 +79,28 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           landingPageUrl,
           linkInsertionLanguage,
           linkInsertionDescription,
-          ...orderData 
+          ...orderData
         } = ctx.request.body.data || ctx.request.body;
-         console.log("projectId",projectId)
-         console.log(projectName)
+        console.log("projectId", projectId)
+        console.log(projectName)
         // If projectId is provided, verify it exists and belongs to the user
         if (projectId) {
           const project = await strapi.db.query('api::project.project').findOne({
-            where: { 
+            where: {
               id: projectId,
               owner: user.id
             }
           });
-          
+
           if (!project) {
             return ctx.badRequest(`Project with ID ${projectId} not found or does not belong to you`);
           }
-          
+
           // Check if project is archived
           if (project.archived) {
             return ctx.badRequest(`Cannot create orders in archived project "${project.ProjectName}". Please unarchive the project first or create a new project.`);
           }
-          
+
           // Add project to orderData
           orderData.project = projectId;
         }
@@ -114,28 +114,28 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               projectUrl: orderData.website // Use the website URL as project URL
             }
           });
-          
+
           // Add the new project to orderData
           orderData.project = newProject.id;
         }
 
-        console.log("orderdata",orderData);
+        console.log("orderdata", orderData);
         console.log('Creating order with data:1', orderData);
-        
+
         // Check if this is an outsourced content order
         const isOutsourced = !!instructions;
-        
+
         // Validate required fields
         if (!orderData.totalAmount || !orderData.description || !orderData.website) {
           return ctx.badRequest('Missing required fields: totalAmount, description and website are required');
         }
 
         console.log(typeof orderData.website)
-        
+
         // Variables to store marketplace data and snapshot
         let marketplace = null;
         let websiteSnapshot = null;
-        
+
         // If website is passed as a string ID, convert it to the proper format
         if (typeof orderData.website === 'string' && !isNaN(parseInt(orderData.website))) {
           console.log(`Website appears to be a string ID: ${orderData.website}, looking up by ID`);
@@ -144,14 +144,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { id: websiteId }
           });
-          
+
           if (!marketplace) {
             return ctx.badRequest(`Website with ID ${websiteId} not found in marketplace`);
           }
-          
+
           console.log(`Found website ID ${marketplace.id} for domain ${marketplace.url}`);
           orderData.website = marketplace.id;
-        } 
+        }
         // If it's a domain name (preferred approach), try to find the corresponding marketplace entry
         else if (typeof orderData.website === 'string') {
           console.log(`Looking up website by domain: ${orderData.website}`);
@@ -162,7 +162,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           if (!marketplace) {
             return ctx.badRequest(`Website with domain ${orderData.website} not found in marketplace`);
           }
-          
+
           console.log(`Found website ID ${marketplace.id} for domain ${orderData.website}`);
           orderData.website = marketplace.id;
         }
@@ -172,14 +172,21 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { id: orderData.website }
           });
-          
+
           if (!marketplace) {
             return ctx.badRequest(`Website with ID ${orderData.website} not found in marketplace`);
           }
-          
+
           console.log(`Verified website ID ${orderData.website} exists`);
         }
-        
+
+        // CRITICAL: Prevent users from ordering their own websites
+        // Check if the user is trying to order their own website
+        if (marketplace && marketplace.publisher_email === user.email) {
+          console.log(`🚫 Self-order prevented: User ${user.email} tried to order their own website ${marketplace.url}`);
+          return ctx.badRequest('You cannot place an order on your own website. Please select a different website.');
+        }
+
         // Create marketplace snapshot to preserve historical data
         if (marketplace) {
           console.log('Creating marketplace snapshot for order');
@@ -228,7 +235,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             sample_post: marketplace.sample_post,
             capturedAt: new Date().toISOString()
           };
-          
+
           // Add snapshot fields to order data
           orderData.websiteSnapshot = websiteSnapshot;
           orderData.websiteUrl = marketplace.url;
@@ -250,15 +257,15 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           orderData.websiteMozDa = marketplace.moz_da;
           orderData.websiteLanguage = marketplace.language;
           orderData.websiteCountries = marketplace.countries;
-          
+
           console.log('Marketplace snapshot created and added to order data');
         }
-        
+
         // Remove links from orderData if present to prevent conflicts
         if (orderData.links) {
           delete orderData.links;
         }
-        
+
         // Check for duplicate recent orders to prevent duplicates
         const recentOrders = await strapi.db.query('api::order.order').findMany({
           where: {
@@ -268,19 +275,19 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             description: orderData.description,
             // Check orders created in the last 5 minutes
             createdAt: {
-              $gt: new Date(Date.now() -  1000)
+              $gt: new Date(Date.now() - 1000)
             }
           },
           limit: 1
         });
-        
+
         if (recentOrders && recentOrders.length > 0) {
           console.log('Potential duplicate order detected, returning existing order');
           // Return the existing order instead of creating a duplicate
           const existingOrder = await strapi.entityService.findOne('api::order.order', recentOrders[0].id, {
             populate: ['advertiser', 'publisher', 'website', 'orderContent'],
           });
-          
+
           return {
             data: existingOrder,
             meta: {
@@ -288,7 +295,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             }
           };
         }
-        
+
         // Create the order
         // First prepare order data with proper fields
         const orderToCreate = {
@@ -309,13 +316,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         console.log('Creating order with data:', orderToCreate);
         const order = await strapi.service('api::order.order').create(orderToCreate, user);
         console.log('Order created:', order);
-        
+
         if (!order || !order.documentId) {
           throw new Error('Failed to create order');
         }
 
-        console.log("orders",order)
-        
+        console.log("orders", order)
+
         // Get the website/marketplace info to find the publisher (reuse existing marketplace data)
         let marketplaceWithPublisher = marketplace;
         if (!marketplace || !marketplace.publisher) {
@@ -325,7 +332,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             populate: ['publisher']
           });
         }
-        
+
         // Create notification for publisher about new order
         if (marketplaceWithPublisher && marketplaceWithPublisher.publisher) {
           try {
@@ -343,7 +350,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         } else {
           console.log('No publisher found for marketplace, skipping new order notification');
         }
-        
+
         // Handle outsourced content details if this is an outsourced order
         if (isOutsourced) {
           try {
@@ -355,7 +362,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               order: order.documentId,
               publishedAt: new Date()
             };
-            
+
             // Format links properly
             if (typeof outsourcedContentData.links !== 'string' && !Array.isArray(outsourcedContentData.links)) {
               outsourcedContentData.links = [];
@@ -363,24 +370,24 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             if (Array.isArray(outsourcedContentData.links)) {
               outsourcedContentData.links = JSON.stringify(outsourcedContentData.links);
             }
-            
+
             console.log('Outsourced content data:', outsourcedContentData);
-            
+
             // Create the outsourced content
             const outsourcedContent = await strapi.entityService.create('api::outsourced-content.outsourced-content', {
               data: outsourcedContentData
             });
-            
+
             console.log('Outsourced content created:', outsourcedContent);
           } catch (error) {
             console.error('Error creating outsourced content details:', error);
             // Continue even if this fails - we don't want to roll back the order
           }
         }
-        
+
         // Define default title for content
         const defaultTitle = `Order for ${orderData.description}`;
-        
+
         // Only create content object for non-outsourced orders and non-Link Insertion orders
         if (!isOutsourced && serviceType !== 'link_insertion') {
           try {
@@ -394,16 +401,16 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               // Important: establish the relationship with the order
               order: order.documentId
             };
-            
+
             // If HTML content was provided
             if (content) {
               // If content is a string, treat it as content field
               if (typeof content === 'string') {
                 contentData.content = content;
-              } 
+              }
               // If content is an object, merge its properties
               else if (typeof content === 'object') {
-                contentData = { 
+                contentData = {
                   ...contentData,
                   ...content,
                   // Ensure the order relation is preserved
@@ -411,9 +418,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 };
               }
             }
-            
+
             // Explicitly add each metadata field if they were provided in the request
-            
+
             // Add links if they were provided - ensure it's stored as JSON
             if (links && (Array.isArray(links) || typeof links === 'string')) {
               // Use our formatLinks helper to ensure proper JSON storage
@@ -424,21 +431,21 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               contentData.links = formatLinks(ctx.request.body.links);
               console.log('Adding links from request body:', contentData.links);
             }
-            
+
             // Add metaDescription if provided in the request
             if (metaDescription) {
               contentData.metaDescription = metaDescription;
             }
-            
+
             // Add keywords if provided in the request
             if (keywords) {
               contentData.keywords = keywords;
             }
-            
+
             // Add URL if provided in the request
             if (url) {
               contentData.url = url;
-            } 
+            }
             // If URL isn't provided but website is, try to use website URL from snapshot
             else if (!contentData.url && orderData.website) {
               try {
@@ -450,7 +457,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                   const websiteInfo = await strapi.db.query('api::marketplace.marketplace').findOne({
                     where: { id: orderData.website }
                   });
-                  
+
                   if (websiteInfo && websiteInfo.url) {
                     contentData.url = websiteInfo.url;
                   }
@@ -460,39 +467,39 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 // Continue even if this fails
               }
             }
-            
+
             // Add title if provided in the request
             if (title) {
               contentData.title = title;
             }
-            
+
             console.log('Creating order content with data:', contentData);
-            
+
             // Create the order content
             const newOrderContent = await strapi.entityService.create('api::order-content.order-content', {
               data: contentData
             });
-            
+
             console.log('Order content created:', newOrderContent);
-            
+
             // Update the order to ensure the relation is bidirectional
             await strapi.entityService.update('api::order.order', order.id, {
               data: {
                 orderContent: newOrderContent.id
               }
             });
-            
+
           } catch (contentError) {
             console.error('Error creating order content:', contentError);
             // We don't want to fail the whole operation if just the content creation fails
           }
         }
-        
+
         // Return the created order with populated relations
         const populatedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
           populate: ['advertiser', 'publisher', 'website', 'orderContent'],
         });
-        
+
         // Create notification for publisher (website owner) using snapshot data
         try {
           // Use publisher email from marketplace snapshot if available
@@ -506,13 +513,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             });
             publisherEmail = websiteForNotification?.publisher_email;
           }
-          
+
           if (publisherEmail) {
             // Find the user by email
             const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
               where: { email: publisherEmail }
             });
-            
+
             if (publisherUser) {
               console.log(`Creating new order notification for publisher ${publisherUser.id} (${publisherEmail})`);
               await strapi.service('api::notification.notification').createOrderNotification(
@@ -545,7 +552,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           console.error('Failed to create new order notification:', notificationError);
           // Don't fail the order creation if notification fails
         }
-        
+
         return {
           data: populatedOrder,
           meta: {
@@ -563,7 +570,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         if (error.message === 'Authentication required') {
           return ctx.unauthorized('Authentication required');
         }
-        
+
         // Log and return any other errors
         console.error('Error creating order:', error);
         return ctx.badRequest(error.message || 'Error creating order');
@@ -574,32 +581,32 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async fixLinks(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
-        
+
         // Check if user is an admin
         if (user.role && user.role.type !== 'admin') {
           return ctx.forbidden('Only administrators can fix links');
         }
-        
+
         let fixed = 0;
         let errors = 0;
-        
+
         // Find all order-contents
         const orderContents = await strapi.db.query('api::order-content.order-content').findMany();
-        
+
         for (const content of orderContents) {
           try {
             // Check if links needs to be fixed
             if (content.links !== null) {
               let updatedLinks;
-              
+
               // If links is already a string but not JSON, format it
               if (typeof content.links === 'string' && !content.links.startsWith('[')) {
                 updatedLinks = JSON.stringify([content.links]);
-              } 
+              }
               // If links is an array, stringify it
               else if (Array.isArray(content.links)) {
                 updatedLinks = JSON.stringify(content.links);
@@ -629,7 +636,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             errors++;
           }
         }
-        
+
         return {
           data: {
             fixed,
@@ -647,13 +654,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async getMyOrders(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
 
         // Extract query parameters
-        const { 
+        const {
           type = 'all',
           page = 1,
           pageSize = 10,
@@ -667,10 +674,10 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const currentPage = Math.max(1, parseInt(page));
         const limit = Math.min(50, Math.max(1, parseInt(pageSize))); // Max 50 per page
         const start = (currentPage - 1) * limit;
-        
+
         // Build base filters for user access
         const baseFilters = {};
-        
+
         if (type === 'advertiser') {
           // Include only orders where user is advertiser
           baseFilters.advertiser = user.id;
@@ -679,17 +686,17 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // This ensures orders stay with the publisher who accepted them,
           // even after website ownership transfers
           baseFilters.publisher = user.id;
-          
+
           // Exclude orders where user is the advertiser (to prevent self-acceptance)
           baseFilters.advertiser = { $ne: user.id };
-          
+
           console.log(`[Order Filter] Publisher ${user.id} - filtering by publisher field only`);
         } else if (type === 'all') {
           // Include orders where user is advertiser OR publisher (direct relationships only)
           baseFilters.$or = [];
           baseFilters.$or.push({ advertiser: user.id });
           baseFilters.$or.push({ publisher: user.id });
-          
+
           console.log(`[Order Filter] User ${user.id} - filtering by direct relationships only`);
         }
 
@@ -698,37 +705,37 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         if (search && search.trim()) {
           const searchTerm = search.trim();
           searchFilters.$or = [];
-          
+
           // Search by order ID (exact match if it's a number)
           if (!isNaN(searchTerm)) {
             searchFilters.$or.push({ id: parseInt(searchTerm) });
           }
-          
+
           // Search by description
           // searchFilters.$or.push({
           //   description: { $containsi: searchTerm }
           // });
-          
+
           // Search by website URL
           searchFilters.$or.push({
             website: {
               url: { $containsi: searchTerm }
             }
           });
-          
+
           // Search by project name
           searchFilters.$or.push({
             project: {
               ProjectName: { $containsi: searchTerm }
             }
           });
-          
+
           // Search by order content title
-        //   searchFilters.$or.push({
-        //     orderContent: {
-        //       title: { $containsi: searchTerm }
-        //     }
-        //   });
+          //   searchFilters.$or.push({
+          //     orderContent: {
+          //       title: { $containsi: searchTerm }
+          //     }
+          //   });
         }
 
         // Add status filter
@@ -756,7 +763,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const sortOptions = {};
         const validSortFields = ['orderDate', 'id', 'orderStatus', 'totalAmount', 'deliveredDate', 'acceptedDate', 'updatedAt'];
         const validSortOrders = ['asc', 'desc'];
-        
+
         if (validSortFields.includes(sortBy) && validSortOrders.includes(sortOrder.toLowerCase())) {
           sortOptions[sortBy] = sortOrder.toLowerCase();
         } else {
@@ -767,7 +774,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         console.log(`Fetching orders for user ID ${user.id}, page: ${currentPage}, limit: ${limit}`);
         console.log('Combined Filters:', JSON.stringify(combinedFilters, null, 2));
         console.log('Sort Options:', sortOptions);
-        
+
         // Get total count for pagination
         const totalCount = await strapi.entityService.count('api::order.order', {
           filters: combinedFilters
@@ -781,7 +788,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           start,
           limit
         });
-        
+
         // Calculate pagination info
         const totalPages = Math.ceil(totalCount / limit);
         const hasNextPage = currentPage < totalPages;
@@ -821,7 +828,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async getAvailableOrders(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
@@ -830,7 +837,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // For available orders, we ONLY want active websites they currently own
         // Historical orders are handled via the publisher field, not marketplace ownership
         const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
-          where: { 
+          where: {
             publisher_email: user.email,
             status: 'active' // Only active websites for new available orders
           }
@@ -840,19 +847,19 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         publisherWebsites.forEach(website => {
           console.log(`  - Website ${website.id}: ${website.url} (status: ${website.status}, delisted reason: ${website.delistedReason || 'N/A'})`);
         });
-        
+
         // Debug: Check what orders exist for wordscloud.in
         if (publisherWebsites.some(w => w.url === 'wordscloud.in')) {
           const wordscloudinSite = publisherWebsites.find(w => w.url === 'wordscloud.in');
           console.log(`[Debug] Checking orders for wordscloud.in (website ID: ${wordscloudinSite.id})`);
-          
+
           const allOrdersForSite = await strapi.entityService.findMany('api::order.order', {
             filters: {
               website: { id: wordscloudinSite.id }
             },
             populate: ['website', 'advertiser', 'publisher']
           });
-          
+
           console.log(`[Debug] Found ${allOrdersForSite.length} total orders for wordscloud.in:`);
           allOrdersForSite.forEach(order => {
             console.log(`  - Order ${order.id}: Status=${order.orderStatus}, Publisher=${order.publisher?.id || 'null'}, Date=${order.orderDate}, Advertiser=${order.advertiser?.id}`);
@@ -898,19 +905,19 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             submissionStatus: 'ownership_transferred'
           }
         });
-        
+
         console.log(`[Debug] User ${user.email} has ${transferredWebsites.length} transferred websites`);
 
         let historicalOrders = [];
         if (transferredWebsites.length > 0) {
           console.log(`[Available Orders] Found ${transferredWebsites.length} transferred websites for user ${user.id}`);
-          
+
           for (const transferredWebsite of transferredWebsites) {
             // Find the current marketplace listing for this URL
             const currentMarketplaceListing = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { url: transferredWebsite.url, status: 'active' }
             });
-            
+
             if (currentMarketplaceListing && transferredWebsite.ownershipTransferredAt) {
               // Get pending orders placed BEFORE the transfer date
               const preTransferOrders = await strapi.entityService.findMany('api::order.order', {
@@ -924,7 +931,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 populate: ['website', 'advertiser', 'outsourcedContent'],
                 sort: { orderDate: 'desc' }
               });
-              
+
               console.log(`[Available Orders] Found ${preTransferOrders.length} pre-transfer orders for ${transferredWebsite.url}`);
               historicalOrders = historicalOrders.concat(preTransferOrders);
             }
@@ -933,14 +940,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Combine current and historical orders
         const combinedOrders = [...currentWebsiteOrders, ...historicalOrders];
-        
+
         // Remove duplicates (in case of any overlap)
-        orders = combinedOrders.filter((order, index, self) => 
+        orders = combinedOrders.filter((order, index, self) =>
           index === self.findIndex(o => o.id === order.id)
         );
-          
+
         console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (${currentWebsiteOrders.length} current + ${historicalOrders.length} historical)`);
-        
+
         // Log all order IDs for debugging
         console.log('Available order IDs:', orders.map(order => order.id).join(', '));
 
@@ -960,39 +967,39 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async acceptOrder(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
 
         const { id } = ctx.params;
-        
+
         // Use the order service to handle order acceptance
         const updatedOrder = await strapi.service('api::order.order').acceptOrder(id, user);
 
-          // Check if user has a publisher wallet, create if not exists
-          await checkPublisherWallet(user.id);
+        // Check if user has a publisher wallet, create if not exists
+        await checkPublisherWallet(user.id);
 
         // Create notification for advertiser
         try {
           console.log(`[OrderController] About to create order_accepted notification for order ${updatedOrder.id}`);
           console.log(`[OrderController] Publisher (current user): ${user.id}, Advertiser: ${updatedOrder.advertiser?.id || updatedOrder.advertiser}`);
           console.log(`[OrderController] Full updatedOrder.advertiser object:`, JSON.stringify(updatedOrder.advertiser, null, 2));
-          
+
           const advertiserId = updatedOrder.advertiser?.id || updatedOrder.advertiser;
           if (!advertiserId) {
             console.error(`[OrderController] ERROR: No advertiser ID found in updatedOrder!`);
             console.error(`[OrderController] updatedOrder:`, JSON.stringify(updatedOrder, null, 2));
             throw new Error('No advertiser ID found in order');
           }
-          
+
           await strapi.service('api::notification.notification').createOrderNotification(
             updatedOrder.id,
             user.id,
             advertiserId,
             'order_accepted'
           );
-          
+
           console.log(`[OrderController] Order accepted notification created successfully for advertiser ${advertiserId}`);
         } catch (notificationError) {
           console.error('Failed to create order accepted notification:', notificationError);
@@ -1007,7 +1014,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         };
       } catch (error) {
         console.error('Error accepting order:', error);
-        
+
         // Handle specific service errors
         if (error.message === 'Order not found') {
           return ctx.notFound('Order not found');
@@ -1018,7 +1025,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         if (error.message === 'You do not have permission to accept this order') {
           return ctx.forbidden('You do not have permission to accept this order');
         }
-        
+
         return ctx.internalServerError('An error occurred while accepting the order');
       }
     },
@@ -1027,14 +1034,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async rejectOrder(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
 
         const { id } = ctx.params;
         const { body } = ctx.request;
-        
+
         if (!body.reason || body.reason.trim().length === 0) {
           return ctx.badRequest('Rejection reason is required');
         }
@@ -1134,7 +1141,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async deliverOrder(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
@@ -1143,7 +1150,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const { body } = ctx.request;
         console.log("user", user);
         console.log(id);
-        
+
         // Get the order - make sure we populate the publisher field
         const order = await strapi.db.query('api::order.order').findOne({
           where: { id },
@@ -1154,7 +1161,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.notFound('Order not found');
         }
         console.log("order", order);
-        
+
         // Initialize a flag to track if we need to update publisher
         let publisherNeedsUpdate = false;
 
@@ -1162,32 +1169,32 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         if (!order.publisher || !order.publisher.id) {
           console.log(`Order ${id} has no publisher assigned. Assigning current user as publisher.`);
           publisherNeedsUpdate = true;
-          
+
           // First check if this user is allowed to deliver this order
           let canDeliver = false;
-          
+
           // If the order is for a website owned by this user
           if (order.website && order.website.id) {
             const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { id: order.website.id, publisher_email: user.email }
             });
-            
+
             if (isWebsiteOwner) {
               console.log('User owns this website. Assigning as publisher.');
               canDeliver = true;
             }
           }
-          
+
           // Or if they are the advertiser for their own order
           if (order.advertiser && order.advertiser.id === user.id) {
             console.log('User is the advertiser for this order. Assigning as publisher too.');
             canDeliver = true;
           }
-          
+
           if (!canDeliver) {
             return ctx.forbidden('You do not have permission to deliver this order.');
           }
-          
+
           // Update the order to set the user as the publisher
           await strapi.db.query('api::order.order').update({
             where: { id },
@@ -1195,14 +1202,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               publisher: user.id
             }
           });
-          
+
           // Set the publisher value in our order object
           if (!order.publisher) {
             order.publisher = { id: user.id };
           } else {
             order.publisher.id = user.id;
           }
-          
+
           // Ensure publisher wallet exists
           await checkPublisherWallet(user.id);
         }
@@ -1214,40 +1221,40 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             orderPublisher: order.publisher.id,
             currentUser: user.id
           });
-          
+
           // Check if this is the advertiser's own order
           if (order.advertiser && order.advertiser.id === user.id) {
             console.log('User is the advertiser for this order. Fixing publisher association...');
             publisherNeedsUpdate = true;
-          } 
+          }
           // Special case: Check if the website belongs to this user
           else if (order.website && order.website.id) {
-                      // Check if user is the current website owner for NEW orders only
-          // For historical orders, only the originally assigned publisher can deliver
-          const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: { id: order.website.id, publisher_email: user.email }
-          });
-            
-          if (isWebsiteOwner) {
-            // Only allow website owner to take over if this is a very recent order (within 24 hours)
-            // This prevents ownership transfers from stealing old orders
-            const orderAge = new Date() - new Date(order.orderDate);
-            const maxAgeForOwnerTakeover = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-            
-            if (orderAge <= maxAgeForOwnerTakeover) {
-              console.log('User owns this website and order is recent. Allowing publisher association...');
-              publisherNeedsUpdate = true;
+            // Check if user is the current website owner for NEW orders only
+            // For historical orders, only the originally assigned publisher can deliver
+            const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { id: order.website.id, publisher_email: user.email }
+            });
+
+            if (isWebsiteOwner) {
+              // Only allow website owner to take over if this is a very recent order (within 24 hours)
+              // This prevents ownership transfers from stealing old orders
+              const orderAge = new Date() - new Date(order.orderDate);
+              const maxAgeForOwnerTakeover = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+              if (orderAge <= maxAgeForOwnerTakeover) {
+                console.log('User owns this website and order is recent. Allowing publisher association...');
+                publisherNeedsUpdate = true;
+              } else {
+                console.log(`Order is too old (${Math.round(orderAge / (1000 * 60 * 60))} hours) for automatic publisher assignment.`);
+                return ctx.forbidden('This order was placed before your ownership. Only the originally assigned publisher can deliver it.');
+              }
             } else {
-              console.log(`Order is too old (${Math.round(orderAge / (1000 * 60 * 60))} hours) for automatic publisher assignment.`);
-              return ctx.forbidden('This order was placed before your ownership. Only the originally assigned publisher can deliver it.');
+              return ctx.forbidden('You do not have permission to update this order. You are neither the publisher nor the website owner.');
             }
-          } else {
-            return ctx.forbidden('You do not have permission to update this order. You are neither the publisher nor the website owner.');
-          }
           } else {
             return ctx.forbidden('You do not have permission to update this order. Publisher ID does not match your user ID.');
           }
-          
+
           // Update the publisher if needed
           if (publisherNeedsUpdate) {
             await strapi.db.query('api::order.order').update({
@@ -1256,7 +1263,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 publisher: user.id
               }
             });
-            
+
             // Update our order object
             if (!order.publisher) {
               order.publisher = { id: user.id };
@@ -1268,11 +1275,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Check if the order is in pending status
         let statusNeedsUpdate = false;
-        
+
         if (order.orderStatus === 'pending') {
           console.log(`Order ${id} is in pending status. Updating to accepted first.`);
           statusNeedsUpdate = true;
-          
+
           // Update to accepted
           await strapi.db.query('api::order.order').update({
             where: { id },
@@ -1281,20 +1288,20 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               acceptedDate: new Date()
             }
           });
-          
+
           // Update our order object
           order.orderStatus = 'accepted';
         } else if (order.orderStatus !== 'accepted') {
           return ctx.badRequest(`Order must be in "accepted" or "pending" status to be marked as delivered (current status: ${order.orderStatus})`);
         }
-        
+
         // For outsourced orders, check if we need to link outsourced content
         if (order.isOutsourced) {
           // Check if outsourced content exists for this order
           const outsourcedContent = await strapi.db.query('api::outsourced-content.outsourced-content').findOne({
             where: { order: id }
           });
-          
+
           // If outsourced content exists but is not linked to order, update the association
           if (outsourcedContent && !order.outsourcedContent) {
             console.log(`Found outsourced content (${outsourcedContent.id}) not linked to order. Linking now.`);
@@ -1313,7 +1320,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             if (order.website && order.website.url) {
               projectName = order.website.url;
             }
-            
+
             // Create new outsourced content
             const newOutsourcedContent = await strapi.entityService.create('api::outsourced-content.outsourced-content', {
               data: {
@@ -1323,7 +1330,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 publishedAt: new Date()
               }
             });
-            
+
             // Link the outsourced content to the order
             await strapi.db.query('api::order.order').update({
               where: { id },
@@ -1342,7 +1349,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             });
           }
         }
-        
+
         // Now mark as delivered
         console.log(`Marking order ${id} as delivered.`);
         const updatedOrder = await strapi.db.query('api::order.order').update({
@@ -1399,14 +1406,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async completeOrder(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
 
         const { id } = ctx.params;
         console.log(`Attempting to complete order ${id} by user ${user.id}`);
-        
+
         // Get the order with related data
         const order = await strapi.db.query('api::order.order').findOne({
           where: { id },
@@ -1503,14 +1510,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async disputeOrder(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
 
         const { id } = ctx.params;
         const { body } = ctx.request;
-        
+
         if (!body.reason) {
           return ctx.badRequest('Dispute reason is required');
         }
@@ -1563,29 +1570,29 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         return ctx.internalServerError('An error occurred while disputing the order');
       }
     },
-    
+
     // Fix missing relations between orders and orderContent
     async fixRelations(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
-        
+
         // Check if user is an admin
         if (user.role && user.role.type !== 'admin') {
           return ctx.forbidden('Only administrators can fix relations');
         }
-        
+
         let fixed = 0;
         let errors = 0;
-        
+
         // Find order-contents that have order relation but the order doesn't point back
         const orderContents = await strapi.db.query('api::order-content.order-content').findMany({
           populate: ['order']
         });
-        
+
         for (const content of orderContents) {
           if (content.order && content.order.id) {
             try {
@@ -1594,7 +1601,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 where: { id: content.order.id },
                 populate: ['orderContent']
               });
-              
+
               if (order && !order.orderContent) {
                 // Fix the order by adding the missing relation
                 await strapi.entityService.update('api::order.order', order.id, {
@@ -1611,12 +1618,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             }
           }
         }
-        
+
         // Find orders that have missing titles/content
         const ordersWithNoContent = await strapi.db.query('api::order.order').findMany({
           populate: ['orderContent']
         });
-        
+
         for (const order of ordersWithNoContent) {
           // If order has no orderContent, create one
           if (!order.orderContent) {
@@ -1630,14 +1637,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                   order: order.id
                 }
               });
-              
+
               // Update the order to point to the new content
               await strapi.entityService.update('api::order.order', order.id, {
                 data: {
                   orderContent: newContent.id
                 }
               });
-              
+
               fixed++;
               console.log(`Created missing content for order ${order.id}`);
             } catch (err) {
@@ -1646,7 +1653,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             }
           }
         }
-        
+
         return {
           data: {
             fixed,
@@ -1664,28 +1671,28 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async migrateInstructions(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
-        
+
         // Check if user is an admin
         if (user.role && user.role.type !== 'admin') {
           return ctx.forbidden('Only administrators can migrate instructions');
         }
-        
+
         let fixed = 0;
         let created = 0;
         let errors = 0;
-        
+
         // Find outsourced orders with instructions
         const outsourcedOrders = await strapi.db.query('api::order.order').findMany({
           where: { isOutsourced: true },
           populate: ['outsourcedContent']
         });
-        
+
         console.log(`Found ${outsourcedOrders.length} outsourced orders to process`);
-        
+
         for (const order of outsourcedOrders) {
           try {
             // If order has instructions
@@ -1699,7 +1706,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 });
                 fixed++;
                 console.log(`Updated instructions for outsourced content ${order.outsourcedContent.id}`);
-              } 
+              }
               // If order doesn't have linked outsourced content, create one
               else {
                 // Get website details for the project name
@@ -1712,7 +1719,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                     projectName = website.url;
                   }
                 }
-                
+
                 // Create new outsourced content
                 const newOutsourcedContent = await strapi.entityService.create('api::outsourced-content.outsourced-content', {
                   data: {
@@ -1722,14 +1729,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                     publishedAt: new Date()
                   }
                 });
-                
+
                 // Link the outsourced content to the order
                 await strapi.entityService.update('api::order.order', order.id, {
                   data: {
                     outsourcedContent: newOutsourcedContent.id
                   }
                 });
-                
+
                 created++;
                 console.log(`Created new outsourced content for order ${order.id}`);
               }
@@ -1739,7 +1746,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             errors++;
           }
         }
-        
+
         return {
           data: {
             fixed,
@@ -1758,41 +1765,41 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async requestRevision(ctx) {
       const { orderId } = ctx.params;
       const { message } = ctx.request.body;
-      
+
       try {
         // Get current user
         const user = ctx.state.user;
         if (!user) {
           return ctx.unauthorized('You must be logged in to request a revision');
         }
-        
+
         // Check if the order exists
         const order = await strapi.entityService.findOne('api::order.order', orderId, {
           populate: ['advertiser', 'publisher'],
         });
-        
+
         if (!order) {
           return ctx.notFound('Order not found');
         }
-        
+
         // Ensure user is the advertiser for this order
         if (order.advertiser?.id !== user.id) {
           return ctx.forbidden('Only the advertiser can request revisions');
         }
-        
+
         // Validate 5-day window for requesting revisions
         if (order.deliveredDate) {
           const deliveredDate = new Date(order.deliveredDate);
           const currentDate = new Date();
           const daysDifference = Math.floor((currentDate - deliveredDate) / (1000 * 60 * 60 * 24));
-          
+
           if (daysDifference > 5) {
             return ctx.badRequest('Revision can only be requested within 5 working days of delivery');
           }
         } else {
           return ctx.badRequest('Order has not been delivered yet');
         }
-        
+
         // Update order status and set revision timestamps
         const updated = await strapi.entityService.update('api::order.order', orderId, {
           data: {
@@ -1802,7 +1809,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             revisionStatus: 'requested',
           }
         });
-        
+
         // Create a communication record for the revision request
         await strapi.entityService.create('api::communication.communication', {
           data: {
@@ -1812,8 +1819,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             communicationStatus: 'requested',
           }
         });
-        
-                // Create notification for publisher about revision request
+
+        // Create notification for publisher about revision request
         try {
           await strapi.service('api::notification.notification').createOrderNotification(
             orderId,
@@ -1857,7 +1864,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Don't fail the revision request if email fails
         }
 
-        return { 
+        return {
           success: true,
           data: updated
         };
@@ -1866,37 +1873,37 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         return ctx.internalServerError('An error occurred while requesting revision');
       }
     },
-    
+
     // Start working on a revision (for publishers)
     async startRevision(ctx) {
       const { orderId } = ctx.params;
-      
+
       try {
         // Get current user
         const user = ctx.state.user;
         if (!user) {
           return ctx.unauthorized('You must be logged in to start a revision');
         }
-        
+
         // Check if the order exists
         const order = await strapi.entityService.findOne('api::order.order', orderId, {
           populate: ['publisher', 'advertiser'],
         });
-        
+
         if (!order) {
           return ctx.notFound('Order not found');
         }
-        
+
         // Ensure user is the publisher for this order
         if (order.publisher?.id !== user.id) {
           return ctx.forbidden('Only the publisher can start working on revisions');
         }
-        
+
         // Update order revision status
         const updated = await strapi.entityService.update('api::order.order', orderId, {
           data: { revisionStatus: 'in_progress' }
         });
-        
+
         // Create a communication record
         await strapi.entityService.create('api::communication.communication', {
           data: {
@@ -1920,8 +1927,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           console.error('Failed to create revision in progress notification:', notificationError);
           // Don't fail the revision start if notification fails
         }
-        
-        return { 
+
+        return {
           success: true,
           data: updated
         };
@@ -1930,42 +1937,42 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         return ctx.internalServerError('An error occurred while starting revision');
       }
     },
-    
+
     // Mark a revision as completed (for publishers)
     async completeRevision(ctx) {
       const { orderId } = ctx.params;
       const { message } = ctx.request.body;
-      
+
       try {
         // Get current user
         const user = ctx.state.user;
         if (!user) {
           return ctx.unauthorized('You must be logged in to complete a revision');
         }
-        
+
         // Check if the order exists
         const order = await strapi.entityService.findOne('api::order.order', orderId, {
           populate: ['publisher', 'advertiser'],
         });
-        
+
         if (!order) {
           return ctx.notFound('Order not found');
         }
-        
+
         // Ensure user is the publisher for this order
         if (order.publisher?.id !== user.id) {
           return ctx.forbidden('Only the publisher can complete revisions');
         }
-        
+
         // Update order revision status and order status
         const updated = await strapi.entityService.update('api::order.order', orderId, {
-          data: { 
+          data: {
             revisionStatus: 'completed',
             orderStatus: 'delivered',
             deliveredDate: new Date()
           }
         });
-        
+
         // Create a communication record
         await strapi.entityService.create('api::communication.communication', {
           data: {
@@ -1975,7 +1982,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             communicationStatus: 'acceptance',
           }
         });
-        
+
         // Create notification for advertiser about revision completion
         try {
           await strapi.service('api::notification.notification').createOrderNotification(
@@ -1988,8 +1995,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           console.error('Failed to create revision completed notification:', notificationError);
           // Don't fail the revision completion if notification fails
         }
-        
-        return { 
+
+        return {
           success: true,
           data: updated
         };
@@ -1998,27 +2005,27 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         return ctx.internalServerError('An error occurred while completing revision');
       }
     },
-    
+
     // Migrate existing orders to populate marketplace snapshot data
     async migrateSnapshots(ctx) {
       try {
         const user = ctx.state.user;
-        
+
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
-        
+
         // Check if user is an admin
         if (user.role && user.role.type !== 'admin') {
           return ctx.forbidden('Only administrators can migrate snapshots');
         }
-        
+
         let migrated = 0;
         let errors = 0;
         let skipped = 0;
-        
+
         console.log('Starting marketplace snapshot migration for existing orders...');
-        
+
         // Find orders that don't have snapshot data yet
         const ordersToMigrate = await strapi.db.query('api::order.order').findMany({
           where: {
@@ -2026,9 +2033,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           },
           populate: ['website']
         });
-        
+
         console.log(`Found ${ordersToMigrate.length} orders to migrate`);
-        
+
         for (const order of ordersToMigrate) {
           try {
             if (!order.website || !order.website.id) {
@@ -2036,18 +2043,18 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               skipped++;
               continue;
             }
-            
+
             // Get the current marketplace data (this is the best we can do for historical data)
             const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { id: order.website.id }
             });
-            
+
             if (!marketplace) {
               console.log(`Marketplace not found for order ${order.id}, skipping`);
               skipped++;
               continue;
             }
-            
+
             // Create snapshot data
             const websiteSnapshot = {
               id: marketplace.id,
@@ -2094,7 +2101,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               sample_post: marketplace.sample_post,
               migratedAt: new Date().toISOString()
             };
-            
+
             // Update the order with snapshot data
             await strapi.entityService.update('api::order.order', order.id, {
               data: {
@@ -2120,7 +2127,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 websiteCountries: marketplace.countries
               }
             });
-            
+
             migrated++;
             console.log(`Migrated snapshot data for order ${order.id}`);
           } catch (err) {
@@ -2128,7 +2135,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             errors++;
           }
         }
-        
+
         return {
           data: {
             migrated,
@@ -2146,43 +2153,43 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     // Accept an order as complete (for advertisers)
     async finalizeOrder(ctx) {
       const { orderId } = ctx.params;
-      
+
       try {
         // Get current user
         const user = ctx.state.user;
         if (!user) {
           return ctx.unauthorized('You must be logged in to accept an order');
         }
-        
+
         // Check if the order exists
         const order = await strapi.entityService.findOne('api::order.order', orderId, {
           populate: ['advertiser', 'publisher'],
         });
-        
+
         if (!order) {
           return ctx.notFound('Order not found');
         }
-        
+
         // Ensure user is the advertiser for this order
         if (order.advertiser?.id !== user.id) {
           return ctx.forbidden('Only the advertiser can finalize the order');
         }
-        
+
         // Check if order is in a state that can be finalized
         const validStates = ['delivered'];
         if (!validStates.includes(order.orderStatus)) {
           return ctx.badRequest(`Order must be in 'delivered' status to be finalized (current status: ${order.orderStatus})`);
         }
-        
+
         // Check if revision was completed (if there was a revision)
         if (order.revisionRequestedAt && order.revisionStatus && order.revisionStatus !== 'completed') {
           return ctx.badRequest('Cannot finalize order - revision is not completed yet');
         }
-        
+
         try {
           // Use the order service to complete the order and handle payments
           const completedOrder = await strapi.service('api::order.order').completeOrder(orderId, user);
-          
+
           // Create a final communication record
           await strapi.entityService.create('api::communication.communication', {
             data: {
@@ -2192,7 +2199,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               communicationStatus: 'acceptance',
             }
           });
-          
+
           // Create notification for publisher about delivery acceptance
           try {
             await strapi.service('api::notification.notification').createOrderNotification(
@@ -2205,8 +2212,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             console.error('Failed to create delivery accepted notification:', notificationError);
             // Don't fail the order finalization if notification fails
           }
-          
-          return { 
+
+          return {
             success: true,
             data: completedOrder,
             meta: {
