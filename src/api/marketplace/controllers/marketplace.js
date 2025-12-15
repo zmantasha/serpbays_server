@@ -363,6 +363,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         'ahrefs_traffic': 'ahrefs_traffic',
         'moz_da': 'moz_da',
         'ahrefs_dr': 'ahrefs_dr',
+        'semrush_authority_score': 'semrush_authority_score',
         'price': 'price',
         'createdAt': 'createdAt',
         'updatedAt': 'updatedAt'
