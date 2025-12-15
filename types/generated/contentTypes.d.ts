@@ -3242,10 +3242,16 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
-    firstName: Schema.Attribute.String;
+    firstName: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 50;
+      }>;
     identity: Schema.Attribute.Enumeration<['SEO', 'Agency', 'Other']>;
     invoices: Schema.Attribute.Relation<'oneToMany', 'api::invoice.invoice'>;
-    lastName: Schema.Attribute.String;
+    lastName: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 50;
+      }>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -3307,6 +3313,7 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.Required &
       Schema.Attribute.Unique &
       Schema.Attribute.SetMinMaxLength<{
+        maxLength: 30;
         minLength: 3;
       }>;
     vatGstNumber: Schema.Attribute.String;
