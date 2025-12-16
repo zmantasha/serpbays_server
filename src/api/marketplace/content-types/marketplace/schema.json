@@ -76,6 +76,14 @@
     "guidelines": {
       "type": "text"
     },
+    "description": {
+      "type": "text",
+      "description": "Website description and audience information"
+    },
+    "publication_location": {
+      "type": "text",
+      "description": "Where the article will be published - publisher-defined text describing publication location"
+    },
     "backlink_validity": {
       "type": "string",
       "required": true

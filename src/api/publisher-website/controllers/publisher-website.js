@@ -354,6 +354,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               language: 'language',
               category: 'category',
               guidelines: 'guidelines',
+              description: 'description',
+              publicationLocation: 'publication_location',
               sponsored: 'sponsored',
               ugc: 'ugc',
               copywritingPrice: 'publisher_writing_price'
@@ -731,6 +733,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         backlink_type: submission.backlinkType,
         category: Array.isArray(submission.category) ? submission.category : [submission.category].filter(Boolean), // Handle both array and string
         guidelines: submission.guidelines,
+        description: submission.description, // Website description
+        publication_location: submission.publicationLocation, // Where article will be published
         backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
         publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
         publisher_email: submission.publisherEmail,

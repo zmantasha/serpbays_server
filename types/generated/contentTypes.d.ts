@@ -1077,6 +1077,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     delistedReason: Schema.Attribute.Enumeration<
       ['ownership_transferred', 'admin_action', 'violation', 'other']
     >;
+    description: Schema.Attribute.Text;
     digital_pr: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     dofollow_link: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -1141,6 +1142,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    publication_location: Schema.Attribute.Text;
     publishedAt: Schema.Attribute.DateTime;
     publisher_casino_pricing: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -2027,6 +2029,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     pausedAt: Schema.Attribute.DateTime;
     protocol: Schema.Attribute.Enumeration<['https', 'http']> &
       Schema.Attribute.DefaultTo<'https'>;
+    publicationLocation: Schema.Attribute.Text;
     publishedAt: Schema.Attribute.DateTime;
     publisherEmail: Schema.Attribute.Email & Schema.Attribute.Required;
     publisherName: Schema.Attribute.String;

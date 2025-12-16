@@ -759,6 +759,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language : [updatedWebsite.language].filter(Boolean),
                   countries: updatedWebsite.countries,
                   guidelines: updatedWebsite.guidelines,
+                  description: updatedWebsite.description,
+                  publication_location: updatedWebsite.publicationLocation,
                   sponsored: updatedWebsite.sponsored || false,
                   ugc: updatedWebsite.ugc || false,
                   publisher_writing_price: updatedWebsite.copywritingPrice || 0,
@@ -1140,7 +1142,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         datingGuestPostPrice: updateData.datingGuestPostPrice,
         datingLinkInsertionPrice: updateData.datingLinkInsertionPrice,
         samplePosts: updateData.samplePosts,
-        guidelines: updateData.guidelines
+        guidelines: updateData.guidelines,
+        description: updateData.description,
+        publicationLocation: updateData.publicationLocation
       };
 
       // Remove undefined values
@@ -1244,6 +1248,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               backlink_type: updatedWebsite.backlinkType || 'Do follow',
               backlink_validity: convertBacklinkValidity(updatedWebsite.backlinkValidity),
               guidelines: updatedWebsite.guidelines || null,
+              description: updatedWebsite.description || null,
+              publication_location: updatedWebsite.publicationLocation || null,
               // dofollow_link: (updatedWebsite.backlinkType === 'Do follow' || updatedWebsite.backlinkType === 'Do Follow' || updatedWebsite.backlinkType === 'dofollow') ? 1 : 0,
               dofollow_link: updatedWebsite.allowedLinks || 1,
 

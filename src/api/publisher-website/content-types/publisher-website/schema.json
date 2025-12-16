@@ -79,6 +79,10 @@
       "type": "text",
       "description": "Content guidelines and requirements"
     },
+    "publicationLocation": {
+      "type": "text",
+      "description": "Where the article will be published - publisher-defined text describing publication location, URL, or additional details"
+    },
     "generalGuestPostPrice": {
       "type": "integer",
       "min": 0,

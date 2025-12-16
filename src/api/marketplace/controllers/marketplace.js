@@ -353,6 +353,60 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       console.log('🔍 Marketplace filters for public/advertisers:', JSON.stringify(ctx.query.filters, null, 2));
     }
 
+    // Handle sensitive category price-based filtering
+    // Convert sensitive category filters to price-based filters
+    const sensitivePriceMapping = {
+      'Casino': ['adv_casino_pricing', 'adv_li_casino_pricing'],
+      'Casino/Sports Betting': ['adv_casino_pricing', 'adv_li_casino_pricing'],
+      'Crypto': ['adv_crypto_pricing', 'adv_li_crypto_pricing'],
+      'CBD': ['adv_cbd_pricing', 'adv_li_cbd_pricing'],
+      'Dating': ['adv_dating_pricing', 'adv_li_dating_pricing'],
+      'Dating/Adult': ['adv_dating_pricing', 'adv_li_dating_pricing'],
+    };
+
+    // Check for sensitive_price_category filter parameter
+    const sensitivePriceCategories = [];
+    const queryParams = ctx.query;
+    
+    // Handle array format: sensitive_price_category[0]=Casino&sensitive_price_category[1]=CBD
+    if (queryParams.sensitive_price_category) {
+      if (Array.isArray(queryParams.sensitive_price_category)) {
+        sensitivePriceCategories.push(...queryParams.sensitive_price_category);
+      } else {
+        sensitivePriceCategories.push(queryParams.sensitive_price_category);
+      }
+    }
+
+    // Also check for indexed format: sensitive_price_category_0=Casino&sensitive_price_category_1=CBD
+    Object.keys(queryParams).forEach(key => {
+      if (key.startsWith('sensitive_price_category_') || key.match(/^sensitive_price_category\[\d+\]$/)) {
+        const value = queryParams[key];
+        if (value && !sensitivePriceCategories.includes(value)) {
+          sensitivePriceCategories.push(value);
+        }
+      }
+    });
+
+    // Apply sensitive category price-based filters
+    if (sensitivePriceCategories.length > 0) {
+      console.log('🔍 Sensitive price categories to filter:', sensitivePriceCategories);
+      
+      if (!ctx.query.filters.$and) {
+        ctx.query.filters.$and = [];
+      }
+
+      // For each selected sensitive category, website must have at least one of the related prices > 0
+      sensitivePriceCategories.forEach(category => {
+        const priceFields = sensitivePriceMapping[category];
+        if (priceFields) {
+          const categoryFilter = {
+            $or: priceFields.map(field => ({ [field]: { $gt: 0 } }))
+          };
+          ctx.query.filters.$and.push(categoryFilter);
+          console.log(`🔍 Added price filter for ${category}:`, JSON.stringify(categoryFilter));
+        }
+      });
+    }
 
     // Handle sorting - ensure proper field mapping and default sort
     if (ctx.query.sort) {
