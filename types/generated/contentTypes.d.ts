@@ -1937,7 +1937,10 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<0>;
-    description: Schema.Attribute.Text;
+    description: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
     detailsCompletedAt: Schema.Attribute.DateTime;
     doCopywriting: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     expectedTATHours: Schema.Attribute.Integer &
@@ -1970,7 +1973,10 @@ export interface ApiPublisherWebsitePublisherWebsite
     gscRefreshToken: Schema.Attribute.Text & Schema.Attribute.Private;
     gscVerified: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     gscVerifiedAt: Schema.Attribute.DateTime;
-    guidelines: Schema.Attribute.Text;
+    guidelines: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 600;
+      }>;
     isPRSite: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     language: Schema.Attribute.JSON & Schema.Attribute.DefaultTo<['English']>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
@@ -2029,7 +2035,10 @@ export interface ApiPublisherWebsitePublisherWebsite
     pausedAt: Schema.Attribute.DateTime;
     protocol: Schema.Attribute.Enumeration<['https', 'http']> &
       Schema.Attribute.DefaultTo<'https'>;
-    publicationLocation: Schema.Attribute.Text;
+    publicationLocation: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
     publishedAt: Schema.Attribute.DateTime;
     publisherEmail: Schema.Attribute.Email & Schema.Attribute.Required;
     publisherName: Schema.Attribute.String;
