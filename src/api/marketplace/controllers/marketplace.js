@@ -433,12 +433,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Set the properly formatted sort
       ctx.query.sort = `${mappedField}:${sortDirection}`;
 
-      // Special handling for ahrefs_traffic sorting - filter out 0 and null values
-      // so actual traffic values appear at the top when sorting descending
-      if (mappedField === 'ahrefs_traffic' && sortDirection === 'desc') {
+      // Special handling for metric sorting - filter out 0 and null values
+      // so actual values appear at the top when sorting descending
+      const metricFields = ['ahrefs_traffic', 'ahrefs_dr', 'moz_da', 'semrush_authority_score'];
+      if (metricFields.includes(mappedField) && sortDirection === 'desc') {
         // Add filter to exclude 0 and null values when sorting descending
         const metricFilter = {
-          ahrefs_traffic: { $gt: 0 }
+          [mappedField]: { $gt: 0 }
         };
 
         if (ctx.query.filters.$and) {
@@ -447,7 +448,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           ctx.query.filters.$and = [metricFilter];
         }
 
-        console.log('🔍 Applied ahrefs_traffic filter for descending sort');
+        console.log('🔍 Applied metric filter for descending sort:', mappedField);
       }
     } else {
       // Default sort if none provided
