@@ -367,7 +367,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Check for sensitive_price_category filter parameter
     const sensitivePriceCategories = [];
     const queryParams = ctx.query;
-    
+
     // Handle array format: sensitive_price_category[0]=Casino&sensitive_price_category[1]=CBD
     if (queryParams.sensitive_price_category) {
       if (Array.isArray(queryParams.sensitive_price_category)) {
@@ -390,7 +390,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Apply sensitive category price-based filters
     if (sensitivePriceCategories.length > 0) {
       console.log('🔍 Sensitive price categories to filter:', sensitivePriceCategories);
-      
+
       if (!ctx.query.filters.$and) {
         ctx.query.filters.$and = [];
       }
@@ -432,6 +432,23 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Set the properly formatted sort
       ctx.query.sort = `${mappedField}:${sortDirection}`;
+
+      // Special handling for ahrefs_traffic sorting - filter out 0 and null values
+      // so actual traffic values appear at the top when sorting descending
+      if (mappedField === 'ahrefs_traffic' && sortDirection === 'desc') {
+        // Add filter to exclude 0 and null values when sorting descending
+        const metricFilter = {
+          ahrefs_traffic: { $gt: 0 }
+        };
+
+        if (ctx.query.filters.$and) {
+          ctx.query.filters.$and.push(metricFilter);
+        } else {
+          ctx.query.filters.$and = [metricFilter];
+        }
+
+        console.log('🔍 Applied ahrefs_traffic filter for descending sort');
+      }
     } else {
       // Default sort if none provided
       ctx.query.sort = 'updatedAt:desc';
