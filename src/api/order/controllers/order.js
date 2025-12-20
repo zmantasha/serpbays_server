@@ -142,7 +142,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Try to find the website by ID
           const websiteId = parseInt(orderData.website);
           marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: { id: websiteId }
+            where: { id: websiteId },
+            populate: ['publisher']
           });
 
           if (!marketplace) {
@@ -156,7 +157,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         else if (typeof orderData.website === 'string') {
           console.log(`Looking up website by domain: ${orderData.website}`);
           marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: { url: orderData.website }
+            where: { url: orderData.website },
+            populate: ['publisher']
           });
           console.log("market", marketplace)
           if (!marketplace) {
@@ -170,7 +172,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         else if (typeof orderData.website === 'number') {
           console.log(`Verifying website ID: ${orderData.website}`);
           marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: { id: orderData.website }
+            where: { id: orderData.website },
+            populate: ['publisher']
           });
 
           if (!marketplace) {
@@ -182,7 +185,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // CRITICAL: Prevent users from ordering their own websites
         // Check if the user is trying to order their own website
-        if (marketplace && marketplace.publisher_email === user.email) {
+        if (marketplace && marketplace.publisher && marketplace.publisher.email === user.email) {
+          console.log(`🚫 Self-order prevented: User ${user.email} tried to order their own website ${marketplace.url}`);
+          return ctx.badRequest('You cannot place an order on your own website. Please select a different website.');
+        } else if (marketplace && marketplace.publisher_email === user.email) {
+          // Fallback check using stored email string
           console.log(`🚫 Self-order prevented: User ${user.email} tried to order their own website ${marketplace.url}`);
           return ctx.badRequest('You cannot place an order on your own website. Please select a different website.');
         }
@@ -298,9 +305,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Create the order
         // First prepare order data with proper fields
+
+        // Find publisher user by email if we have marketplace data
+        let publisherId = null;
+        if (marketplace && marketplace.publisher_email) {
+          const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { email: marketplace.publisher_email }
+          });
+          if (publisherUser) {
+            publisherId = publisherUser.id;
+          }
+        }
+
         const orderToCreate = {
           ...orderData,
           advertiser: user.id,
+          // Assign publisher found via email lookup
+          publisher: publisherId,
           orderDate: new Date(),
           isOutsourced: isOutsourced,
           instructions: instructions || null,
@@ -325,30 +346,24 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Get the website/marketplace info to find the publisher (reuse existing marketplace data)
         let marketplaceWithPublisher = marketplace;
-        if (!marketplace || !marketplace.publisher) {
-          // If we don't have publisher info, fetch it
-          marketplaceWithPublisher = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: { id: orderData.website },
-            populate: ['publisher']
-          });
-        }
+        // Marketplace doesn't have a direct publisher relation, so we use the email link we just established
 
         // Create notification for publisher about new order
-        if (marketplaceWithPublisher && marketplaceWithPublisher.publisher) {
+        if (publisherId) {
           try {
             await strapi.service('api::notification.notification').createOrderNotification(
               order.id,
-              marketplaceWithPublisher.publisher.id,
+              publisherId,
               user.id,
               'new_order'
             );
-            console.log(`New order notification created for publisher ${marketplaceWithPublisher.publisher.id}`);
+            console.log(`New order notification created for publisher ${publisherId}`);
           } catch (notificationError) {
             console.error('Failed to create new order notification:', notificationError);
             // Don't fail the order creation if notification fails
           }
         } else {
-          console.log('No publisher found for marketplace, skipping new order notification');
+          console.log('No publisher user found for marketplace email, skipping new order notification');
         }
 
         // Handle outsourced content details if this is an outsourced order
@@ -501,49 +516,27 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         });
 
         // Create notification for publisher (website owner) using snapshot data
+        // NOTE: We already sent the internal notification above. Sending email here.
         try {
           // Use publisher email from marketplace snapshot if available
           let publisherEmail = null;
           if (marketplace && marketplace.publisher_email) {
             publisherEmail = marketplace.publisher_email;
-          } else {
-            // Fallback: Get the website to find the publisher
-            const websiteForNotification = await strapi.db.query('api::marketplace.marketplace').findOne({
-              where: { id: orderData.website }
-            });
-            publisherEmail = websiteForNotification?.publisher_email;
           }
 
           if (publisherEmail) {
-            // Find the user by email
-            const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
-              where: { email: publisherEmail }
-            });
-
-            if (publisherUser) {
-              console.log(`Creating new order notification for publisher ${publisherUser.id} (${publisherEmail})`);
-              await strapi.service('api::notification.notification').createOrderNotification(
-                order.id,
-                publisherUser.id,
-                user.id,
-                'new_order'
+            // Send email notification for new order
+            try {
+              const emailService = strapi.service('api::global.email-operations');
+              await emailService.sendOrderCreationEmail(
+                populatedOrder,
+                publisherEmail,
+                user.email
               );
-
-              // Send email notification for new order
-              try {
-                const emailService = strapi.service('api::global.email-operations');
-                await emailService.sendOrderCreationEmail(
-                  populatedOrder,
-                  publisherEmail,
-                  user.email
-                );
-                console.log(`Order creation emails sent for order ${order.id}`);
-              } catch (emailError) {
-                console.error('Failed to send order creation emails:', emailError);
-                // Don't fail order creation if email fails
-              }
-            } else {
-              console.log(`Publisher user not found for email: ${publisherEmail}`);
+              console.log(`Order creation emails sent for order ${order.id}`);
+            } catch (emailError) {
+              console.error('Failed to send order creation emails:', emailError);
+              // Don't fail order creation if email fails
             }
           } else {
             console.log(`Website not found or missing publisher_email for website ID: ${orderData.website}`);
@@ -682,22 +675,25 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Include only orders where user is advertiser
           baseFilters.advertiser = user.id;
         } else if (type === 'publisher') {
-          // ONLY include orders where user is directly assigned as publisher
-          // This ensures orders stay with the publisher who accepted them,
-          // even after website ownership transfers
-          baseFilters.publisher = user.id;
+          // 1. Direct publisher assignment
+          // 2. Fallback: Website owner (matched by email)
+          baseFilters.$or = [
+            { publisher: user.id },
+            { website: { publisher_email: user.email } }
+          ];
 
           // Exclude orders where user is the advertiser (to prevent self-acceptance)
           baseFilters.advertiser = { $ne: user.id };
 
-          console.log(`[Order Filter] Publisher ${user.id} - filtering by publisher field only`);
+          console.log(`[Order Filter] Publisher ${user.id} - filtering by direct publisher OR website owner email`);
         } else if (type === 'all') {
           // Include orders where user is advertiser OR publisher (direct relationships only)
           baseFilters.$or = [];
           baseFilters.$or.push({ advertiser: user.id });
           baseFilters.$or.push({ publisher: user.id });
+          baseFilters.$or.push({ website: { publisher_email: user.email } });
 
-          console.log(`[Order Filter] User ${user.id} - filtering by direct relationships only`);
+          console.log(`[Order Filter] User ${user.id} - filtering by direct relationships`);
         }
 
         // Add search filters
@@ -887,10 +883,18 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         if (websiteIds.length > 0) {
           currentWebsiteOrders = await strapi.entityService.findMany('api::order.order', {
             filters: {
-              website: { id: { $in: websiteIds } },
-              orderStatus: 'pending',
-              publisher: null, // No publisher assigned yet
-              advertiser: { id: { $ne: user.id } } // Exclude orders placed by this user as advertiser
+              $and: [
+                { website: { id: { $in: websiteIds } } },
+                { orderStatus: 'pending' },
+                { advertiser: { id: { $ne: user.id } } }, // Exclude orders placed by this user as advertiser
+                // Show orders that are unassigned OR assigned to this user
+                {
+                  $or: [
+                    { publisher: { $null: true } },
+                    { publisher: { id: user.id } }
+                  ]
+                }
+              ]
             },
             populate: ['website', 'advertiser', 'outsourcedContent'],
             sort: { orderDate: 'desc' }
