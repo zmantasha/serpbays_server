@@ -799,7 +799,105 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
     } catch (error) {
       console.error('Error updating TAT:', error);
-      return ctx.badRequest(error.message);
+      return ctx.badRequest('Failed to update TAT');
+    }
+  },
+
+  /**
+   * Get marketplace statistics for advertiser dashboard
+   */
+  async getStats(ctx) {
+    try {
+      const user = ctx.state.user;
+
+      // Calculate date 15 days ago
+      const fifteenDaysAgo = new Date();
+      fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+
+      // 1. New Sites Count (last 15 days)
+      const newSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          createdAt: { $gte: fifteenDaysAgo },
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        }
+      });
+
+      // 2. Guest Post Sites (price > 0)
+      const gpSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          price: { $gt: 0 },
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        }
+      });
+
+      // 3. Link Insertion Sites (link_insertion_price > 0)
+      const liSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          link_insertion_price: { $gt: 0 },
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        }
+      });
+
+      // 4. High Traffic Sites (ahrefs_traffic > 10000)
+      const highTrafficCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          ahrefs_traffic: { $gt: 10000 },
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        }
+      });
+
+      // 5. Sensitive Niche Sites (Any sensitive price > 0)
+      const sensitiveSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          $or: [
+            { adv_casino_pricing: { $gt: 0 } },
+            { adv_li_casino_pricing: { $gt: 0 } },
+            { adv_crypto_pricing: { $gt: 0 } },
+            { adv_li_crypto_pricing: { $gt: 0 } },
+            { adv_cbd_pricing: { $gt: 0 } },
+            { adv_li_cbd_pricing: { $gt: 0 } },
+            { adv_dating_pricing: { $gt: 0 } },
+            { adv_li_dating_pricing: { $gt: 0 } }
+          ],
+          $and: [
+            {
+              $or: [
+                { status: 'active' },
+                { status: { $null: true } },
+                { status: '' }
+              ]
+            }
+          ]
+        }
+      });
+
+      return {
+        newSites: newSitesCount,
+        guestPostSites: gpSitesCount,
+        linkInsertionSites: liSitesCount,
+        highTrafficSites: highTrafficCount,
+        sensitiveSites: sensitiveSitesCount
+      };
+
+    } catch (error) {
+      console.error('Error fetching marketplace stats:', error);
+      return ctx.internalServerError('Failed to fetch marketplace stats');
     }
   },
 
