@@ -7,17 +7,19 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 
 module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi }) => ({
-  
+
   // Centralized wallet creation - USE THIS EVERYWHERE
-  async getOrCreateWallet(userId) {
+  async getOrCreateWallet(userId, transaction = null) {
     try {
+      const queryOptions = transaction ? { transacting: transaction } : {};
+
       // First, ensure no duplicates exist
-      await this.ensureSingleWallet(userId);
-      
+      await this.ensureSingleWallet(userId, transaction);
+
       // Try to find existing wallet
       let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { users_permissions_user: userId }
-      });
+      }, queryOptions);
 
       // If wallet exists, return it
       if (wallet) {
@@ -27,7 +29,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       // Create new wallet if none exists
       console.log(`[GetOrCreate] Creating new wallet for user ${userId}`);
-      wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+      wallet = await strapi.db.query('api::user-wallet.user-wallet').create({
         data: {
           users_permissions_user: userId,
           type: 'unified',
@@ -39,14 +41,14 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           currency: 'USD',
           publishedAt: new Date()
         }
-      });
+      }, queryOptions);
 
       // Fix bidirectional relation for Strapi admin visibility
       try {
         await strapi.db.query('plugin::users-permissions.user').update({
           where: { id: userId },
           data: { user_wallet: wallet.id }
-        });
+        }, queryOptions);
         console.log(`[GetOrCreate] Fixed bidirectional relation for user ${userId}`);
       } catch (relationError) {
         console.error(`[GetOrCreate] Failed to fix relation for user ${userId}:`, relationError.message);
@@ -61,12 +63,14 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
   },
 
   // Ensure user has only one wallet (cleanup duplicates)
-  async ensureSingleWallet(userId) {
+  async ensureSingleWallet(userId, transaction = null) {
     try {
+      const queryOptions = transaction ? { transacting: transaction } : {};
+
       // Find all wallets for this user
       const allWallets = await strapi.db.query('api::user-wallet.user-wallet').findMany({
         where: { users_permissions_user: userId }
-      });
+      }, queryOptions);
 
       if (allWallets.length <= 1) {
         console.log(`[Cleanup] User ${userId} has ${allWallets.length} wallet(s) - no consolidation needed, preserving existing balances`);
@@ -74,7 +78,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       }
 
       console.log(`[Cleanup] ⚠️  Found ${allWallets.length} wallets for user ${userId}, consolidating...`);
-      
+
       // Log current wallet states before consolidation
       allWallets.forEach((w, i) => {
         console.log(`[Cleanup] Wallet ${i + 1} (ID: ${w.id}): Balance $${w.balance}, Escrow $${w.escrowBalance}, Pending $${w.pendingWithdrawalBalance}`);
@@ -108,7 +112,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           escrowBalance: totalEscrow,
           pendingWithdrawalBalance: totalPending
         }
-      });
+      }, queryOptions);
 
       console.log(`[Cleanup] ✅ Primary wallet ${primaryWallet.id} updated with consolidated amounts`);
 
@@ -117,7 +121,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       if (otherWalletIds.length > 0) {
         await strapi.db.query('api::user-wallet.user-wallet').deleteMany({
           where: { id: { $in: otherWalletIds } }
-        });
+        }, queryOptions);
         console.log(`[Cleanup] 🗑️  DELETED ${otherWalletIds.length} duplicate wallets: ${otherWalletIds.join(', ')}`);
       }
 
@@ -163,7 +167,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       // 🎯 FIXED: Don't recalculate escrow balance in getBalance!
       // Escrow balance should only be managed by order creation/completion logic
       // This method was incorrectly calculating escrow from withdrawals instead of orders
-      
+
       console.log(`[getBalance] Current escrow balance: ${wallet.escrowBalance} (preserved from order logic)`);
 
       // Calculate total balance correctly (mainBalance + promoBalance)
@@ -196,19 +200,19 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       // Use centralized wallet creation
       let wallet = await this.getOrCreateWallet(userId);
 
-       console.log(`[Simple] Getting balance for user ${userId}, wallet ID: ${wallet.id}, balance: ${wallet.balance}`);
+      console.log(`[Simple] Getting balance for user ${userId}, wallet ID: ${wallet.id}, balance: ${wallet.balance}`);
 
-       // Use separate balance tracking - only mainBalance is withdrawable
-       const mainBalance = parseFloat(wallet.mainBalance || 0);
-       const promoBalance = parseFloat(wallet.promoBalance || 0);
-       const storedEscrowBalance = parseFloat(wallet.escrowBalance || 0);
-       const pendingWithdrawalBalance = parseFloat(wallet.pendingWithdrawalBalance || 0);
-       
-       // Calculate total balance correctly (mainBalance + promoBalance)
-       const totalBalance = mainBalance + promoBalance;
-       
-       // Available balance = mainBalance - pendingWithdrawalBalance (only main balance can be withdrawn)
-       const walletBalance = mainBalance;
+      // Use separate balance tracking - only mainBalance is withdrawable
+      const mainBalance = parseFloat(wallet.mainBalance || 0);
+      const promoBalance = parseFloat(wallet.promoBalance || 0);
+      const storedEscrowBalance = parseFloat(wallet.escrowBalance || 0);
+      const pendingWithdrawalBalance = parseFloat(wallet.pendingWithdrawalBalance || 0);
+
+      // Calculate total balance correctly (mainBalance + promoBalance)
+      const totalBalance = mainBalance + promoBalance;
+
+      // Available balance = mainBalance - pendingWithdrawalBalance (only main balance can be withdrawn)
+      const walletBalance = mainBalance;
 
       // Calculate earnings from completed orders (for publishers)
       let completedOrdersAmount = 0;
@@ -257,19 +261,19 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }, 0);
       }
 
-               // Note: pendingWithdrawalBalance already declared above
+      // Note: pendingWithdrawalBalance already declared above
 
-       // Calculate total paid out amount (for publisher role)
-       let totalPaidOutAmount = 0;
-       const paidWithdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
-         filters: {
-           publisher: { id: userId },
-           withdrawal_status: 'paid'
-         }
-       });
-       totalPaidOutAmount = paidWithdrawals.reduce((total, wr) => {
-         return total + parseFloat(wr.amount || 0);
-       }, 0);
+      // Calculate total paid out amount (for publisher role)
+      let totalPaidOutAmount = 0;
+      const paidWithdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+        filters: {
+          publisher: { id: userId },
+          withdrawal_status: 'paid'
+        }
+      });
+      totalPaidOutAmount = paidWithdrawals.reduce((total, wr) => {
+        return total + parseFloat(wr.amount || 0);
+      }, 0);
 
       // Calculate total available balance (Available Balance = Wallet Balance)
       // Pending withdrawals are already deducted from wallet balance when withdrawal request is created
@@ -370,7 +374,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
   // Redeem promo code or voucher code
   async redeemPromo(ctx) {
     const transaction = await strapi.db.transaction();
-    
+    const queryOptions = { transacting: transaction };
+
     try {
       const userId = ctx.state?.user?.id;
       if (!userId) {
@@ -385,7 +390,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       }
 
       // Use centralized wallet creation - create wallet if it doesn't exist
-      const wallet = await this.getOrCreateWallet(userId);
+      // PASS TRANSACTION to prevent deadlock
+      const wallet = await this.getOrCreateWallet(userId, transaction);
       console.log(`[PROMO/VOUCHER REDEMPTION] Got/created wallet ${wallet.id} for user ${userId}`);
 
       let codeType = 'promo';
@@ -394,14 +400,14 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       // First, try to find a promo code
       const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
-        where: { 
+        where: {
           code: promoCode,
           promoStatus: 'active',
           expiryDate: {
             $gt: new Date()
           }
         }
-      });
+      }, queryOptions);
 
       if (promo) {
         codeData = promo;
@@ -417,7 +423,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
               $gt: new Date()
             }
           }
-        });
+        }, queryOptions);
 
         if (voucher) {
           codeData = voucher;
@@ -442,15 +448,15 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           await transaction.rollback();
           return ctx.badRequest('This voucher code has already been used');
         }
-        
+
         // Double-check with a fresh query to prevent race conditions
         const freshVoucher = await strapi.db.query('api::voucher-code.voucher-code').findOne({
           where: {
             id: codeData.id,
             voucherStatus: 'active'
           }
-        });
-        
+        }, queryOptions);
+
         if (!freshVoucher || freshVoucher.usedBy) {
           await transaction.rollback();
           return ctx.badRequest('This voucher code has already been used');
@@ -458,17 +464,17 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       } else {
         // For promo codes, check if user has already used this promo code
         const existingRedemption = await strapi.db.query('api::promo-redemption.promo-redemption').findOne({
-          where: { 
+          where: {
             promoCode: codeData.id,
             user: userId
           }
-        });
+        }, queryOptions);
 
         if (existingRedemption) {
           await transaction.rollback();
           return ctx.badRequest('You have already used this promo code');
         }
-        
+
         // Check if promo code has reached its redemption limit
         if (codeData.currentRedemptions >= codeData.maxRedemptions) {
           await transaction.rollback();
@@ -478,12 +484,12 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       // Now that validation passed, proceed with the transaction
       const codeAmount = parseFloat(codeData.amount) || 0;
-      
+
       // Use the separate balance tracking system
       const currentMainBalance = parseFloat(wallet.mainBalance || 0);
       const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
       const currentTotalBalance = parseFloat(wallet.balance || 0);
-      
+
       // Add to promo balance (both promo codes and vouchers go to promo balance)
       const newPromoBalance = currentPromoBalance + codeAmount;
       const newTotalBalance = currentMainBalance + newPromoBalance;
@@ -501,12 +507,12 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           promoBalance: newPromoBalance,
           balance: newTotalBalance
         }
-      });
+      }, queryOptions);
 
       console.log(`[${codeType.toUpperCase()}] Balances updated successfully for wallet ${wallet.id}`);
 
       // Create transaction record
-      const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
+      await strapi.db.query('api::transaction.transaction').create({
         data: {
           type: codeType === 'voucher' ? 'promo' : codeType, // Use 'promo' type for both voucher and promo codes
           amount: codeAmount,
@@ -529,24 +535,25 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           createdBy: null,
           updatedBy: null
         }
-      });
+      }, queryOptions);
 
       if (isVoucher) {
         // Mark voucher code as used
-        await strapi.entityService.update('api::voucher-code.voucher-code', codeData.id, {
+        await strapi.db.query('api::voucher-code.voucher-code').update({
+          where: { id: codeData.id },
           data: {
             voucherStatus: 'used',
             usedBy: userId,
             usedAt: new Date()
           }
-        });
+        }, queryOptions);
         console.log(`[VOUCHER] Marked voucher code ${promoCode} as used by user ${userId}`);
-        
+
         // For vouchers, we don't create a promo-redemption record since it's for promo codes only
         // The voucher usage is tracked directly in the voucher-code table
       } else {
         // Record promo code redemption
-        const redemption = await strapi.entityService.create('api::promo-redemption.promo-redemption', {
+        await strapi.db.query('api::promo-redemption.promo-redemption').create({
           data: {
             promoCode: codeData.id,
             user: userId,
@@ -555,14 +562,15 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
             createdBy: null,
             updatedBy: null
           }
-        });
-        
+        }, queryOptions);
+
         // Update the promo code's current redemptions count
-        await strapi.entityService.update('api::promo-code.promo-code', codeData.id, {
+        await strapi.db.query('api::promo-code.promo-code').update({
+          where: { id: codeData.id },
           data: {
             currentRedemptions: codeData.currentRedemptions + 1
           }
-        });
+        }, queryOptions);
         console.log(`[PROMO] Updated redemption count for promo code ${promoCode}: ${codeData.currentRedemptions + 1}/${codeData.maxRedemptions}`);
       }
 
@@ -597,7 +605,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       // First, try to find a promo code
       const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
-        where: { 
+        where: {
           code: promoCode,
           promoStatus: 'active',
           expiryDate: {
@@ -649,7 +657,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
   async fixCompletedOrderEarnings(ctx) {
     try {
       console.log('Starting migration to fix completed order earnings...');
-      
+
       // Get all completed orders
       const completedOrders = await strapi.db.query('api::order.order').findMany({
         where: {
@@ -659,7 +667,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Found ${completedOrders.length} completed orders to process`);
-      
+
       let processedCount = 0;
       let errorCount = 0;
 
@@ -685,10 +693,10 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
           if (existingTransaction.length > 0) {
             console.log(`Order ${order.id} already has credited earnings, checking wallet balance...`);
-            
+
             // Calculate total earnings that should be in wallet from this order
             const totalEarnings = existingTransaction.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
-            
+
             // Add to wallet if not already there (idempotent)
             await strapi.db.query('api::user-wallet.user-wallet').update({
               where: { id: publisherWallet.id },
@@ -696,7 +704,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
                 balance: publisherWallet.balance + totalEarnings
               }
             });
-            
+
             console.log(`Added ${totalEarnings} to publisher ${order.publisher.id} wallet for order ${order.id}`);
             processedCount++;
             continue;
@@ -704,7 +712,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
           // Credit the earnings
           const paymentAmount = order.totalAmount || 0;
-          
+
           if (paymentAmount > 0) {
             // Add to wallet balance
             await strapi.db.query('api::user-wallet.user-wallet').update({
@@ -891,8 +899,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           user_wallet: wallet.id,
           users_permissions_user: userId,
           order: orderId,
-          metadata: { 
-            ...transactionData.metadata, 
+          metadata: {
+            ...transactionData.metadata,
             spendingBreakdown: {
               promoSpent: promoSpent,
               mainSpent: mainSpent,
@@ -904,13 +912,13 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Spent ${amount} from wallet for user ${userId} (Promo: ${promoSpent}, Main: ${mainSpent})`);
-      return { 
-        success: true, 
-        promoSpent, 
-        mainSpent, 
-        newPromoBalance, 
-        newMainBalance, 
-        newTotalBalance 
+      return {
+        success: true,
+        promoSpent,
+        mainSpent,
+        newPromoBalance,
+        newMainBalance,
+        newTotalBalance
       };
     } catch (error) {
       console.error('Error spending funds:', error);
