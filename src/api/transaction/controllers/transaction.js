@@ -15,14 +15,14 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const { amount, baseAmount, currency = 'USD', gateway } = ctx.request.body;
       const userId = ctx.state?.user?.id;
       let wallet;
-       console.log("[PAYMENT] Received payment request:", {
-         amount: amount,
-         baseAmount: baseAmount,
-         currency: currency,
-         gateway: gateway,
-         amountType: typeof amount,
-         baseAmountType: typeof baseAmount
-       })
+      console.log("[PAYMENT] Received payment request:", {
+        amount: amount,
+        baseAmount: baseAmount,
+        currency: currency,
+        gateway: gateway,
+        amountType: typeof amount,
+        baseAmountType: typeof baseAmount
+      })
       // Validate required fields
       if (!amount || !gateway) {
         return ctx.badRequest('Amount and gateway are required');
@@ -35,11 +35,18 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return ctx.badRequest('Invalid amount');
       }
 
+      // Maximum transaction amount check (security measure)
+      const MAX_TRANSACTION_AMOUNT = 10000; // $10,000 USD
+      if (parsedAmount > MAX_TRANSACTION_AMOUNT) {
+        console.warn(`[PAYMENT SECURITY] Transaction amount ${parsedAmount} exceeds maximum ${MAX_TRANSACTION_AMOUNT}`);
+        return ctx.badRequest(`Maximum transaction amount is $${MAX_TRANSACTION_AMOUNT.toLocaleString()}`);
+      }
+
       // For development mode without authentication
       if (!userId && process.env.NODE_ENV !== 'production') {
         // Find an existing wallet - any wallet works since they're unified
         wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({});
-        
+
         if (!wallet) {
           return ctx.notFound('Wallet not found');
         }
@@ -50,7 +57,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
           where: { users_permissions_user: userId }
         });
-        
+
         if (!wallet) {
           return ctx.notFound('Wallet not found');
         }
@@ -75,7 +82,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               baseAmount: parsedBaseAmount.toString(), // Store base amount to credit to wallet
               totalAmount: parsedAmount.toString() // Store total amount paid
             };
-            
+
             // Use the enhanced payment service with metadata
             console.log('[STRIPE] Creating payment intent with:', {
               totalAmount: parsedAmount,
@@ -83,13 +90,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               currency: currency,
               metadata: stripeMetadata
             });
-            
+
             paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(
               parsedAmount, // Use total amount (with fees) for payment
               currency,
               stripeMetadata
             );
-            
+
             console.log('[STRIPE] Payment intent created:', {
               id: paymentData.id,
               amount: paymentData.amount,
@@ -100,7 +107,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             // Convert USD to INR for Razorpay (Razorpay requires INR)
             let razorpayAmountINR = parsedAmount;
             let razorpayConversionRate = 1;
-            
+
             if (currency.toUpperCase() === 'USD') {
               try {
                 razorpayConversionRate = await exchangeRateService.getExchangeRate('USD', 'INR');
@@ -112,10 +119,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
                 razorpayAmountINR = parsedAmount * razorpayConversionRate;
               }
             }
-            
+
             // Create Razorpay order in INR
             paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(razorpayAmountINR, 'INR');
-            
+
             // Store conversion info in paymentData for reference
             paymentData.originalAmountUSD = parsedAmount;
             paymentData.conversionRate = razorpayConversionRate;
@@ -174,24 +181,24 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
           console.log(`[PAYMENT] ✅ Created pending transaction ${transaction.id} for Payment Intent ${paymentData.id} (Base: $${parsedBaseAmount}, Total: $${parsedAmount})`);
 
-          return { 
-            data: { 
+          return {
+            data: {
               walletId: wallet.id,
-              paymentData: paymentData 
+              paymentData: paymentData
             }
           };
         }
 
         // For PayPal, don't create a transaction yet (handled by webhooks)
         if (gateway.toLowerCase() === 'paypal') {
-          return { 
-            data: { 
+          return {
+            data: {
               walletId: wallet.id,
-              paymentData: paymentData 
+              paymentData: paymentData
             }
           };
         }
-        
+
         // For PhonePe, return redirect URL
         if (gateway.toLowerCase() === 'phonepe') {
           // Create pending transaction for PhonePe
@@ -227,13 +234,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             }
           };
         }
-        
+
         // For Razorpay, create a pending transaction
         // Store the base USD amount (what user will get in wallet), but record INR payment details
         const razorpayBaseAmount = gateway.toLowerCase() === 'razorpay' ? parsedBaseAmount : parsedAmount;
         const razorpayINRAmount = paymentData.amountINR || parsedAmount;
         const razorpayRate = paymentData.conversionRate || 1;
-        
+
         const transaction = await strapi.entityService.create('api::transaction.transaction', {
           data: {
             type: 'deposit',
@@ -258,7 +265,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           },
           populate: ['user_wallet']
         });
-        
+
         console.log(`[RAZORPAY] ✅ Created pending transaction ${transaction.id}: Base USD $${razorpayBaseAmount}, Paid INR ₹${razorpayINRAmount.toFixed(2)} (Rate: ${razorpayRate})`);
 
         return { data: { transaction, paymentData } };
@@ -277,7 +284,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const { gateway } = ctx.params;
       const payload = ctx.request.body;
-      
+
       console.log(`📣 RECEIVED ${gateway.toUpperCase()} WEBHOOK:`, JSON.stringify(payload, null, 2));
 
       let isValid = false;
@@ -288,23 +295,23 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         case 'stripe': {
           const stripeSignature = ctx.request.headers['stripe-signature'];
           let event;
-          
+
           if (process.env.NODE_ENV === 'development') {
             // Skip signature verification in development
             console.warn('[STRIPE WEBHOOK] ⚠️ Development mode: Skipping signature verification');
             event = payload;
           } else {
             // Get raw body for signature verification
-            const rawBody = ctx.request.body[Symbol.for('unparsedBody')] || 
-                           ctx.request.body._unparsedBody || 
-                           ctx.request.rawBody ||
-                           payload;
-            
+            const rawBody = ctx.request.body[Symbol.for('unparsedBody')] ||
+              ctx.request.body._unparsedBody ||
+              ctx.request.rawBody ||
+              payload;
+
             if (!rawBody) {
               console.error('[STRIPE WEBHOOK] ❌ No raw body available for signature verification');
               return ctx.badRequest('Raw body required for webhook verification');
             }
-            
+
             // Verify signature in production
             event = stripe.webhooks.constructEvent(
               rawBody,
@@ -312,17 +319,17 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               process.env.STRIPE_WEBHOOK_SECRET
             );
           }
-          
+
           if (event.type === 'payment_intent.succeeded') {
             isValid = true;
             transactionId = event.data.object.id;
-            
+
             // Get metadata from the payment intent if available
             if (event.data.object.metadata && event.data.object.metadata.walletId) {
               walletIdFromMetadata = parseInt(event.data.object.metadata.walletId);
               console.log(`Found walletId ${walletIdFromMetadata} in Stripe payment intent metadata`);
             }
-            
+
             if (event.data.object.payment_intent) {
               transactionId = event.data.object.payment_intent;
             }
@@ -364,85 +371,85 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           where: { gatewayTransactionId: transactionId },
           populate: ['user_wallet']
         });
-        
+
         if (existingTransaction) {
           console.log(`✅ Found transaction ${existingTransaction.id}, updating status to success`);
-          
+
           // Update transaction status to success
           await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
             data: { transactionStatus: 'success' }
           });
-          
+
           // Try to get walletId from transaction data
           let walletId = existingTransaction.user_wallet?.id;
-          
+
           // If we can't get the walletId directly, try the metadata
           if (!walletId && existingTransaction.metadata && existingTransaction.metadata.walletId) {
             walletId = existingTransaction.metadata.walletId;
             console.log(`Found walletId ${walletId} in transaction metadata`);
           }
-          
+
           // Try the wallet ID from payment intent metadata
           if (!walletId && walletIdFromMetadata) {
             walletId = walletIdFromMetadata;
             console.log(`Using walletId ${walletId} from payment intent metadata`);
           }
-          
+
           // If we have userId in metadata but no wallet, try to find their wallet
           if (!walletId && existingTransaction.metadata && existingTransaction.metadata.userId) {
             const userId = existingTransaction.metadata.userId;
             console.log(`Looking for wallet belonging to user ${userId}`);
-            
+
             const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
               where: { users_permissions_user: userId }
             });
-            
+
             if (wallet) {
               walletId = wallet.id;
               console.log(`Found wallet ${walletId} for user ${userId}`);
             }
           }
-          
+
           if (walletId) {
             console.log(`Looking up wallet with ID: ${walletId}`);
-            
+
             // Find the wallet
             const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
               where: { id: walletId },
               populate: ['users_permissions_user']
             });
-            
+
             if (wallet) {
               console.log(`Found wallet for user: ${wallet.users_permissions_user?.id}`);
-              
+
               const currentBalance = parseFloat(wallet.balance) || 0;
               const transactionAmount = parseFloat(existingTransaction.amount) || 0;
               const newBalance = currentBalance + transactionAmount;
-              
+
               console.log(`💵 Updating wallet balance: ${currentBalance} + ${transactionAmount} = ${newBalance}`);
-              
+
               try {
-                 // Update wallet balance directly (don't create new transaction since we already have one)
-                 const currentMainBalance = parseFloat(wallet.mainBalance || 0);
-                 const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
-                 const newMainBalance = currentMainBalance + transactionAmount;
-                 const newTotalBalance = newMainBalance + currentPromoBalance;
-                 
+                // Update wallet balance directly (don't create new transaction since we already have one)
+                const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+                const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+                const newMainBalance = currentMainBalance + transactionAmount;
+                const newTotalBalance = newMainBalance + currentPromoBalance;
+
                 await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-                   data: {
-                     mainBalance: newMainBalance,
-                     balance: newTotalBalance
-                   }
+                  data: {
+                    mainBalance: newMainBalance,
+                    balance: newTotalBalance
+                  }
                 });
-                
-                 console.log(`✅ Wallet balance updated successfully: Main=${newMainBalance}, Total=${newTotalBalance}`);
-                
-                 // Update the transaction to link it to the wallet and set fund_source
+
+                console.log(`✅ Wallet balance updated successfully: Main=${newMainBalance}, Total=${newTotalBalance}`);
+
+                // Update the transaction to link it to the wallet and set fund_source
                 await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
-                   data: { 
-                     user_wallet: wallet.id,
-                     fund_source: 'main_fund' // Direct payments go to main balance
-                   }
+                  data: {
+                    user_wallet: wallet.id,
+                    fund_source: 'main_fund' // Direct payments go to main balance
+                  }
                 });
 
                 // Create invoice for successful deposit
@@ -451,7 +458,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
                   try {
                     // Generate invoice number (you might want to use a more sophisticated system)
                     const invoiceNumber = `INV-${Date.now()}-${existingTransaction.id}`;
-                    
+
                     // Log the transaction data for debugging
                     console.log('Transaction data for invoice:', {
                       amount: existingTransaction.amount,
@@ -486,9 +493,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
                         publishedAt: new Date()
                       }
                     });
-                    
+
                     console.log(`✅ Invoice created successfully: ${invoice.id}`);
-                    
+
                     // Link the invoice to the transaction
                     await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
                       data: {
@@ -532,7 +539,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const transaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: { gatewayTransactionId }
       });
-      
+
       if (transaction) {
         console.log(`Marking transaction ${transaction.id} as failed`);
         await strapi.entityService.update('api::transaction.transaction', transaction.id, {
@@ -553,17 +560,17 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async createPendingTransaction(ctx) {
     try {
       const { amount, currency, gateway, gatewayTransactionId, walletId } = ctx.request.body;
-      
+
       // Validate the wallet belongs to the user
       const userId = ctx.state?.user?.id;
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { id: walletId, users_permissions_user: userId }
       });
-      
+
       if (!wallet) {
         return ctx.notFound('Wallet not found or does not belong to user');
       }
-      
+
       // Create pending transaction
       const transaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
@@ -584,9 +591,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           publishedAt: new Date()
         }
       });
-      
+
       console.log(`Created pending transaction ${transaction.id} after payment submission`);
-      
+
       return { data: { transaction } };
     } catch (error) {
       console.error("Error creating pending transaction:", error);
@@ -598,7 +605,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async getTransactionStatus(ctx) {
     try {
       const { id } = ctx.params;
-      
+
       // First try to find by gateway transaction ID (payment intent ID)
       let transaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: { gatewayTransactionId: id },
@@ -619,8 +626,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           const paymentIntent = await stripe.paymentIntents.retrieve(id);
           return {
             data: {
-              transactionStatus: paymentIntent.status === 'succeeded' ? 'success' : 
-                                paymentIntent.status === 'processing' ? 'pending' : 'failed',
+              transactionStatus: paymentIntent.status === 'succeeded' ? 'success' :
+                paymentIntent.status === 'processing' ? 'pending' : 'failed',
               description: `Payment ${paymentIntent.status}`,
               stripeStatus: paymentIntent.status
             }
@@ -656,7 +663,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async verifyPayPalPayment(ctx) {
     try {
       const { orderId, walletId } = ctx.request.body;
-      
+
       if (!orderId || !walletId) {
         return ctx.badRequest('Order ID and Wallet ID are required');
       }
@@ -665,13 +672,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Get PayPal order details
       const orderDetails = await strapi.service('api::transaction.payment').getPayPalOrderDetails(orderId);
-      
+
       if (!orderDetails.success) {
         return ctx.badRequest('Failed to get PayPal order details');
       }
 
       const order = orderDetails.order;
-      
+
       // Check if order is completed
       if (order.status !== 'COMPLETED') {
         return ctx.badRequest('PayPal order is not completed');
@@ -679,7 +686,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       const purchaseUnit = order.purchase_units[0];
       const amount = parseFloat(purchaseUnit.amount.value);
-      
+
       // Check if transaction already exists
       const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: {
@@ -713,7 +720,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: walletId },
-        data: { 
+        data: {
           mainBalance: newMainBalance,
           balance: newTotalBalance
         }
@@ -760,20 +767,20 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async approveTransaction(ctx) {
     try {
       const user = ctx.state.user;
-      
+
       if (!user) {
         return ctx.unauthorized('Authentication required');
       }
 
       // Check if user is admin or has special access
       const isAdmin = (user.role && (user.role.type === 'admin' || user.role.name === 'Admin')) || user.email === 'mantasha@wordscloud.in';
-      
+
       if (!isAdmin) {
         return ctx.forbidden('Admin access required');
       }
 
       const { id } = ctx.params;
-      
+
       const transaction = await strapi.entityService.findOne('api::transaction.transaction', id, {
         populate: ['users_permissions_user']
       });
@@ -784,7 +791,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Update transaction status
       const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
-        data: { 
+        data: {
           transactionStatus: 'success',
           approvedAt: new Date(),
           approvedBy: user.id
@@ -820,14 +827,14 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async denyTransaction(ctx) {
     try {
       const user = ctx.state.user;
-      
+
       if (!user) {
         return ctx.unauthorized('Authentication required');
       }
 
       // Check if user is admin or has special access
       const isAdmin = (user.role && (user.role.type === 'admin' || user.role.name === 'Admin')) || user.email === 'mantasha@wordscloud.in';
-      
+
       if (!isAdmin) {
         return ctx.forbidden('Admin access required');
       }
@@ -838,7 +845,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       if (!reason || reason.trim().length === 0) {
         return ctx.badRequest('Denial reason is required');
       }
-      
+
       const transaction = await strapi.entityService.findOne('api::transaction.transaction', id, {
         populate: ['users_permissions_user']
       });
@@ -849,7 +856,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Update transaction status
       const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
-        data: { 
+        data: {
           transactionStatus: 'denied',
           deniedAt: new Date(),
           deniedBy: user.id,
@@ -887,20 +894,20 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async markTransactionPaid(ctx) {
     try {
       const user = ctx.state.user;
-      
+
       if (!user) {
         return ctx.unauthorized('Authentication required');
       }
 
       // Check if user is admin or has special access
       const isAdmin = (user.role && (user.role.type === 'admin' || user.role.name === 'Admin')) || user.email === 'mantasha@wordscloud.in';
-      
+
       if (!isAdmin) {
         return ctx.forbidden('Admin access required');
       }
 
       const { id } = ctx.params;
-      
+
       const transaction = await strapi.entityService.findOne('api::transaction.transaction', id, {
         populate: ['users_permissions_user']
       });
@@ -911,7 +918,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Update transaction status
       const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
-        data: { 
+        data: {
           transactionStatus: 'paid',
           paidAt: new Date(),
           markedPaidBy: user.id
