@@ -84,11 +84,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             };
 
             // Use the enhanced payment service with metadata
-            console.log('[STRIPE] Creating payment intent with:', {
-              totalAmount: parsedAmount,
-              baseAmount: parsedBaseAmount,
+            // GDPR: Sanitized logging
+            console.log('[STRIPE] Creating payment intent:', {
               currency: currency,
-              metadata: stripeMetadata
+              hasMetadata: !!stripeMetadata
             });
 
             paymentData = await strapi.service('api::transaction.payment').createStripePaymentIntent(
@@ -97,11 +96,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               stripeMetadata
             );
 
-            console.log('[STRIPE] Payment intent created:', {
-              id: paymentData.id,
-              amount: paymentData.amount,
-              currency: paymentData.currency
-            });
+            // GDPR: Sanitized logging
+            console.log('[STRIPE] Payment intent created successfully');
             break;
           case 'razorpay':
             // Convert USD to INR for Razorpay (Razorpay requires INR)
@@ -179,7 +175,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             populate: ['user_wallet']
           });
 
-          console.log(`[PAYMENT] ✅ Created pending transaction ${transaction.id} for Payment Intent ${paymentData.id} (Base: $${parsedBaseAmount}, Total: $${parsedAmount})`);
+          console.log(`[PAYMENT] ✅ Created pending transaction for payment intent`);
 
           return {
             data: {
@@ -223,7 +219,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             populate: ['user_wallet']
           });
 
-          console.log(`✅ Created PhonePe transaction ${transaction.id} for ${parsedAmount} ${currency}`);
+          console.log(`✅ Created PhonePe transaction successfully`);
 
           return {
             data: {
@@ -266,7 +262,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           populate: ['user_wallet']
         });
 
-        console.log(`[RAZORPAY] ✅ Created pending transaction ${transaction.id}: Base USD $${razorpayBaseAmount}, Paid INR ₹${razorpayINRAmount.toFixed(2)} (Rate: ${razorpayRate})`);
+        console.log(`[RAZORPAY] ✅ Created pending transaction successfully`);
 
         return { data: { transaction, paymentData } };
       } catch (error) {
@@ -285,7 +281,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const { gateway } = ctx.params;
       const payload = ctx.request.body;
 
-      console.log(`📣 RECEIVED ${gateway.toUpperCase()} WEBHOOK:`, JSON.stringify(payload, null, 2));
+      // GDPR: Sanitized webhook logging
+      console.log(`📣 RECEIVED ${gateway.toUpperCase()} WEBHOOK - Event type: ${payload.type || 'unknown'}`);
 
       let isValid = false;
       let transactionId;
@@ -438,7 +435,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               const transactionAmount = parseFloat(existingTransaction.amount) || 0;
               const newBalance = currentBalance + transactionAmount;
 
-              console.log(`💵 Updating wallet balance: ${currentBalance} + ${transactionAmount} = ${newBalance}`);
+              // GDPR: Sanitized balance logging
+              console.log(`💵 Updating wallet balance`);
 
               try {
                 // Update wallet balance directly (don't create new transaction since we already have one)
