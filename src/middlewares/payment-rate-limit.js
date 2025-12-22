@@ -6,13 +6,24 @@
  */
 
 const rateLimit = require('koa-ratelimit');
-const Redis = require('ioredis');
 
-// Create Redis client for rate limiting (can also use in-memory Map)
-// For production, use Redis. For development, in-memory is fine.
-const db = process.env.REDIS_URL
-    ? new Redis(process.env.REDIS_URL)
-    : new Map();
+// Create database for rate limiting
+// For production with Redis, install: npm install ioredis
+// For development, uses in-memory Map (no Redis needed)
+let db;
+if (process.env.REDIS_URL) {
+    try {
+        const Redis = require('ioredis');
+        db = new Redis(process.env.REDIS_URL);
+        console.log('[RATE LIMIT] Using Redis for rate limiting');
+    } catch (error) {
+        console.warn('[RATE LIMIT] Redis not available, falling back to in-memory storage');
+        db = new Map();
+    }
+} else {
+    db = new Map();
+    console.log('[RATE LIMIT] Using in-memory storage for rate limiting');
+}
 
 /**
  * Payment endpoint rate limiter
