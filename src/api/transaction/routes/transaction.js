@@ -82,8 +82,7 @@ module.exports = {
       config: {
         auth: {
           scope: ['api::transaction.transaction.create']
-        },
-        middlewares: ['plugin::global.payment-rate-limit']
+        }
       }
     },
     // Transaction operations (Admin only)
@@ -124,8 +123,7 @@ module.exports = {
       config: {
         auth: {
           scope: ['api::transaction.transaction.create']
-        },
-        middlewares: ['plugin::global.payment-rate-limit']
+        }
       }
     },
     {
