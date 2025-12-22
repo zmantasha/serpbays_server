@@ -294,30 +294,42 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       switch (gateway.toLowerCase()) {
         case 'stripe': {
           const stripeSignature = ctx.request.headers['stripe-signature'];
+
+          if (!stripeSignature) {
+            console.error('[STRIPE WEBHOOK] ❌ Missing stripe-signature header');
+            return ctx.badRequest('Missing Stripe signature header');
+          }
+
+          // Verify webhook signature - MANDATORY in all environments
+          const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+          if (!webhookSecret) {
+            console.error('[STRIPE WEBHOOK] ❌ CRITICAL: STRIPE_WEBHOOK_SECRET not configured');
+            return ctx.internalServerError('Webhook signature verification failed - missing secret');
+          }
+
+          // Get raw body for signature verification
+          const rawBody = ctx.request.body[Symbol.for('unparsedBody')] ||
+            ctx.request.body._unparsedBody ||
+            ctx.request.rawBody ||
+            payload;
+
+          if (!rawBody) {
+            console.error('[STRIPE WEBHOOK] ❌ No raw body available for signature verification');
+            return ctx.badRequest('Raw body required for webhook verification');
+          }
+
           let event;
-
-          if (process.env.NODE_ENV === 'development') {
-            // Skip signature verification in development
-            console.warn('[STRIPE WEBHOOK] ⚠️ Development mode: Skipping signature verification');
-            event = payload;
-          } else {
-            // Get raw body for signature verification
-            const rawBody = ctx.request.body[Symbol.for('unparsedBody')] ||
-              ctx.request.body._unparsedBody ||
-              ctx.request.rawBody ||
-              payload;
-
-            if (!rawBody) {
-              console.error('[STRIPE WEBHOOK] ❌ No raw body available for signature verification');
-              return ctx.badRequest('Raw body required for webhook verification');
-            }
-
-            // Verify signature in production
+          try {
+            // Verify signature using Stripe SDK
             event = stripe.webhooks.constructEvent(
               rawBody,
               stripeSignature,
-              process.env.STRIPE_WEBHOOK_SECRET
+              webhookSecret
             );
+            console.log('[STRIPE WEBHOOK] ✅ Signature verified successfully');
+          } catch (err) {
+            console.error('[STRIPE WEBHOOK] ❌ Signature verification failed:', err.message);
+            return ctx.forbidden('Invalid webhook signature');
           }
 
           if (event.type === 'payment_intent.succeeded') {

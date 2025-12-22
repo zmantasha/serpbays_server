@@ -82,7 +82,8 @@ module.exports = {
       config: {
         auth: {
           scope: ['api::transaction.transaction.create']
-        }
+        },
+        middlewares: ['plugin::global.payment-rate-limit']
       }
     },
     // Transaction operations (Admin only)
@@ -123,7 +124,8 @@ module.exports = {
       config: {
         auth: {
           scope: ['api::transaction.transaction.create']
-        }
+        },
+        middlewares: ['plugin::global.payment-rate-limit']
       }
     },
     {
@@ -259,7 +261,7 @@ module.exports = {
         }
       }
     },
-      // Cleanup old pending Razorpay transactions
+    // Cleanup old pending Razorpay transactions
     {
       method: 'POST',
       path: '/api/transactions/cleanup-pending-razorpay',
