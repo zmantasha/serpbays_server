@@ -44,7 +44,7 @@ const paymentRateLimiter = rateLimit({
         reset: 'Rate-Limit-Reset',
         total: 'Rate-Limit-Total',
     },
-    max: 10, // Maximum 10 requests per minute
+    max: 30, // ✅ INCREASED: From 10 to 30 to allow retries during network issues
     disableHeader: false,
     whitelist: (ctx) => {
         // No whitelist - apply to all users
@@ -87,7 +87,7 @@ const verificationRateLimiter = rateLimit({
         const userId = ctx.state?.user?.id;
         return userId ? `verify:user:${userId}` : `verify:ip:${ctx.ip}`;
     },
-    max: 20,
+    max: 50, // ✅ INCREASED: From 20 to 50 for better retry support
     disableHeader: false,
 });
 

@@ -111,21 +111,26 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return;
       }
 
-      // Update transaction status
-      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-        data: {
-          transactionStatus: status === 'captured' ? 'success' : 'failed',
-          external_transaction_id: paymentId,
-          updatedAt: new Date()
+      // ✅ CRITICAL: Use atomic transaction for transaction update + wallet update
+      // Prevents audit trail breakage if server crashes between operations
+      await strapi.db.transaction(async ({ trx }) => {
+        // ✅ ATOMIC OPERATION 1: Update transaction status
+        await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+          data: {
+            transactionStatus: status === 'captured' ? 'success' : 'failed',
+            external_transaction_id: paymentId,
+            updatedAt: new Date()
+          }
+        });
+
+        // ✅ ATOMIC OPERATION 2: Update wallet balance (if captured)
+        if (status === 'captured') {
+          await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
+          console.log(`[RAZORPAY WEBHOOK] ✅ Successfully processed payment ${paymentId} for wallet ${transaction.user_wallet.id}`);
         }
+
+        // Both operations succeed or both fail - no broken audit trail!
       });
-
-      if (status === 'captured') {
-        // Update wallet balance
-        await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
-
-        console.log(`[RAZORPAY WEBHOOK] ✅ Successfully processed payment ${paymentId} for wallet ${transaction.user_wallet.id}`);
-      }
 
     } catch (error) {
       console.error('[RAZORPAY WEBHOOK] Error in handlePaymentCaptured:', error);
@@ -193,20 +198,25 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return;
       }
 
-      // Update transaction status
-      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-        data: {
-          transactionStatus: status === 'paid' ? 'success' : 'failed',
-          updatedAt: new Date()
+      // ✅ CRITICAL: Use atomic transaction for transaction update + wallet update
+      // Prevents audit trail breakage if server crashes between operations
+      await strapi.db.transaction(async ({ trx }) => {
+        // ✅ ATOMIC OPERATION 1: Update transaction status
+        await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+          data: {
+            transactionStatus: status === 'paid' ? 'success' : 'failed',
+            updatedAt: new Date()
+          }
+        });
+
+        // ✅ ATOMIC OPERATION 2: Update wallet balance (if paid)
+        if (status === 'paid') {
+          await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
+          console.log(`[RAZORPAY WEBHOOK] ✅ Successfully processed order ${orderId} for wallet ${transaction.user_wallet.id}`);
         }
+
+        // Both operations succeed or both fail - no broken audit trail!
       });
-
-      if (status === 'paid') {
-        // Update wallet balance
-        await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
-
-        console.log(`[RAZORPAY WEBHOOK] ✅ Successfully processed order ${orderId} for wallet ${transaction.user_wallet.id}`);
-      }
 
     } catch (error) {
       console.error('[RAZORPAY WEBHOOK] Error in handleOrderPaid:', error);

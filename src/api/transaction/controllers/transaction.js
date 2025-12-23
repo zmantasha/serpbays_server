@@ -68,7 +68,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return ctx.notFound('Wallet not found');
       }
       console.log("wallet", wallet)
-      // SECURITY: Rate limiting - Check recent payment attempts (5 per hour)
+      // SECURITY: Rate limiting - Check recent payment attempts (20 per hour)
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
       const recentAttempts = await strapi.db.query('api::transaction.transaction').count({
         where: {
@@ -80,7 +80,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         }
       });
 
-      const MAX_PAYMENT_ATTEMPTS_PER_HOUR = 5;
+      const MAX_PAYMENT_ATTEMPTS_PER_HOUR = 20; // ✅ INCREASED from 5 to allow retries
       if (recentAttempts >= MAX_PAYMENT_ATTEMPTS_PER_HOUR) {
         console.warn(`[PAYMENT SECURITY] Rate limit exceeded for user ${userId} on gateway ${gateway}. Attempts: ${recentAttempts}`);
         return ctx.tooManyRequests(`Too many payment attempts. Please wait before trying again. (Limit: ${MAX_PAYMENT_ATTEMPTS_PER_HOUR} per hour)`);

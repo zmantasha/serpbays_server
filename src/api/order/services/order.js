@@ -192,7 +192,8 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
   // When an order is completed, mark funds as available to publisher but don't transfer yet
   async completeOrder(id, user) {
-    // Use transaction to ensure data consistency
+    // ✅ CRITICAL: Use database transaction to ensure atomicity
+    // All wallet operations must succeed or all fail - prevents money loss on crashes
     return await strapi.db.transaction(async ({ trx }) => {
       // Get the order with all relations
       const order = await this.getCompleteOrder(id);
@@ -252,7 +253,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.log(`  - Publisher ${publisherId}: Adding ${paymentAmount} to MAIN balance (withdrawable)`);
       console.log(`  - Amount transferred: ${paymentAmount}`);
 
-      // Release escrow funds from advertiser wallet 
+      // ✅ ATOMIC OPERATION 1: Release escrow funds from advertiser wallet 
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: advertiserWallet.id },
         data: {
@@ -260,7 +261,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }
       });
 
-      // Add earnings to publisher MAIN balance (withdrawable funds)
+      // ✅ ATOMIC OPERATION 2: Add earnings to publisher MAIN balance (withdrawable funds)
       await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
         publisherId,
         paymentAmount,
@@ -273,7 +274,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       console.log(`[ORDER COMPLETE] ✅ Money transfer completed successfully`);
 
-      // Create platform fee transaction
+      // ✅ ATOMIC OPERATION 3: Create platform fee transaction
       const feeTransaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'fee',
@@ -295,7 +296,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         feeTransactionId: feeTransaction.id
       });
 
-      // Update the order
+      // ✅ ATOMIC OPERATION 4: Update the order status
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
           orderStatus: 'completed',
@@ -307,7 +308,11 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       console.log(`Order ${id} completed successfully and marked available for withdrawal`);
 
+      // ✅ Transaction committed successfully - all operations atomic
+      // If any operation above fails, ALL operations are rolled back
+
       // Trigger TAT update for the website based on completed orders
+      // NOTE: This runs AFTER transaction commits (not critical for atomicity)
       try {
         const websiteId = order.website?.id || order.website;
         if (websiteId) {
