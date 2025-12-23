@@ -120,8 +120,18 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       const order = orderDetails.order;
       const purchaseUnit = order.purchase_units[0];
-      const amount = parseFloat(purchaseUnit.amount.value);
+      const paypalOrderAmount = parseFloat(purchaseUnit.amount.value);
+      const paypalCaptureAmount = parseFloat(capture.amount.value);
       const currency = purchaseUnit.amount.currency_code;
+
+      // SECURITY: Verify amounts match (prevent tampering)
+      if (Math.abs(paypalOrderAmount - paypalCaptureAmount) > 0.01) {
+        console.error('[PAYPAL WEBHOOK] ❌ Amount mismatch detected - possible fraud!');
+        console.error(`[PAYPAL WEBHOOK] Order amount: ${paypalOrderAmount}, Capture amount: ${paypalCaptureAmount}`);
+        return;  // Don't credit wallet if amounts don't match
+      }
+
+      console.log(`[PAYPAL WEBHOOK] ✅ Amount verification passed: ${paypalCaptureAmount} ${currency}`);
 
       // Extract metadata from order
       const customId = purchaseUnit.custom_id;
@@ -146,9 +156,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       }
 
       // Use baseAmount if available, otherwise use full PayPal amount (for backward compatibility)
-      const amountToCredit = baseAmount !== null ? baseAmount : amount;
+      const amountToCredit = baseAmount !== null ? baseAmount : paypalCaptureAmount;
 
-      console.log(`[PAYPAL WEBHOOK] Amount to credit: ${amountToCredit} (baseAmount: ${baseAmount}, PayPal amount: ${amount})`);
+      console.log(`[PAYPAL WEBHOOK] Amount to credit: ${amountToCredit} (baseAmount: ${baseAmount}, PayPal charged: ${paypalCaptureAmount})`);
 
       // Find the wallet
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
