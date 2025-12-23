@@ -385,6 +385,53 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
         case 'paypal': {
           const orderID = payload.resource ? payload.resource.id : payload.id;
+
+          // SECURITY: Limit verification attempts (max 5 per order) - consistent with Razorpay
+          const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              gatewayTransactionId: orderID,
+              gateway: 'paypal'
+            }
+          });
+
+          if (existingTransaction) {
+            const attempts = existingTransaction.metadata?.verificationAttempts || 0;
+            const MAX_VERIFICATION_ATTEMPTS = 5;
+
+            if (attempts >= MAX_VERIFICATION_ATTEMPTS) {
+              console.warn(`[PAYPAL SECURITY] Verification limit exceeded for order ${orderID}. Attempts: ${attempts}`);
+
+              // Mark as failed if still pending
+              if (existingTransaction.transactionStatus === 'pending') {
+                await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
+                  data: {
+                    transactionStatus: 'failed',
+                    payment_notes: 'Verification failed: Maximum verification attempts exceeded'
+                  }
+                });
+              }
+
+              return ctx.send({
+                verified: false,
+                message: 'Maximum verification attempts exceeded',
+                attemptsRemaining: 0
+              });
+            }
+
+            // Increment attempt counter
+            await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
+              data: {
+                metadata: {
+                  ...existingTransaction.metadata,
+                  verificationAttempts: attempts + 1,
+                  lastVerificationAttempt: new Date().toISOString()
+                }
+              }
+            });
+
+            console.log(`[PAYPAL] Verification attempt ${attempts + 1}/${MAX_VERIFICATION_ATTEMPTS} for order ${orderID}`);
+          }
+
           isValid = await strapi.service('api::transaction.payment').capturePayPalPayment(orderID);
           transactionId = orderID;
           break;
