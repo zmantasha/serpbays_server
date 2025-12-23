@@ -238,16 +238,125 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
   /**
    * Handle payment denied event
+   * Creates a failed transaction record for audit trail and user visibility
    */
   async handlePaymentDenied(eventData) {
     try {
       const capture = eventData.resource;
-      console.log(`[PAYPAL WEBHOOK] Payment denied - Capture ID: ${capture.id}`);
+      const orderId = capture.supplementary_data?.related_ids?.order_id;
 
-      // Log the denial reason
+      console.log(`[PAYPAL WEBHOOK] Payment denied - Capture ID: ${capture.id}, Order ID: ${orderId}`);
       console.log(`[PAYPAL WEBHOOK] Denial reason: ${capture.reason_code || 'Unknown'}`);
 
-      // You can create a failed transaction record here if needed
+      if (!orderId) {
+        console.error('[PAYPAL WEBHOOK] No order ID found for denied payment');
+        return;
+      }
+
+      // Get order details to find wallet and user info
+      const orderDetails = await strapi.service('api::transaction.payment').getPayPalOrderDetails(orderId);
+
+      if (!orderDetails.success) {
+        console.error('[PAYPAL WEBHOOK] Failed to get order details for denied payment:', orderId);
+        return;
+      }
+
+      const order = orderDetails.order;
+      const purchaseUnit = order.purchase_units[0];
+      const amount = parseFloat(purchaseUnit.amount.value);
+      const currency = purchaseUnit.amount.currency_code;
+
+      // Extract wallet ID from custom_id
+      let walletId = null;
+      let baseAmount = null;
+
+      try {
+        if (purchaseUnit.custom_id) {
+          const customData = JSON.parse(purchaseUnit.custom_id);
+          walletId = customData.walletId ? parseInt(customData.walletId) : null;
+          baseAmount = customData.baseAmount ? parseFloat(customData.baseAmount) : null;
+        }
+      } catch (e) {
+        // Fallback: custom_id might be just walletId (old format)
+        walletId = purchaseUnit.custom_id ? parseInt(purchaseUnit.custom_id) : null;
+      }
+
+      if (!walletId) {
+        console.error('[PAYPAL WEBHOOK] No wallet ID found in order metadata for denied payment');
+        return;
+      }
+
+      // Find the wallet
+      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { id: walletId }
+      });
+
+      if (!wallet) {
+        console.error(`[PAYPAL WEBHOOK] Wallet not found: ${walletId}`);
+        return;
+      }
+
+      // Check if failed transaction already exists
+      const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: {
+          gatewayTransactionId: capture.id,
+          user_wallet: walletId
+        }
+      });
+
+      if (existingTransaction) {
+        console.log(`[PAYPAL WEBHOOK] Transaction already exists for capture ${capture.id}, updating to failed`);
+
+        // Update existing transaction to failed
+        await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
+          data: {
+            transactionStatus: 'failed',
+            payment_notes: `Payment denied - Reason: ${capture.reason_code || 'Unknown'}`,
+            metadata: {
+              ...existingTransaction.metadata,
+              denialReason: capture.reason_code,
+              failureTimestamp: new Date().toISOString()
+            }
+          }
+        });
+
+        console.log(`[PAYPAL WEBHOOK] ✅ Updated transaction ${existingTransaction.id} to failed status`);
+        return;
+      }
+
+      // Use baseAmount if available, otherwise use full PayPal amount
+      const failedAmount = baseAmount !== null ? baseAmount : amount;
+
+      // Create failed transaction record
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'deposit',
+          amount: failedAmount,
+          netAmount: failedAmount,
+          transactionStatus: 'failed',
+          gateway: 'paypal',
+          gatewayTransactionId: capture.id,
+          description: 'PayPal payment failed',
+          payment_notes: `Payment denied - Reason: ${capture.reason_code || 'Unknown'}`,
+          user_wallet: walletId,
+          users_permissions_user: wallet.users_permissions_user,
+          fund_source: 'main_fund',
+          fee: 0,
+          metadata: {
+            orderId: orderId,
+            captureId: capture.id,
+            denialReason: capture.reason_code,
+            currency: currency,
+            failureTimestamp: new Date().toISOString()
+          },
+          publishedAt: new Date(),
+          createdBy: null,
+          updatedBy: null
+        }
+      });
+
+      console.log(`[PAYPAL WEBHOOK] ✅ Failed transaction recorded for wallet ${walletId} - Amount: $${failedAmount}, Reason: ${capture.reason_code || 'Unknown'}`);
+
     } catch (error) {
       console.error('[PAYPAL WEBHOOK] Error handling payment denied:', error);
     }
