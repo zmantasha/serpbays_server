@@ -253,6 +253,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   /**
    * Simple payment verification - just check payment status for order ID
    * POST /api/transactions/verify-razorpay
+   * MAX 5 verification attempts per order
    */
   async verifyPayment(ctx) {
     try {
@@ -278,6 +279,45 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           transactionStatus: 'not_found'
         });
       }
+
+      // Check verification attempt count (max 5 attempts)
+      const MAX_VERIFICATION_ATTEMPTS = 5;
+      const currentAttempts = transaction.metadata?.verificationAttempts || 0;
+
+      if (currentAttempts >= MAX_VERIFICATION_ATTEMPTS) {
+        console.warn(`[RAZORPAY VERIFY] ⚠️ Maximum verification attempts (${MAX_VERIFICATION_ATTEMPTS}) reached for order ${order_id}`);
+
+        // Mark as failed after max attempts
+        if (transaction.transactionStatus === 'pending') {
+          await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+            data: {
+              transactionStatus: 'failed',
+              payment_notes: `Payment verification failed - maximum ${MAX_VERIFICATION_ATTEMPTS} attempts reached`,
+              updatedAt: new Date()
+            }
+          });
+        }
+
+        return ctx.send({
+          verified: false,
+          message: `Maximum verification attempts (${MAX_VERIFICATION_ATTEMPTS}) exceeded. Payment marked as failed.`,
+          transactionStatus: 'failed',
+          isProcessed: true
+        });
+      }
+
+      // Increment verification attempt counter
+      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+        data: {
+          metadata: {
+            ...transaction.metadata,
+            verificationAttempts: currentAttempts + 1,
+            lastVerificationAttempt: new Date().toISOString()
+          }
+        }
+      });
+
+      console.log(`[RAZORPAY VERIFY] Verification attempt ${currentAttempts + 1}/${MAX_VERIFICATION_ATTEMPTS} for order ${order_id}`);
 
       // If already successful, don't update (prevent double processing)
       if (transaction.transactionStatus === 'success') {
