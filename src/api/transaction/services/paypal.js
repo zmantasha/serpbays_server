@@ -14,7 +14,7 @@ try {
 // PayPal Environment Configuration
 const getPayPalEnvironment = () => {
   const isProduction = process.env.NODE_ENV === 'production' && process.env.PAYPAL_ENVIRONMENT === 'live';
-  
+
   if (isProduction) {
     return new paypal.core.LiveEnvironment(
       process.env.PAYPAL_CLIENT_ID,
@@ -46,7 +46,7 @@ module.exports = {
     try {
       const request = new paypal.orders.OrdersCreateRequest();
       request.prefer("return=representation");
-      
+
       // Store walletId and baseAmount in custom_id as JSON for webhook retrieval
       const customIdData = {
         walletId: metadata.walletId || null,
@@ -54,7 +54,7 @@ module.exports = {
         totalAmount: amount,
         userId: metadata.userId || null
       };
-      
+
       const orderData = {
         intent: 'CAPTURE',
         purchase_units: [{
@@ -85,7 +85,7 @@ module.exports = {
       request.requestBody(orderData);
 
       const response = await paypalClient.execute(request);
-      
+
       if (response.statusCode !== 201) {
         throw new Error(`PayPal order creation failed with status: ${response.statusCode}`);
       }
@@ -113,7 +113,7 @@ module.exports = {
       request.requestBody({});
 
       const response = await paypalClient.execute(request);
-      
+
       if (response.statusCode !== 201) {
         throw new Error(`PayPal order capture failed with status: ${response.statusCode}`);
       }
@@ -146,7 +146,7 @@ module.exports = {
     try {
       const request = new paypal.orders.OrdersGetRequest(orderId);
       const response = await paypalClient.execute(request);
-      
+
       return {
         success: true,
         order: response.result
@@ -158,33 +158,57 @@ module.exports = {
   },
 
   /**
-   * Verify PayPal webhook signature
+   * Verify PayPal webhook signature using PayPal SDK
+   * CRITICAL: This prevents fake webhooks from crediting wallets
    */
-  verifyWebhookSignature(headers, body, webhookId) {
+  async verifyWebhookSignature(headers, body, webhookId) {
     try {
-      const signature = headers['paypal-transmission-id'];
-      const certId = headers['paypal-cert-id'];
+      // Validate required headers
+      const transmissionId = headers['paypal-transmission-id'];
       const transmissionTime = headers['paypal-transmission-time'];
+      const certUrl = headers['paypal-cert-url'];
       const authAlgo = headers['paypal-auth-algo'];
-      const transmissionSignature = headers['paypal-transmission-sig'];
+      const transmissionSig = headers['paypal-transmission-sig'];
 
-      if (!signature || !certId || !transmissionTime || !authAlgo || !transmissionSignature) {
-        throw new Error('Missing required PayPal webhook headers');
+      if (!transmissionId || !transmissionTime || !certUrl || !authAlgo || !transmissionSig) {
+        console.error('[PAYPAL] Missing required webhook headers');
+        return {
+          success: false,
+          verified: false,
+          error: 'Missing required PayPal webhook headers'
+        };
       }
 
-      // Create the verification string
-      const verificationString = `${signature}|${certId}|${transmissionTime}|${authAlgo}|${webhookId}`;
-      
-      // Get PayPal's public certificate (in production, you should cache this)
-      // For now, we'll use a simplified verification
-      // In production, you should implement proper certificate verification
-      
+      // Create verification request using PayPal SDK
+      const request = new paypal.notifications.WebhookVerifySignatureRequest();
+      request.requestBody({
+        transmission_id: transmissionId,
+        transmission_time: transmissionTime,
+        cert_url: certUrl,
+        auth_algo: authAlgo,
+        transmission_sig: transmissionSig,
+        webhook_id: webhookId,
+        webhook_event: typeof body === 'string' ? JSON.parse(body) : body
+      });
+
+      // Execute verification with PayPal
+      const response = await paypalClient.execute(request);
+
+      const verified = response.result.verification_status === 'SUCCESS';
+
+      if (verified) {
+        console.log('[PAYPAL] ✅ Webhook signature verified successfully');
+      } else {
+        console.error('[PAYPAL] ❌ Webhook signature verification failed:', response.result.verification_status);
+      }
+
       return {
         success: true,
-        verified: true // Simplified for now - implement proper verification in production
+        verified: verified,
+        verificationStatus: response.result.verification_status
       };
     } catch (error) {
-      console.error('PayPal webhook verification error:', error);
+      console.error('[PAYPAL] Webhook verification error:', error);
       return {
         success: false,
         verified: false,
@@ -203,7 +227,7 @@ module.exports = {
       }
 
       const request = new paypalPayouts.payouts.PayoutsPostRequest();
-      
+
       const payoutData = {
         sender_batch_header: {
           sender_batch_id: `payout_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -225,7 +249,7 @@ module.exports = {
       request.requestBody(payoutData);
 
       const response = await paypalPayoutsClient.execute(request);
-      
+
       if (response.statusCode !== 201) {
         throw new Error(`PayPal payout creation failed with status: ${response.statusCode}`);
       }
@@ -253,7 +277,7 @@ module.exports = {
 
       const request = new paypalPayouts.payouts.PayoutsGetRequest(batchId);
       const response = await paypalPayoutsClient.execute(request);
-      
+
       return {
         success: true,
         payout: response.result
@@ -270,7 +294,7 @@ module.exports = {
   async refundPayment(captureId, amount = null, reason = 'requested_by_customer') {
     try {
       const request = new paypal.payments.CapturesRefundRequest(captureId);
-      
+
       const refundData = {
         amount: amount ? {
           value: amount.toString(),
@@ -282,7 +306,7 @@ module.exports = {
       request.requestBody(refundData);
 
       const response = await paypalClient.execute(request);
-      
+
       if (response.statusCode !== 201) {
         throw new Error(`PayPal refund failed with status: ${response.statusCode}`);
       }
@@ -306,7 +330,7 @@ module.exports = {
     try {
       const request = new paypal.core.AccessTokenRequest();
       const response = await paypalClient.execute(request);
-      
+
       return {
         success: true,
         accessToken: response.result.access_token,

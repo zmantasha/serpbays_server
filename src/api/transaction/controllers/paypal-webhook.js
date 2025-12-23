@@ -3,7 +3,7 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 
 module.exports = createCoreController('api::transaction.transaction', ({ strapi }) => ({
-  
+
   /**
    * Handle PayPal webhook events
    * POST /api/transactions/paypal-webhook
@@ -12,7 +12,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const headers = ctx.request.headers;
       const body = ctx.request.body;
-      
+
       console.log('[PAYPAL WEBHOOK] Received webhook:', {
         eventType: body.event_type,
         eventId: body.id,
@@ -20,28 +20,27 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         timestamp: body.create_time
       });
 
-      // Verify webhook signature (temporarily disabled for testing)
+      // CRITICAL: Verify webhook signature - MANDATORY (no bypass)
       const webhookId = process.env.PAYPAL_WEBHOOK_ID;
       if (!webhookId) {
-        console.warn('[PAYPAL WEBHOOK] PAYPAL_WEBHOOK_ID not configured - skipping verification (NOT RECOMMENDED FOR PRODUCTION)');
-      } else {
-        try {
-          const verification = await strapi.service('api::transaction.payment').verifyPayPalWebhook(
-            headers, 
-            JSON.stringify(body), 
-            webhookId
-          );
-
-          if (!verification.verified) {
-            console.error('[PAYPAL WEBHOOK] Webhook verification failed:', verification.error);
-            // For now, continue processing but log the error
-            console.warn('[PAYPAL WEBHOOK] Continuing without verification (NOT RECOMMENDED FOR PRODUCTION)');
-          }
-        } catch (error) {
-          console.error('[PAYPAL WEBHOOK] Verification error:', error);
-          console.warn('[PAYPAL WEBHOOK] Continuing without verification (NOT RECOMMENDED FOR PRODUCTION)');
-        }
+        console.error('[PAYPAL WEBHOOK] ❌ CRITICAL: PAYPAL_WEBHOOK_ID not configured in environment');
+        return ctx.internalServerError('Webhook verification failed - missing webhook ID');
       }
+
+      // Verify signature using PayPal SDK
+      const verification = await strapi.service('api::transaction.payment').verifyPayPalWebhook(
+        headers,
+        body,
+        webhookId
+      );
+
+      if (!verification.success || !verification.verified) {
+        console.error('[PAYPAL WEBHOOK] ❌ Webhook signature verification FAILED - possible fraud attempt');
+        console.error('[PAYPAL WEBHOOK] Verification details:', verification.error || verification.verificationStatus);
+        return ctx.forbidden('Invalid webhook signature');
+      }
+
+      console.log('[PAYPAL WEBHOOK] ✅ Webhook signature verified successfully');
 
       // Handle different event types
       switch (body.event_type) {
@@ -81,11 +80,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const orderId = eventData.resource.id;
       console.log(`[PAYPAL WEBHOOK] Order approved: ${orderId}`);
-      
+
       // Just capture the payment - don't process wallet update here
       // The PAYMENT.CAPTURE.COMPLETED event will handle the wallet update
       const captureResult = await strapi.service('api::transaction.payment').capturePayPalPayment(orderId);
-      
+
       if (captureResult.success) {
         console.log(`[PAYPAL WEBHOOK] Payment captured successfully for order ${orderId} - waiting for PAYMENT.CAPTURE.COMPLETED event`);
       } else {
@@ -103,7 +102,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const capture = eventData.resource;
       const orderId = capture.supplementary_data?.related_ids?.order_id;
-      
+
       console.log(`[PAYPAL WEBHOOK] Payment completed - Capture ID: ${capture.id}, Order ID: ${orderId}`);
 
       if (!orderId) {
@@ -113,7 +112,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Get order details to find wallet and user info
       const orderDetails = await strapi.service('api::transaction.payment').getPayPalOrderDetails(orderId);
-      
+
       if (!orderDetails.success) {
         console.error('[PAYPAL WEBHOOK] Failed to get order details for:', orderId);
         return;
@@ -123,12 +122,12 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const purchaseUnit = order.purchase_units[0];
       const amount = parseFloat(purchaseUnit.amount.value);
       const currency = purchaseUnit.amount.currency_code;
-      
+
       // Extract metadata from order
       const customId = purchaseUnit.custom_id;
       let walletId = null;
       let baseAmount = null;
-      
+
       // Try to parse custom_id as JSON (new format with baseAmount)
       try {
         if (customId) {
@@ -145,10 +144,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         console.error('[PAYPAL WEBHOOK] No wallet ID found in order metadata');
         return;
       }
-      
+
       // Use baseAmount if available, otherwise use full PayPal amount (for backward compatibility)
       const amountToCredit = baseAmount !== null ? baseAmount : amount;
-      
+
       console.log(`[PAYPAL WEBHOOK] Amount to credit: ${amountToCredit} (baseAmount: ${baseAmount}, PayPal amount: ${amount})`);
 
       // Find the wallet
@@ -185,7 +184,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: walletId },
-        data: { 
+        data: {
           mainBalance: newMainBalance,
           balance: newTotalBalance
         }
@@ -234,10 +233,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const capture = eventData.resource;
       console.log(`[PAYPAL WEBHOOK] Payment denied - Capture ID: ${capture.id}`);
-      
+
       // Log the denial reason
       console.log(`[PAYPAL WEBHOOK] Denial reason: ${capture.reason_code || 'Unknown'}`);
-      
+
       // You can create a failed transaction record here if needed
     } catch (error) {
       console.error('[PAYPAL WEBHOOK] Error handling payment denied:', error);
@@ -251,7 +250,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const refund = eventData.resource;
       console.log(`[PAYPAL WEBHOOK] Payment refunded - Refund ID: ${refund.id}`);
-      
+
       // Find the original transaction
       const originalTransaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: {
@@ -314,7 +313,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const payout = eventData.resource;
       console.log(`[PAYPAL WEBHOOK] Payout completed - Batch ID: ${payout.batch_header.payout_batch_id}`);
-      
+
       // Update withdrawal request status
       // You'll need to implement this based on your withdrawal system
       console.log(`[PAYPAL WEBHOOK] Payout completed for batch: ${payout.batch_header.payout_batch_id}`);
@@ -330,7 +329,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const payout = eventData.resource;
       console.log(`[PAYPAL WEBHOOK] Payout failed - Batch ID: ${payout.batch_header.payout_batch_id}`);
-      
+
       // Update withdrawal request status to failed
       // You'll need to implement this based on your withdrawal system
       console.log(`[PAYPAL WEBHOOK] Payout failed for batch: ${payout.batch_header.payout_batch_id}`);
