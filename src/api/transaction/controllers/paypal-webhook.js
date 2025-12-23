@@ -43,6 +43,23 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       console.log('[PAYPAL WEBHOOK] ✅ Webhook signature verified successfully');
 
+      // IDEMPOTENCY: Check if this webhook event has already been processed
+      const eventId = body.id;
+      if (eventId) {
+        const processedEvent = await strapi.db.query('api::transaction.transaction').findOne({
+          where: {
+            metadata: {
+              $contains: { webhookEventId: eventId }
+            }
+          }
+        });
+
+        if (processedEvent) {
+          console.log(`[PAYPAL WEBHOOK] ✅ Event ${eventId} already processed - skipping duplicate`);
+          return ctx.send({ success: true, message: 'Event already processed' });
+        }
+      }
+
       // Handle different event types
       switch (body.event_type) {
         case 'CHECKOUT.ORDER.APPROVED':
@@ -174,10 +191,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       // Check if transaction already exists (check both capture ID and order ID)
       const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: {
-          $or: [
-            { gatewayTransactionId: capture.id },
-            { gatewayTransactionId: orderId }
-          ],
+          gatewayTransactionId: capture.id,
           user_wallet: walletId
         }
       });
@@ -220,6 +234,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           metadata: {
             orderId: orderId,
             captureId: capture.id,
+            webhookEventId: eventData.id,  // For idempotency tracking
             payerEmailHash: order.payer?.email_address
               ? crypto.createHash('sha256').update(order.payer.email_address.toLowerCase()).digest('hex')
               : null,  // Hash email for GDPR compliance
@@ -348,6 +363,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           metadata: {
             orderId: orderId,
             captureId: capture.id,
+            webhookEventId: eventData.id,  // For idempotency tracking
             denialReason: capture.reason_code,
             currency: currency,
             failureTimestamp: new Date().toISOString()
