@@ -1,6 +1,7 @@
 'use strict';
 
 const { createCoreController } = require('@strapi/strapi').factories;
+const crypto = require('crypto');
 
 module.exports = createCoreController('api::transaction.transaction', ({ strapi }) => ({
 
@@ -219,7 +220,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           metadata: {
             orderId: orderId,
             captureId: capture.id,
-            payerEmail: order.payer?.email_address,
+            payerEmailHash: order.payer?.email_address
+              ? crypto.createHash('sha256').update(order.payer.email_address.toLowerCase()).digest('hex')
+              : null,  // Hash email for GDPR compliance
             payerId: order.payer?.payer_id,
             currency: currency
           },
@@ -348,6 +351,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             denialReason: capture.reason_code,
             currency: currency,
             failureTimestamp: new Date().toISOString()
+            // Note: No payer email stored for failed transactions (GDPR compliance)
           },
           publishedAt: new Date(),
           createdBy: null,
