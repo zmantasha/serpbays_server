@@ -63,8 +63,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
    */
   async find(ctx) {
     try {
-      const { 
-        page = 1, 
+      const {
+        page = 1,
         pageSize = 10, // Default page size to match frontend
         sort = 'createdAt:desc',
         sortField = '',
@@ -121,10 +121,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
         filters.$and.push(condition);
       };
-      
+
       // Convert sort string to proper format for Strapi
       let sortObj = { createdAt: 'desc' }; // Default sort
-      
+
       // Handle new sortField and sortDirection parameters
       if (sortField && sortDirection) {
         // Map frontend field names to database field names
@@ -137,7 +137,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           'price': 'generalGuestPostPrice',
           'addedDate': 'createdAt'
         };
-        
+
         const dbField = fieldMapping[sortField] || sortField;
         sortObj = { [dbField]: sortDirection };
         console.log(`[ADMIN WEBSITES SORTING] Field: ${sortField} -> ${dbField}, Direction: ${sortDirection}`);
@@ -150,7 +150,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           sortObj = { [sort]: 'asc' };
         }
       }
-      
+
       // Search filter - search by domain (url), title/description, or publisher
       // Trim whitespace from search term
       const trimmedSearch = search ? String(search).trim() : '';
@@ -165,7 +165,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Status filter
       if (status) {
-        filters.submissionStatus = status;
+        if (status === 'ready_for_approval') {
+          // Special filter: websites with complete metrics but pending approval
+          // A website is "ready for approval" if:
+          // 1. submissionStatus is 'approval_pending'
+          // 2. All required metrics are present (DA, DR, Traffic)
+          filters.submissionStatus = 'approval_pending';
+          addAndFilter({
+            $and: [
+              { moz_da: { $notNull: true } },
+              { moz_da: { $gt: 0 } },
+              { ahrefs_dr: { $notNull: true } },
+              { ahrefs_dr: { $gt: 0 } },
+              { ahrefs_traffic: { $notNull: true } },
+              { ahrefs_traffic: { $gt: 0 } }
+            ]
+          });
+        } else {
+          filters.submissionStatus = status;
+        }
       }
 
       // User filter
@@ -327,7 +345,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       let limit = parseInt(pageSize);
       let currentPage = parseInt(page);
       let useRecordRange = false;
-      
+
       // Debug: Log pagination parameters (only in development)
       if (process.env.NODE_ENV === 'development') {
         console.log('[ADMIN WEBSITES PAGINATION DEBUG]', {
@@ -337,7 +355,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           parsedPageSize: limit
         });
       }
-      
+
       if (recordRangeMin && recordRangeMax) {
         const min = parseInt(recordRangeMin);
         const max = parseInt(recordRangeMax);
@@ -367,7 +385,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       } else {
         // Use normal pagination with raw database query for better control
         const offset = (currentPage - 1) * limit;
-        
+
         websites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
           where: filters,
           orderBy: sortObj,
@@ -390,10 +408,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         traffic: website.moz_da || 'N/A',
         addedDate: website.createdAt,
         owner: {
-          id: website.currentPublisherId?.id || website.originalPublisherId?.id ||website.publisherId|| 0,
-          username: website.currentPublisherId?.username || website.originalPublisherId?.username  ||website.publisherName|| 'Unknown',
-          email: website.currentPublisherId?.email || website.originalPublisherId?.email ||website.publisherEmail
-||          'N/A'
+          id: website.currentPublisherId?.id || website.originalPublisherId?.id || website.publisherId || 0,
+          username: website.currentPublisherId?.username || website.originalPublisherId?.username || website.publisherName || 'Unknown',
+          email: website.currentPublisherId?.email || website.originalPublisherId?.email || website.publisherEmail
+            || 'N/A'
         },
         // SEO Metrics
         metrics: {
@@ -476,7 +494,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         metrics_update_count: website.metrics_update_count || 0,
         metrics_update_method: website.metrics_update_method
       }));
-      
+
       console.log('[ADMIN WEBSITES FIND]', {
         total,
         websitesCount: websites.length,
@@ -547,10 +565,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         traffic: website.moz_da || 'N/A',
         addedDate: website.createdAt,
         owner: {
-          id: website.currentPublisherId?.id || website.originalPublisherId?.id ||website.publisherId|| 0,
-          username: website.currentPublisherId?.username || website.originalPublisherId?.username  ||website.publisherName|| 'Unknown',
-          email: website.currentPublisherId?.email || website.originalPublisherId?.email ||website.publisherEmail
-||          'N/A'
+          id: website.currentPublisherId?.id || website.originalPublisherId?.id || website.publisherId || 0,
+          username: website.currentPublisherId?.username || website.originalPublisherId?.username || website.publisherName || 'Unknown',
+          email: website.currentPublisherId?.email || website.originalPublisherId?.email || website.publisherEmail
+            || 'N/A'
         },
         // Pricing information - return null for empty prices instead of 0
         pricing: {
@@ -657,7 +675,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} approving website ${id}`);
 
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
-        data: { 
+        data: {
           submissionStatus: 'approved',
           adminNotes,
           approvedAt: new Date(),
@@ -669,16 +687,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Add the approved website to the marketplace using the proper mapping function
       if (updatedWebsite.url) {
         console.log(`[ADMIN ACTION] Adding approved website ${updatedWebsite.url} to marketplace`);
-        
+
         try {
           // Use the createMarketplaceListing helper from publisher-website controller for proper field mapping
           try {
             const publisherWebsiteController = strapi.controller('api::publisher-website.publisher-website');
-            
+
             if (publisherWebsiteController && typeof publisherWebsiteController.createMarketplaceListing === 'function') {
               console.log(`[ADMIN ACTION] Using createMarketplaceListing helper for proper field mapping`);
               const marketplaceListing = await publisherWebsiteController.createMarketplaceListing(updatedWebsite);
-              
+
               // Store marketplace ID in publisher website
               if (marketplaceListing && marketplaceListing.id) {
                 await strapi.entityService.update('api::publisher-website.publisher-website', id, {
@@ -693,11 +711,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           } catch (controllerError) {
             console.warn(`[ADMIN ACTION] Error using createMarketplaceListing helper:`, controllerError.message);
           }
-          
+
           // Fallback: Manual marketplace update if helper not available or failed
           {
             console.warn(`[ADMIN ACTION] createMarketplaceListing helper not found, falling back to manual mapping`);
-            
+
             // Fallback: Manual marketplace update if helper not available
             const existingMarketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
               filters: { url: updatedWebsite.url },
@@ -706,7 +724,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
             if (existingMarketplaceRecord && existingMarketplaceRecord.length > 0) {
               console.log(`[ADMIN ACTION] Marketplace record already exists for website ${updatedWebsite.url}, updating it`);
-              
+
               // Use database query API for more reliable updates
               await strapi.db.query('api::marketplace.marketplace').update({
                 where: { id: existingMarketplaceRecord[0].id },
@@ -771,7 +789,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   updatedAt: new Date()
                 }
               });
-              
+
               // Store marketplace ID
               await strapi.entityService.update('api::publisher-website.publisher-website', id, {
                 data: { marketplaceId: existingMarketplaceRecord[0].id }
@@ -795,7 +813,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   publisher_email: updatedWebsite.publisherEmail
                 }
               });
-              
+
               if (newMarketplace && newMarketplace.id) {
                 await strapi.entityService.update('api::publisher-website.publisher-website', id, {
                   data: { marketplaceId: newMarketplace.id }
@@ -803,7 +821,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               }
             }
           }
-          
+
           console.log(`[ADMIN ACTION] Successfully added website ${updatedWebsite.url} to marketplace`);
         } catch (marketplaceError) {
           console.error(`[ADMIN ACTION] Error adding website ${updatedWebsite.url} to marketplace:`, marketplaceError);
@@ -929,7 +947,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const websiteUrl = websiteBeforeUpdate.url;
 
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
-        data: { 
+        data: {
           submissionStatus: 'rejected',
           rejectionReason: reason,
           rejectedAt: new Date(),
@@ -941,7 +959,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // If the website was previously approved, remove it from the marketplace
       if (wasPreviouslyApproved && websiteUrl) {
         console.log(`[ADMIN ACTION] Website ${websiteUrl} was previously approved, removing from marketplace`);
-        
+
         try {
           // Find and remove the marketplace record
           const marketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
@@ -952,10 +970,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           if (marketplaceRecord && marketplaceRecord.length > 0) {
             const marketplaceId = marketplaceRecord[0].id;
             console.log(`[ADMIN ACTION] Removing marketplace record ${marketplaceId} for website ${websiteUrl}`);
-            
+
             await strapi.entityService.delete('api::marketplace.marketplace', marketplaceId);
             console.log(`[ADMIN ACTION] Successfully removed marketplace record for website ${websiteUrl}`);
-            
+
             // Log the action for audit purposes
             console.log(`[ADMIN AUDIT] Website ${websiteUrl} (ID: ${id}) rejected and removed from marketplace by admin ${ctx.state.user.id} at ${new Date().toISOString()}. Reason: ${reason}`);
           } else {
@@ -1003,7 +1021,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const websiteData = ctx.request.body;
 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} creating new website`, websiteData);
-    
+
 
       // Prepare the data with proper defaults and transformations
       const preparedData = {
@@ -1170,17 +1188,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // If website is approved, sync changes directly to marketplace (super admin updates go live immediately)
       if (wasApproved && (updatedWebsite.submissionStatus === 'approved' || mappedData.submissionStatus === undefined)) {
         console.log(`[ADMIN ACTION] Website ${id} is approved, syncing changes to marketplace`);
-        
+
         try {
           let marketplaceListing = null;
-          
+
           // Find marketplace by ID if available
           if (marketplaceId) {
             marketplaceListing = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { id: marketplaceId }
             });
           }
-          
+
           // Fallback: Find by URL if ID not found
           if (!marketplaceListing && updatedWebsite.url) {
             marketplaceListing = await strapi.db.query('api::marketplace.marketplace').findOne({
@@ -1190,7 +1208,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
           if (marketplaceListing) {
             console.log(`[ADMIN ACTION] Found marketplace listing ${marketplaceListing.id}, syncing all fields`);
-            
+
             // Helper to convert backlink validity
             const convertBacklinkValidity = (value) => {
               const validityMap = {
@@ -1215,7 +1233,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               adv_li_cbd_pricing: updatedWebsite.cbdLinkInsertionPrice || 0,
               adv_dating_pricing: updatedWebsite.datingGuestPostPrice || 0,
               adv_li_dating_pricing: updatedWebsite.datingLinkInsertionPrice || 0,
-              
+
               // Publisher earnings (80% of advertiser prices)
               publisher_price: Math.floor(Math.max(
                 (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
@@ -1242,7 +1260,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8),
               publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8),
               publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * 0.8),
-              
+
               // Content requirements
               min_word_count: updatedWebsite.minWordCount || 500,
               backlink_type: updatedWebsite.backlinkType || 'Do follow',
@@ -1253,27 +1271,27 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               // dofollow_link: (updatedWebsite.backlinkType === 'Do follow' || updatedWebsite.backlinkType === 'Do Follow' || updatedWebsite.backlinkType === 'dofollow') ? 1 : 0,
               dofollow_link: updatedWebsite.allowedLinks || 1,
 
-              
+
               // Content options
               sponsored: updatedWebsite.sponsored || false,
               ugc: updatedWebsite.ugc || false,
               digital_pr: updatedWebsite.isPRSite || false,
               publisher_writing_price: updatedWebsite.copywritingPrice || 0,
-              
+
               // Delivery
               tat: Math.ceil((updatedWebsite.expectedTATHours || 0) / 24),
               placement_speed: (updatedWebsite.expectedTATHours || 0) <= 72 ? 'Fast' : 'Normal',
               sample_links: JSON.stringify(updatedWebsite.samplePosts || []),
-              
+
               // Categories and targeting
               category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category : [updatedWebsite.category].filter(Boolean),
               language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language : [updatedWebsite.language].filter(Boolean),
               countries: updatedWebsite.countries || null,
-              
+
               // Publisher info
               publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
               publisher_email: updatedWebsite.publisherEmail,
-              
+
               // Metrics (if updated)
               moz_da: updatedWebsite.moz_da ?? marketplaceListing.moz_da,
               ahrefs_dr: updatedWebsite.ahrefs_dr ?? marketplaceListing.ahrefs_dr,
@@ -1284,7 +1302,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               moz_spam_score: updatedWebsite.moz_spam_score ?? marketplaceListing.moz_spam_score,
               ahrefs_referring_domain: updatedWebsite.ahrefs_referring_domain ?? marketplaceListing.ahrefs_referring_domain,
               ahrefs_keywords: updatedWebsite.ahrefs_keywords ?? marketplaceListing.ahrefs_keywords,
-              
+
               // Ensure visibility
               publishedAt: marketplaceListing.publishedAt || new Date(),
               approvalStatus: 'approved',
@@ -1324,7 +1342,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             const verified = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { id: marketplaceListing.id }
             });
-            
+
             if (verified) {
               console.log(`[ADMIN ACTION] Verification - Marketplace updated:`, {
                 id: verified.id,
@@ -1410,14 +1428,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
         if (marketplaceRecord && marketplaceRecord.length > 0) {
           const marketplaceId = marketplaceRecord[0].id;
-          
+
           // Check if this is an ownership transfer
           if (updatedWebsite.submissionStatus === 'ownership_transferred') {
             console.log(`[ADMIN ACTION] Website ${websiteUrl} has ownership transferred status`);
-            
+
             // Find the verified publisher's website (not the ownership transfer record)
             const verifiedPublisherWebsite = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-              filters: { 
+              filters: {
                 url: websiteUrl,
                 submissionStatus: 'approved',
                 gscVerified: true,
@@ -1430,7 +1448,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             if (verifiedPublisherWebsite && verifiedPublisherWebsite.length > 0) {
               const verifiedWebsite = verifiedPublisherWebsite[0];
               console.log(`[ADMIN ACTION] Found verified publisher website ${verifiedWebsite.id} for ${websiteUrl}`);
-              
+
               // Use metrics from the verified publisher's website, not the ownership transfer record
               const updateDataMarketplace = {
                 ahrefs_dr: verifiedWebsite.ahrefs_dr || metricsData.ahrefs_dr,
@@ -1589,16 +1607,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   async getStats(ctx) {
     try {
       console.log('[ADMIN WEBSITE STATS] Method called');
-      
+
       // Check cache first (5-minute cache)
       const cacheKey = 'website-stats-cache'
       const cachedStats = await strapi.cache?.get(cacheKey)
-      
+
       if (cachedStats) {
         console.log('[ADMIN WEBSITE STATS] Returning cached stats')
         return ctx.send(cachedStats)
       }
-      
+
       // Get counts by status in parallel for better performance
       const [total, pending, approved, rejected] = await Promise.all([
         strapi.db.query('api::publisher-website.publisher-website').count(),
@@ -1612,7 +1630,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           where: { submissionStatus: 'rejected' }
         })
       ]);
-      
+
       console.log('[ADMIN WEBSITE STATS] Counts:', { total, pending, approved, rejected });
 
       // Get new websites this month
@@ -1635,14 +1653,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         rejectedWebsites: rejected,
         newThisMonth
       };
-      
+
       console.log('[ADMIN WEBSITE STATS]', statsData);
-      
+
       // Cache the results for 5 minutes
       if (strapi.cache) {
         await strapi.cache.set(cacheKey, { data: statsData }, { ttl: 300 }) // 5 minutes
       }
-      
+
       ctx.send({
         data: statsData
       });
@@ -1659,7 +1677,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   async bulkUpdateMetrics(ctx) {
     try {
       const { websites } = ctx.request.body;
-      
+
       console.log("websites", websites)
       if (!Array.isArray(websites) || websites.length === 0) {
         ctx.throw(400, 'No websites data provided');
@@ -1673,7 +1691,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       for (const websiteData of websites) {
         try {
           const { id, domain, notes, ...metricsData } = websiteData;
-          
+
           if (!id) {
             errors.push({ id: 'unknown', error: 'Missing website ID' });
             continue;
@@ -1683,7 +1701,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
           // Fetch existing website to get current metrics_update_count
           const existingWebsite = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-          
+
           if (!existingWebsite) {
             errors.push({ id, error: 'Website not found' });
             continue;
@@ -1714,14 +1732,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
               if (marketplaceRecord && marketplaceRecord.length > 0) {
                 const marketplaceId = marketplaceRecord[0].id;
-                
+
                 // Check if this is an ownership transfer
                 if (updatedWebsite.submissionStatus === 'ownership_transferred') {
                   console.log(`[ADMIN ACTION] Website ${websiteUrl} has ownership transferred status in bulk update`);
-                  
+
                   // Find the verified publisher's website (not the ownership transfer record)
                   const verifiedPublisherWebsite = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-                    filters: { 
+                    filters: {
                       url: websiteUrl,
                       submissionStatus: 'approved',
                       gscVerified: true,
@@ -1733,7 +1751,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   if (verifiedPublisherWebsite && verifiedPublisherWebsite.length > 0) {
                     const verifiedWebsite = verifiedPublisherWebsite[0];
                     console.log(`[ADMIN ACTION] Found verified publisher website ${verifiedWebsite.id} for ${websiteUrl} in bulk update`);
-                    
+
                     // Use metrics from the verified publisher's website, not the ownership transfer record
                     const updateDataMarketplace = {
                       ahrefs_dr: verifiedWebsite.ahrefs_dr || metricsData.ahrefs_dr,
@@ -1797,16 +1815,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           });
         } catch (error) {
           console.error(`[ADMIN ACTION] Error updating website ${websiteData.id}:`, error);
-          errors.push({ 
-            id: websiteData.id || 'unknown', 
-            error: error.message 
+          errors.push({
+            id: websiteData.id || 'unknown',
+            error: error.message
           });
         }
       }
 
       console.log(`[ADMIN ACTION] Bulk update completed: ${results.length} successful, ${errors.length} errors`);
 
-     return ctx.send({
+      return ctx.send({
         success: true,
         updated: results.length,
         errors: errors.length,
@@ -1837,7 +1855,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Find existing APPROVED website with the same URL (only check against active websites)
       const existingWebsite = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-        filters: { 
+        filters: {
           url: url,
           submissionStatus: 'approved' // Only check against active websites
         },
@@ -1865,7 +1883,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       console.log('[CONFLICT CHECK] Found websites with URL:', url, 'Status filter: submissionStatus = approved')
       console.log('[CONFLICT CHECK] Results:', existingWebsite.length, 'websites found')
-      
+
       if (existingWebsite.length === 0) {
         console.log('[CONFLICT CHECK] No approved websites found - no conflict')
         return ctx.send({
@@ -1960,7 +1978,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Get existing website to verify it exists
       const existingWebsite = await strapi.entityService.findOne('api::publisher-website.publisher-website', id)
-      
+
       if (!existingWebsite) {
         return ctx.notFound('Website not found')
       }
@@ -2043,10 +2061,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           active: false
         })
       }
-      
+
       const userId = ctx.state.user.id
       const progress = bulkImportProgress.get(`user-${userId}`)
-      
+
       if (!progress) {
         return ctx.send({
           total: 0,
@@ -2055,7 +2073,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           active: false
         })
       }
-      
+
       return ctx.send({
         ...progress,
         active: true
@@ -2078,7 +2096,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   async bulkImport(ctx) {
     try {
       const { websites } = ctx.request.body
-      
+
       if (!Array.isArray(websites) || websites.length === 0) {
         return ctx.badRequest('No websites data provided')
       }
@@ -2103,10 +2121,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex]
-        
+
         for (let i = 0; i < batch.length; i++) {
           const websiteData = batch[i]
-          
+
           try {
             // Normalize URL
             const normalizeUrl = (url) => {
@@ -2220,7 +2238,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             // Check for conflicts using the same logic as single import (approved-only replacement policy)
             const publisherType = websiteData.publisherType || 'reseller'
             const existingWebsite = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-              filters: { 
+              filters: {
                 url: normalizedUrl,
                 submissionStatus: 'approved'
               },
@@ -2277,7 +2295,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 await strapi.entityService.update('api::publisher-website.publisher-website', existing.id, {
                   data: preparedData
                 })
-                
+
                 results.successful++
                 results.details.push({
                   url: normalizedUrl,
@@ -2293,7 +2311,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             await strapi.entityService.create('api::publisher-website.publisher-website', {
               data: preparedData
             })
-            
+
             results.successful++
             results.details.push({
               url: normalizedUrl,
@@ -2304,14 +2322,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           } catch (error) {
             console.error(`[BULK IMPORT] Error processing website ${websiteData.url}:`, error)
             results.errors++
-            
+
             // Extract more detailed error information
             let errorMessage = error.message || 'Unknown error occurred'
             if (error.details && error.details.errors && Array.isArray(error.details.errors)) {
               const validationErrors = error.details.errors.map(e => `${e.path?.join('.') || 'field'}: ${e.message}`).join(', ')
               errorMessage = `Validation error: ${validationErrors}`
             }
-            
+
             results.details.push({
               url: websiteData.url || 'N/A',
               status: 'error',
@@ -2319,13 +2337,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             })
           }
         }
-        
+
         // Log progress and store in memory map
         const processed = (batchIndex + 1) * batchSize
         const totalProcessed = Math.min(processed, websites.length)
         const progressPercent = Math.round((totalProcessed / websites.length) * 100)
         console.log(`[BULK IMPORT] Progress: ${totalProcessed}/${websites.length} (${progressPercent}%)`)
-        
+
         // Store progress in memory map
         if (ctx.state.user && ctx.state.user.id) {
           bulkImportProgress.set(`user-${ctx.state.user.id}`, {
@@ -2355,27 +2373,27 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   // Helper method to prepare website data (extracted from create method)
   prepareWebsiteData(websiteData, normalizedUrl) {
     const publisherType = websiteData.publisherType || 'reseller'
-    
+
     // Normalize backlinkType to match schema enum values
     const normalizeBacklinkType = (value) => {
       if (!value) return 'Do follow' // Default value
-      
+
       const normalized = String(value).trim().toLowerCase()
-      
+
       // Handle various input formats
-      if (normalized === 'dofollow' || normalized === 'do follow' || normalized === 'do_follow' || 
-          normalized === 'follow' || normalized === '1' || normalized === 'true' || normalized === 'yes') {
+      if (normalized === 'dofollow' || normalized === 'do follow' || normalized === 'do_follow' ||
+        normalized === 'follow' || normalized === '1' || normalized === 'true' || normalized === 'yes') {
         return 'Do follow'
-      } else if (normalized === 'nofollow' || normalized === 'no follow' || normalized === 'no_follow' || 
-                 normalized === '0' || normalized === 'false' || normalized === 'no') {
+      } else if (normalized === 'nofollow' || normalized === 'no follow' || normalized === 'no_follow' ||
+        normalized === '0' || normalized === 'false' || normalized === 'no') {
         return 'No follow'
       }
-      
+
       // If it doesn't match any known pattern, default to 'Do follow'
       console.warn(`Unknown backlinkType value: "${value}", defaulting to "Do follow"`)
       return 'Do follow'
     }
-    
+
     return {
       url: normalizedUrl,
       protocol: 'https',
@@ -2428,7 +2446,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
    */
   async exportFiltered(ctx) {
     try {
-      const { 
+      const {
         search = '',
         status = '',
         category = '',
@@ -2457,7 +2475,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Build comprehensive filters
       const filters = {};
-      
+
       // Convert sort string to proper format for Strapi
       let sortObj = { createdAt: 'desc' }; // Default sort
       if (sort && typeof sort === 'string') {
@@ -2468,7 +2486,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           sortObj = { [sort]: 'asc' };
         }
       }
-      
+
       // Search filter
       if (search) {
         filters.$or = [
@@ -2631,7 +2649,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Handle record range for export
       let limit = null;
       let useRecordRange = false;
-      
+
       if (recordRangeMin && recordRangeMax) {
         const min = parseInt(recordRangeMin);
         const max = parseInt(recordRangeMax);
@@ -2690,7 +2708,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         Publisher_ID: website.currentPublisherId?.id || website.originalPublisherId?.id || 'N/A',
         Publisher_Username: website.currentPublisherId?.username || website.originalPublisherId?.username || 'Unknown',
         Publisher_Email_Current: website.currentPublisherId?.email || website.originalPublisherId?.email || 'N/A',
-        
+
         // SEO Metrics
         DA: website.moz_da || 'N/A',
         DR: website.ahrefs_dr || 'N/A',
@@ -2701,7 +2719,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         Semrush_Authority_Score: website.semrush_authority_score || 'N/A',
         Semrush_Traffic: website.semrush_traffic || 'N/A',
         Moz_Spam_Score: website.moz_spam_score || 'N/A',
-        
+
         // Pricing
         General_Guest_Post_Price: website.generalGuestPostPrice || 0,
         General_Link_Insertion_Price: website.generalLinkInsertionPrice || 0,
@@ -2719,7 +2737,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         Dating_Link_Insertion_Price: website.datingLinkInsertionPrice || 0,
         Copywriting_Offered: website.doCopywriting ? 'Yes' : 'No',
         Copywriting_Price: website.copywritingPrice || 0,
-        
+
         // Content Requirements
         Min_Word_Count: website.minWordCount || 500,
         Backlink_Type: website.backlinkType || 'Do follow',
@@ -2728,30 +2746,30 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         Sponsored_Content: website.sponsored ? 'Yes' : 'No',
         UGC_Content: website.ugc ? 'Yes' : 'No',
         PR_Site: website.isPRSite ? 'Yes' : 'No',
-        
+
         // Categories and Targeting
         Categories: Array.isArray(website.category) ? website.category.join(', ') : website.category || 'General',
         Countries: Array.isArray(website.countries) ? website.countries.join(', ') : website.countries || 'United States',
         Languages: Array.isArray(website.language) ? website.language.join(', ') : website.language || 'English',
-        
+
         // Verification
         GSC_Verified: website.gscVerified ? 'Yes' : 'No',
         GSC_Verified_At: website.gscVerifiedAt || 'N/A',
         GSC_Permission_Level: website.gscPermissionLevel || 'N/A',
         Verification_Method: website.verificationMethod || 'N/A',
-        
+
         // Delivery
         Expected_TAT_Hours: website.expectedTATHours || 168,
         Sample_Posts: Array.isArray(website.samplePosts) ? website.samplePosts.join('; ') : website.samplePosts || 'N/A',
         Guidelines: website.guidelines || 'N/A',
-        
+
         // Additional Metadata
         Reseller_Code: website.resellerCode || 'N/A',
         Added_By_Reseller: website.addedByReseller ? 'Yes' : 'No',
         Metrics_Last_Updated: website.metrics_last_updated || 'Never',
         Metrics_Update_Count: website.metrics_update_count || 0,
         Metrics_Update_Method: website.metrics_update_method || 'N/A',
-        
+
         // Dates
         Created_At: website.createdAt,
         Updated_At: website.updatedAt,
@@ -2770,7 +2788,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Set response headers for CSV download
       ctx.type = 'text/csv';
       ctx.attachment(`websites_export_${new Date().toISOString().split('T')[0]}.csv`);
-      
+
       // Send as buffer to ensure proper blob handling
       const buffer = Buffer.from(csvContent, 'utf8');
       return ctx.send(buffer);
@@ -2799,7 +2817,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       if (website.url) {
         try {
           console.log(`[ADMIN ACTION] Checking for marketplace entry with URL: ${website.url}`);
-          
+
           // Find marketplace entry with the same URL
           const marketplaceEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
             where: { url: website.url }
@@ -2807,10 +2825,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
           if (marketplaceEntry) {
             console.log(`[ADMIN ACTION] Found marketplace entry ${marketplaceEntry.id} for URL ${website.url}, deleting it`);
-            
+
             // Delete the marketplace entry
             await strapi.entityService.delete('api::marketplace.marketplace', marketplaceEntry.id);
-            
+
             console.log(`[ADMIN ACTION] Successfully deleted marketplace entry ${marketplaceEntry.id} for URL ${website.url}`);
           } else {
             console.log(`[ADMIN ACTION] No marketplace entry found for URL ${website.url}`);
@@ -2856,7 +2874,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         try {
           // Check if website exists and has required metrics
           const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-          
+
           if (!website) {
             errors.push({ id, error: `Website with ID ${id} not found` });
             continue;
@@ -2864,16 +2882,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
           // Policy validation: Check if website has metrics
           if (!website.moz_da && !website.ahrefsDR) {
-            errors.push({ 
-              id, 
-              error: `Website "${website.url}" does not have required metrics (DA/DR). Please update metrics first.` 
+            errors.push({
+              id,
+              error: `Website "${website.url}" does not have required metrics (DA/DR). Please update metrics first.`
             });
             continue;
           }
 
           // Approve the website
           const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
-            data: { 
+            data: {
               submissionStatus: 'approved',
               approvedAt: new Date(),
               approvedBy: ctx.state.user.id
@@ -2950,7 +2968,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         try {
           // Check if website exists
           const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-          
+
           if (!website) {
             errors.push({ id, error: `Website with ID ${id} not found` });
             continue;
@@ -2958,7 +2976,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
           // Reject the website
           await strapi.entityService.update('api::publisher-website.publisher-website', id, {
-            data: { 
+            data: {
               submissionStatus: 'rejected',
               rejectionReason: reason.trim(),
               rejectedAt: new Date(),
@@ -3008,7 +3026,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         try {
           // Check if website exists
           const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-          
+
           if (!website) {
             errors.push({ id, error: `Website with ID ${id} not found` });
             continue;
@@ -3018,7 +3036,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           if (website.url) {
             try {
               console.log(`[ADMIN BULK ACTION] Checking for marketplace entry with URL: ${website.url}`);
-              
+
               // Find marketplace entry with the same URL
               const marketplaceEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
                 where: { url: website.url }
@@ -3026,10 +3044,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
               if (marketplaceEntry) {
                 console.log(`[ADMIN BULK ACTION] Found marketplace entry ${marketplaceEntry.id} for URL ${website.url}, deleting it`);
-                
+
                 // Delete the marketplace entry
                 await strapi.entityService.delete('api::marketplace.marketplace', marketplaceEntry.id);
-                
+
                 console.log(`[ADMIN BULK ACTION] Successfully deleted marketplace entry ${marketplaceEntry.id} for URL ${website.url}`);
               } else {
                 console.log(`[ADMIN BULK ACTION] No marketplace entry found for URL ${website.url}`);
