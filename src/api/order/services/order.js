@@ -628,5 +628,212 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.error('Order delivery failed:', error);
       throw error;
     }
+  },
+
+  // Cancellation Helper: Validate if order can be cancelled
+  async validateCancellation(order, userId, cancelledBy) {
+    // System cancellations (cron jobs)
+    if (cancelledBy === 'system') {
+      return { allowed: true };
+    }
+
+    // Advertiser cancellation rules
+    if (cancelledBy === 'advertiser') {
+      if (order.advertiser.id !== userId) {
+        return { allowed: false, reason: 'Not authorized to cancel this order' };
+      }
+
+      // Can cancel if not accepted yet
+      if (order.orderStatus === 'pending') {
+        return { allowed: true };
+      }
+
+      // Can cancel if accepted but not delivered in 7 days
+      if (order.orderStatus === 'accepted' && order.acceptedDate) {
+        const acceptedDate = new Date(order.acceptedDate);
+        const daysSinceAccepted = (Date.now() - acceptedDate) / (1000 * 60 * 60 * 24);
+
+        if (daysSinceAccepted >= 7) {
+          return { allowed: true };
+        }
+        return {
+          allowed: false,
+          reason: 'Order already accepted. Cannot cancel until 7 days after acceptance with no delivery.'
+        };
+      }
+
+      return { allowed: false, reason: 'Order cannot be cancelled at this stage' };
+    }
+
+    // Publisher cancellation rules
+    if (cancelledBy === 'publisher') {
+      // Check if user is the direct publisher OR the website owner via email
+      let isPublisher = order.publisher && order.publisher.id === userId;
+
+      if (!isPublisher && order.website && order.website.publisher_email) {
+        const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId);
+        if (user && user.email === order.website.publisher_email) {
+          isPublisher = true;
+        }
+      }
+
+      if (!isPublisher) {
+        return { allowed: false, reason: 'Not authorized to cancel this order' };
+      }
+
+      // Can cancel if accepted but not delivered
+      if (order.orderStatus === 'accepted') {
+        return { allowed: true };
+      }
+
+      return { allowed: false, reason: 'Order can only be cancelled after acceptance and before delivery' };
+    }
+
+    return { allowed: false, reason: 'Invalid cancellation type' };
+  },
+
+  // Cancellation Helper: Refund escrow
+  async refundEscrowToAdvertiser(order) {
+    // Get advertiser (buyer) wallet
+    const advertiserWallet = await strapi.controller('api::user-wallet.user-wallet')
+      .getOrCreateWallet(order.advertiser.id);
+
+    const refundAmount = parseFloat(order.totalAmount);
+
+    // Refund to advertiser's main balance from escrow
+    await strapi.db.query('api::user-wallet.user-wallet').update({
+      where: { id: advertiserWallet.id },
+      data: {
+        mainBalance: (parseFloat(advertiserWallet.mainBalance) || 0) + refundAmount,
+        escrowBalance: (parseFloat(advertiserWallet.escrowBalance) || 0) - refundAmount
+      }
+    });
+
+    // Create refund transaction
+    await strapi.entityService.create('api::transaction.transaction', {
+      data: {
+        type: 'refund', // or 'escrow_refund'
+        amount: refundAmount,
+        netAmount: refundAmount,
+        transactionStatus: 'success',
+        gateway: 'system',
+        gatewayTransactionId: `refund_order_${order.id}_${Date.now()}`,
+        fund_source: 'main_fund', // Returned to main fund
+        description: `Refund for cancelled order #${order.id}`,
+        user_wallet: advertiserWallet.id,
+        users_permissions_user: order.advertiser.id,
+        order: order.id,
+        publishedAt: new Date()
+      }
+    });
+
+    console.log(`[Refund] $${refundAmount} refunded to advertiser ${order.advertiser.id} for order ${order.id}`);
+
+    return refundAmount;
+  },
+
+  // Cancellation Helper: Create audit log
+  async createAuditLog(order, action, userId, reason) {
+    try {
+      await strapi.entityService.create('api::order-audit-log.order-audit-log', {
+        data: {
+          order: order.id,
+          action,
+          performedBy: userId, // Can be null for system
+          previousStatus: order.orderStatus,
+          newStatus: action === 'cancelled' ? 'cancelled' : order.orderStatus,
+          reason,
+          metadata: {
+            orderAmount: order.totalAmount,
+            timestamp: new Date().toISOString()
+          },
+          timestamp: new Date(),
+          publishedAt: new Date()
+        }
+      });
+    } catch (e) {
+      console.error("Failed to create audit log", e);
+    }
+  },
+
+  // Cancellation Helper: Send notifications
+  async sendCancellationNotifications(order, cancelledBy, reason) {
+    const notificationService = strapi.service('api::notification.notification');
+
+    // Email to advertiser
+    try {
+      if (order.advertiser.email) {
+        await strapi.plugins['email'].services.email.send({
+          to: order.advertiser.email,
+          from: process.env.EMAIL_FROM || 'no-reply@serpbays.com',
+          subject: `Order #${order.id} Cancelled`,
+          html: `
+              <h2>Order Cancelled</h2>
+              <p>Your order #${order.id} has been cancelled.</p>
+              <p><strong>Cancelled by:</strong> ${cancelledBy}</p>
+              <p><strong>Reason:</strong> ${reason}</p>
+              <p><strong>Refund Amount:</strong> $${order.totalAmount}</p>
+              <p>The funds have been returned to your wallet and are available for immediate use.</p>
+          `
+        });
+      }
+    } catch (e) {
+      console.error("Failed to send email to advertiser", e);
+    }
+
+    // In-app notification to advertiser
+    try {
+      await notificationService.createOrderNotification(
+        order.id,
+        order.publisher ? order.publisher.id : null,
+        order.advertiser.id,
+        'order_cancelled',
+        {
+          recipientId: order.advertiser.id,
+          cancelledBy,
+          reason
+        }
+      );
+    } catch (e) {
+      console.error("Failed to create notification for advertiser", e);
+    }
+
+    // Email to publisher (if exists)
+    if (order.publisher) {
+      try {
+        if (order.publisher.email) {
+          await strapi.plugins['email'].services.email.send({
+            to: order.publisher.email,
+            from: process.env.EMAIL_FROM || 'no-reply@serpbays.com',
+            subject: `Order #${order.id} Cancelled`,
+            html: `
+                  <h2>Order Cancelled</h2>
+                  <p>Order #${order.id} has been cancelled by ${cancelledBy}.</p>
+                  <p><strong>Reason:</strong> ${reason}</p>
+                  <p>No further action is required from you.</p>
+              `
+          });
+        }
+      } catch (e) {
+        console.error("Failed to send email to publisher", e);
+      }
+
+      // In-app notification to publisher
+      try {
+        await notificationService.createOrderNotification(
+          order.id,
+          order.publisher.id,
+          order.advertiser.id,
+          'order_cancelled',
+          {
+            recipientId: order.publisher.id,
+            cancelledBy,
+            reason
+          }
+        );
+      } catch (e) {
+        console.error("Failed to create notification for publisher", e);
+      }
+    }
   }
 }));

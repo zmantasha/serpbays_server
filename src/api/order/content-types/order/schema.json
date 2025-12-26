@@ -259,6 +259,31 @@
     "metadata": {
       "type": "json",
       "description": "Additional metadata for the order (e.g., spending breakdown for refunds)"
+    },
+    "cancellationReason": {
+      "type": "string",
+      "description": "Reason provided for cancellation"
+    },
+    "cancelledBy": {
+      "type": "string",
+      "enum": [
+        "advertiser",
+        "publisher",
+        "system"
+      ],
+      "description": "Who cancelled the order"
+    },
+    "cancelledAt": {
+      "type": "datetime",
+      "description": "When the order was cancelled"
+    },
+    "warningNotificationSentAt": {
+      "type": "datetime",
+      "description": "When the 30-day warning notification was sent"
+    },
+    "cancellationNotes": {
+      "type": "text",
+      "description": "Additional notes regarding cancellation"
     }
   }
 }

@@ -2233,5 +2233,64 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         return ctx.internalServerError('An error occurred while finalizing the order');
       }
     },
+    // Cancel an order
+    async cancelOrder(ctx) {
+      const { id } = ctx.params;
+      const { reason, cancelledBy } = ctx.request.body;
+      const user = ctx.state.user;
+
+      try {
+        if (!user) {
+          return ctx.unauthorized('Authentication required');
+        }
+
+        console.log(`[CancelOrder] User ${user.id} requesting cancellation for order ${id}`);
+
+        // 1. Fetch order with relations
+        const order = await strapi.entityService.findOne('api::order.order', id, {
+          populate: ['advertiser', 'publisher', 'website']
+        });
+
+        if (!order) {
+          return ctx.notFound('Order not found');
+        }
+
+        // 2. Validate cancellation permission
+        const canCancel = await strapi.service('api::order.order').validateCancellation(order, user.id, cancelledBy);
+        if (!canCancel.allowed) {
+          return ctx.badRequest(canCancel.reason);
+        }
+
+        // 3. Refund escrow to advertiser (buyer)
+        const refundAmount = await strapi.service('api::order.order').refundEscrowToAdvertiser(order);
+
+        // 4. Update order status
+        const updatedOrder = await strapi.entityService.update('api::order.order', id, {
+          data: {
+            orderStatus: 'cancelled',
+            cancellationReason: reason,
+            cancelledBy,
+            cancelledAt: new Date()
+          }
+        });
+
+        // 5. Create audit log
+        await strapi.service('api::order.order').createAuditLog(order, 'cancelled', user.id, reason);
+
+        // 6. Send notifications (email + in-app)
+        await strapi.service('api::order.order').sendCancellationNotifications(order, cancelledBy, reason);
+
+        return {
+          data: {
+            order: updatedOrder,
+            refundAmount,
+            refundedTo: 'advertiser'
+          }
+        };
+      } catch (error) {
+        console.error('Error cancelling order:', error);
+        return ctx.badRequest('Failed to cancel order');
+      }
+    },
   };
 });

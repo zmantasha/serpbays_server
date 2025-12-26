@@ -294,7 +294,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       // Note: escrowBalance is kept separate for order processing, 
       // pendingWithdrawalBalance is managed directly by withdrawal operations
 
-      // Return simplified response
+      // Return simplified response with earnings data
       return {
         data: {
           balance: totalBalance, // Total balance (mainBalance + promoBalance) for transaction history
@@ -306,7 +306,13 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           pendingWithdrawalBalance, // Amount pending withdrawal
           totalAvailable, // Same as walletBalance, for clarity
           currency: wallet.currency || "USD",
-          userType: wallet.type || 'unified'
+          userType: wallet.type || 'unified',
+          // Earnings data (calculated above but was missing from response)
+          completedOrders, // Array of escrow_release transactions for completed orders
+          completedOrdersAmount, // Total earnings from completed orders
+          transactionCount, // Number of completed order transactions
+          totalPaidOutAmount, // Total amount withdrawn (paid withdrawals)
+          totalEarnings: completedOrdersAmount // Total lifetime earnings
         }
       };
     } catch (error) {

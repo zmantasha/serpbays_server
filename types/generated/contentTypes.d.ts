@@ -1328,6 +1328,7 @@ export interface ApiNotificationNotification
         'message_received',
         'delivery_accepted_by_advertiser',
         'system_update',
+        'order_cancelled',
       ]
     > &
       Schema.Attribute.Required;
@@ -1362,6 +1363,46 @@ export interface ApiNotificationNotification
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'system'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiOrderAuditLogOrderAuditLog
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'order_audit_logs';
+  info: {
+    description: 'Log of all important actions taken on an order';
+    displayName: 'Order Audit Log';
+    pluralName: 'order-audit-logs';
+    singularName: 'order-audit-log';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    action: Schema.Attribute.String & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::order-audit-log.order-audit-log'
+    > &
+      Schema.Attribute.Private;
+    metadata: Schema.Attribute.JSON;
+    newStatus: Schema.Attribute.String;
+    order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
+    performedBy: Schema.Attribute.Relation<
+      'oneToOne',
+      'plugin::users-permissions.user'
+    >;
+    previousStatus: Schema.Attribute.String;
+    publishedAt: Schema.Attribute.DateTime;
+    reason: Schema.Attribute.Text;
+    timestamp: Schema.Attribute.DateTime & Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -1423,6 +1464,10 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'plugin::users-permissions.user'
     >;
     anchorText: Schema.Attribute.String;
+    cancellationNotes: Schema.Attribute.Text;
+    cancellationReason: Schema.Attribute.String;
+    cancelledAt: Schema.Attribute.DateTime;
+    cancelledBy: Schema.Attribute.String;
     chatroom: Schema.Attribute.Relation<'oneToOne', 'api::chatroom.chatroom'>;
     communications: Schema.Attribute.Relation<
       'oneToMany',
@@ -1506,6 +1551,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    warningNotificationSentAt: Schema.Attribute.DateTime;
     website: Schema.Attribute.Relation<
       'manyToOne',
       'api::marketplace.marketplace'
@@ -3363,6 +3409,7 @@ declare module '@strapi/strapi' {
       'api::marketplace-list.marketplace-list': ApiMarketplaceListMarketplaceList;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
       'api::notification.notification': ApiNotificationNotification;
+      'api::order-audit-log.order-audit-log': ApiOrderAuditLogOrderAuditLog;
       'api::order-content.order-content': ApiOrderContentOrderContent;
       'api::order.order': ApiOrderOrder;
       'api::outsourced-content.outsourced-content': ApiOutsourcedContentOutsourcedContent;
