@@ -8,13 +8,22 @@
     "description": "Requests for specific websites or website criteria from advertisers"
   },
   "options": {
-    "draftAndPublish": false
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "userEmail",
+      "adminNotes",
+      "responseNotes",
+      "rejectionReason"
+    ]
   },
   "pluginOptions": {},
   "attributes": {
     "requestType": {
       "type": "enumeration",
-      "enum": ["specific", "criteria"],
+      "enum": [
+        "specific",
+        "criteria"
+      ],
       "required": true,
       "description": "Type of request - specific domains or criteria-based"
     },
@@ -62,17 +71,36 @@
     },
     "budgetRange": {
       "type": "enumeration",
-      "enum": ["budget50-100", "budget100-250", "budget250-500", "budget500-1000", "budget1000+", "negotiable"],
+      "enum": [
+        "budget50-100",
+        "budget100-250",
+        "budget250-500",
+        "budget500-1000",
+        "budget1000+",
+        "negotiable"
+      ],
       "description": "Budget range per placement"
     },
     "timeline": {
       "type": "enumeration",
-      "enum": ["asap", "within1week", "within2weeks", "within1month", "flexible"],
+      "enum": [
+        "asap",
+        "within1week",
+        "within2weeks",
+        "within1month",
+        "flexible"
+      ],
       "description": "Timeline for request fulfillment"
     },
     "contentType": {
       "type": "enumeration",
-      "enum": ["guest-post", "sponsored-content", "product-review", "link-insertion", "other"],
+      "enum": [
+        "guest-post",
+        "sponsored-content",
+        "product-review",
+        "link-insertion",
+        "other"
+      ],
       "description": "Type of content to be placed"
     },
     "additionalRequirements": {
@@ -81,7 +109,11 @@
     },
     "contactPreference": {
       "type": "enumeration",
-      "enum": ["email", "phone", "chat"],
+      "enum": [
+        "email",
+        "phone",
+        "chat"
+      ],
       "default": "email",
       "description": "Preferred contact method"
     },
@@ -96,7 +128,15 @@
     },
     "status": {
       "type": "enumeration",
-      "enum": ["pending", "under_review", "approved", "rejected", "in-progress", "completed", "cancelled"],
+      "enum": [
+        "pending",
+        "under_review",
+        "approved",
+        "rejected",
+        "in-progress",
+        "completed",
+        "cancelled"
+      ],
       "default": "pending",
       "description": "Status of the request"
     },
@@ -157,4 +197,4 @@
       "description": "User who made the request"
     }
   }
-} 
+}
