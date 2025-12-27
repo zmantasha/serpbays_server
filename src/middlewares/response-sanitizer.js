@@ -75,7 +75,10 @@ module.exports = (config, { strapi }) => {
                 'notes',
                 // User identification in bank transfers
                 'userEmail',
-                'userName'
+                'userName',
+                // Marketplace flattened fields
+                'publisher_name',
+                'publisher_email'
             ];
 
             // Remove sensitive fields

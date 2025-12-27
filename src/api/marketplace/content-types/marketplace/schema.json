@@ -8,7 +8,12 @@
     "description": ""
   },
   "options": {
-    "draftAndPublish": false
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "publisher_name",
+      "publisher_email",
+      "gsc_refresh_token"
+    ]
   },
   "attributes": {
     "url": {
