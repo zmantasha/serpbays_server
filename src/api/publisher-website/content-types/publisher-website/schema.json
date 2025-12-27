@@ -8,7 +8,15 @@
     "description": "Website submissions from publishers for marketplace approval"
   },
   "options": {
-    "draftAndPublish": false
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "publisherEmail",
+      "publisherName",
+      "gscRefreshToken",
+      "reviewNotes",
+      "changeRequests",
+      "claimedFrom"
+    ]
   },
   "pluginOptions": {},
   "attributes": {

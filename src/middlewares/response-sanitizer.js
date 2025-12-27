@@ -47,7 +47,16 @@ module.exports = (config, { strapi }) => {
                 'resetPasswordToken',
                 'confirmationToken',
                 'password',
-                'provider'
+                'provider',
+                // Website-specific sensitive fields
+                'publisherEmail',
+                'websitePublisherEmail',
+                'publisherName',
+                'websitePublisherName',
+                'gscRefreshToken',
+                'reviewNotes',
+                'changeRequests',
+                'claimedFrom'
             ];
 
             // Remove sensitive fields
