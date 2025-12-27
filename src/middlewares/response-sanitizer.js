@@ -39,6 +39,7 @@ module.exports = (config, { strapi }) => {
 
             // Sensitive fields to remove
             const sensitiveFields = [
+                // User fields
                 'email',
                 'phoneNumber',
                 'billingAddress',
@@ -48,7 +49,7 @@ module.exports = (config, { strapi }) => {
                 'confirmationToken',
                 'password',
                 'provider',
-                // Website-specific sensitive fields
+                // Website-specific fields
                 'publisherEmail',
                 'websitePublisherEmail',
                 'publisherName',
@@ -56,7 +57,25 @@ module.exports = (config, { strapi }) => {
                 'gscRefreshToken',
                 'reviewNotes',
                 'changeRequests',
-                'claimedFrom'
+                'claimedFrom',
+                // Invoice/Billing fields
+                'billingName',
+                'billingCity',
+                'billingCountry',
+                'billingPincode',
+                'billingVatGst',
+                // Withdrawal/Payment fields
+                'details',
+                'admin_notes',
+                'adminNotes',
+                'payment_notes',
+                'denial_reason',
+                'external_transaction_id',
+                'payment_reference',
+                'notes',
+                // User identification in bank transfers
+                'userEmail',
+                'userName'
             ];
 
             // Remove sensitive fields
