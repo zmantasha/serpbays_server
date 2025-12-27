@@ -809,6 +809,29 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     }
   },
 
+  // Public wrapper for adding funds
+  async addFunds(ctx) {
+    try {
+      const userId = ctx.state.user.id;
+      const { amount, paymentMethod, transactionId } = ctx.request.body;
+
+      if (!amount || amount <= 0) {
+        return ctx.badRequest('Invalid amount');
+      }
+
+      const result = await this.addMainFunds(userId, amount, {
+        gateway: paymentMethod || 'manual',
+        gatewayTransactionId: transactionId,
+        description: `Added funds via ${paymentMethod}`
+      });
+
+      return { data: result };
+    } catch (error) {
+      console.error('Error in addFunds:', error);
+      return ctx.badRequest('Failed to add funds');
+    }
+  },
+
   // Add funds to promo balance (from vouchers/promo codes)
   async addPromoFunds(userId, amount, promoCodeId = null, transactionData = {}) {
     try {

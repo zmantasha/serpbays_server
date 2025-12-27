@@ -108,7 +108,8 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           { description: `Order #${order.id} escrow hold` }
         );
 
-        const newEscrowBalance = currentWallet.escrowBalance + escrowHeld;
+        const currentEscrow = parseFloat(currentWallet.escrowBalance) || 0;
+        const newEscrowBalance = currentEscrow + escrowHeld;
 
         console.log(`[ORDER CREATE] Money Flow for User ${user.id}:`);
         console.log(`  - Wallet ID: ${currentWallet.id} (original: ${wallet.id})`);
@@ -459,11 +460,17 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         );
       }
 
-      // Reduce escrow balance
+      // Validate and reduce escrow balance
+      const currentEscrow = parseFloat(advertiserWallet.escrowBalance) || 0;
+      if (currentEscrow < refundAmount) {
+        console.error(`[ESCROW ERROR] Cannot refund $${refundAmount}, only $${currentEscrow} in escrow!`);
+        throw new Error(`Insufficient escrow balance for refund: have $${currentEscrow}, need $${refundAmount}`);
+      }
+
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: advertiserWallet.id },
         data: {
-          escrowBalance: advertiserWallet.escrowBalance - refundAmount
+          escrowBalance: currentEscrow - refundAmount
         }
       });
 
@@ -699,13 +706,21 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       .getOrCreateWallet(order.advertiser.id);
 
     const refundAmount = parseFloat(order.totalAmount);
+    const currentEscrow = parseFloat(advertiserWallet.escrowBalance) || 0;
+
+    // Validate sufficient escrow before refunding
+    if (currentEscrow < refundAmount) {
+      console.error(`[ESCROW ERROR] Cannot refund $${refundAmount}, only $${currentEscrow} in escrow!`);
+      console.error(`[ESCROW ERROR] Order ID: ${order.id}, Advertiser ID: ${order.advertiser.id}`);
+      throw new Error(`Insufficient escrow balance: have $${currentEscrow}, need $${refundAmount}`);
+    }
 
     // Refund to advertiser's main balance from escrow
     await strapi.db.query('api::user-wallet.user-wallet').update({
       where: { id: advertiserWallet.id },
       data: {
         mainBalance: (parseFloat(advertiserWallet.mainBalance) || 0) + refundAmount,
-        escrowBalance: (parseFloat(advertiserWallet.escrowBalance) || 0) - refundAmount
+        escrowBalance: currentEscrow - refundAmount
       }
     });
 
