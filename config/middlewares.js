@@ -37,6 +37,8 @@ module.exports = [
   'strapi::session',
   'strapi::favicon',
   'strapi::public',
+  // Privacy protection - removes sensitive user data from all API responses
+  'global::response-sanitizer',
   // Custom admin middleware
   'global::admin-logger',
 ];

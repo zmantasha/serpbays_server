@@ -10,7 +10,17 @@
   },
   "options": {
     "draftAndPublish": false,
-    "timestamps": true
+    "timestamps": true,
+    "privateAttributes": [
+      "email",
+      "resetPasswordToken",
+      "confirmationToken",
+      "provider",
+      "phoneNumber",
+      "billingAddress",
+      "registrationNumber",
+      "vatGstNumber"
+    ]
   },
   "attributes": {
     "username": {
