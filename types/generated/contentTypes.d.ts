@@ -523,6 +523,7 @@ export interface ApiAuthorAuthor extends Struct.CollectionTypeSchema {
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: ['email'];
   };
   attributes: {
     articles: Schema.Attribute.Relation<'oneToMany', 'api::article.article'>;
@@ -556,6 +557,7 @@ export interface ApiBankTransferRequestBankTransferRequest
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: ['userEmail', 'userName', 'adminNotes', 'notes'];
   };
   pluginOptions: {
     'content-manager': {
@@ -862,6 +864,15 @@ export interface ApiInvoiceInvoice extends Struct.CollectionTypeSchema {
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'billingName',
+      'billingAddress',
+      'billingCity',
+      'billingCountry',
+      'billingPincode',
+      'billingVatGst',
+      'notes',
+    ];
   };
   attributes: {
     billingAddress: Schema.Attribute.Text & Schema.Attribute.Required;
@@ -963,6 +974,11 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'publisher_name',
+      'publisher_email',
+      'gsc_refresh_token',
+    ];
   };
   attributes: {
     adv_casino_pricing: Schema.Attribute.Integer &
@@ -1825,6 +1841,14 @@ export interface ApiPublisherWebsitePublisherWebsite
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'publisherEmail',
+      'publisherName',
+      'gscRefreshToken',
+      'reviewNotes',
+      'changeRequests',
+      'claimedFrom',
+    ];
   };
   attributes: {
     addedByReseller: Schema.Attribute.Boolean &
@@ -2549,6 +2573,12 @@ export interface ApiWebsiteRequestWebsiteRequest
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'userEmail',
+      'adminNotes',
+      'responseNotes',
+      'rejectionReason',
+    ];
   };
   attributes: {
     additionalRequirements: Schema.Attribute.Text;
@@ -2749,6 +2779,14 @@ export interface ApiWithdrawalRequestWithdrawalRequest
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'details',
+      'admin_notes',
+      'payment_notes',
+      'denial_reason',
+      'external_transaction_id',
+      'payment_reference',
+    ];
   };
   attributes: {
     admin_notes: Schema.Attribute.Text;
@@ -3273,6 +3311,16 @@ export interface PluginUsersPermissionsUser
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'email',
+      'resetPasswordToken',
+      'confirmationToken',
+      'provider',
+      'phoneNumber',
+      'billingAddress',
+      'registrationNumber',
+      'vatGstNumber',
+    ];
     timestamps: true;
   };
   attributes: {
