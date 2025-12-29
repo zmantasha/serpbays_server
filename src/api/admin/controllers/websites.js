@@ -1859,14 +1859,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           url: url,
           submissionStatus: 'approved' // Only check against active websites
         },
-        populate: {
-          currentPublisherId: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName']
-          },
-          originalPublisherId: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName']
-          }
-        }
+        populate: ['currentPublisherId', 'originalPublisherId']
       })
 
       // Debug: Check what websites exist with this URL regardless of status
@@ -1961,6 +1954,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
     } catch (error) {
       console.error('[ADMIN WEBSITES CHECK CONFLICT ERROR]', error)
+      console.error('[ERROR DETAILS]', {
+        message: error.message,
+        stack: error.stack,
+        url: ctx.query.url,
+        publisherType: ctx.query.publisherType
+      })
       return ctx.internalServerError('Failed to check website conflicts')
     }
   },
