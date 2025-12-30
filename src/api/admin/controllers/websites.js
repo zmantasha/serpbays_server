@@ -3142,6 +3142,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.error('[ADMIN BULK DELETE ERROR]', error);
       return ctx.internalServerError('Failed to bulk delete websites');
     }
-  }
+  },
 
+  /**
+   * Manual marketplace sync (for testing)
+   * PHASE 1: Safe testing endpoint - respects dry-run mode
+   */
+  async testMarketplaceSync(ctx) {
+    try {
+      const { id } = ctx.params;
+
+      strapi.log.info(`[ADMIN ACTION] Admin ${ctx.state.user?.id} testing marketplace sync for website ${id}`);
+
+      // Call sync service
+      const result = await strapi.service('api::marketplace-sync.marketplace-sync')
+        .syncWebsite(id, 'update');
+
+      return ctx.send({
+        success: result.success,
+        dryRun: result.dryRun,
+        reason: result.reason,
+        error: result.error,
+        data: result.data,
+        message: result.dryRun
+          ? 'DRY RUN: Operation logged, no database changes made'
+          : result.success
+            ? 'Sync completed successfully'
+            : 'Sync failed - check logs'
+      });
+    } catch (error) {
+      strapi.log.error('[ADMIN ACTION] Manual marketplace sync failed:', error);
+      return ctx.badRequest(`Manual sync failed: ${error.message}`);
+    }
+  }
 }));
