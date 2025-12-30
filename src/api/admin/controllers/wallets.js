@@ -261,7 +261,17 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       if (!wallet) {
-        return ctx.notFound('Wallet not found for this user');
+        return ctx.send({
+          data: [],
+          meta: {
+            pagination: {
+              page: parseInt(page),
+              pageSize: parseInt(pageSize),
+              pageCount: 0,
+              total: 0
+            }
+          }
+        });
       }
 
       // Build transaction filters
