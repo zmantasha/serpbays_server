@@ -7,7 +7,7 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 
 module.exports = createCoreController('plugin::users-permissions.user', ({ strapi }) => ({
-  
+
   /**
    * Admin login with enhanced security checks
    */
@@ -21,7 +21,7 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
 
       // Use Strapi's auth service with better error handling
       let user, jwt;
-      
+
       try {
         // Try to use the users-permissions plugin auth service
         if (strapi.plugins['users-permissions']?.services?.auth) {
@@ -116,11 +116,11 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
   async me(ctx) {
     try {
       const userId = ctx.state.user.id;
-      
+
       const user = await strapi.entityService.findOne(
         'plugin::users-permissions.user',
         userId,
-        { 
+        {
           populate: ['role', 'user_wallet']
         }
       );
@@ -162,6 +162,8 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         where: { confirmed: false }
       });
 
+      console.log('[DASHBOARD STATS] User counts:', { totalUsers, activeUsers, blockedUsers, pendingUsers });
+
       stats.users = {
         total: totalUsers,
         active: activeUsers,
@@ -169,59 +171,90 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         pending: pendingUsers
       };
 
-      // Get order statistics
-      const totalOrders = await strapi.db.query('api::order.order').count();
-      const pendingOrders = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'pending' }
-      });
-      const completedOrders = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'completed' }
-      });
+      // Get order statistics - wrapped in try-catch to prevent 500 error
+      try {
+        const totalOrders = await strapi.db.query('api::order.order').count();
+        const pendingOrders = await strapi.db.query('api::order.order').count({
+          where: { orderStatus: 'pending' }
+        });
+        const completedOrders = await strapi.db.query('api::order.order').count({
+          where: { orderStatus: 'completed' }
+        });
 
-      stats.orders = {
-        total: totalOrders,
-        pending: pendingOrders,
-        completed: completedOrders
-      };
+        stats.orders = {
+          total: totalOrders,
+          pending: pendingOrders,
+          completed: completedOrders
+        };
+        console.log('[DASHBOARD] Orders query OK');
+      } catch (ordersError) {
+        console.error('[DASHBOARD ERROR] Orders query failed:', ordersError.message);
+        stats.orders = {
+          total: 0,
+          pending: 0,
+          completed: 0
+        };
+      }
 
-      // Get financial statistics
-      const totalTransactions = await strapi.db.query('api::transaction.transaction').count();
-      const pendingWithdrawals = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
-        where: { status: 'pending' }
-      });
+      // Get financial statistics - wrapped in try-catch
+      try {
+        const totalTransactions = await strapi.db.query('api::transaction.transaction').count();
+        const pendingWithdrawals = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+          where: { status: 'pending' }
+        });
 
-      // Calculate total revenue (sum of completed transactions)
-      const revenueData = await strapi.db.query('api::transaction.transaction').findMany({
-        where: { transactionStatus: 'completed' },
-        select: ['amount']
-      });
-      const totalRevenue = revenueData.reduce((sum, transaction) => {
-        return sum + parseFloat(transaction.amount || 0);
-      }, 0);
+        // Calculate total revenue (sum of completed transactions)
+        const revenueData = await strapi.db.query('api::transaction.transaction').findMany({
+          where: { transactionStatus: 'completed' },
+          select: ['amount']
+        });
+        const totalRevenue = revenueData.reduce((sum, transaction) => {
+          return sum + parseFloat(transaction.amount || 0);
+        }, 0);
 
-      stats.financial = {
-        totalTransactions,
-        pendingWithdrawals,
-        totalRevenue: totalRevenue.toFixed(2)
-      };
+        stats.financial = {
+          totalTransactions,
+          pendingWithdrawals,
+          totalRevenue: totalRevenue.toFixed(2)
+        };
+        console.log('[DASHBOARD] Financial query OK');
+      } catch (financialError) {
+        console.error('[DASHBOARD ERROR] Financial query failed:', financialError.message);
+        stats.financial = {
+          totalTransactions: 0,
+          pendingWithdrawals: 0,
+          totalRevenue: '0.00'
+        };
+      }
 
-      // Get website statistics
-      const totalWebsites = await strapi.db.query('api::marketplace.marketplace').count();
-      const approvedWebsites = await strapi.db.query('api::publisher-website.publisher-website').count({
-        where: { submissionStatus: 'approved' }
-      });
+      // Get website statistics - wrapped in try-catch
+      try {
+        const totalWebsites = await strapi.db.query('api::marketplace.marketplace').count();
+        const approvedWebsites = await strapi.db.query('api::publisher-website.publisher-website').count({
+          where: { submissionStatus: 'approved' }
+        });
 
-      stats.websites = {
-        total: totalWebsites,
-        approved: approvedWebsites
-      };
+        stats.websites = {
+          total: totalWebsites,
+          approved: approvedWebsites
+        };
+        console.log('[DASHBOARD] Websites query OK');
+      } catch (websitesError) {
+        console.error('[DASHBOARD ERROR] Websites query failed:', websitesError.message);
+        stats.websites = {
+          total: 0,
+          approved: 0
+        };
+      }
 
       // Get communication statistics
       const totalCommunications = await strapi.db.query('api::communication.communication').count();
-      
+
       stats.communications = {
         total: totalCommunications
       };
+
+      console.log('[DASHBOARD STATS] Final stats:', JSON.stringify(stats, null, 2));
 
       ctx.send(stats);
 
