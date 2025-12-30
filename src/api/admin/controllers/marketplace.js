@@ -543,12 +543,33 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Calculate average metrics
       const metricsData = await strapi.db.query('api::marketplace.marketplace').findMany({
-        select: ['moz_da', 'ahrefs_dr', 'price']
+        select: ['moz_da', 'ahrefs_dr', 'price', 'id']
       });
 
       const avgDA = metricsData.reduce((sum, w) => sum + (parseFloat(w.moz_da) || 0), 0) / metricsData.length || 0;
       const avgDR = metricsData.reduce((sum, w) => sum + (parseFloat(w.ahrefs_dr) || 0), 0) / metricsData.length || 0;
       const avgPrice = metricsData.reduce((sum, w) => sum + (parseFloat(w.price) || 0), 0) / metricsData.length || 0;
+
+      // Calculate real totalRevenue and avgRating
+      let totalRevenue = 0;
+      let totalCompletedOrders = 0;
+      let totalOrders = 0;
+
+      for (const website of metricsData) {
+        const orders = await strapi.db.query('api::order.order').findMany({
+          where: { website: website.id },
+          select: ['orderStatus', 'totalAmount']
+        });
+
+        totalOrders += orders.length;
+        const completedOrders = orders.filter(o => o.orderStatus === 'completed');
+        totalCompletedOrders += completedOrders.length;
+        totalRevenue += completedOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0);
+      }
+
+      const avgRating = totalOrders > 0
+        ? Math.min(5, Math.max(1, ((totalCompletedOrders / totalOrders) * 5)))
+        : 0;
 
       ctx.send({
         total,
@@ -559,7 +580,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           domainAuthority: Math.round(avgDA * 10) / 10,
           domainRating: Math.round(avgDR * 10) / 10,
           price: Math.round(avgPrice * 100) / 100
-        }
+        },
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        avgRating: Math.round(avgRating * 10) / 10
       });
 
     } catch (error) {
