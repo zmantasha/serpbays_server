@@ -13,9 +13,9 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
    */
   async find(ctx) {
     try {
-      const { 
-        page = 1, 
-        pageSize = 20, 
+      const {
+        page = 1,
+        pageSize = 20,
         sort = 'createdAt:desc',
         search = '',
         status = '',
@@ -24,7 +24,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Build filters
       const filters = {};
-      
+
       // Search filter
       if (search) {
         filters.$or = [
@@ -42,7 +42,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         filters.publisher = userId;
       }
 
-      // Get withdrawal requests with pagination
+      // Get withdrawal requests with simplified populate
       const withdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
         filters,
         sort,
@@ -50,11 +50,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           page: parseInt(page),
           pageSize: parseInt(pageSize)
         },
-        populate: {
-          publisher: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName']
-          }
-        }
+        populate: ['publisher']
       });
 
       // Get total count for pagination
@@ -134,7 +130,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Update withdrawal request
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-        data: { 
+        data: {
           withdrawal_status: 'approved',
           adminNotes,
           paymentReference,
@@ -188,7 +184,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Update withdrawal request
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-        data: { 
+        data: {
           withdrawal_status: 'denied',
           denial_reason: reason,
           rejected_at: new Date(),
@@ -237,7 +233,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Update withdrawal request
       const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-        data: { 
+        data: {
           withdrawal_status: 'paid',
           paymentReference,
           paymentMethod,
@@ -299,7 +295,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const totalAmountData = await strapi.db.query('api::withdrawal-request.withdrawal-request').findMany({
         select: ['amount', 'withdrawal_status']
       });
-      
+
       const totalAmount = totalAmountData.reduce((sum, withdrawal) => {
         return sum + parseFloat(withdrawal.amount || 0);
       }, 0);
@@ -371,25 +367,25 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // Get or create the publisher's wallet using the correct method
       const publisherWallet = await strapi.controller('api::user-wallet.user-wallet')
         .getOrCreateWallet(withdrawal.publisher.id);
-      
+
       if (!publisherWallet) {
         return ctx.badRequest('Publisher wallet not found');
       }
 
       const currentPendingBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
       const withdrawalAmount = parseFloat(withdrawal.amount);
-      
+
       if (currentPendingBalance < withdrawalAmount) {
         return ctx.badRequest(`Insufficient pending withdrawal balance. Available: ${currentPendingBalance}, Required: ${withdrawalAmount}`);
       }
 
       // Use database transaction to ensure atomicity
       const trx = await strapi.db.connection.transaction();
-      
+
       try {
         // Update withdrawal request
         const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-          data: { 
+          data: {
             withdrawal_status: 'paid',
             paymentReference,
             paymentNotes,
@@ -492,14 +488,14 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
               params: { id: withdrawalId },
               request: { body: { adminNotes: notes } },
               state: ctx.state,
-              send: () => {} // Mock send function
+              send: () => { } // Mock send function
             });
           } else {
             await this.reject({
               params: { id: withdrawalId },
               request: { body: { reason: notes } },
               state: ctx.state,
-              send: () => {} // Mock send function
+              send: () => { } // Mock send function
             });
           }
           results.push({ id: withdrawalId, status: 'success' });
