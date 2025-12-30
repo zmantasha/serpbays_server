@@ -13,9 +13,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
    */
   async find(ctx) {
     try {
-      const { 
-        page = 1, 
-        pageSize = 20, 
+      const {
+        page = 1,
+        pageSize = 20,
         sort = 'createdAt:desc',
         search = '',
         status = '',
@@ -25,7 +25,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
 
       // Build filters
       const filters = {};
-      
+
       // Search filter
       if (search) {
         filters.$or = [
@@ -94,6 +94,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
     try {
       const { id } = ctx.params;
 
+      // Simplified populate - only advertiser and publisher to avoid 500 errors
       const order = await strapi.entityService.findOne('api::order.order', id, {
         populate: {
           advertiser: {
@@ -101,19 +102,6 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           },
           publisher: {
             fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
-          },
-          orderContent: {
-            fields: ['url', 'metaDescription', 'keywords', 'links', 'minWordCount']
-          },
-          outsourcedContent: {
-            fields: ['links', 'instructions']
-          },
-          communications: {
-            populate: ['sender'],
-            sort: 'createdAt:desc'
-          },
-          transactions: {
-            sort: 'createdAt:desc'
           }
         }
       });
@@ -144,7 +132,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating order ${id} status to ${orderStatus}`);
 
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
-        data: { 
+        data: {
           orderStatus,
           adminNotes,
           lastStatusUpdate: new Date()
@@ -188,7 +176,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} assigning publisher ${publisherId} to order ${id}`);
 
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
-        data: { 
+        data: {
           publisher: publisherId,
           orderStatus: 'assigned',
           assignedAt: new Date()
@@ -287,7 +275,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} cancelling order ${id}. Reason: ${reason}`);
 
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
-        data: { 
+        data: {
           orderStatus: 'cancelled',
           cancellationReason: reason,
           cancelledAt: new Date(),
@@ -324,17 +312,17 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
   async getOrderContent(ctx) {
     try {
       const { id } = ctx.params;
-      
+
       // Find the order content for this order
       const orderContent = await strapi.db.query('api::order-content.order-content').findOne({
         where: { order: id },
       });
-      
+
       // Find the outsourced content for this order
       const outsourcedContent = await strapi.db.query('api::outsourced-content.outsourced-content').findOne({
         where: { order: id },
       });
-      
+
       ctx.send({
         orderContent,
         outsourcedContent
@@ -352,7 +340,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
     try {
       const { id } = ctx.params;
       console.log('[ADMIN ORDER CHATROOM] Fetching chatroom for order:', id);
-      
+
       // Find the chatroom for this order
       const chatroom = await strapi.db.query('api::chatroom.chatroom').findOne({
         where: { order: id },
@@ -376,7 +364,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           }
         }
       });
-      
+
       if (!chatroom) {
         console.log('[ADMIN ORDER CHATROOM] No existing chatroom found, creating new one');
         // Create a new chatroom if it doesn't exist
@@ -384,12 +372,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           where: { id },
           populate: ['advertiser', 'publisher']
         });
-        
+
         if (!order) {
           console.log('[ADMIN ORDER CHATROOM] Order not found:', id);
           return ctx.notFound('Order not found');
         }
-        
+
         // Check if there are existing communications for this order
         const existingCommunications = await strapi.db.query('api::communication.communication').findMany({
           where: { order: id },
@@ -400,9 +388,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           },
           orderBy: { createdAt: 'asc' }
         });
-        
+
         console.log('[ADMIN ORDER CHATROOM] Found existing communications:', existingCommunications.length);
-        
+
         const newChatroom = await strapi.db.query('api::chatroom.chatroom').create({
           data: {
             order: id,
@@ -412,7 +400,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
             lastActivity: new Date()
           }
         });
-        
+
         // If there are existing communications, link them to the new chatroom
         if (existingCommunications.length > 0) {
           await strapi.db.query('api::chatroom.chatroom').update({
@@ -424,7 +412,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
             }
           });
         }
-        
+
         ctx.send({
           chatroom: newChatroom,
           communications: existingCommunications
@@ -432,7 +420,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       } else {
         // If chatroom exists but has no communications, check for direct communications
         let communications = chatroom.communications || [];
-        
+
         if (communications.length === 0) {
           // Fallback: get communications directly from the order
           communications = await strapi.db.query('api::communication.communication').findMany({
@@ -445,7 +433,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
             orderBy: { createdAt: 'asc' }
           });
         }
-        
+
         ctx.send({
           chatroom,
           communications: communications
@@ -464,26 +452,26 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
     try {
       const { id } = ctx.params;
       const { message, messageType = 'admin_message' } = ctx.request.body;
-      
+
       if (!message || message.trim() === '') {
         return ctx.badRequest('Message cannot be empty');
       }
-      
+
       // Find or create chatroom for this order
       let chatroom = await strapi.db.query('api::chatroom.chatroom').findOne({
         where: { order: id }
       });
-      
+
       if (!chatroom) {
         const order = await strapi.db.query('api::order.order').findOne({
           where: { id },
           populate: ['advertiser', 'publisher']
         });
-        
+
         if (!order) {
           return ctx.notFound('Order not found');
         }
-        
+
         chatroom = await strapi.db.query('api::chatroom.chatroom').create({
           data: {
             order: id,
@@ -494,7 +482,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           }
         });
       }
-      
+
       // Create the communication message
       const communication = await strapi.db.query('api::communication.communication').create({
         data: {
@@ -506,7 +494,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           publishedAt: new Date()
         }
       });
-      
+
       // Add communication to chatroom
       await strapi.db.query('api::chatroom.chatroom').update({
         where: { id: chatroom.id },
@@ -517,7 +505,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           lastActivity: new Date()
         }
       });
-      
+
       // Return the created message with sender info
       const messageWithSender = await strapi.db.query('api::communication.communication').findOne({
         where: { id: communication.id },
@@ -527,7 +515,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           }
         }
       });
-      
+
       ctx.send({
         message: messageWithSender
       });

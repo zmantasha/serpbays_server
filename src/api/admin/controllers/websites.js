@@ -541,14 +541,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const { id } = ctx.params;
 
       const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: {
-          currentPublisherId: {
-            fields: ['id', 'username', 'email']
-          },
-          originalPublisherId: {
-            fields: ['id', 'username', 'email']
-          }
-        }
+        populate: ['currentPublisherId', 'originalPublisherId']
       });
 
       if (!website) {
@@ -1859,14 +1852,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           url: url,
           submissionStatus: 'approved' // Only check against active websites
         },
-        populate: {
-          currentPublisherId: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName']
-          },
-          originalPublisherId: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName']
-          }
-        }
+        populate: ['currentPublisherId', 'originalPublisherId']
       })
 
       // Debug: Check what websites exist with this URL regardless of status
@@ -1961,6 +1947,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
     } catch (error) {
       console.error('[ADMIN WEBSITES CHECK CONFLICT ERROR]', error)
+      console.error('[ERROR DETAILS]', {
+        message: error.message,
+        stack: error.stack,
+        url: ctx.query.url,
+        publisherType: ctx.query.publisherType
+      })
       return ctx.internalServerError('Failed to check website conflicts')
     }
   },
@@ -2172,14 +2164,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             // Duplicate detection: if URL already exists in DB (any status), mark as duplicate and skip
             const existingAny = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
               filters: { url: normalizedUrl },
-              populate: {
-                currentPublisherId: {
-                  fields: ['id', 'username', 'email', 'firstName', 'lastName']
-                },
-                originalPublisherId: {
-                  fields: ['id', 'username', 'email', 'firstName', 'lastName']
-                }
-              }
+              populate: ['currentPublisherId', 'originalPublisherId']
             })
 
             if (Array.isArray(existingAny) && existingAny.length > 0) {
@@ -2242,14 +2227,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 url: normalizedUrl,
                 submissionStatus: 'approved'
               },
-              populate: {
-                currentPublisherId: {
-                  fields: ['id', 'username', 'email', 'firstName', 'lastName']
-                },
-                originalPublisherId: {
-                  fields: ['id', 'username', 'email', 'firstName', 'lastName']
-                }
-              }
+              populate: ['currentPublisherId', 'originalPublisherId']
             })
 
             // Apply business rules for conflict resolution
@@ -2452,6 +2430,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         category = '',
         daFilter = '',
         metricsUpdateFilter = '',
+        metricsStatusFilter = 'All',
         minDA = '',
         maxDA = '',
         minDR = '',
@@ -2470,6 +2449,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         addedByReseller = '',
         recordRangeMin = '',
         recordRangeMax = '',
+        columnGroups = '',
+        selectedIds = '',
         sort = 'createdAt:desc'
       } = ctx.query;
 
@@ -2678,105 +2659,185 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         websites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
           filters,
           sort: sortObj,
-          populate: {
-            currentPublisherId: {
-              fields: ['id', 'username', 'email']
-            },
-            originalPublisherId: {
-              fields: ['id', 'username', 'email']
-            }
-          }
+          populate: ['currentPublisherId', 'originalPublisherId']
         });
       }
 
-      console.log(`Found ${websites.length} websites to export`);
+      console.log(`Found ${websites.length} websites (before metrics filter)`);
 
+      // Apply metrics status filter (client-side filtering)
+      if (metricsStatusFilter && metricsStatusFilter !== 'All') {
+        const isMetricsComplete = (website) => {
+          const da = website.moz_da;
+          const dr = website.ahrefs_dr;
+          return da && dr && da !== 'N/A' && dr !== 'N/A' && da !== '-' && dr !== '';
+        };
+
+        websites = websites.filter(website => {
+          const hasMetrics = isMetricsComplete(website);
+          const isApproved = website.submissionStatus === 'approved';
+
+          if (metricsStatusFilter === 'Ready') {
+            // Ready = has metrics AND NOT approved
+            return hasMetrics && !isApproved;
+          } else if (metricsStatusFilter === 'Live') {
+            // Live = has metrics AND approved
+            return hasMetrics && isApproved;
+          } else if (metricsStatusFilter === 'Missing') {
+            // Missing = lacks metrics
+            return !hasMetrics;
+          }
+          return true;
+        });
+
+        console.log(`After metrics filter (${metricsStatusFilter}): ${websites.length} websites`);
+      }
+
+      console.log(`Total websites to export: ${websites.length}`);
+
+      // Apply selected IDs filter (export selected rows only)
+      if (selectedIds && selectedIds.trim() !== '') {
+        const idsArray = selectedIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+        if (idsArray.length > 0) {
+          websites = websites.filter(website => idsArray.includes(website.id));
+          console.log(`After selected IDs filter: ${websites.length} websites (IDs: ${idsArray.join(', ')})`);
+        }
+      }
+
+      // Parse column groups
+      let groups = {
+        publisherInfo: true,
+        seoMetrics: true,
+        pricingGeneral: true,
+        pricingNiche: true,
+        technicalSettings: true,
+        contentCategories: true,
+        locationLanguage: true,
+        datesMetadata: true
+      };
+
+      if (columnGroups && columnGroups !== '') {
+        try {
+          const parsed = JSON.parse(columnGroups);
+          groups = { ...groups, ...parsed };
+          console.log('Column groups:', groups);
+        } catch (error) {
+          console.error('Failed to parse column groups:', error);
+        }
+      }
       if (websites.length === 0) {
         return ctx.badRequest('No websites found matching the criteria');
       }
 
-      // Transform data for CSV export
-      const csvData = websites.map(website => ({
-        ID: website.id,
-        Domain: website.url || 'N/A',
-        Protocol: website.protocol || 'https',
-        Title: website.publisherName || 'N/A',
-        Description: website.description || 'No description',
-        Status: website.submissionStatus || 'pending',
-        Publisher_Email: website.publisherEmail || 'N/A',
-        Publisher_Name: website.publisherName || 'N/A',
-        Publisher_ID: website.currentPublisherId?.id || website.originalPublisherId?.id || 'N/A',
-        Publisher_Username: website.currentPublisherId?.username || website.originalPublisherId?.username || 'Unknown',
-        Publisher_Email_Current: website.currentPublisherId?.email || website.originalPublisherId?.email || 'N/A',
+      // Transform data for CSV export with dynamic columns based on column groups
+      const csvData = websites.map(website => {
+        const row = {
+          // Basic Info (always included)
+          ID: website.id,
+          Domain: website.url || 'N/A',
+          Protocol: website.protocol || 'https',
+          Title: website.publisherName || 'N/A',
+          Description: website.description || 'No description',
+          Status: website.submissionStatus || 'pending',
+        };
+
+        // Publisher Info
+        if (groups.publisherInfo) {
+          Object.assign(row, {
+            Publisher_Email: website.publisherEmail || 'N/A',
+            Publisher_Name: website.publisherName || 'N/A',
+            Publisher_ID: website.currentPublisherId?.id || website.originalPublisherId?.id || 'N/A',
+            Publisher_Username: website.currentPublisherId?.username || website.originalPublisherId?.username || 'Unknown',
+            Publisher_Email_Current: website.currentPublisherId?.email || website.originalPublisherId?.email || 'N/A',
+          });
+        }
 
         // SEO Metrics
-        DA: website.moz_da || 'N/A',
-        DR: website.ahrefs_dr || 'N/A',
-        Ahrefs_Rank: website.ahrefs_rank || 'N/A',
-        Ahrefs_Traffic: website.ahrefs_traffic || 'N/A',
-        Ahrefs_Keywords: website.ahrefs_keywords || 'N/A',
-        Ahrefs_Referring_Domains: website.ahrefs_referring_domain || 'N/A',
-        Semrush_Authority_Score: website.semrush_authority_score || 'N/A',
-        Semrush_Traffic: website.semrush_traffic || 'N/A',
-        Moz_Spam_Score: website.moz_spam_score || 'N/A',
+        if (groups.seoMetrics) {
+          Object.assign(row, {
+            DA: website.moz_da || 'N/A',
+            DR: website.ahrefs_dr || 'N/A',
+            Ahrefs_Rank: website.ahrefs_rank || 'N/A',
+            Ahrefs_Traffic: website.ahrefs_traffic || 'N/A',
+            Ahrefs_Keywords: website.ahrefs_keywords || 'N/A',
+            Ahrefs_Referring_Domains: website.ahrefs_referring_domain || 'N/A',
+            Semrush_Authority_Score: website.semrush_authority_score || 'N/A',
+            Semrush_Traffic: website.semrush_traffic || 'N/A',
+            Moz_Spam_Score: website.moz_spam_score || 'N/A',
+          });
+        }
 
-        // Pricing
-        General_Guest_Post_Price: website.generalGuestPostPrice || 0,
-        General_Link_Insertion_Price: website.generalLinkInsertionPrice || 0,
-        Casino_Accepted: website.casinoAccepted ? 'Yes' : 'No',
-        Casino_Guest_Post_Price: website.casinoGuestPostPrice || 0,
-        Casino_Link_Insertion_Price: website.casinoLinkInsertionPrice || 0,
-        Crypto_Accepted: website.cryptoAccepted ? 'Yes' : 'No',
-        Crypto_Guest_Post_Price: website.cryptoGuestPostPrice || 0,
-        Crypto_Link_Insertion_Price: website.cryptoLinkInsertionPrice || 0,
-        CBD_Accepted: website.cbdAccepted ? 'Yes' : 'No',
-        CBD_Guest_Post_Price: website.cbdGuestPostPrice || 0,
-        CBD_Link_Insertion_Price: website.cbdLinkInsertionPrice || 0,
-        Dating_Accepted: website.datingAccepted ? 'Yes' : 'No',
-        Dating_Guest_Post_Price: website.datingGuestPostPrice || 0,
-        Dating_Link_Insertion_Price: website.datingLinkInsertionPrice || 0,
-        Copywriting_Offered: website.doCopywriting ? 'Yes' : 'No',
-        Copywriting_Price: website.copywritingPrice || 0,
+        // Pricing - General
+        if (groups.pricingGeneral) {
+          Object.assign(row, {
+            General_Guest_Post_Price: website.generalGuestPostPrice || 0,
+            General_Link_Insertion_Price: website.generalLinkInsertionPrice || 0,
+            Copywriting_Offered: website.doCopywriting ? 'Yes' : 'No',
+            Copywriting_Price: website.copywritingPrice || 0,
+          });
+        }
 
-        // Content Requirements
-        Min_Word_Count: website.minWordCount || 500,
-        Backlink_Type: website.backlinkType || 'Do follow',
-        Allowed_Links: website.allowedLinks || 1,
-        Backlink_Validity: website.backlinkValidity || 'one_year',
-        Sponsored_Content: website.sponsored ? 'Yes' : 'No',
-        UGC_Content: website.ugc ? 'Yes' : 'No',
-        PR_Site: website.isPRSite ? 'Yes' : 'No',
+        // Pricing - Niche
+        if (groups.pricingNiche) {
+          Object.assign(row, {
+            Casino_Accepted: website.casinoAccepted ? 'Yes' : 'No',
+            Casino_Guest_Post_Price: website.casinoGuestPostPrice || 0,
+            Casino_Link_Insertion_Price: website.casinoLinkInsertionPrice || 0,
+            Crypto_Accepted: website.cryptoAccepted ? 'Yes' : 'No',
+            Crypto_Guest_Post_Price: website.cryptoGuestPostPrice || 0,
+            Crypto_Link_Insertion_Price: website.cryptoLinkInsertionPrice || 0,
+            CBD_Accepted: website.cbdAccepted ? 'Yes' : 'No',
+            CBD_Guest_Post_Price: website.cbdGuestPostPrice || 0,
+            CBD_Link_Insertion_Price: website.cbdLinkInsertionPrice || 0,
+            Dating_Accepted: website.datingAccepted ? 'Yes' : 'No',
+            Dating_Guest_Post_Price: website.datingGuestPostPrice || 0,
+            Dating_Link_Insertion_Price: website.datingLinkInsertionPrice || 0,
+          });
+        }
 
-        // Categories and Targeting
-        Categories: Array.isArray(website.category) ? website.category.join(', ') : website.category || 'General',
-        Countries: Array.isArray(website.countries) ? website.countries.join(', ') : website.countries || 'United States',
-        Languages: Array.isArray(website.language) ? website.language.join(', ') : website.language || 'English',
+        // Technical Settings
+        if (groups.technicalSettings) {
+          Object.assign(row, {
+            Min_Word_Count: website.minWordCount || 500,
+            Backlink_Type: website.backlinkType || 'Do follow',
+            Allowed_Links: website.allowedLinks || 1,
+            Backlink_Validity: website.backlinkValidity || 'one_year',
+            Sponsored_Content: website.sponsored ? 'Yes' : 'No',
+            UGC_Content: website.ugc ? 'Yes' : 'No',
+            PR_Site: website.isPRSite ? 'Yes' : 'No',
+          });
+        }
 
-        // Verification
-        GSC_Verified: website.gscVerified ? 'Yes' : 'No',
-        GSC_Verified_At: website.gscVerifiedAt || 'N/A',
-        GSC_Permission_Level: website.gscPermissionLevel || 'N/A',
-        Verification_Method: website.verificationMethod || 'N/A',
+        // Content & Categories
+        if (groups.contentCategories) {
+          Object.assign(row, {
+            Categories: Array.isArray(website.category) ? website.category.join(', ') : website.category || 'General',
+            Content_Guidelines: website.contentGuidelines || 'None',
+            Turnaround_Time: website.turnaroundTime || 'N/A',
+          });
+        }
 
-        // Delivery
-        Expected_TAT_Hours: website.expectedTATHours || 168,
-        Sample_Posts: Array.isArray(website.samplePosts) ? website.samplePosts.join('; ') : website.samplePosts || 'N/A',
-        Guidelines: website.guidelines || 'N/A',
+        // Location & Language
+        if (groups.locationLanguage) {
+          Object.assign(row, {
+            Countries: Array.isArray(website.countries) ? website.countries.join(', ') : website.countries || 'N/A',
+            Languages: Array.isArray(website.language) ? website.language.join(', ') : website.language || 'English',
+          });
+        }
 
-        // Additional Metadata
-        Reseller_Code: website.resellerCode || 'N/A',
-        Added_By_Reseller: website.addedByReseller ? 'Yes' : 'No',
-        Metrics_Last_Updated: website.metrics_last_updated || 'Never',
-        Metrics_Update_Count: website.metrics_update_count || 0,
-        Metrics_Update_Method: website.metrics_update_method || 'N/A',
+        // Dates & Metadata
+        if (groups.datesMetadata) {
+          Object.assign(row, {
+            Added_Date: website.createdAt || 'N/A',
+            Approved_Date: website.approvedAt || 'N/A',
+            Last_Updated: website.updatedAt || 'N/A',
+            GSC_Verified: website.gscVerified ? 'Yes' : 'No',
+            Verification_Method: website.verificationMethod || 'N/A',
+          });
+        }
 
-        // Dates
-        Created_At: website.createdAt,
-        Updated_At: website.updatedAt,
-        Approved_At: website.approvedAt || 'N/A',
-        Reviewed_At: website.reviewedAt || 'N/A',
-        Ownership_Transferred_At: website.ownershipTransferredAt || 'N/A'
-      }));
+        return row;
+      });
 
       // Convert to CSV
       const csvHeaders = Object.keys(csvData[0]);
@@ -3081,6 +3142,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.error('[ADMIN BULK DELETE ERROR]', error);
       return ctx.internalServerError('Failed to bulk delete websites');
     }
-  }
+  },
 
+  /**
+   * Manual marketplace sync (for testing)
+   * PHASE 1: Safe testing endpoint - respects dry-run mode
+   */
+  async testMarketplaceSync(ctx) {
+    try {
+      const { id } = ctx.params;
+
+      strapi.log.info(`[ADMIN ACTION] Admin ${ctx.state.user?.id} testing marketplace sync for website ${id}`);
+
+      // Call sync service
+      const result = await strapi.service('api::marketplace-sync.marketplace-sync')
+        .syncWebsite(id, 'update');
+
+      return ctx.send({
+        success: result.success,
+        dryRun: result.dryRun,
+        reason: result.reason,
+        error: result.error,
+        data: result.data,
+        message: result.dryRun
+          ? 'DRY RUN: Operation logged, no database changes made'
+          : result.success
+            ? 'Sync completed successfully'
+            : 'Sync failed - check logs'
+      });
+    } catch (error) {
+      strapi.log.error('[ADMIN ACTION] Manual marketplace sync failed:', error);
+      return ctx.badRequest(`Manual sync failed: ${error.message}`);
+    }
+  }
 }));
