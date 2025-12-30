@@ -19,7 +19,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       // Build query filters
       const filters = {};
-      
+
       if (search) {
         filters.$or = [
           { users_permissions_user: { username: { $containsi: search } } },
@@ -176,7 +176,20 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       if (!wallet) {
-        return ctx.notFound('Wallet not found for this user');
+        return ctx.send({
+          data: {
+            id: null,
+            mainBalance: 0,
+            promoBalance: 0,
+            escrowBalance: 0,
+            pendingWithdrawalBalance: 0,
+            withdrawableBalance: 0,
+            currency: 'USD',
+            type: 'user',
+            walletCreatedAt: null,
+            walletUpdatedAt: null
+          }
+        });
       }
 
       // Get recent transactions
@@ -212,7 +225,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         promoBalance: parseFloat(wallet.promoBalance || 0),
         escrowBalance: parseFloat(wallet.escrowBalance || 0),
         pendingWithdrawalBalance: parseFloat(wallet.pendingWithdrawalBalance || 0),
-        withdrawableBalance:  parseFloat(wallet.mainBalance || 0),
+        withdrawableBalance: parseFloat(wallet.mainBalance || 0),
         recentTransactions: transactions.map(tx => ({
           id: tx.id,
           type: tx.type,
@@ -248,7 +261,17 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       if (!wallet) {
-        return ctx.notFound('Wallet not found for this user');
+        return ctx.send({
+          data: [],
+          meta: {
+            pagination: {
+              page: parseInt(page),
+              pageSize: parseInt(pageSize),
+              pageCount: 0,
+              total: 0
+            }
+          }
+        });
       }
 
       // Build transaction filters
@@ -321,8 +344,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         data: {
           mainBalance: mainBalance !== undefined ? mainBalance : wallet.mainBalance,
           promoBalance: promoBalance !== undefined ? promoBalance : wallet.promoBalance,
-          balance: (mainBalance !== undefined ? mainBalance : wallet.mainBalance) + 
-                   (promoBalance !== undefined ? promoBalance : wallet.promoBalance)
+          balance: (mainBalance !== undefined ? mainBalance : wallet.mainBalance) +
+            (promoBalance !== undefined ? promoBalance : wallet.promoBalance)
         }
       });
 
@@ -413,13 +436,13 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
   async walletOperation(ctx) {
     try {
       const { walletId } = ctx.params;
-      const { 
-        type, 
-        amount, 
-        transactionType, 
-        transactionId, 
-        reason, 
-        notes, 
+      const {
+        type,
+        amount,
+        transactionType,
+        transactionId,
+        reason,
+        notes,
         targetUserId,
         fundSource = 'main'
       } = ctx.request.body;
