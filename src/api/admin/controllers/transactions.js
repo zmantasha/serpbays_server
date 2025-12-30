@@ -13,9 +13,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
    */
   async find(ctx) {
     try {
-      const { 
-        page = 1, 
-        pageSize = 20, 
+      const {
+        page = 1,
+        pageSize = 20,
         sort = 'createdAt:desc',
         search = '',
         status = '',
@@ -26,7 +26,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Build filters
       const filters = {};
-      
+
       // Search filter
       if (search) {
         filters.$or = [
@@ -61,20 +61,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const start = (pageNum - 1) * sizeNum
       const limit = sizeNum
 
-      // Get transactions with pagination
+      // Get transactions with simplified populate
       const transactions = await strapi.entityService.findMany('api::transaction.transaction', {
         filters,
         sort,
         start,
         limit,
-        populate: {
-          users_permissions_user: {
-            fields: ['id', 'username', 'email']
-          },
-          order: {
-            fields: ['id', 'description']
-          }
-        }
+        populate: ['users_permissions_user', 'order']
       });
 
       // Alias `type` to `transactionType` for admin frontend compatibility
@@ -148,7 +141,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating transaction ${id} status to ${transactionStatus}`);
 
       const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
-        data: { 
+        data: {
           transactionStatus,
           adminNotes,
           lastStatusUpdate: new Date(),
@@ -179,7 +172,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} approving transaction ${id}`);
 
       const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
-        data: { 
+        data: {
           transactionStatus: 'completed',
           adminNotes: notes,
           approvedAt: new Date(),
@@ -192,7 +185,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       if (updatedTransaction.type === 'payment') {
         const wallet = await strapi.controller('api::user-wallet.user-wallet')
           .getOrCreateWallet(updatedTransaction.users_permissions_user.id);
-        
+
         await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
           data: {
             balance: parseFloat(wallet.balance) + parseFloat(updatedTransaction.amount)
@@ -222,7 +215,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} rejecting transaction ${id}. Reason: ${reason}`);
 
       const updatedTransaction = await strapi.entityService.update('api::transaction.transaction', id, {
-        data: { 
+        data: {
           transactionStatus: 'failed',
           failureReason: reason,
           rejectedAt: new Date(),
@@ -271,7 +264,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         where: { transactionStatus: 'completed' },
         select: ['gateway']
       });
-      
+
       const methodBreakdown = {};
       paymentMethods.forEach(transaction => {
         const method = transaction.gateway || 'unknown';
@@ -350,12 +343,12 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
         ctx.set('Content-Type', 'text/csv');
         ctx.set('Content-Disposition', 'attachment; filename="transactions-report.csv"');
-        
+
         const csvString = [
           Object.keys(csv[0]).join(','),
           ...csv.map(row => Object.values(row).join(','))
         ].join('\n');
-        
+
         ctx.body = csvString;
       } else {
         ctx.send({

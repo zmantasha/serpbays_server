@@ -93,29 +93,26 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
   async findOne(ctx) {
     try {
       const { id } = ctx.params;
+      console.log('[ORDER DETAILS] Fetching order ID:', id);
 
-      // Simplified populate - only advertiser and publisher to avoid 500 errors
+      // Use simple array populate - Strapi v4 recommended approach
       const order = await strapi.entityService.findOne('api::order.order', id, {
-        populate: {
-          advertiser: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
-          },
-          publisher: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
-          }
-        }
+        populate: ['advertiser', 'publisher', 'website']
       });
 
       if (!order) {
+        console.log('[ORDER DETAILS] Order not found:', id);
         return ctx.notFound('Order not found');
       }
 
+      console.log('[ORDER DETAILS] Successfully fetched order');
       ctx.send({
         data: order
       });
 
     } catch (error) {
-      console.error('[ADMIN ORDER FIND ONE ERROR]', error);
+      console.error('[ORDER DETAILS ERROR] Message:', error.message);
+      console.error('[ORDER DETAILS ERROR] Stack:', error.stack);
       return ctx.internalServerError('Failed to fetch order details');
     }
   },
