@@ -779,7 +779,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Get paginated orders
         const orders = await strapi.entityService.findMany('api::order.order', {
           filters: combinedFilters,
-          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent', 'project'],
+          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent', 'project', 'communications'],
           sort: sortOptions,
           start,
           limit
@@ -1945,7 +1945,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     // Mark a revision as completed (for publishers)
     async completeRevision(ctx) {
       const { orderId } = ctx.params;
-      const { message } = ctx.request.body;
+      const { message, deliveryProof } = ctx.request.body;
 
       try {
         // Get current user
@@ -1968,13 +1968,21 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.forbidden('Only the publisher can complete revisions');
         }
 
+        // Prepare update data
+        const updateData = {
+          revisionStatus: 'completed',
+          orderStatus: 'delivered',
+          deliveredDate: new Date()
+        };
+
+        // Add delivery proof if provided
+        if (deliveryProof) {
+          updateData.deliveryProof = deliveryProof;
+        }
+
         // Update order revision status and order status
         const updated = await strapi.entityService.update('api::order.order', orderId, {
-          data: {
-            revisionStatus: 'completed',
-            orderStatus: 'delivered',
-            deliveredDate: new Date()
-          }
+          data: updateData
         });
 
         // Create a communication record
