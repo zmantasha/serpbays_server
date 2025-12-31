@@ -715,34 +715,107 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       throw new Error(`Insufficient escrow balance: have $${currentEscrow}, need $${refundAmount}`);
     }
 
-    // Refund to advertiser's main balance from escrow
-    await strapi.db.query('api::user-wallet.user-wallet').update({
-      where: { id: advertiserWallet.id },
-      data: {
-        mainBalance: (parseFloat(advertiserWallet.mainBalance) || 0) + refundAmount,
-        escrowBalance: currentEscrow - refundAmount
-      }
-    });
+    // Check if order has spending breakdown metadata
+    const spendingBreakdown = order.metadata?.spendingBreakdown;
 
-    // Create refund transaction
-    await strapi.entityService.create('api::transaction.transaction', {
-      data: {
-        type: 'refund', // or 'escrow_refund'
-        amount: refundAmount,
-        netAmount: refundAmount,
-        transactionStatus: 'success',
-        gateway: 'system',
-        gatewayTransactionId: `refund_order_${order.id}_${Date.now()}`,
-        fund_source: 'main_fund', // Returned to main fund
-        description: `Refund for cancelled order #${order.id}`,
-        user_wallet: advertiserWallet.id,
-        users_permissions_user: order.advertiser.id,
-        order: order.id,
-        publishedAt: new Date()
-      }
-    });
+    if (spendingBreakdown && (spendingBreakdown.promoSpent || spendingBreakdown.mainSpent)) {
+      // Refund to original sources based on spending breakdown
+      const promoRefund = parseFloat(spendingBreakdown.promoSpent || 0);
+      const mainRefund = parseFloat(spendingBreakdown.mainSpent || 0);
 
-    console.log(`[Refund] $${refundAmount} refunded to advertiser ${order.advertiser.id} for order ${order.id}`);
+      console.log(`[Refund] Using spending breakdown: Promo $${promoRefund}, Main $${mainRefund}`);
+
+      const currentMainBalance = parseFloat(advertiserWallet.mainBalance) || 0;
+      const currentPromoBalance = parseFloat(advertiserWallet.promoBalance) || 0;
+      const currentTotalBalance = parseFloat(advertiserWallet.balance) || 0;
+
+      // Update wallet with refunds to original sources
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: advertiserWallet.id },
+        data: {
+          mainBalance: currentMainBalance + mainRefund,
+          promoBalance: currentPromoBalance + promoRefund,
+          balance: currentTotalBalance + refundAmount, // Update total balance
+          escrowBalance: currentEscrow - refundAmount
+        }
+      });
+
+      // Create refund transactions (one for each source if both were used)
+      if (promoRefund > 0) {
+        await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            type: 'refund',
+            amount: promoRefund,
+            netAmount: promoRefund,
+            transactionStatus: 'success',
+            gateway: 'system',
+            gatewayTransactionId: `refund_promo_${order.id}_${Date.now()}`,
+            fund_source: 'promo_fund',
+            description: `Refund to promo balance for cancelled order #${order.id}`,
+            user_wallet: advertiserWallet.id,
+            users_permissions_user: order.advertiser.id,
+            order: order.id,
+            publishedAt: new Date()
+          }
+        });
+      }
+
+      if (mainRefund > 0) {
+        await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            type: 'refund',
+            amount: mainRefund,
+            netAmount: mainRefund,
+            transactionStatus: 'success',
+            gateway: 'system',
+            gatewayTransactionId: `refund_main_${order.id}_${Date.now()}`,
+            fund_source: 'main_fund',
+            description: `Refund to main balance for cancelled order #${order.id}`,
+            user_wallet: advertiserWallet.id,
+            users_permissions_user: order.advertiser.id,
+            order: order.id,
+            publishedAt: new Date()
+          }
+        });
+      }
+
+      console.log(`[Refund] $${refundAmount} refunded to advertiser ${order.advertiser.id} (Promo: $${promoRefund}, Main: $${mainRefund})`);
+    } else {
+      // Fallback: No spending breakdown, refund to main balance only
+      console.log(`[Refund] No spending breakdown found, refunding to main balance`);
+
+      const currentMainBalance = parseFloat(advertiserWallet.mainBalance) || 0;
+      const currentTotalBalance = parseFloat(advertiserWallet.balance) || 0;
+
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: advertiserWallet.id },
+        data: {
+          mainBalance: currentMainBalance + refundAmount,
+          balance: currentTotalBalance + refundAmount, // Update total balance
+          escrowBalance: currentEscrow - refundAmount
+        }
+      });
+
+      // Create refund transaction
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'refund',
+          amount: refundAmount,
+          netAmount: refundAmount,
+          transactionStatus: 'success',
+          gateway: 'system',
+          gatewayTransactionId: `refund_order_${order.id}_${Date.now()}`,
+          fund_source: 'main_fund',
+          description: `Refund for cancelled order #${order.id}`,
+          user_wallet: advertiserWallet.id,
+          users_permissions_user: order.advertiser.id,
+          order: order.id,
+          publishedAt: new Date()
+        }
+      });
+
+      console.log(`[Refund] $${refundAmount} refunded to advertiser ${order.advertiser.id} for order ${order.id}`);
+    }
 
     return refundAmount;
   },
