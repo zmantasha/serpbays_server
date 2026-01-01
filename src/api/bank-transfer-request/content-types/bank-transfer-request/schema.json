@@ -8,7 +8,13 @@
     "description": "Bank transfer requests from users"
   },
   "options": {
-    "draftAndPublish": false
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "userEmail",
+      "userName",
+      "adminNotes",
+      "notes"
+    ]
   },
   "pluginOptions": {
     "content-manager": {
@@ -40,7 +46,9 @@
       "type": "media",
       "multiple": false,
       "required": true,
-      "allowedTypes": ["images"]
+      "allowedTypes": [
+        "images"
+      ]
     },
     "adminNotes": {
       "type": "text"

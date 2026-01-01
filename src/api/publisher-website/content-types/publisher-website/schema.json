@@ -8,7 +8,15 @@
     "description": "Website submissions from publishers for marketplace approval"
   },
   "options": {
-    "draftAndPublish": false
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "publisherEmail",
+      "publisherName",
+      "gscRefreshToken",
+      "reviewNotes",
+      "changeRequests",
+      "claimedFrom"
+    ]
   },
   "pluginOptions": {},
   "attributes": {
@@ -73,11 +81,18 @@
     "description": {
       "type": "text",
       "required": false,
+      "maxLength": 200,
       "description": "Website description and audience information"
     },
     "guidelines": {
       "type": "text",
+      "maxLength": 600,
       "description": "Content guidelines and requirements"
+    },
+    "publicationLocation": {
+      "type": "text",
+      "maxLength": 200,
+      "description": "Where the article will be published - publisher-defined text describing publication location, URL, or additional details"
     },
     "generalGuestPostPrice": {
       "type": "integer",

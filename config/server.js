@@ -10,6 +10,6 @@ module.exports = ({ env }) => ({
   },
   cron: {
     enabled: env.bool('CRON_ENABLED', true),
-    tasks: require('../src/cron/tat-updater'),
+    tasks: require('../src/cron/index'),
   },
 });

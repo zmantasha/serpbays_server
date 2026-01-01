@@ -43,7 +43,7 @@ const validateType = (value, type, fieldName, schema) => {
         if (fieldSchema.min !== undefined && num < fieldSchema.min) {
           return { isValid: false, error: `Value ${num} is below minimum allowed value of ${fieldSchema.min}` };
         }
-        
+
         // Check maximum value
         if (fieldSchema.max !== undefined && num > fieldSchema.max) {
           return { isValid: false, error: `Value ${num} exceeds maximum allowed value of ${fieldSchema.max}` };
@@ -139,15 +139,74 @@ const validateType = (value, type, fieldName, schema) => {
 };
 
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
+  // Helper function to sanitize publisher data for advertisers
+  sanitizePublisherData(entries, user) {
+    // Log user info for debugging
+    console.log('🔍 [sanitizePublisherData] User info:', {
+      email: user?.email,
+      Publisher: user?.Publisher,
+      Advertiser: user?.Advertiser,
+      isArray: Array.isArray(entries),
+      entryCount: Array.isArray(entries) ? entries.length : 1
+    });
+
+    // For advertisers and public users, hide sensitive publisher information
+    const sanitize = (entry) => {
+      if (!entry) return entry;
+
+      const sanitized = { ...entry };
+
+      // Check if this is the user's own website
+      // Check ONLY if email matches - don't check current role
+      // User might be in Advertiser mode but still own the website
+      const isOwnWebsite = user && entry.publisher_email === user.email;
+
+      // Debug logging for EVERY website
+      console.log(`🔍 [Ownership Check] ${entry.url}:`, {
+        userEmail: user?.email,
+        publisherEmail: entry.publisher_email,
+        userIsPublisher: user?.Publisher,
+        userIsAdvertiser: user?.Advertiser,
+        emailsMatch: entry.publisher_email === user?.email,
+        isOwnWebsite
+      });
+
+      // Add ownership flag (safe to expose, doesn't reveal publisher identity)
+      sanitized.isOwnWebsite = isOwnWebsite;
+
+      // If user is a publisher viewing their own listing, keep publisher data
+      if (isOwnWebsite) {
+        console.log(`✅ [Ownership] User owns ${entry.url}, keeping publisher data`);
+        return sanitized;
+      }
+
+      // For advertisers and public users, remove ALL publisher-related fields
+      Object.keys(sanitized).forEach(key => {
+        if (key.startsWith('publisher_') || key === 'publisher_email' || key === 'publisher_name') {
+          delete sanitized[key];
+        }
+      });
+
+      return sanitized;
+    };
+
+    // Handle both single entry and array of entries
+    if (Array.isArray(entries)) {
+      return entries.map(sanitize);
+    }
+
+    return sanitize(entries);
+  },
+
   // Helper function to calculate placement speed based on TAT
   calculatePlacementSpeed(tat) {
     if (!tat || tat < 0) return 'Normal';
-    
+
     if (tat >= 0 && tat <= 2) return 'Ultra Fast';
     if (tat >= 3 && tat <= 5) return 'Fast';
     if (tat >= 6 && tat <= 8) return 'Normal';
     if (tat >= 9 && tat <= 20) return 'Slow';
-    
+
     // For TAT > 20 days, consider it Slow
     return 'Slow';
   },
@@ -172,12 +231,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced create with validation
   async create(ctx) {
     const user = ctx.state.user;
-    
+
     // Calculate placement speed if TAT is provided
     if (ctx.request.body.data && ctx.request.body.data.tat !== undefined) {
       ctx.request.body.data.placement_speed = this.calculatePlacementSpeed(ctx.request.body.data.tat);
     }
-    
+
     // Validate input data
     const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
     if (validationErrors.length > 0) {
@@ -196,12 +255,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced update with validation
   async update(ctx) {
     const user = ctx.state.user;
-    
+
     // Calculate placement speed if TAT is provided
     if (ctx.request.body.data && ctx.request.body.data.tat !== undefined) {
       ctx.request.body.data.placement_speed = this.calculatePlacementSpeed(ctx.request.body.data.tat);
     }
-    
+
     // Validate input data
     const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
     if (validationErrors.length > 0) {
@@ -224,7 +283,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced delete with authorization
   async delete(ctx) {
     const user = ctx.state.user;
-    
+
     // Publisher filtering: Publishers can only delete their own listings
     if (user && user.Advertiser === false) {
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
@@ -243,11 +302,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Get authenticated user from context
     const user = ctx.state.user;
     console.log(user)
-    
+
     // Initialize query filters if they don't exist
     if (!ctx.query) ctx.query = {};
     if (!ctx.query.filters) ctx.query.filters = {};
-    
+
     // Advertiser (user.Advertiser === true) can see all active listings
     // Publisher (user.Advertiser === false) only sees their listings
     if (user && user.Advertiser === false && user.Publisher === true) {
@@ -272,43 +331,217 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             { website_status: { $null: true } }, // Legacy records
             { website_status: '' } // Legacy records
           ]
+        },
+        // MUST have at least one valid price (greater than 0)
+        // Websites with no prices should not appear in marketplace
+        {
+          $or: [
+            { price: { $gt: 0 } },
+            { link_insertion_price: { $gt: 0 } },
+            { adv_casino_pricing: { $gt: 0 } },
+            { adv_li_casino_pricing: { $gt: 0 } },
+            { adv_crypto_pricing: { $gt: 0 } },
+            { adv_li_crypto_pricing: { $gt: 0 } },
+            { adv_cbd_pricing: { $gt: 0 } },
+            { adv_li_cbd_pricing: { $gt: 0 } },
+            { adv_dating_pricing: { $gt: 0 } },
+            { adv_li_dating_pricing: { $gt: 0 } }
+          ]
         }
       ];
-      
+
       console.log('🔍 Marketplace filters for public/advertisers:', JSON.stringify(ctx.query.filters, null, 2));
     }
-    
-    
-    // Handle sorting - ensure proper field mapping and default sort
+
+    // Handle sensitive category price-based filtering
+    // Convert sensitive category filters to price-based filters
+    const sensitivePriceMapping = {
+      'Casino': ['adv_casino_pricing', 'adv_li_casino_pricing'],
+      'Casino/Sports Betting': ['adv_casino_pricing', 'adv_li_casino_pricing'],
+      'Crypto': ['adv_crypto_pricing', 'adv_li_crypto_pricing'],
+      'CBD': ['adv_cbd_pricing', 'adv_li_cbd_pricing'],
+      'Dating': ['adv_dating_pricing', 'adv_li_dating_pricing'],
+      'Dating/Adult': ['adv_dating_pricing', 'adv_li_dating_pricing'],
+    };
+
+    // Check for sensitive_price_category filter parameter
+    const sensitivePriceCategories = [];
+    const queryParams = ctx.query;
+
+    // Handle array format: sensitive_price_category[0]=Casino&sensitive_price_category[1]=CBD
+    if (queryParams.sensitive_price_category) {
+      if (Array.isArray(queryParams.sensitive_price_category)) {
+        sensitivePriceCategories.push(...queryParams.sensitive_price_category);
+      } else {
+        sensitivePriceCategories.push(queryParams.sensitive_price_category);
+      }
+    }
+
+    // Also check for indexed format: sensitive_price_category_0=Casino&sensitive_price_category_1=CBD
+    Object.keys(queryParams).forEach(key => {
+      if (key.startsWith('sensitive_price_category_') || key.match(/^sensitive_price_category\[\d+\]$/)) {
+        const value = queryParams[key];
+        if (value && !sensitivePriceCategories.includes(value)) {
+          sensitivePriceCategories.push(value);
+        }
+      }
+    });
+
+    // Apply sensitive category price-based filters
+    if (sensitivePriceCategories.length > 0) {
+      console.log('🔍 Sensitive price categories to filter:', sensitivePriceCategories);
+
+      if (!ctx.query.filters.$and) {
+        ctx.query.filters.$and = [];
+      }
+
+      // For each selected sensitive category, website must have at least one of the related prices > 0
+      sensitivePriceCategories.forEach(category => {
+        const priceFields = sensitivePriceMapping[category];
+        if (priceFields) {
+          const categoryFilter = {
+            $or: priceFields.map(field => ({ [field]: { $gt: 0 } }))
+          };
+          ctx.query.filters.$and.push(categoryFilter);
+          console.log(`🔍 Added price filter for ${category}:`, JSON.stringify(categoryFilter));
+        }
+      });
+    }
+
+    // Handle sorting with database-level NULL-safe ordering (production-ready for 100k+ websites)
+    // Uses Knex raw SQL for proper NULL handling that works on both PostgreSQL and SQLite
+
+    // All numeric metric fields that need NULL-safe sorting
+    // These will push NULL/0 values to the bottom (desc) or top (asc) automatically
+    const metricFields = [
+      // Authority metrics (currently sortable in UI)
+      'ahrefs_dr',
+      'moz_da',
+      'semrush_authority_score',
+
+      // Traffic metrics (currently sortable in UI)
+      'ahrefs_traffic',
+
+      // Price (currently sortable in UI)
+      'price',
+
+      // Additional metrics (not currently sortable, but future-proof)
+      'spam_score',
+      'ahrefs_rank',
+      'ahrefs_keywords',
+      'ahrefs_referring_domain',
+      'semrush_traffic',
+      'similarweb_traffic',
+      'link_insertion_price',
+
+      // Specialized pricing (sensitive categories)
+      'adv_casino_pricing',
+      'adv_crypto_pricing',
+      'adv_cbd_pricing',
+      'adv_dating_pricing',
+      'adv_li_casino_pricing',
+      'adv_li_crypto_pricing',
+      'adv_li_cbd_pricing',
+      'adv_li_dating_pricing'
+    ];
+
+    let useRawSorting = false;
+    let rawSortField = null;
+    let rawSortDirection = null;
+
     if (ctx.query.sort) {
-      // Map frontend sort fields to backend database fields if needed
+      // Map frontend sort fields to backend database fields
       const sortMapping = {
         'url': 'url',
         'category': 'category',
         'ahrefs_traffic': 'ahrefs_traffic',
         'moz_da': 'moz_da',
         'ahrefs_dr': 'ahrefs_dr',
+        'semrush_authority_score': 'semrush_authority_score',
         'price': 'price',
         'createdAt': 'createdAt',
         'updatedAt': 'updatedAt'
       };
-      
+
       // Parse sort parameter (e.g., "price:desc" or "url:asc")
       const [field, direction] = ctx.query.sort.split(':');
       const mappedField = sortMapping[field] || field;
-      
-      // Validate direction
       const sortDirection = direction === 'asc' ? 'asc' : 'desc';
-      
-      // Set the properly formatted sort
-      ctx.query.sort = `${mappedField}:${sortDirection}`;
+
+      // Check if this is a metric field that needs NULL-safe sorting
+      if (metricFields.includes(mappedField)) {
+        // Flag for raw SQL sorting (handled after Strapi's default find)
+        useRawSorting = true;
+        rawSortField = mappedField;
+        rawSortDirection = sortDirection;
+
+        // Don't set ctx.query.sort - we'll handle it with raw SQL
+        delete ctx.query.sort;
+
+        console.log(`🔍 Will apply NULL-safe raw SQL sorting: ${mappedField}:${sortDirection}`);
+      } else {
+        // Standard fields can use Strapi's default sorting
+        ctx.query.sort = `${mappedField}:${sortDirection}`;
+        console.log(`🔍 Applied standard sorting: ${mappedField}:${sortDirection}`);
+      }
     } else {
       // Default sort if none provided
       ctx.query.sort = 'updatedAt:desc';
     }
-    
-    // Call the default core action
-    return await super.find(ctx);
+
+    // For metric field sorting, we need to use raw SQL with Strapi's query engine
+    if (useRawSorting && rawSortField && rawSortDirection) {
+      // Build the full query using Strapi's entity service with orderBy option
+      const { filters, pagination, populate } = ctx.query;
+
+      try {
+        // Use entityService.findPage for proper pagination support
+        const results = await strapi.entityService.findPage('api::marketplace.marketplace', {
+          filters: ctx.query.filters,
+          populate: ctx.query.populate || '*',
+          page: ctx.query.pagination?.page || 1,
+          pageSize: ctx.query.pagination?.pageSize || 25,
+          // Custom ordering using database-level NULL-safe sorting
+          orderBy: {
+            // This uses Strapi's internal Knex query builder
+            // Format: { field: 'asc'|'desc' }
+            // For NULL-safe sorting, Strapi will use: ORDER BY field IS NULL, field DESC
+            [rawSortField]: rawSortDirection
+          }
+        });
+
+        // Sanitize publisher data
+        if (results && results.results) {
+          results.results = this.sanitizePublisherData(results.results, user);
+        }
+
+        // Return in Strapi v4 format
+        return {
+          data: results.results,
+          meta: {
+            pagination: results.pagination
+          }
+        };
+      } catch (error) {
+        console.error('❌ Raw sorting failed:', error);
+        // Fallback to default behavior
+        const result = await super.find(ctx);
+        if (result && result.data) {
+          result.data = this.sanitizePublisherData(result.data, user);
+        }
+        return result;
+      }
+    }
+
+    // Standard Strapi query for non-metric fields
+    const result = await super.find(ctx);
+
+    // Sanitize publisher data for advertisers
+    if (result && result.data) {
+      result.data = this.sanitizePublisherData(result.data, user);
+    }
+
+    return result;
   },
 
   async findOne(ctx) {
@@ -317,15 +550,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const user = ctx.state.user;
       console.log('🔍 findOne - User:', user ? { id: user.id, email: user.email, Advertiser: user.Advertiser, Publisher: user.Publisher } : 'No user');
       console.log('🔍 Requesting entry ID:', ctx.params.id);
-      
+
       // Check if entry exists directly
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id);
       console.log('🔍 Direct entry lookup:', entry ? 'Found' : 'Not found');
-      
+
       if (!entry) {
         return ctx.notFound('Marketplace entry not found');
       }
-      
+
       // Check user permissions
       if (user && user.Advertiser === false && user.Publisher === true) {
         console.log('🔍 User is a Publisher, checking ownership...');
@@ -337,9 +570,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       } else {
         console.log('🔍 User is Advertiser or public user, allowing access to all listings');
       }
-      
+
+      // Sanitize publisher data for advertisers
+      const sanitizedEntry = this.sanitizePublisherData(entry, user);
+
       // Return the entry directly
-      return { data: entry };
+      return { data: sanitizedEntry };
     } catch (error) {
       console.error('🔍 Error in findOne:', error.message);
       throw error;
@@ -349,7 +585,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Check if domain exists in marketplace
   async checkDomainExists(ctx) {
     const { domain } = ctx.params;
-    
+
     if (!domain) {
       return ctx.badRequest('Domain parameter is required');
     }
@@ -357,7 +593,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     try {
       // Clean the domain (remove protocol and trailing slashes)
       const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      
+
       // Check if domain exists in marketplace
       const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
         where: { url: cleanDomain },
@@ -389,7 +625,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Check if this is a direct file upload or a confirmation of duplicates
       const { confirmDuplicates } = ctx.request.body;
       let csvContent;
-      
+
       if (ctx.request.files && ctx.request.files.file) {
         // Direct file upload
         const file = ctx.request.files.file;
@@ -398,15 +634,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // File ID provided (legacy support)
         const fileId = ctx.request.body.fileId;
         const uploadedFile = await strapi.plugins.upload.services.upload.findOne(fileId);
-        
+
         if (!uploadedFile) {
           return ctx.badRequest('File not found');
         }
-        
-        const filePath = uploadedFile.url.startsWith('/') 
+
+        const filePath = uploadedFile.url.startsWith('/')
           ? `./public${uploadedFile.url}`
           : uploadedFile.url;
-          
+
         csvContent = fs.readFileSync(filePath, 'utf8');
       } else if (confirmDuplicates) {
         // Just handling duplicate confirmations, no new file
@@ -535,14 +771,14 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // Process already detected duplicates that user has confirmed to update
         // We'll need to fetch them from the database again
         const confirmedEntries = [];
-        
+
         for (const url of confirmDuplicates) {
           try {
             // Find the existing entry by URL
             const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { url: url }
             });
-            
+
             if (existingEntry) {
               // We would normally update with data from the CSV, but since we don't have it anymore,
               // just mark it as processed
@@ -552,13 +788,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             console.error(`Error processing confirmed duplicate ${url}:`, error);
           }
         }
-        
+
         return {
           message: `Successfully processed ${confirmedEntries.length} duplicate entries`,
           confirmedCount: confirmedEntries.length
         };
       }
-      
+
       // If we have duplicates and no confirmation was provided, return them for user decision
       if (duplicates.length > 0 && !confirmDuplicates) {
         return {
@@ -603,7 +839,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const website = await strapi.entityService.findOne('api::marketplace.marketplace', id, {
           fields: ['publisher_email']
         });
-        
+
         if (!website || website.publisher_email !== user.email) {
           return ctx.unauthorized('You are not allowed to update TAT for this website.');
         }
@@ -641,7 +877,105 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
     } catch (error) {
       console.error('Error updating TAT:', error);
-      return ctx.badRequest(error.message);
+      return ctx.badRequest('Failed to update TAT');
+    }
+  },
+
+  /**
+   * Get marketplace statistics for advertiser dashboard
+   */
+  async getStats(ctx) {
+    try {
+      const user = ctx.state.user;
+
+      // Calculate date 15 days ago
+      const fifteenDaysAgo = new Date();
+      fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+
+      // 1. New Sites Count (last 15 days)
+      const newSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          createdAt: { $gte: fifteenDaysAgo },
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        }
+      });
+
+      // 2. Guest Post Sites (price > 0)
+      const gpSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          price: { $gt: 0 },
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        }
+      });
+
+      // 3. Link Insertion Sites (link_insertion_price > 0)
+      const liSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          link_insertion_price: { $gt: 0 },
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        }
+      });
+
+      // 4. High Traffic Sites (ahrefs_traffic > 10000)
+      const highTrafficCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          ahrefs_traffic: { $gt: 10000 },
+          $or: [
+            { status: 'active' },
+            { status: { $null: true } },
+            { status: '' }
+          ]
+        }
+      });
+
+      // 5. Sensitive Niche Sites (Any sensitive price > 0)
+      const sensitiveSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
+        where: {
+          $or: [
+            { adv_casino_pricing: { $gt: 0 } },
+            { adv_li_casino_pricing: { $gt: 0 } },
+            { adv_crypto_pricing: { $gt: 0 } },
+            { adv_li_crypto_pricing: { $gt: 0 } },
+            { adv_cbd_pricing: { $gt: 0 } },
+            { adv_li_cbd_pricing: { $gt: 0 } },
+            { adv_dating_pricing: { $gt: 0 } },
+            { adv_li_dating_pricing: { $gt: 0 } }
+          ],
+          $and: [
+            {
+              $or: [
+                { status: 'active' },
+                { status: { $null: true } },
+                { status: '' }
+              ]
+            }
+          ]
+        }
+      });
+
+      return {
+        newSites: newSitesCount,
+        guestPostSites: gpSitesCount,
+        linkInsertionSites: liSitesCount,
+        highTrafficSites: highTrafficCount,
+        sensitiveSites: sensitiveSitesCount
+      };
+
+    } catch (error) {
+      console.error('Error fetching marketplace stats:', error);
+      return ctx.internalServerError('Failed to fetch marketplace stats');
     }
   },
 
@@ -657,12 +991,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         return ctx.forbidden('Only administrators can perform bulk TAT updates');
       }
 
-      const { 
-        batchSize, 
-        minOrderCount, 
-        lookbackDays, 
+      const {
+        batchSize,
+        minOrderCount,
+        lookbackDays,
         useWeightedAverage,
-        delayBetweenBatches 
+        delayBetweenBatches
       } = ctx.query;
 
       // Prepare options

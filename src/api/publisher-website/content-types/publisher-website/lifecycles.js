@@ -33,17 +33,17 @@ module.exports = {
    */
   async afterUpdate(event) {
     const { result, params } = event;
-    
+
     // PREVENT INFINITE LOOP: Only process if status JUST changed to 'approved' AND no marketplaceId exists yet
     // This means it's a new approval, not an update to existing approved website
     const wasJustApproved = result.submissionStatus === 'approved' && !result.marketplaceId;
-    
+
     if (wasJustApproved) {
       const updatedWebsiteUrl = result.url;
       const updatedWebsiteId = result.id;
-      
+
       console.log(`🎉 Website ${updatedWebsiteId} (${updatedWebsiteUrl}) was approved for the first time.`);
-      
+
       // STEP 1: Create marketplace listing for the newly approved website
       console.log(`📝 Creating marketplace listing for approved website ${updatedWebsiteId}`);
       try {
@@ -57,7 +57,7 @@ module.exports = {
       } catch (marketplaceError) {
         console.error('❌ Failed to create marketplace listing:', marketplaceError);
       }
-      
+
       // STEP 2: Find all other websites with the same URL that need ownership transfer
       // This includes both 'approved' and 'ownership_claimed' websites
       const otherWebsitesToTransfer = await strapi.db.query('api::publisher-website.publisher-website').findMany({
@@ -68,13 +68,13 @@ module.exports = {
         }
         // Removed populate to avoid relation issues
       });
-      
+
       if (otherWebsitesToTransfer.length > 0) {
         console.log(`🔄 Found ${otherWebsitesToTransfer.length} other websites (approved/ownership_claimed) with URL ${updatedWebsiteUrl}.`);
-        
+
         for (const oldWebsite of otherWebsitesToTransfer) {
           console.log(`🔄 Transferring ownership for old website ${oldWebsite.id} (${oldWebsite.url}) - Status: ${oldWebsite.submissionStatus} → ownership_transferred`);
-          
+
           // Update the old website to 'ownership_transferred'
           await strapi.entityService.update('api::publisher-website.publisher-website', oldWebsite.id, {
             data: {
@@ -86,7 +86,7 @@ module.exports = {
             }
           });
           console.log(`✅ Old website ${oldWebsite.id} status updated to 'ownership_transferred'.`);
-          
+
           // Delist from marketplace if it had an entry
           if (oldWebsite.marketplaceId) {
             try {
@@ -94,7 +94,7 @@ module.exports = {
               const marketplaceEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
                 where: { id: oldWebsite.marketplaceId }
               });
-              
+
               if (marketplaceEntry) {
                 await strapi.entityService.update('api::marketplace.marketplace', oldWebsite.marketplaceId, {
                   data: {
@@ -112,7 +112,7 @@ module.exports = {
           }
         }
       }
-      
+
       console.log(`✅ Ownership transfer process completed for URL: ${updatedWebsiteUrl}`);
 
       // After first approval, ensure marketplace metrics are hydrated immediately
@@ -241,7 +241,7 @@ module.exports = {
               dataUpdated.expectedTATHours ?? result.expectedTATHours
             ),
             fast_placement_status: Boolean(dataUpdated.fast_placement_status ?? result.fast_placement_status),
-            
+
             // PRICING: Sync pricing changes to marketplace
             // Advertiser pricing (what advertisers pay)
             price: dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice ?? null,
@@ -254,34 +254,59 @@ module.exports = {
             adv_li_cbd_pricing: dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice ?? null,
             adv_dating_pricing: dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice ?? null,
             adv_li_dating_pricing: dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? null,
-            
-            // Publisher earnings (80% of advertiser price)
-            publisher_price: Math.floor(Math.max(
-              (dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? 0) * 0.8
-            )) || 1,
-            publisher_link_insertion_price: Math.floor((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? 0) * 0.8),
-            publisher_casino_pricing: Math.floor(Math.max(
-              (dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice ?? 0) * 0.8
-            )),
-            publisher_crypto_pricing: Math.floor(Math.max(
-              (dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice ?? 0) * 0.8
-            )),
-            publisher_cbd_pricing: Math.floor(Math.max(
-              (dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice ?? 0) * 0.8
-            )),
-            publisher_dating_pricing: Math.floor(Math.max(
-              (dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice ?? 0) * 0.8,
-              (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? 0) * 0.8
-            )),
-            publisher_li_casino_pricing: Math.floor((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice ?? 0) * 0.8),
-            publisher_li_crypto_pricing: Math.floor((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice ?? 0) * 0.8),
-            publisher_li_cbd_pricing: Math.floor((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice ?? 0) * 0.8),
-            publisher_li_dating_pricing: Math.floor((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? 0) * 0.8),
-            
+
+            // Publisher earnings (80% of advertiser price) - return null if no base price set
+            publisher_price: ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) > 0 ||
+              (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) || 0) * 0.8,
+                ((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) || 0) * 0.8
+              )) || 1
+              : null,
+            publisher_link_insertion_price: (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) * 0.8)
+              : null,
+            publisher_casino_pricing: ((dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice) > 0 ||
+              (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                ((dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice) || 0) * 0.8,
+                ((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) || 0) * 0.8
+              ))
+              : null,
+            publisher_crypto_pricing: ((dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice) > 0 ||
+              (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                ((dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice) || 0) * 0.8,
+                ((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) || 0) * 0.8
+              ))
+              : null,
+            publisher_cbd_pricing: ((dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice) > 0 ||
+              (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                ((dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice) || 0) * 0.8,
+                ((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) || 0) * 0.8
+              ))
+              : null,
+            publisher_dating_pricing: ((dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice) > 0 ||
+              (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) > 0)
+              ? Math.floor(Math.max(
+                ((dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice) || 0) * 0.8,
+                ((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) || 0) * 0.8
+              ))
+              : null,
+            publisher_li_casino_pricing: (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) * 0.8)
+              : null,
+            publisher_li_crypto_pricing: (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) * 0.8)
+              : null,
+            publisher_li_cbd_pricing: (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) * 0.8)
+              : null,
+            publisher_li_dating_pricing: (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) > 0
+              ? Math.floor((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) * 0.8)
+              : null,
+
             // Update timestamps
             metrics_last_updated: new Date(),
             metrics_update_method: 'lifecycle_auto'
@@ -300,6 +325,59 @@ module.exports = {
       console.error('⚠️ Metrics and pricing sync to marketplace failed in lifecycle afterUpdate:', syncError);
       // Non-blocking: do not throw to avoid interrupting the original update
     }
+
+    // NEW: Professional sync service with feature flags and dry-run mode
+    // This provides better architecture and can eventually replace the above sync code
+    try {
+      const config = require('../../../../../config/marketplace-sync');
+
+      // Only run if new sync service is enabled
+      if (config.enabled && result?.submissionStatus === 'approved') {
+        const changedFields = Object.keys(params.data || {});
+
+        if (changedFields.length > 0) {
+          const metricsFields = ['moz_da', 'ahrefs_dr', 'ahrefs_traffic', 'ahrefs_rank',
+            'semrush_authority_score', 'semrush_traffic', 'moz_spam_score'];
+
+          const pricingFields = ['generalGuestPostPrice', 'generalLinkInsertionPrice',
+            'casinoGuestPostPrice', 'casinoLinkInsertionPrice', 'cryptoGuestPostPrice',
+            'cryptoLinkInsertionPrice', 'cbdGuestPostPrice', 'cbdLinkInsertionPrice',
+            'datingGuestPostPrice', 'datingLinkInsertionPrice'];
+
+          const metricsChanged = config.features.syncMetrics &&
+            metricsFields.some(f => changedFields.includes(f));
+
+          const pricingChanged = config.features.syncPricing &&
+            pricingFields.some(f => changedFields.includes(f));
+
+          // Call new sync service (non-blocking, respects dry-run mode)
+          if (metricsChanged || pricingChanged) {
+            strapi.log.info(`[NEW SYNC SERVICE] Triggering sync for website ${result.id}`, {
+              metricsChanged,
+              pricingChanged,
+              dryRun: config.dryRun
+            });
+
+            if (metricsChanged) {
+              strapi.service('api::marketplace-sync.marketplace-sync')
+                .syncMetrics(result.id)
+                .catch(err => strapi.log.error('[NEW SYNC SERVICE ERROR]', err.message));
+            }
+
+            if (pricingChanged) {
+              strapi.service('api::marketplace-sync.marketplace-sync')
+                .syncPricing(result.id)
+                .catch(err => strapi.log.error('[NEW SYNC SERVICE ERROR]', err.message));
+            }
+          }
+        }
+      }
+    } catch (newSyncError) {
+      // Silently ignore if new sync service not available yet
+      if (newSyncError.message && !newSyncError.message.includes('Cannot find module')) {
+        strapi.log.debug('[NEW SYNC SERVICE] Not available or disabled:', newSyncError.message);
+      }
+    }
   },
 
   /**
@@ -309,8 +387,8 @@ module.exports = {
     const { data } = event.params;
     console.log(`🆕 Creating new website entry for URL: ${data.url} by ${data.publisherEmail}`);
 
-     const categorySearchValue = buildCategorySearchValue(data?.category);
-     data.category_search = categorySearchValue;
+    const categorySearchValue = buildCategorySearchValue(data?.category);
+    data.category_search = categorySearchValue;
   },
 
   /**

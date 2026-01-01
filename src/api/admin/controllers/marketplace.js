@@ -13,11 +13,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
    */
   async find(ctx) {
     try {
-      const { 
-        page = 1, 
-        pageSize = 20, 
-        search, 
-        category, 
+      const {
+        page = 1,
+        pageSize = 20,
+        search,
+        category,
         status,
         // Numerical range filters
         minDA, maxDA, minDR, maxDR,
@@ -34,7 +34,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Build filters
       const filters = {};
-      
+
       // Search filter
       if (search) {
         filters.$or = [
@@ -164,7 +164,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Get total count for pagination
       const total = await strapi.db.query('api::marketplace.marketplace').count({ where: filters });
-      
+
       console.log('[MARKETPLACE FIND] Total count:', total);
 
       // Transform data for admin panel with real order counts
@@ -202,10 +202,10 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const orders = await strapi.db.query('api::order.order').findMany({
           where: { website: website.id }
         });
-        
+
         // Calculate order counts for this website
         const totalOrders = orders.length;
-        
+
         // Calculate last month orders
         const lastMonth = new Date();
         lastMonth.setMonth(lastMonth.getMonth() - 1);
@@ -266,9 +266,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             lastMonthOrders: lastMonthOrders, // Real last month orders
             totalOrders: totalOrders, // Real total orders
             averageRating: 4.5, // Default since not in schema
-            completionRate: 100, // Default since not in schema
-            responseTime: '24h', // Default since not in schema
-            revenue: 0 // Default since not in schema
+            completionRate: totalOrders > 0 ? Math.round((orders.filter(o => o.orderStatus === 'completed').length / totalOrders) * 100) : 0,
+            responseTime: website.tat ? `${website.tat}h` : 'Not specified',
+            revenue: orders.filter(o => o.orderStatus === 'completed').reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0)
           },
           status: website.publishedAt ? 'Active' : 'Inactive',
           approvalDate: website.publishedAt,
@@ -307,7 +307,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const { id } = ctx.params;
 
       const website = await strapi.entityService.findOne('api::marketplace.marketplace', id);
- console.log("websites", website)
+      console.log("websites", website)
       if (!website) {
         return ctx.notFound('Marketplace website not found');
       }
@@ -316,7 +316,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const orders = await strapi.db.query('api::order.order').findMany({
         where: { website: website.id }
       });
-      
+
       // Hydrate metrics/prices from publisher-website when missing on marketplace
       let metricsSource = { ...website };
       let pricingSource = { ...website };
@@ -366,7 +366,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         else acc.other++;
         return acc;
       }, { pending: 0, processing: 0, completed: 0, cancelled: 0, other: 0 });
-      
+
       // Calculate last month orders
       const lastMonth = new Date();
       lastMonth.setMonth(lastMonth.getMonth() - 1);
@@ -449,9 +449,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           lastMonthOrders: lastMonthOrders, // Real last month orders
           totalOrders: totalOrders, // Real total orders
           averageRating: 4.5, // Default since not in schema
-          completionRate: 100, // Default since not in schema
-          responseTime: '24h', // Default since not in schema
-          revenue: 0, // Default since not in schema
+          completionRate: totalOrders > 0 ? Math.round((statusCounts.completed / totalOrders) * 100) : 0,
+          responseTime: website.tat ? `${website.tat}h` : 'Not specified',
+          revenue: orders.filter(o => o.orderStatus === 'completed').reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0),
           byStatus: statusCounts
         },
         services: {
@@ -534,7 +534,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const categories = await strapi.db.query('api::marketplace.marketplace').findMany({
         select: ['category']
       });
-      
+
       const categoryBreakdown = {};
       categories.forEach(website => {
         const cat = website.category || 'Uncategorized';
@@ -543,12 +543,33 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Calculate average metrics
       const metricsData = await strapi.db.query('api::marketplace.marketplace').findMany({
-        select: ['moz_da', 'ahrefs_dr', 'price']
+        select: ['moz_da', 'ahrefs_dr', 'price', 'id']
       });
-      
+
       const avgDA = metricsData.reduce((sum, w) => sum + (parseFloat(w.moz_da) || 0), 0) / metricsData.length || 0;
       const avgDR = metricsData.reduce((sum, w) => sum + (parseFloat(w.ahrefs_dr) || 0), 0) / metricsData.length || 0;
       const avgPrice = metricsData.reduce((sum, w) => sum + (parseFloat(w.price) || 0), 0) / metricsData.length || 0;
+
+      // Calculate real totalRevenue and avgRating
+      let totalRevenue = 0;
+      let totalCompletedOrders = 0;
+      let totalOrders = 0;
+
+      for (const website of metricsData) {
+        const orders = await strapi.db.query('api::order.order').findMany({
+          where: { website: website.id },
+          select: ['orderStatus', 'totalAmount']
+        });
+
+        totalOrders += orders.length;
+        const completedOrders = orders.filter(o => o.orderStatus === 'completed');
+        totalCompletedOrders += completedOrders.length;
+        totalRevenue += completedOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0);
+      }
+
+      const avgRating = totalOrders > 0
+        ? Math.min(5, Math.max(1, ((totalCompletedOrders / totalOrders) * 5)))
+        : 0;
 
       ctx.send({
         total,
@@ -559,7 +580,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           domainAuthority: Math.round(avgDA * 10) / 10,
           domainRating: Math.round(avgDR * 10) / 10,
           price: Math.round(avgPrice * 100) / 100
-        }
+        },
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        avgRating: Math.round(avgRating * 10) / 10
       });
 
     } catch (error) {
@@ -581,12 +604,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Transform admin panel data back to Strapi format
       const strapiData = {};
-      
+
       if (updateData.title) strapiData.publisher_name = updateData.title;
       if (updateData.description) strapiData.description = updateData.description;
       if (updateData.category) strapiData.category = updateData.category;
       if (updateData.subcategory) strapiData.subcategory = updateData.subcategory;
-      
+
       if (updateData.metrics) {
         if (updateData.metrics.da) strapiData.moz_da = updateData.metrics.da;
         if (updateData.metrics.dr) strapiData.ahrefs_dr = updateData.metrics.dr;
@@ -596,11 +619,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         if (updateData.metrics.pageSpeed) strapiData.placement_speed = updateData.metrics.pageSpeed;
         if (updateData.metrics.mobileFriendly !== undefined) strapiData.fast_placement_status = updateData.metrics.mobileFriendly;
       }
-      
+
       if (updateData.content) {
         if (updateData.content.updateFrequency) strapiData.placement_speed = updateData.content.updateFrequency;
       }
-      
+
       if (updateData.financial) {
         if (updateData.financial.price) strapiData.price = updateData.financial.price;
         if (updateData.financial.commission) strapiData.publisher_price = updateData.financial.commission;
@@ -714,13 +737,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       for (const websiteData of websites) {
         try {
-          const { 
-            domain, 
-            title, 
-            category, 
-            da, 
-            traffic, 
-            price, 
+          const {
+            domain,
+            title,
+            category,
+            da,
+            traffic,
+            price,
             status,
             publisherName,
             publisherEmail,
@@ -769,7 +792,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           const normalizedDofollowLink = toBoolean(dofollowLink) ? 1 : 0;
           const normalizedFastPlacement = toBoolean(fastPlacementStatus);
           const normalizedTat = toInteger(tat, 0);
-          
+
           // Helper to parse multiple values from CSV fields
           const parseMultipleValues = (value, defaultValue = []) => {
             if (!value) return defaultValue;
@@ -777,19 +800,19 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             if (typeof value === 'string') {
               const trimmed = value.trim();
               if (trimmed.length === 0) return defaultValue;
-              
+
               // Split by common delimiters: comma, semicolon, pipe, or newline
               // Also handle cases where there might be spaces around delimiters
               const values = trimmed.split(/[,;|\n]/)
                 .map(v => v.trim())
                 .filter(v => v.length > 0);
-              
+
               console.log(`[DEBUG] Parsing "${trimmed}" -> [${values.join(', ')}]`);
               return values.length > 0 ? values : defaultValue;
             }
             return defaultValue;
           };
-          
+
           // Use consistent parsing for all array fields
           const normalizedCategory = parseMultipleValues(category, ['Uncategorized']);
           const normalizedLanguage = parseMultipleValues(language, ['English']);
@@ -866,9 +889,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           results.imported++;
 
         } catch (error) {
-          results.errors.push({ 
-            domain: websiteData.domain || 'N/A', 
-            errors: extractErrorMessages(error) 
+          results.errors.push({
+            domain: websiteData.domain || 'N/A',
+            errors: extractErrorMessages(error)
           });
         }
       }

@@ -20,14 +20,9 @@
   },
   "attributes": {
     "type": {
-      "type": "enumeration",
-      "enum": [
-        "advertiser",
-        "publisher",
-        "unified"
-      ],
-      "required": true,
-      "unique": false
+      "type": "string",
+      "default": "unified",
+      "required": true
     },
     "currency": {
       "type": "string",

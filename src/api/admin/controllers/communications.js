@@ -13,9 +13,9 @@ module.exports = createCoreController('api::communication.communication', ({ str
    */
   async find(ctx) {
     try {
-      const { 
-        page = 1, 
-        pageSize = 20, 
+      const {
+        page = 1,
+        pageSize = 20,
         sort = 'createdAt:desc',
         search = '',
         type = '',
@@ -25,7 +25,7 @@ module.exports = createCoreController('api::communication.communication', ({ str
 
       // Build filters
       const filters = {};
-      
+
       // Search filter
       if (search) {
         filters.$or = [
@@ -49,7 +49,7 @@ module.exports = createCoreController('api::communication.communication', ({ str
         filters.sender = userId;
       }
 
-      // Get communications with pagination
+      // Get communications with simplified populate
       const communications = await strapi.entityService.findMany('api::communication.communication', {
         filters,
         sort,
@@ -57,22 +57,7 @@ module.exports = createCoreController('api::communication.communication', ({ str
           page: parseInt(page),
           pageSize: parseInt(pageSize)
         },
-        populate: {
-          sender: {
-            fields: ['id', 'username', 'email']
-          },
-          order: {
-            fields: ['id', 'description'],
-            populate: {
-              advertiser: {
-                fields: ['id', 'username', 'email']
-              },
-              publisher: {
-                fields: ['id', 'username', 'email']
-              }
-            }
-          }
-        }
+        populate: ['sender', 'order']
       });
 
       // Get total count for pagination
@@ -302,7 +287,7 @@ module.exports = createCoreController('api::communication.communication', ({ str
       const messageTypes = await strapi.db.query('api::communication.communication').findMany({
         select: ['messageType']
       });
-      
+
       const typeBreakdown = {};
       messageTypes.forEach(comm => {
         const type = comm.messageType || 'general';

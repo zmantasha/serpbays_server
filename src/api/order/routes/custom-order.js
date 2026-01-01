@@ -207,5 +207,18 @@ module.exports = {
         },
       },
     },
+    // Route for cancelling an order
+    {
+      method: 'POST',
+      path: '/orders/:id/cancel',
+      handler: 'order.cancelOrder',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.cancelOrder'],
+        },
+      },
+    },
   ],
 }; 

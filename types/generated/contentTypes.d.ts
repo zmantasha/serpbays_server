@@ -523,6 +523,7 @@ export interface ApiAuthorAuthor extends Struct.CollectionTypeSchema {
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: ['email'];
   };
   attributes: {
     articles: Schema.Attribute.Relation<'oneToMany', 'api::article.article'>;
@@ -556,6 +557,7 @@ export interface ApiBankTransferRequestBankTransferRequest
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: ['userEmail', 'userName', 'adminNotes', 'notes'];
   };
   pluginOptions: {
     'content-manager': {
@@ -862,6 +864,15 @@ export interface ApiInvoiceInvoice extends Struct.CollectionTypeSchema {
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'billingName',
+      'billingAddress',
+      'billingCity',
+      'billingCountry',
+      'billingPincode',
+      'billingVatGst',
+      'notes',
+    ];
   };
   attributes: {
     billingAddress: Schema.Attribute.Text & Schema.Attribute.Required;
@@ -963,6 +974,11 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'publisher_name',
+      'publisher_email',
+      'gsc_refresh_token',
+    ];
   };
   attributes: {
     adv_casino_pricing: Schema.Attribute.Integer &
@@ -1077,6 +1093,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     delistedReason: Schema.Attribute.Enumeration<
       ['ownership_transferred', 'admin_action', 'violation', 'other']
     >;
+    description: Schema.Attribute.Text;
     digital_pr: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     dofollow_link: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -1141,6 +1158,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    publication_location: Schema.Attribute.Text;
     publishedAt: Schema.Attribute.DateTime;
     publisher_casino_pricing: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
@@ -1326,6 +1344,7 @@ export interface ApiNotificationNotification
         'message_received',
         'delivery_accepted_by_advertiser',
         'system_update',
+        'order_cancelled',
       ]
     > &
       Schema.Attribute.Required;
@@ -1360,6 +1379,46 @@ export interface ApiNotificationNotification
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'system'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiOrderAuditLogOrderAuditLog
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'order_audit_logs';
+  info: {
+    description: 'Log of all important actions taken on an order';
+    displayName: 'Order Audit Log';
+    pluralName: 'order-audit-logs';
+    singularName: 'order-audit-log';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    action: Schema.Attribute.String & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::order-audit-log.order-audit-log'
+    > &
+      Schema.Attribute.Private;
+    metadata: Schema.Attribute.JSON;
+    newStatus: Schema.Attribute.String;
+    order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
+    performedBy: Schema.Attribute.Relation<
+      'oneToOne',
+      'plugin::users-permissions.user'
+    >;
+    previousStatus: Schema.Attribute.String;
+    publishedAt: Schema.Attribute.DateTime;
+    reason: Schema.Attribute.Text;
+    timestamp: Schema.Attribute.DateTime & Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -1421,6 +1480,10 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'plugin::users-permissions.user'
     >;
     anchorText: Schema.Attribute.String;
+    cancellationNotes: Schema.Attribute.Text;
+    cancellationReason: Schema.Attribute.String;
+    cancelledAt: Schema.Attribute.DateTime;
+    cancelledBy: Schema.Attribute.String;
     chatroom: Schema.Attribute.Relation<'oneToOne', 'api::chatroom.chatroom'>;
     communications: Schema.Attribute.Relation<
       'oneToMany',
@@ -1504,6 +1567,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    warningNotificationSentAt: Schema.Attribute.DateTime;
     website: Schema.Attribute.Relation<
       'manyToOne',
       'api::marketplace.marketplace'
@@ -1777,6 +1841,14 @@ export interface ApiPublisherWebsitePublisherWebsite
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'publisherEmail',
+      'publisherName',
+      'gscRefreshToken',
+      'reviewNotes',
+      'changeRequests',
+      'claimedFrom',
+    ];
   };
   attributes: {
     addedByReseller: Schema.Attribute.Boolean &
@@ -1935,7 +2007,10 @@ export interface ApiPublisherWebsitePublisherWebsite
         number
       > &
       Schema.Attribute.DefaultTo<0>;
-    description: Schema.Attribute.Text;
+    description: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
     detailsCompletedAt: Schema.Attribute.DateTime;
     doCopywriting: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     expectedTATHours: Schema.Attribute.Integer &
@@ -1968,7 +2043,10 @@ export interface ApiPublisherWebsitePublisherWebsite
     gscRefreshToken: Schema.Attribute.Text & Schema.Attribute.Private;
     gscVerified: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     gscVerifiedAt: Schema.Attribute.DateTime;
-    guidelines: Schema.Attribute.Text;
+    guidelines: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 600;
+      }>;
     isPRSite: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     language: Schema.Attribute.JSON & Schema.Attribute.DefaultTo<['English']>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
@@ -2027,6 +2105,10 @@ export interface ApiPublisherWebsitePublisherWebsite
     pausedAt: Schema.Attribute.DateTime;
     protocol: Schema.Attribute.Enumeration<['https', 'http']> &
       Schema.Attribute.DefaultTo<'https'>;
+    publicationLocation: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
     publishedAt: Schema.Attribute.DateTime;
     publisherEmail: Schema.Attribute.Email & Schema.Attribute.Required;
     publisherName: Schema.Attribute.String;
@@ -2416,8 +2498,9 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
       'oneToMany',
       'api::transaction.transaction'
     >;
-    type: Schema.Attribute.Enumeration<['advertiser', 'publisher', 'unified']> &
-      Schema.Attribute.Required;
+    type: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'unified'>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -2490,6 +2573,12 @@ export interface ApiWebsiteRequestWebsiteRequest
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'userEmail',
+      'adminNotes',
+      'responseNotes',
+      'rejectionReason',
+    ];
   };
   attributes: {
     additionalRequirements: Schema.Attribute.Text;
@@ -2690,6 +2779,14 @@ export interface ApiWithdrawalRequestWithdrawalRequest
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'details',
+      'admin_notes',
+      'payment_notes',
+      'denial_reason',
+      'external_transaction_id',
+      'payment_reference',
+    ];
   };
   attributes: {
     admin_notes: Schema.Attribute.Text;
@@ -3214,6 +3311,16 @@ export interface PluginUsersPermissionsUser
   };
   options: {
     draftAndPublish: false;
+    privateAttributes: [
+      'email',
+      'resetPasswordToken',
+      'confirmationToken',
+      'provider',
+      'phoneNumber',
+      'billingAddress',
+      'registrationNumber',
+      'vatGstNumber',
+    ];
     timestamps: true;
   };
   attributes: {
@@ -3226,6 +3333,7 @@ export interface PluginUsersPermissionsUser
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     businessName: Schema.Attribute.String;
     city: Schema.Attribute.String;
+    clerkId: Schema.Attribute.String & Schema.Attribute.Unique;
     communications: Schema.Attribute.Relation<
       'oneToMany',
       'api::communication.communication'
@@ -3241,10 +3349,16 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
-    firstName: Schema.Attribute.String;
+    firstName: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 50;
+      }>;
     identity: Schema.Attribute.Enumeration<['SEO', 'Agency', 'Other']>;
     invoices: Schema.Attribute.Relation<'oneToMany', 'api::invoice.invoice'>;
-    lastName: Schema.Attribute.String;
+    lastName: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 50;
+      }>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -3306,6 +3420,7 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.Required &
       Schema.Attribute.Unique &
       Schema.Attribute.SetMinMaxLength<{
+        maxLength: 30;
         minLength: 3;
       }>;
     vatGstNumber: Schema.Attribute.String;
@@ -3343,6 +3458,7 @@ declare module '@strapi/strapi' {
       'api::marketplace-list.marketplace-list': ApiMarketplaceListMarketplaceList;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
       'api::notification.notification': ApiNotificationNotification;
+      'api::order-audit-log.order-audit-log': ApiOrderAuditLogOrderAuditLog;
       'api::order-content.order-content': ApiOrderContentOrderContent;
       'api::order.order': ApiOrderOrder;
       'api::outsourced-content.outsourced-content': ApiOutsourcedContentOutsourcedContent;

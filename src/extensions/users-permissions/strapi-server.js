@@ -25,14 +25,30 @@ module.exports = (plugin) => {
   plugin.contentTypes.user.lifecycles = {
     async afterCreate(event) {
       const { result } = event;
-      
+
       try {
+        strapi.log.info(`[LIFECYCLE afterCreate] User ${result.id} created with:`, {
+          Advertiser: result.Advertiser,
+          Publisher: result.Publisher,
+          AdvertiserType: typeof result.Advertiser,
+          PublisherType: typeof result.Publisher
+        });
+
         // Create unified wallet for ALL users (both advertisers and publishers)
         await ensureAdvertiserWallet(result.id);
         console.log(`[USER REGISTRATION] Created wallet for new user ${result.id}`);
-        
+
         // Ensure Publisher field is set if not explicitly provided during registration
-        if (result.Publisher === undefined && !result.Advertiser) {
+        const shouldSetPublisher = result.Publisher === undefined && !result.Advertiser;
+
+        strapi.log.info(`[LIFECYCLE] Should set Publisher?`, {
+          shouldSetPublisher,
+          PublisherIsUndefined: result.Publisher === undefined,
+          AdvertiserIsFalsy: !result.Advertiser
+        });
+
+        if (shouldSetPublisher) {
+          strapi.log.info(`[LIFECYCLE] Setting Publisher to true for user ${result.id}`);
           await strapi.entityService.update(
             'plugin::users-permissions.user',
             result.id,
@@ -49,11 +65,15 @@ module.exports = (plugin) => {
   plugin.controllers.user.updateMe = async (ctx) => {
     try {
       if (!ctx.state.user || !ctx.state.user.id) {
+        console.error('[UPDATE ME] No authenticated user found in ctx.state.user');
         return ctx.unauthorized('You must be logged in to update your profile');
       }
 
       const userId = ctx.state.user.id;
       const updateData = ctx.request.body.data || ctx.request.body;
+
+      console.log('[UPDATE ME] User ID:', userId);
+      console.log('[UPDATE ME] Update data:', updateData);
 
       // Ensure we can't update critical fields
       delete updateData.email;
@@ -67,13 +87,19 @@ module.exports = (plugin) => {
       const updatedUser = await strapi.entityService.update(
         'plugin::users-permissions.user',
         userId,
-        { data: updateData }
+        {
+          data: updateData,
+          populate: ['role', 'user_wallet']
+        }
       );
 
+      console.log('[UPDATE ME] User updated successfully:', updatedUser.id);
+
       // Return sanitized user data
-      ctx.body = sanitizeOutput(updatedUser);
+      const sanitizedUser = sanitizeOutput(updatedUser);
+      ctx.send(sanitizedUser);
     } catch (error) {
-      console.error('Error updating user:', error);
+      console.error('[UPDATE ME] Error updating user:', error);
       return ctx.badRequest('Error updating user', { error: error.message });
     }
   };
@@ -98,8 +124,8 @@ module.exports = (plugin) => {
       const updatedUser = await strapi.entityService.update(
         'plugin::users-permissions.user',
         userId,
-        { 
-          data: { 
+        {
+          data: {
             Advertiser: isAdvertiser,
             Publisher: !isAdvertiser
           },

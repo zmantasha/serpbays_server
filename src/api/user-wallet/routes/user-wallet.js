@@ -7,6 +7,30 @@
 module.exports = {
   routes: [
     {
+      method: 'POST',
+      path: '/api/wallet/add-funds',
+      handler: 'user-wallet.addFunds',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.addFunds']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/api/wallet/add-funds',
+      handler: 'user-wallet.addFunds',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.addFunds']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
       method: 'GET',
       path: '/api/wallet/balance',
       handler: 'user-wallet.getBalance',

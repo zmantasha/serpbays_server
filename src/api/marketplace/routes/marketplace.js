@@ -6,6 +6,16 @@
 
 module.exports = {
   routes: [
+    // Marketplace Stats (Must be before :id routes)
+    {
+      method: 'GET',
+      path: '/marketplaces/stats',
+      handler: 'marketplace.getStats',
+      config: {
+        policies: ['global::is-authenticated'],
+        middlewares: [],
+      },
+    },
     // Default CRUD routes with custom policies
     {
       method: 'GET',

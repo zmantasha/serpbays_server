@@ -8,7 +8,15 @@
     "description": "Withdrawal requests with external transaction tracking"
   },
   "options": {
-    "draftAndPublish": false
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "details",
+      "admin_notes",
+      "payment_notes",
+      "denial_reason",
+      "external_transaction_id",
+      "payment_reference"
+    ]
   },
   "attributes": {
     "publisher": {

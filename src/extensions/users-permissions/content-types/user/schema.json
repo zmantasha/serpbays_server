@@ -10,12 +10,23 @@
   },
   "options": {
     "draftAndPublish": false,
-    "timestamps": true
+    "timestamps": true,
+    "privateAttributes": [
+      "email",
+      "resetPasswordToken",
+      "confirmationToken",
+      "provider",
+      "phoneNumber",
+      "billingAddress",
+      "registrationNumber",
+      "vatGstNumber"
+    ]
   },
   "attributes": {
     "username": {
       "type": "string",
       "minLength": 3,
+      "maxLength": 30,
       "unique": true,
       "configurable": false,
       "required": true
@@ -58,6 +69,10 @@
       "type": "boolean",
       "default": false,
       "configurable": false
+    },
+    "clerkId": {
+      "type": "string",
+      "unique": true
     },
     "role": {
       "type": "relation",
@@ -111,10 +126,12 @@
       "mappedBy": "sender"
     },
     "firstName": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 50
     },
     "lastName": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 50
     },
     "businessName": {
       "type": "string"

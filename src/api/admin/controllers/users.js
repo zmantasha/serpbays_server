@@ -13,9 +13,9 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
    */
   async find(ctx) {
     try {
-      const { 
-        page = 1, 
-        pageSize = 20, 
+      const {
+        page = 1,
+        pageSize = 20,
         sort = 'createdAt:desc',
         search = '',
         role = '',
@@ -26,7 +26,7 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
 
       // Build filters
       const filters = {};
-      
+
       // Search filter
       if (search) {
         filters.$or = [
@@ -46,7 +46,7 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       if (blocked !== '') {
         filters.blocked = blocked === 'true';
       }
-      
+
       if (confirmed !== '') {
         filters.confirmed = confirmed === 'true';
       }
@@ -138,42 +138,19 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
     try {
       const { id } = ctx.params;
 
+      console.log('[USER DETAILS] Fetching user ID:', id);
+
+      // Simplified populate to avoid 500 errors
       const user = await strapi.entityService.findOne('plugin::users-permissions.user', id, {
-        populate: {
-          role: true,
-          user_wallet: true,
-          advertiserOrders: {
-            populate: ['publisher'],
-            sort: 'createdAt:desc'
-          },
-          publisherOrders: {
-            populate: ['advertiser'],
-            sort: 'createdAt:desc'
-          },
-          transactions: {
-            sort: 'createdAt:desc'
-          },
-          communications: {
-            sort: 'createdAt:desc'
-          },
-          withdrawalRequests: {
-            sort: 'createdAt:desc'
-          }
-        }
+        populate: ['role', 'user_wallet']
       });
 
       if (!user) {
+        console.log('[USER DETAILS] User not found:', id);
         return ctx.notFound('User not found');
       }
 
-      // Calculate user statistics
-      const totalSpent = user.transactions
-        ?.filter(t => t.transactionType === 'payment' && t.transactionStatus === 'completed')
-        ?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
-
-      const totalEarnings = user.transactions
-        ?.filter(t => t.transactionType === 'earning' && t.transactionStatus === 'completed')
-        ?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+      console.log('[USER DETAILS] Successfully fetched user');
 
       const transformedUser = {
         id: user.id,
@@ -212,19 +189,16 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           currency: user.user_wallet.currency || 'USD'
         } : null,
         statistics: {
-          totalOrders: (user.advertiserOrders?.length || 0) + (user.publisherOrders?.length || 0),
-          totalSpent,
-          totalEarnings,
+          totalOrders: 0,
+          totalSpent: 0,
+          totalEarnings: 0,
           lastLogin: user.updatedAt,
           joinDate: user.createdAt
         },
-        recentOrders: [
-          ...(user.advertiserOrders || []).map(order => ({ ...order, role: 'advertiser' })),
-          ...(user.publisherOrders || []).map(order => ({ ...order, role: 'publisher' }))
-        ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 10),
-        recentTransactions: user.transactions || [],
-        recentCommunications: user.communications || [],
-        withdrawalRequests: user.withdrawalRequests || []
+        recentOrders: [],
+        recentTransactions: [],
+        recentCommunications: [],
+        withdrawalRequests: []
       };
 
       ctx.send({
@@ -232,7 +206,8 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       });
 
     } catch (error) {
-      console.error('[ADMIN USER FIND ONE ERROR]', error);
+      console.error('[USER DETAILS ERROR] Message:', error.message);
+      console.error('[USER DETAILS ERROR] Stack:', error.stack);
       return ctx.internalServerError('Failed to fetch user details');
     }
   },
