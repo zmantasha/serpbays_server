@@ -234,7 +234,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         }
       });
 
-      console.log(`[PAYPAL WEBHOOK] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amountToCredit} (PayPal charged $${amount})`);
+      console.log(`[PAYPAL WEBHOOK] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amountToCredit} (PayPal charged $${paypalCaptureAmount})`);
 
     } catch (error) {
       console.error('[PAYPAL WEBHOOK] Error handling payment completed:', error);
