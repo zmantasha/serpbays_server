@@ -779,7 +779,19 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Get paginated orders
         const orders = await strapi.entityService.findMany('api::order.order', {
           filters: combinedFilters,
-          populate: ['website', 'advertiser', 'publisher', 'orderContent', 'outsourcedContent', 'project', 'communications'],
+          populate: {
+            website: true,
+            advertiser: {
+              fields: ['id', 'username'] // Only populate id and username, exclude email
+            },
+            publisher: {
+              fields: ['id', 'username'] // Only populate id and username, exclude email  
+            },
+            orderContent: true,
+            outsourcedContent: true,
+            project: true,
+            communications: true
+          },
           sort: sortOptions,
           start,
           limit
