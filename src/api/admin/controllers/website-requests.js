@@ -13,9 +13,9 @@ module.exports = createCoreController('api::website-request.website-request', ({
    */
   async getWebsiteRequests(ctx) {
     try {
-      const { 
-        page = 1, 
-        pageSize = 20, 
+      const {
+        page = 1,
+        pageSize = 20,
         sort = 'createdAt:desc',
         search = '',
         status = '',
@@ -25,13 +25,13 @@ module.exports = createCoreController('api::website-request.website-request', ({
 
       // Build filters
       const filters = {};
-      
-      // Search filter
+
+      // Search filter (only search public fields - userEmail is private)
       if (search) {
         filters.$or = [
-          { title: { $containsi: search } },
-          { domain: { $containsi: search } },
-          { userEmail: { $containsi: search } }
+          { specificDomains: { $containsi: search } },
+          { category: { $containsi: search } },
+          { additionalRequirements: { $containsi: search } }
         ];
       }
 
@@ -55,7 +55,7 @@ module.exports = createCoreController('api::website-request.website-request', ({
         sort,
         populate: {
           user: {
-            fields: ['id', 'username', 'email']
+            fields: ['id', 'username']
           }
         },
         start: (page - 1) * pageSize,
@@ -89,17 +89,17 @@ module.exports = createCoreController('api::website-request.website-request', ({
     try {
       const [total, pending, underReview, approved, rejected] = await Promise.all([
         strapi.entityService.count('api::website-request.website-request', {}),
-        strapi.entityService.count('api::website-request.website-request', { 
-          filters: { status: 'pending' } 
+        strapi.entityService.count('api::website-request.website-request', {
+          filters: { status: 'pending' }
         }),
-        strapi.entityService.count('api::website-request.website-request', { 
-          filters: { status: 'under_review' } 
+        strapi.entityService.count('api::website-request.website-request', {
+          filters: { status: 'under_review' }
         }),
-        strapi.entityService.count('api::website-request.website-request', { 
-          filters: { status: 'approved' } 
+        strapi.entityService.count('api::website-request.website-request', {
+          filters: { status: 'approved' }
         }),
-        strapi.entityService.count('api::website-request.website-request', { 
-          filters: { status: 'rejected' } 
+        strapi.entityService.count('api::website-request.website-request', {
+          filters: { status: 'rejected' }
         })
       ]);
 
@@ -159,7 +159,7 @@ module.exports = createCoreController('api::website-request.website-request', ({
         },
         populate: {
           user: {
-            fields: ['id', 'username', 'email']
+            fields: ['id', 'username']
           }
         }
       });
@@ -199,7 +199,7 @@ module.exports = createCoreController('api::website-request.website-request', ({
         },
         populate: {
           user: {
-            fields: ['id', 'username', 'email']
+            fields: ['id', 'username']
           }
         }
       });
@@ -250,14 +250,14 @@ module.exports = createCoreController('api::website-request.website-request', ({
       }
 
       const results = [];
-      
+
       for (const id of requestIds) {
         try {
           const updated = await strapi.entityService.update('api::website-request.website-request', id, {
             data: updateData,
             populate: {
               user: {
-                fields: ['id', 'username', 'email']
+                fields: ['id', 'username']
               }
             }
           });
