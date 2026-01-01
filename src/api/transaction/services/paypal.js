@@ -55,14 +55,18 @@ module.exports = {
         userId: metadata.userId || null
       };
 
+      // CRITICAL: PayPal requires exactly 2 decimal places for currency amounts
+      // Parse and format amount to ensure proper decimal precision
+      const formattedAmount = parseFloat(amount).toFixed(2);
+
       const orderData = {
         intent: 'CAPTURE',
         purchase_units: [{
           amount: {
             currency_code: currency.toUpperCase(),
-            value: amount.toString()
+            value: formattedAmount  // Use formatted amount with exactly 2 decimal places
           },
-          description: `Wallet top-up for ${amount} ${currency}`,
+          description: `Wallet top-up for ${formattedAmount} ${currency}`,
           custom_id: JSON.stringify(customIdData),
           invoice_id: `wallet_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         }],
