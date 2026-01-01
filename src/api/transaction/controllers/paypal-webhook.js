@@ -43,22 +43,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       console.log('[PAYPAL WEBHOOK] ✅ Webhook signature verified successfully');
 
-      // IDEMPOTENCY: Check if this webhook event has already been processed
-      const eventId = body.id;
-      if (eventId) {
-        const processedEvent = await strapi.db.query('api::transaction.transaction').findOne({
-          where: {
-            metadata: {
-              $contains: { webhookEventId: eventId }
-            }
-          }
-        });
-
-        if (processedEvent) {
-          console.log(`[PAYPAL WEBHOOK] ✅ Event ${eventId} already processed - skipping duplicate`);
-          return ctx.send({ success: true, message: 'Event already processed' });
-        }
-      }
+      // IDEMPOTENCY: Note - Duplicate check is handled in handlePaymentCompleted 
+      // by checking for existing transactions with the specific capture/order ID
+      // This is more reliable than searching in metadata JSON field
 
       // Handle different event types
       switch (body.event_type) {
