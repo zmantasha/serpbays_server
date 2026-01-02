@@ -675,18 +675,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         resellerCode: website.resellerCode,
         addedByReseller: website.addedByReseller || false,
         // SEO Metrics (placeholder for future API integration)
-        ahrefs_dr: website.ahrefs_dr || null,
-        ahrefs_traffic: website.ahrefs_traffic || null,
-        ahrefs_rank: website.ahrefs_rank || null,
-        moz_da: website.moz_da || null,
-        semrush_authority_score: website.semrush_authority_score || null,
-        semrush_traffic: website.semrush_traffic || null,
-        moz_spam_score: website.moz_spam_score || null,
-        ahrefs_referring_domain: website.ahrefs_referring_domain || null,
-        ahrefs_keywords: website.ahrefs_keywords || null,
-        metrics_last_updated: website.metrics_last_updated || null,
-        metrics_update_count: website.metrics_update_count || 0,
-        metrics_update_method: website.metrics_update_method || null
+        ahrefs_dr: website.ahrefs_dr ?? null,
+        ahrefs_traffic: website.ahrefs_traffic ?? null,
+        ahrefs_rank: website.ahrefs_rank ?? null,
+        moz_da: website.moz_da ?? null,
+        semrush_authority_score: website.semrush_authority_score ?? null,
+        semrush_traffic: website.semrush_traffic ?? null,
+        moz_spam_score: website.moz_spam_score ?? null,
+        ahrefs_referring_domain: website.ahrefs_referring_domain ?? null,
+        ahrefs_keywords: website.ahrefs_keywords ?? null,
+        metrics_last_updated: website.metrics_last_updated ?? null,
+        metrics_update_count: website.metrics_update_count ?? 0,
+        metrics_update_method: website.metrics_update_method ?? null
       };
 
       console.log('[ADMIN WEBSITE FIND ONE]', {
