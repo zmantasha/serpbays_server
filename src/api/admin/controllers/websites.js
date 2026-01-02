@@ -175,11 +175,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           addAndFilter({
             $and: [
               { moz_da: { $notNull: true } },
-              { moz_da: { $gt: 0 } },
+              { moz_da: { $gte: 0 } },
               { ahrefs_dr: { $notNull: true } },
-              { ahrefs_dr: { $gt: 0 } },
+              { ahrefs_dr: { $gte: 0 } },
               { ahrefs_traffic: { $notNull: true } },
-              { ahrefs_traffic: { $gt: 0 } }
+              { ahrefs_traffic: { $gte: 0 } }
             ]
           });
         } else {
@@ -346,42 +346,42 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           // Status must be approval_pending (ready for approval)
           filters.submissionStatus = 'approval_pending';
 
-          // Must have at least ONE valid metric (DA > 0 OR DR > 0 OR Traffic > 0)
+          // Must have at least ONE valid metric (DA >= 0 OR DR >= 0 OR Traffic >= 0)
           addAndFilter({
             $or: [
-              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gt: 0 } }] },
-              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gt: 0 } }] },
-              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gt: 0 } }] }
+              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gte: 0 } }] },
+              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gte: 0 } }] },
+              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gte: 0 } }] }
             ]
           });
-          console.log('[ADMIN WEBSITES] Applied "Ready" filter: approval_pending + has metrics');
+          console.log('[ADMIN WEBSITES] Applied "Ready" filter: approval_pending + has metrics (including 0)');
 
         } else if (metricsStatus === 'Live') {
           // "Live (On Marketplace)" = has metrics AND approved (live on marketplace)
           // Status must be approved
           filters.submissionStatus = 'approved';
 
-          // Must have at least ONE valid metric (DA > 0 OR DR > 0 OR Traffic > 0)
+          // Must have at least ONE valid metric (DA >= 0 OR DR >= 0 OR Traffic >= 0)
           addAndFilter({
             $or: [
-              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gt: 0 } }] },
-              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gt: 0 } }] },
-              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gt: 0 } }] }
+              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gte: 0 } }] },
+              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gte: 0 } }] },
+              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gte: 0 } }] }
             ]
           });
-          console.log('[ADMIN WEBSITES] Applied "Live" filter: approved + has metrics');
+          console.log('[ADMIN WEBSITES] Applied "Live" filter: approved + has metrics (including 0)');
 
         } else if (metricsStatus === 'Missing') {
-          // "Metrics Missing" = lacks all metrics (DA, DR, and Traffic are all null or 0)
-          // All three metrics must be missing or zero
+          // "Metrics Missing" = lacks all metrics (DA, DR, and Traffic are all null)
+          // All three metrics must be null (0 is considered a valid value)
           addAndFilter({
             $and: [
-              { $or: [{ moz_da: { $null: true } }, { moz_da: { $lte: 0 } }] },
-              { $or: [{ ahrefs_dr: { $null: true } }, { ahrefs_dr: { $lte: 0 } }] },
-              { $or: [{ ahrefs_traffic: { $null: true } }, { ahrefs_traffic: { $lte: 0 } }] }
+              { moz_da: { $null: true } },
+              { ahrefs_dr: { $null: true } },
+              { ahrefs_traffic: { $null: true } }
             ]
           });
-          console.log('[ADMIN WEBSITES] Applied "Missing" filter: all metrics are null or 0');
+          console.log('[ADMIN WEBSITES] Applied "Missing" filter: all metrics are null (0 is valid)');
         }
       }
 
