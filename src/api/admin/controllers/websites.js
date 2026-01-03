@@ -71,6 +71,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         sortDirection = 'asc',
         search = '',
         status = '',
+        metricsStatus = '', // Metrics status filter (All/Ready/Live/Missing)
         userId = '',
         category = '',
         daFilter = '',
@@ -174,11 +175,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           addAndFilter({
             $and: [
               { moz_da: { $notNull: true } },
-              { moz_da: { $gt: 0 } },
+              { moz_da: { $gte: 0 } },
               { ahrefs_dr: { $notNull: true } },
-              { ahrefs_dr: { $gt: 0 } },
+              { ahrefs_dr: { $gte: 0 } },
               { ahrefs_traffic: { $notNull: true } },
-              { ahrefs_traffic: { $gt: 0 } }
+              { ahrefs_traffic: { $gte: 0 } }
             ]
           });
         } else {
@@ -333,6 +334,54 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           const monthAgo = new Date(now);
           monthAgo.setMonth(monthAgo.getMonth() - 1);
           filters.metrics_last_updated = { $lt: monthAgo.toISOString() };
+        }
+      }
+
+      // Metrics status filter - filter by metrics availability and approval status
+      if (metricsStatus && metricsStatus !== 'All') {
+        console.log(`[ADMIN WEBSITES] Applying metrics status filter: ${metricsStatus}`);
+
+        if (metricsStatus === 'Ready') {
+          // "Ready (Has Metrics)" = has metrics AND NOT approved (pending with complete metrics)
+          // Status must be approval_pending (ready for approval)
+          filters.submissionStatus = 'approval_pending';
+
+          // Must have at least ONE valid metric (DA >= 0 OR DR >= 0 OR Traffic >= 0)
+          addAndFilter({
+            $or: [
+              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gte: 0 } }] },
+              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gte: 0 } }] },
+              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gte: 0 } }] }
+            ]
+          });
+          console.log('[ADMIN WEBSITES] Applied "Ready" filter: approval_pending + has metrics (including 0)');
+
+        } else if (metricsStatus === 'Live') {
+          // "Live (On Marketplace)" = has metrics AND approved (live on marketplace)
+          // Status must be approved
+          filters.submissionStatus = 'approved';
+
+          // Must have at least ONE valid metric (DA >= 0 OR DR >= 0 OR Traffic >= 0)
+          addAndFilter({
+            $or: [
+              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gte: 0 } }] },
+              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gte: 0 } }] },
+              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gte: 0 } }] }
+            ]
+          });
+          console.log('[ADMIN WEBSITES] Applied "Live" filter: approved + has metrics (including 0)');
+
+        } else if (metricsStatus === 'Missing') {
+          // "Metrics Missing" = lacks all metrics (DA, DR, and Traffic are all null)
+          // All three metrics must be null (0 is considered a valid value)
+          addAndFilter({
+            $and: [
+              { moz_da: { $null: true } },
+              { ahrefs_dr: { $null: true } },
+              { ahrefs_traffic: { $null: true } }
+            ]
+          });
+          console.log('[ADMIN WEBSITES] Applied "Missing" filter: all metrics are null (0 is valid)');
         }
       }
 
@@ -626,18 +675,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         resellerCode: website.resellerCode,
         addedByReseller: website.addedByReseller || false,
         // SEO Metrics (placeholder for future API integration)
-        ahrefs_dr: website.ahrefs_dr || null,
-        ahrefs_traffic: website.ahrefs_traffic || null,
-        ahrefs_rank: website.ahrefs_rank || null,
-        moz_da: website.moz_da || null,
-        semrush_authority_score: website.semrush_authority_score || null,
-        semrush_traffic: website.semrush_traffic || null,
-        moz_spam_score: website.moz_spam_score || null,
-        ahrefs_referring_domain: website.ahrefs_referring_domain || null,
-        ahrefs_keywords: website.ahrefs_keywords || null,
-        metrics_last_updated: website.metrics_last_updated || null,
-        metrics_update_count: website.metrics_update_count || 0,
-        metrics_update_method: website.metrics_update_method || null
+        ahrefs_dr: website.ahrefs_dr ?? null,
+        ahrefs_traffic: website.ahrefs_traffic ?? null,
+        ahrefs_rank: website.ahrefs_rank ?? null,
+        moz_da: website.moz_da ?? null,
+        semrush_authority_score: website.semrush_authority_score ?? null,
+        semrush_traffic: website.semrush_traffic ?? null,
+        moz_spam_score: website.moz_spam_score ?? null,
+        ahrefs_referring_domain: website.ahrefs_referring_domain ?? null,
+        ahrefs_keywords: website.ahrefs_keywords ?? null,
+        metrics_last_updated: website.metrics_last_updated ?? null,
+        metrics_update_count: website.metrics_update_count ?? 0,
+        metrics_update_method: website.metrics_update_method ?? null
       };
 
       console.log('[ADMIN WEBSITE FIND ONE]', {
@@ -1110,9 +1159,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating website ${id}`, updateData);
 
+      // Get the website before update to preserve required private fields
+      const websiteBeforeUpdate = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId', 'originalPublisherId']
+      });
+
+      if (!websiteBeforeUpdate) {
+        return ctx.notFound('Website not found');
+      }
+
       // Map frontend field names to database field names
       const mappedData = {
         url: updateData.url,
+        // Preserve publisherEmail - it's required but private (sanitized from responses)
+        publisherEmail: websiteBeforeUpdate.publisherEmail,
         publisherName: updateData.publisherName,
         description: updateData.description,
         submissionStatus: updateData.submissionStatus,
@@ -1154,21 +1214,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         datingLinkInsertionPrice: updateData.datingLinkInsertionPrice,
         samplePosts: updateData.samplePosts,
         guidelines: updateData.guidelines,
-        description: updateData.description,
         publicationLocation: updateData.publicationLocation
       };
 
-      // Remove undefined values
+      // Remove undefined, null, and invalid values
       Object.keys(mappedData).forEach(key => {
-        if (mappedData[key] === undefined) {
+        const value = mappedData[key];
+        // Remove undefined or null
+        if (value === undefined || value === null) {
+          delete mappedData[key];
+        }
+        // Remove 0 for ahrefs_rank (schema has min: 1)
+        if (key === 'ahrefs_rank' && value === 0) {
           delete mappedData[key];
         }
       });
 
       console.log(`[ADMIN ACTION] Mapped update data:`, mappedData);
 
-      // Get the website before update to check if it's approved
-      const websiteBeforeUpdate = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      // Check if website was approved before update (already fetched above)
       const wasApproved = websiteBeforeUpdate?.submissionStatus === 'approved';
       const marketplaceId = websiteBeforeUpdate?.marketplaceId;
 
