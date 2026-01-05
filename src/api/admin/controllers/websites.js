@@ -464,19 +464,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         },
         // SEO Metrics
         metrics: {
-          da: website.moz_da || 0,
-          dr: website.ahrefs_dr || 0,
-          traffic: website.ahrefs_traffic || 0,
-          backlinks: website.ahrefs_referring_domain || 0,
-          organicKeywords: website.ahrefs_keywords || 0,
+          da: website.moz_da ?? null,
+          dr: website.ahrefs_dr ?? null,
+          traffic: website.ahrefs_traffic ?? null,
+          backlinks: website.ahrefs_referring_domain ?? null,
+          organicKeywords: website.ahrefs_keywords ?? null,
           pageSpeed: website.pageSpeed || 'Normal',
           mobileFriendly: website.mobileFriendly || true,
           ssl: website.ssl || true,
           // Additional metrics fields
-          ahrefs_rank: website.ahrefs_rank || 0,
-          semrush_authority_score: website.semrush_authority_score || 0,
-          moz_spam_score: website.moz_spam_score || 0,
-          semrush_traffic: website.semrush_traffic || 0
+          ahrefs_rank: website.ahrefs_rank ?? null,
+          semrush_authority_score: website.semrush_authority_score ?? null,
+          moz_spam_score: website.moz_spam_score ?? null,
+          semrush_traffic: website.semrush_traffic ?? null
         },
         // Pricing information - return null for empty prices instead of 0
         pricing: {
@@ -1460,6 +1460,42 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const metricsData = ctx.request.body;
 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating metrics for website ${id}`, metricsData);
+
+      // Validate metrics data
+      const validationErrors = [];
+
+      // Helper function to validate numeric field
+      const validateNumericField = (fieldName, value, min, max) => {
+        if (value !== undefined && value !== null && value !== '') {
+          const num = parseFloat(value);
+          if (isNaN(num)) {
+            validationErrors.push(`${fieldName} must be a valid number`);
+          } else if (min !== undefined && num < min) {
+            validationErrors.push(`${fieldName} must be ${min} or greater`);
+          } else if (max !== undefined && num > max) {
+            validationErrors.push(`${fieldName} cannot exceed ${max}`);
+          }
+        }
+      };
+
+      // Validate each metric field
+      validateNumericField('ahrefs_dr', metricsData.ahrefs_dr, 0, 100);
+      validateNumericField('moz_da', metricsData.moz_da, 0, 100);
+      validateNumericField('moz_spam_score', metricsData.moz_spam_score, 0, 100);
+      validateNumericField('semrush_authority_score', metricsData.semrush_authority_score, 0, 100);
+      validateNumericField('ahrefs_rank', metricsData.ahrefs_rank, 1, undefined); // Rank must be at least 1
+      validateNumericField('ahrefs_traffic', metricsData.ahrefs_traffic, 0, undefined);
+      validateNumericField('semrush_traffic', metricsData.semrush_traffic, 0, undefined);
+      validateNumericField('ahrefs_referring_domain', metricsData.ahrefs_referring_domain, 0, undefined);
+      validateNumericField('ahrefs_keywords', metricsData.ahrefs_keywords, 0, undefined);
+
+      // If there are validation errors, return bad request
+      if (validationErrors.length > 0) {
+        console.log(`[ADMIN ACTION] Validation errors for metrics update:`, validationErrors);
+        return ctx.badRequest('Validation failed', {
+          errors: validationErrors
+        });
+      }
 
       // Add metrics update tracking
       const updateData = {
