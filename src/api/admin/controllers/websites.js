@@ -1497,9 +1497,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
       }
 
+      // Round decimal values to appropriate precision to prevent UI layout issues
+      // Percentage-based scores (0-100): 1 decimal place
+      // Traffic/counts: whole numbers
+      const roundMetric = (value, decimalPlaces = 1) => {
+        if (value === null || value === undefined || value === '') return value;
+        const num = parseFloat(value);
+        if (isNaN(num)) return value;
+        const multiplier = Math.pow(10, decimalPlaces);
+        return Math.round(num * multiplier) / multiplier;
+      };
+
+      // Apply precision limits
+      const processedMetrics = {
+        // Percentage scores (0-100): 1 decimal place
+        ahrefs_dr: roundMetric(metricsData.ahrefs_dr, 1),
+        moz_da: roundMetric(metricsData.moz_da, 1),
+        moz_spam_score: roundMetric(metricsData.moz_spam_score, 1),
+        semrush_authority_score: roundMetric(metricsData.semrush_authority_score, 1),
+
+        // Traffic and counts: whole numbers (0 decimal places)
+        ahrefs_traffic: roundMetric(metricsData.ahrefs_traffic, 0),
+        semrush_traffic: roundMetric(metricsData.semrush_traffic, 0),
+        ahrefs_referring_domain: roundMetric(metricsData.ahrefs_referring_domain, 0),
+        ahrefs_keywords: roundMetric(metricsData.ahrefs_keywords, 0),
+        ahrefs_rank: roundMetric(metricsData.ahrefs_rank, 0)
+      };
+
       // Add metrics update tracking
       const updateData = {
-        ...metricsData,
+        ...processedMetrics,
         metrics_last_updated: new Date(),
         metrics_update_count: (metricsData.metrics_update_count || 0) + 1,
         metrics_update_method: 'manual'
