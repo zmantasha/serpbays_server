@@ -1037,7 +1037,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
-    ahrefs_dr: Schema.Attribute.Integer &
+    ahrefs_dr: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1135,7 +1135,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
-    moz_da: Schema.Attribute.Integer &
+    moz_da: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1256,7 +1256,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
       >;
     sample_links: Schema.Attribute.Text;
     sample_post: Schema.Attribute.Text;
-    semrush_authority_score: Schema.Attribute.Integer &
+    semrush_authority_score: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1282,7 +1282,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
-    spam_score: Schema.Attribute.Integer &
+    spam_score: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
