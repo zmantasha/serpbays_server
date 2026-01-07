@@ -39,4 +39,6 @@ module.exports = [
   'strapi::public',
   // Custom admin middleware
   'global::admin-logger',
+  // Custom response sanitizer to remove sensitive fields
+  'global::response-sanitizer',
 ];
