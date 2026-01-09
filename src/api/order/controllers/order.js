@@ -1022,6 +1022,32 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Don't fail the order acceptance if notification fails
         }
 
+        // Send email notification for order acceptance
+        try {
+          // Get the updated order with full data for email
+          const fullOrder = await strapi.entityService.findOne('api::order.order', id, {
+            populate: ['website', 'advertiser', 'publisher']
+          });
+
+          // Get advertiser user data
+          const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: updatedOrder.advertiser?.id || updatedOrder.advertiser }
+          });
+
+          if (advertiserUser && advertiserUser.email) {
+            const emailService = strapi.service('api::global.email-operations');
+            await emailService.sendOrderAcceptanceEmail(
+              fullOrder,
+              advertiserUser.email,
+              user.email
+            );
+            console.log(`Order acceptance emails sent for order ${id}`);
+          }
+        } catch (emailError) {
+          console.error('Failed to send order acceptance emails:', emailError);
+          // Don't fail the acceptance if email fails
+        }
+
         return {
           data: updatedOrder,
           meta: {
@@ -1393,13 +1419,25 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
           // Send email notification for order delivery
           try {
-            const emailService = strapi.service('api::global.email-operations');
-            await emailService.sendOrderDeliveryEmail(
-              updatedOrder,
-              order.advertiser.email,
-              user.email
-            );
-            console.log(`Order delivery emails sent for order ${order.id}`);
+            // Get the updated order with full data for email
+            const fullOrder = await strapi.entityService.findOne('api::order.order', id, {
+              populate: ['website', 'advertiser', 'publisher']
+            });
+
+            // Get advertiser user data
+            const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+              where: { id: order.advertiser?.id || order.advertiser }
+            });
+
+            if (advertiserUser && advertiserUser.email) {
+              const emailService = strapi.service('api::global.email-operations');
+              await emailService.sendOrderDeliveryEmail(
+                fullOrder,
+                advertiserUser.email,
+                user.email
+              );
+              console.log(`Order delivery emails sent for order ${id}`);
+            }
           } catch (emailError) {
             console.error('Failed to send order delivery emails:', emailError);
             // Don't fail delivery if email fails
