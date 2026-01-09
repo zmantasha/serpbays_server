@@ -11,6 +11,7 @@
     "draftAndPublish": false,
     "privateAttributes": [
       "publisher_name",
+      "publisher_email",
       "gsc_refresh_token"
     ]
   },
