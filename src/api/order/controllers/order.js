@@ -908,7 +908,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 }
               ]
             },
-            populate: ['website', 'advertiser', 'outsourcedContent'],
+            populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
             sort: { orderDate: 'desc' }
           });
         }
@@ -944,7 +944,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                   orderDate: { $lt: transferredWebsite.ownershipTransferredAt },
                   advertiser: { id: { $ne: user.id } }
                 },
-                populate: ['website', 'advertiser', 'outsourcedContent'],
+                populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
                 sort: { orderDate: 'desc' }
               });
 
