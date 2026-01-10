@@ -1400,6 +1400,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             orderStatus: 'delivered',
             deliveredDate: new Date(),
             deliveryProof: body.proof || '',
+            deliveryMessage: body.message || '',
             // Only update revision status if it was in progress
             ...(order.revisionStatus === 'in_progress' && {
               revisionStatus: 'completed'
@@ -2028,6 +2029,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Add delivery proof if provided
         if (deliveryProof) {
           updateData.deliveryProof = deliveryProof;
+        }
+
+        // Add delivery message if provided
+        if (message) {
+          updateData.deliveryMessage = message;
         }
 
         // Update order revision status and order status
