@@ -206,6 +206,17 @@
       "relation": "oneToMany",
       "target": "api::saved-filter.saved-filter",
       "mappedBy": "users_permissions_user"
+    },
+    "onboardingState": {
+      "type": "json",
+      "configurable": true,
+      "private": false,
+      "default": {
+        "marketplace": {
+          "completed": false,
+          "skipped": false
+        }
+      }
     }
   }
 }
