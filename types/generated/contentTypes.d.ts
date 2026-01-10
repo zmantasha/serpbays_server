@@ -3384,6 +3384,14 @@ export interface PluginUsersPermissionsUser
         notifyWalletBillingUpdatesApp: true;
         notifyWalletBillingUpdatesEmail: true;
       }>;
+    onboardingState: Schema.Attribute.JSON &
+      Schema.Attribute.Configurable &
+      Schema.Attribute.DefaultTo<{
+        marketplace: {
+          completed: false;
+          skipped: false;
+        };
+      }>;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{
