@@ -24,7 +24,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         try {
           // Validate and use the reseller code
           const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(data.resellerCode);
-          
+
           if (!codeValidation.valid) {
             return ctx.badRequest(`Invalid reseller code: ${codeValidation.reason}`);
           }
@@ -32,7 +32,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           // Use the code (increment counter)
           await strapi.service('api::reseller-code.reseller-code').useCode(data.resellerCode, user.id);
           resellerCodeData = codeValidation.codeData;
-          
+
         } catch (error) {
           console.error('Error processing reseller code:', error);
           return ctx.badRequest('Failed to validate reseller code');
@@ -148,12 +148,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Optimize order count queries - batch fetch all marketplaces at once
       const websiteUrls = submissions.map(w => w.url);
       const marketplaces = await strapi.db.query('api::marketplace.marketplace').findMany({
-              where: { 
+        where: {
           url: { $in: websiteUrls },
-                publisher_email: user.email
+          publisher_email: user.email
         },
         fields: ['id', 'url']
-            });
+      });
 
       // Create a map of URL to marketplace ID for quick lookup
       const urlToMarketplaceMap = new Map();
@@ -188,46 +188,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const submissionsWithOrders = submissions.map((website) => {
         try {
           const marketplaceId = urlToMarketplaceMap.get(website.url);
-          
+
           if (!marketplaceId) {
-              return {
-                ...website,
-                orders: 0,
-                resellerOrders: 0,
-                originalPublisherOrders: 0
-              };
-            }
-
-          const orders = ordersByMarketplace.get(marketplaceId) || [];
-            const totalOrders = orders.length;
-
-            // Get reseller vs original publisher order split
-            let resellerOrders = 0;
-            let originalPublisherOrders = 0;
-
-            if (website.ownershipTransferredAt) {
-              const transferDate = new Date(website.ownershipTransferredAt);
-              
-              orders.forEach(order => {
-                const orderDate = new Date(order.createdAt);
-                if (orderDate < transferDate) {
-                  resellerOrders++;
-                } else {
-                  originalPublisherOrders++;
-                }
-              });
-            }
-
-            return {
-              ...website,
-              orders: totalOrders,
-              resellerOrders: website.ownershipTransferredAt ? resellerOrders : 0,
-              originalPublisherOrders: website.ownershipTransferredAt ? originalPublisherOrders : 0,
-            marketplaceId: marketplaceId
-            };
-          } catch (error) {
-          console.error(`Error processing orders for website ${website.url}:`, error);
-            // Return website with zero orders if there's an error
             return {
               ...website,
               orders: 0,
@@ -235,6 +197,44 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               originalPublisherOrders: 0
             };
           }
+
+          const orders = ordersByMarketplace.get(marketplaceId) || [];
+          const totalOrders = orders.length;
+
+          // Get reseller vs original publisher order split
+          let resellerOrders = 0;
+          let originalPublisherOrders = 0;
+
+          if (website.ownershipTransferredAt) {
+            const transferDate = new Date(website.ownershipTransferredAt);
+
+            orders.forEach(order => {
+              const orderDate = new Date(order.createdAt);
+              if (orderDate < transferDate) {
+                resellerOrders++;
+              } else {
+                originalPublisherOrders++;
+              }
+            });
+          }
+
+          return {
+            ...website,
+            orders: totalOrders,
+            resellerOrders: website.ownershipTransferredAt ? resellerOrders : 0,
+            originalPublisherOrders: website.ownershipTransferredAt ? originalPublisherOrders : 0,
+            marketplaceId: marketplaceId
+          };
+        } catch (error) {
+          console.error(`Error processing orders for website ${website.url}:`, error);
+          // Return website with zero orders if there's an error
+          return {
+            ...website,
+            orders: 0,
+            resellerOrders: 0,
+            originalPublisherOrders: 0
+          };
+        }
       });
 
       // Calculate pagination metadata
@@ -294,7 +294,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const { id } = ctx.params;
       const { data } = ctx.request.body;
       const user = ctx.state.user;
-      console.log("dataaa",data)
+      console.log("dataaa", data)
       if (!user) {
         return ctx.unauthorized('You must be logged in to update a website.');
       }
@@ -303,18 +303,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
         populate: ['updateRequests']
       });
-      
+
       if (!existing || existing.publisherEmail !== user.email) {
         return ctx.forbidden('You can only update your own website submissions.');
       }
 
       // Filter out relation fields that shouldn't be updated directly
-      const { 
-        originalPublisherId, 
-        currentPublisherId, 
-        claimedBy, 
+      const {
+        originalPublisherId,
+        currentPublisherId,
+        claimedBy,
         originalWebsiteId,
-        ...updateData 
+        ...updateData
       } = data;
 
       const updated = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
@@ -325,8 +325,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       });
 
-      console.log("updated",updated)
-      console.log("existing",existing)
+      console.log("updated", updated)
+      console.log("existing", existing)
 
       // If this is an approved website being updated, queue a marketplace update request instead of updating live data
       if (existing.submissionStatus === 'approved' && existing.marketplaceId) {
@@ -448,12 +448,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Check if user is admin (flexible admin role checking)
       console.log('User role structure:', JSON.stringify(user?.role, null, 2));
       const isAdmin = user && user.role && (
-        user.role.type === 'admin' || 
-        user.role.name === 'Admin' || 
+        user.role.type === 'admin' ||
+        user.role.name === 'Admin' ||
         user.role.name === 'Administrator' ||
         user.email === 'mantasha@wordscloud.in'  // Special admin access
       );
-      
+
       if (!isAdmin) {
         console.log('Access denied. User role:', user?.role);
         return ctx.forbidden('Only administrators can approve websites.');
@@ -461,7 +461,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
       console.log('Found submission:', submission?.url || 'No submission found');
-      
+
       if (!submission) {
         return ctx.notFound('Submission not found');
       }
@@ -491,7 +491,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // TODO: Send approval email notification
       console.log('=== APPROVAL PROCESS COMPLETED ===');
-      
+
       return { data: approved, message: 'Website approved and added to marketplace' };
     } catch (error) {
       console.error('Error approving website:', error);
@@ -509,12 +509,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const user = ctx.state.user;
 
       const isAdmin = user && user.role && (
-        user.role.type === 'admin' || 
-        user.role.name === 'Admin' || 
+        user.role.type === 'admin' ||
+        user.role.name === 'Admin' ||
         user.role.name === 'Administrator' ||
         user.email === 'mantasha@wordscloud.in'
       );
-      
+
       if (!isAdmin) {
         return ctx.forbidden('Only administrators can reject websites.');
       }
@@ -524,7 +524,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-      
+
       if (!submission) {
         return ctx.notFound('Submission not found');
       }
@@ -540,7 +540,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       });
 
       // TODO: Send rejection email notification
-      
+
       return { data: rejected, message: 'Website rejected' };
     } catch (error) {
       console.error('Error rejecting website:', error);
@@ -556,12 +556,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const user = ctx.state.user;
 
       const isAdmin = user && user.role && (
-        user.role.type === 'admin' || 
-        user.role.name === 'Admin' || 
+        user.role.type === 'admin' ||
+        user.role.name === 'Admin' ||
         user.role.name === 'Administrator' ||
         user.email === 'mantasha@wordscloud.in'
       );
-      
+
       if (!isAdmin) {
         return ctx.forbidden('Only administrators can request changes.');
       }
@@ -571,7 +571,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-      
+
       if (!submission) {
         return ctx.notFound('Submission not found');
       }
@@ -587,7 +587,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       });
 
       // TODO: Send change request email notification
-      
+
       return { data: updated, message: 'Change requests sent to publisher' };
     } catch (error) {
       console.error('Error requesting changes:', error);
@@ -602,18 +602,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const user = ctx.state.user;
 
       const isAdmin = user && user.role && (
-        user.role.type === 'admin' || 
-        user.role.name === 'Admin' || 
+        user.role.type === 'admin' ||
+        user.role.name === 'Admin' ||
         user.role.name === 'Administrator' ||
         user.email === 'mantasha@wordscloud.in'
       );
-      
+
       if (!isAdmin) {
         return ctx.forbidden('Only administrators can update review status.');
       }
 
       const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-      
+
       if (!submission) {
         return ctx.notFound('Submission not found');
       }
@@ -626,7 +626,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           reviewNotes: ctx.request.body.reviewNotes || 'Under detailed review'
         }
       });
-      
+
       return { data: updated, message: 'Submission marked as under review' };
     } catch (error) {
       console.error('Error marking under review:', error);
@@ -640,7 +640,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   async createMarketplaceListing(submission) {
     try {
       console.log('Creating marketplace listing for submission:', submission.url);
-      
+
       // Check if marketplace listing already exists
       const existingListing = await strapi.db.query('api::marketplace.marketplace').findMany({
         where: {
@@ -652,7 +652,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const convertBacklinkValidity = (value) => {
         const validityMap = {
           'one_year': '1 Year',
-          'three_years': '3 Years', 
+          'three_years': '3 Years',
           'five_years': '5 Years',
           'lifetime': 'Lifetime'
         };
@@ -663,7 +663,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // IMPORTANT: Price should be null if not provided, never default to 0
       const marketplaceData = {
         url: submission.url,
-        
+
         // ADVERTISER PRICING (what publisher entered - this is what advertisers pay)
         // If price is not provided (null/undefined/0), keep as null
         price: submission.generalGuestPostPrice > 0 ? submission.generalGuestPostPrice : null,
@@ -679,54 +679,54 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
         // PUBLISHER EARNINGS (advertiser price - 20% = 80% of what they entered)
         // Only calculate if price is provided, otherwise null
-        publisher_price: (submission.generalGuestPostPrice > 0 || submission.generalLinkInsertionPrice > 0) 
+        publisher_price: (submission.generalGuestPostPrice > 0 || submission.generalLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-              (submission.generalGuestPostPrice || 0) * 0.8,
-              (submission.generalLinkInsertionPrice || 0) * 0.8
-            )) || 1
+            (submission.generalGuestPostPrice || 0) * 0.8,
+            (submission.generalLinkInsertionPrice || 0) * 0.8
+          )) || 1
           : null,
-        publisher_link_insertion_price: submission.generalLinkInsertionPrice > 0 
-          ? Math.floor(submission.generalLinkInsertionPrice * 0.8) 
+        publisher_link_insertion_price: submission.generalLinkInsertionPrice > 0
+          ? Math.floor(submission.generalLinkInsertionPrice * 0.8)
           : null,
-        
+
         // Publisher earnings for sensitive categories
         publisher_casino_pricing: (submission.casinoGuestPostPrice > 0 || submission.casinoLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-              (submission.casinoGuestPostPrice || 0) * 0.8,
-              (submission.casinoLinkInsertionPrice || 0) * 0.8
-            ))
+            (submission.casinoGuestPostPrice || 0) * 0.8,
+            (submission.casinoLinkInsertionPrice || 0) * 0.8
+          ))
           : null,
         publisher_crypto_pricing: (submission.cryptoGuestPostPrice > 0 || submission.cryptoLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-              (submission.cryptoGuestPostPrice || 0) * 0.8,
-              (submission.cryptoLinkInsertionPrice || 0) * 0.8
-            ))
+            (submission.cryptoGuestPostPrice || 0) * 0.8,
+            (submission.cryptoLinkInsertionPrice || 0) * 0.8
+          ))
           : null,
         publisher_cbd_pricing: (submission.cbdGuestPostPrice > 0 || submission.cbdLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-              (submission.cbdGuestPostPrice || 0) * 0.8,
-              (submission.cbdLinkInsertionPrice || 0) * 0.8
-            ))
+            (submission.cbdGuestPostPrice || 0) * 0.8,
+            (submission.cbdLinkInsertionPrice || 0) * 0.8
+          ))
           : null,
         publisher_dating_pricing: (submission.datingGuestPostPrice > 0 || submission.datingLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-              (submission.datingGuestPostPrice || 0) * 0.8,
-              (submission.datingLinkInsertionPrice || 0) * 0.8
-            ))
+            (submission.datingGuestPostPrice || 0) * 0.8,
+            (submission.datingLinkInsertionPrice || 0) * 0.8
+          ))
           : null,
-        
+
         // Publisher earnings for specific Link Insertion sensitive categories
-        publisher_li_casino_pricing: submission.casinoLinkInsertionPrice > 0 
-          ? Math.floor(submission.casinoLinkInsertionPrice * 0.8) 
+        publisher_li_casino_pricing: submission.casinoLinkInsertionPrice > 0
+          ? Math.floor(submission.casinoLinkInsertionPrice * 0.8)
           : null,
-        publisher_li_crypto_pricing: submission.cryptoLinkInsertionPrice > 0 
-          ? Math.floor(submission.cryptoLinkInsertionPrice * 0.8) 
+        publisher_li_crypto_pricing: submission.cryptoLinkInsertionPrice > 0
+          ? Math.floor(submission.cryptoLinkInsertionPrice * 0.8)
           : null,
-        publisher_li_cbd_pricing: submission.cbdLinkInsertionPrice > 0 
-          ? Math.floor(submission.cbdLinkInsertionPrice * 0.8) 
+        publisher_li_cbd_pricing: submission.cbdLinkInsertionPrice > 0
+          ? Math.floor(submission.cbdLinkInsertionPrice * 0.8)
           : null,
-        publisher_li_dating_pricing: submission.datingLinkInsertionPrice > 0 
-          ? Math.floor(submission.datingLinkInsertionPrice * 0.8) 
+        publisher_li_dating_pricing: submission.datingLinkInsertionPrice > 0
+          ? Math.floor(submission.datingLinkInsertionPrice * 0.8)
           : null,
 
         min_word_count: submission.minWordCount,
@@ -738,7 +738,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
         publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
         publisher_email: submission.publisherEmail,
-        
+
         // Map new content options
         sponsored: submission.sponsored,
         ugc: submission.ugc,
@@ -779,17 +779,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           publisher_price: marketplaceData.publisher_price,
           publisher_casino_pricing: marketplaceData.publisher_casino_pricing
         });
-        
+
         // Ensure publishedAt and approvalStatus are set when updating
         marketplaceData.publishedAt = existingListing[0].publishedAt || new Date();
         marketplaceData.approvalStatus = existingListing[0].approvalStatus || 'approved';
-        
+
         // Update existing listing using database query API for reliability
         const updated = await strapi.db.query('api::marketplace.marketplace').update({
           where: { id: existingListing[0].id },
           data: marketplaceData
         });
-        
+
         console.log('Marketplace updated successfully with new pricing');
         console.log('Updated marketplace data:', {
           id: updated.id,
@@ -799,12 +799,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           publishedAt: updated.publishedAt,
           approvalStatus: updated.approvalStatus
         });
-        
+
         // Verify the update was applied
         const verified = await strapi.db.query('api::marketplace.marketplace').findOne({
           where: { id: existingListing[0].id }
         });
-        
+
         if (verified) {
           console.log('Verification - Marketplace after update:', {
             id: verified.id,
@@ -814,7 +814,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             adv_crypto_pricing: verified.adv_crypto_pricing,
             adv_cbd_pricing: verified.adv_cbd_pricing
           });
-          
+
           if (marketplaceData.price !== undefined && verified.price !== marketplaceData.price) {
             console.warn('⚠️ PRICE MISMATCH after update!', {
               expected: marketplaceData.price,
@@ -823,12 +823,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             });
           }
         }
-        
+
         // Store marketplace ID in publisher-website submission
         await strapi.entityService.update('api::publisher-website.publisher-website', submission.id, {
           data: { marketplaceId: updated.id }
         });
-        
+
         return updated;
       } else {
         console.log('Creating new marketplace listing');
@@ -836,12 +836,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         const created = await strapi.entityService.create('api::marketplace.marketplace', {
           data: marketplaceData
         });
-        
+
         // Store marketplace ID in publisher-website submission
         await strapi.entityService.update('api::publisher-website.publisher-website', submission.id, {
           data: { marketplaceId: created.id }
         });
-        
+
         console.log('Successfully created marketplace listing with ID:', created.id);
         return created;
       }
@@ -922,7 +922,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Check if this submission belongs to the user and is approved
       const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-      
+
       if (!existing || existing.publisherEmail !== user.email) {
         return ctx.forbidden('You can only manage your own website listings.');
       }
@@ -954,9 +954,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      return { 
+      return {
         data: updated,
-        message: 'Listing paused successfully. You will not receive new guest post orders.' 
+        message: 'Listing paused successfully. You will not receive new guest post orders.'
       };
     } catch (error) {
       console.error('Error pausing listing:', error);
@@ -975,7 +975,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Check if this submission belongs to the user and is paused
       const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
-      
+
       if (!existing || existing.publisherEmail !== user.email) {
         return ctx.forbidden('You can only manage your own website listings.');
       }
@@ -1007,9 +1007,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      return { 
+      return {
         data: updated,
-        message: 'Listing resumed successfully. You can now receive new guest post orders.' 
+        message: 'Listing resumed successfully. You can now receive new guest post orders.'
       };
     } catch (error) {
       console.error('Error resuming listing:', error);
@@ -1061,22 +1061,22 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         url: existingWebsite.url, // Same URL is now allowed
         publisherEmail: user.email,
         publisherName: user.username || user.email.split('@')[0],
-        
+
         // Reference to original website
         originalWebsiteId: existingWebsite.id,
         claimedFrom: existingWebsite.publisherEmail,
         claimedAt: new Date().toISOString(),
         ownershipTransferReason: 'claimed_by_owner',
-        
+
         // Set publisher relations correctly for new owner
         originalPublisherId: existingWebsite.currentPublisherId || null,
         currentPublisherId: user.id,
-        
+
         // Verification details - must be GSC for claims
         verificationMethod: 'google-search-console',
         gscVerified: true,
         gscVerifiedAt: new Date().toISOString(),
-        
+
         // Status - submit for admin review (NOT approved yet)
         submissionStatus: 'approval_pending',
         stepCompleted: 4,
@@ -1100,11 +1100,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           claimedBy: user.id,
           claimedAt: new Date().toISOString(),
           newOwnerWebsiteId: newOwnerWebsite.id, // Link to new owner's entry
-          
+
           // Set relations correctly - find the original publisher's user ID
           originalPublisherId: existingWebsite.currentPublisherId || null,
           currentPublisherId: user.id, // New owner becomes current
-          
+
           // Keep ALL original data intact - just change status
           // Original publisher can still see all their historical data
         }
@@ -1118,7 +1118,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       return ctx.send({
         success: true,
         message: 'Ownership claimed successfully! Your website has been submitted for review.',
-        data: { 
+        data: {
           newWebsiteId: newOwnerWebsite.id,
           originalWebsiteId: existingWebsite.id,
           claimedWebsite: newOwnerWebsite
@@ -1140,7 +1140,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   async checkClaimable(ctx) {
     try {
       const { domain } = ctx.params;
-      
+
       if (!domain) {
         return ctx.badRequest('Domain is required');
       }
@@ -1174,14 +1174,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Prioritize active websites over ownership_transferred ones
       const activeWebsites = allWebsites.filter(w => w.submissionStatus !== 'ownership_transferred');
       const website = activeWebsites.length > 0 ? activeWebsites[0] : allWebsites[0];
-      
+
       console.log('🎯 [checkClaimable] Selected website:', {
         id: website.id,
         status: website.submissionStatus,
         verificationMethod: website.verificationMethod,
         isActive: activeWebsites.length > 0
       });
-      
+
       console.log('🔍 [checkClaimable] Website found:', {
         id: website.id,
         url: website.url,
@@ -1189,12 +1189,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         submissionStatus: website.submissionStatus,
         verificationMethod: website.verificationMethod
       });
-      
+
       // Simple logic: If verification method is Google Search Console, don't allow claiming
       const isGSCVerified = website.verificationMethod === 'google-search-console';
-      
+
       console.log('🔍 [checkClaimable] GSC verified:', isGSCVerified);
-      
+
       return ctx.send({
         exists: true,
         claimable: !isGSCVerified, // Can only claim if NOT verified via GSC
@@ -1211,6 +1211,75 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     } catch (error) {
       console.error('Error checking claimable domain:', error);
       return ctx.internalServerError('Error checking domain');
+    }
+  },
+
+  // Delete publisher website
+  async delete(ctx) {
+    const { id } = ctx.params;
+    const user = ctx.state.user;
+
+    try {
+      if (!user) {
+        return ctx.unauthorized('You must be logged in to delete a website.');
+      }
+
+      // Fetch the website with publisher relation
+      const website = await strapi.entityService.findOne(
+        'api::publisher-website.publisher-website',
+        id,
+        {
+          populate: ['currentPublisherId']
+        }
+      );
+
+      if (!website) {
+        return ctx.notFound('Website not found');
+      }
+
+      // Security: Verify ownership
+      if (website.publisherEmail !== user.email) {
+        return ctx.forbidden('You do not have permission to delete this website');
+      }
+
+      // Business Rule: Cannot delete verified websites (Step 2+)
+      if (website.gscVerified || website.addedByReseller) {
+        return ctx.badRequest({
+          error: 'Cannot delete verified website',
+          message: 'This website has been verified and cannot be deleted. Please contact support if you need assistance.'
+        });
+      }
+
+      // Business Rule: Only allow deletion if step 1
+      if (website.stepCompleted > 1) {
+        return ctx.badRequest({
+          error: 'Cannot delete verified website',
+          message: 'This website has completed verification and cannot be deleted.'
+        });
+      }
+
+      // Business Rule: Only allow deletion if status is pending_verification
+      if (website.submissionStatus !== 'pending_verification') {
+        return ctx.badRequest({
+          error: 'Invalid website status',
+          message: 'Only websites in pending verification status can be deleted.'
+        });
+      }
+
+      // All checks passed - proceed with deletion
+      await strapi.entityService.delete(
+        'api::publisher-website.publisher-website',
+        id
+      );
+
+      return ctx.send({
+        success: true,
+        message: 'Website deleted successfully'
+      });
+
+    } catch (error) {
+      strapi.log.error('Error deleting website:', error);
+      return ctx.internalServerError('An error occurred while deleting the website');
     }
   }
 
