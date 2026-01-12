@@ -1494,6 +1494,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     deliveredDate: Schema.Attribute.DateTime;
+    deliveryMessage: Schema.Attribute.Text;
     deliveryProof: Schema.Attribute.String;
     description: Schema.Attribute.Text & Schema.Attribute.Required;
     disputeDate: Schema.Attribute.DateTime;
@@ -3382,6 +3383,14 @@ export interface PluginUsersPermissionsUser
         notifySecurityAlertsEmail: true;
         notifyWalletBillingUpdatesApp: true;
         notifyWalletBillingUpdatesEmail: true;
+      }>;
+    onboardingState: Schema.Attribute.JSON &
+      Schema.Attribute.Configurable &
+      Schema.Attribute.DefaultTo<{
+        marketplace: {
+          completed: false;
+          skipped: false;
+        };
       }>;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &

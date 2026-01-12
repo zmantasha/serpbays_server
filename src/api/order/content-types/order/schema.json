@@ -50,6 +50,10 @@
     "deliveryProof": {
       "type": "string"
     },
+    "deliveryMessage": {
+      "type": "text",
+      "description": "Optional message from publisher when delivering work"
+    },
     "orderDate": {
       "type": "datetime",
       "required": true

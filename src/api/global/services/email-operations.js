@@ -15,7 +15,7 @@
 const { createCoreService } = require('@strapi/strapi').factories;
 
 module.exports = createCoreService('api::global.global', ({ strapi }) => ({
-  
+
   /**
    * Send payment acceptance email to advertiser
    */
@@ -97,6 +97,37 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       console.log(`Order rejection emails sent for order ${order.id}`);
     } catch (error) {
       console.error('Error sending order rejection emails:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Send order acceptance notification email
+   */
+  async sendOrderAcceptanceEmail(order, advertiserEmail, publisherEmail) {
+    try {
+      const advertiserEmailData = {
+        to: advertiserEmail,
+        subject: `Order Accepted - Order #${order.id}`,
+        html: this.generateOrderAcceptanceTemplate(order, 'advertiser'),
+        text: `Order #${order.id} has been accepted by the publisher. Work will begin shortly and you'll be notified upon delivery.`
+      };
+
+      // const publisherEmailData = {
+      //   to: publisherEmail,
+      //   subject: `Order Acceptance Confirmed - Order #${order.id}`,
+      //   html: this.generateOrderAcceptanceTemplate(order, 'publisher'),
+      //   text: `Order #${order.id} acceptance confirmed. The advertiser has been notified.`
+      // };
+
+      await Promise.all([
+        strapi.plugins.email.services.email.send(advertiserEmailData)
+        // strapi.plugins.email.services.email.send(publisherEmailData)
+      ]);
+
+      console.log(`Order acceptance emails sent for order ${order.id}`);
+    } catch (error) {
+      console.error('Error sending order acceptance emails:', error);
       throw error;
     }
   },
@@ -249,26 +280,26 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   async sendWithdrawalStatusEmail(withdrawalRequest, userEmail, status, reason = null) {
     try {
       let subject, template, text;
-      
-      switch(status) {
+
+      switch (status) {
         case 'approved':
           subject = `Withdrawal Approved - Request #${withdrawalRequest.id}`;
           template = this.generateWithdrawalApprovedTemplate(withdrawalRequest);
           text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been approved and will be processed soon.`;
           break;
-          
+
         case 'paid':
           subject = `Payment Completed - Withdrawal #${withdrawalRequest.id}`;
           template = this.generateWithdrawalPaidTemplate(withdrawalRequest);
           text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been completed and paid to your account.`;
           break;
-          
+
         case 'denied':
           subject = `Withdrawal Denied - Request #${withdrawalRequest.id}`;
           template = this.generateWithdrawalDeniedTemplate(withdrawalRequest, reason);
           text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been denied. Reason: ${reason || 'No reason provided'}`;
           break;
-          
+
         default:
           throw new Error('Invalid withdrawal status');
       }
@@ -296,7 +327,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       const commands = [
         'CONFIRM-PAYMENT',
         'ACCEPT',
-        'REJECT', 
+        'REJECT',
         'APPROVE',
         'DISPUTE',
         'DELIVER',
@@ -347,25 +378,25 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       switch (command) {
         case 'CONFIRM-PAYMENT':
           return await this.handlePaymentConfirmation(entityId, user);
-          
+
         case 'ACCEPT':
           return await this.handleOrderAcceptance(entityId, user);
-          
+
         case 'REJECT':
           return await this.handleOrderRejection(entityId, user);
-          
+
         case 'APPROVE':
           return await this.handleOrderApproval(entityId, user);
-          
+
         case 'DISPUTE':
           return await this.handleOrderDispute(entityId, user);
-          
+
         case 'DELIVER':
           return await this.handleOrderDelivery(entityId, user);
-          
+
         case 'COMPLETE':
           return await this.handleOrderCompletion(entityId, user);
-          
+
         default:
           return { success: false, message: 'Unknown command' };
       }
@@ -427,7 +458,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       const result = await orderController.acceptOrder(ctx);
-      
+
       if (result.data) {
         return { success: true, message: `Order #${orderId} accepted successfully`, data: result.data };
       } else {
@@ -457,7 +488,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       const result = await orderController.rejectOrder(ctx);
-      
+
       if (result.data) {
         return { success: true, message: `Order #${orderId} rejected successfully`, data: result.data };
       } else {
@@ -486,7 +517,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       const result = await orderController.completeOrder(ctx);
-      
+
       if (result.data) {
         return { success: true, message: `Order #${orderId} approved and completed successfully`, data: result.data };
       } else {
@@ -516,7 +547,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       const result = await orderController.disputeOrder(ctx);
-      
+
       if (result.data) {
         return { success: true, message: `Order #${orderId} disputed successfully`, data: result.data };
       } else {
@@ -546,7 +577,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       const result = await orderController.deliverOrder(ctx);
-      
+
       if (result.data) {
         return { success: true, message: `Order #${orderId} marked as delivered successfully`, data: result.data };
       } else {
@@ -575,7 +606,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       const result = await orderController.completeOrder(ctx);
-      
+
       if (result.data) {
         return { success: true, message: `Order #${orderId} completed successfully`, data: result.data };
       } else {
@@ -636,7 +667,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
    */
   generateOrderCreationTemplate(order, recipient) {
     const isPublisher = recipient === 'publisher';
-    
+
     return `
       <!DOCTYPE html>
       <html>
@@ -717,7 +748,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
    */
   generateOrderDeliveryTemplate(order, recipient) {
     const isAdvertiser = recipient === 'advertiser';
-    
+
     return `
       <!DOCTYPE html>
       <html>
@@ -870,7 +901,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
    */
   generateOrderRejectionTemplate(order, recipient) {
     const isAdvertiser = recipient === 'advertiser';
-    
+
     return `
       <!DOCTYPE html>
       <html>
@@ -984,10 +1015,130 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             `}
             
             <p style="text-align: center; margin-top: 20px; color: #666;">
-              ${isAdvertiser ? 
-                'Thank you for using SerpBays! We hope to serve you better next time.<br><small>Need help finding the right publisher? Contact support@serpbays.com</small>' : 
-                'Thank you for maintaining quality standards on SerpBays!<br><small>For any questions: support@serpbays.com</small>'
-              }
+              ${isAdvertiser ?
+        'Thank you for using SerpBays! We hope to serve you better next time.<br><small>Need help finding the right publisher? Contact support@serpbays.com</small>' :
+        'Thank you for maintaining quality standards on SerpBays!<br><small>For any questions: support@serpbays.com</small>'
+      }
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  },
+
+  /**
+   * Generate order acceptance email template
+   */
+  generateOrderAcceptanceTemplate(order, recipient) {
+    const isAdvertiser = recipient === 'advertiser';
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
+          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #28a745; }
+          .acceptance-info { background: #d4edda; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }
+          .confirmation-info { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: #28a745; 
+            color: white !important; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            margin: 10px 5px; 
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background-color 0.3s;
+          }
+          .button:hover { background: #1e7e34; }
+          .button.primary { background: #007bff; }
+          .button.primary:hover { background: #0056b3; }
+          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
+          .detail-label { font-weight: bold; color: #495057; }
+          .detail-value { color: #28a745; font-weight: 500; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${isAdvertiser ? '✅ Order Accepted!' : '✅ Order Acceptance Confirmed'}</h1>
+          </div>
+          <div class="content">
+            <h2>Order #${order.id}</h2>
+            
+            <div class="order-details">
+              <h3>📋 Order Details</h3>
+              <div class="details-grid">
+                <div class="detail-item">
+                  <div class="detail-label">Description:</div>
+                  <div class="detail-value">${order.description}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Amount:</div>
+                  <div class="detail-value">$${order.totalAmount}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Website:</div>
+                  <div class="detail-value">${order.website?.url || order.websiteUrl || 'N/A'}</div>
+                </div>
+                <div class="detail-item">
+                  <div class="detail-label">Acceptance Date:</div>
+                  <div class="detail-value">${new Date(order.acceptedDate || Date.now()).toLocaleDateString()}</div>
+                </div>
+              </div>
+            </div>
+            
+            ${isAdvertiser ? `
+              <div class="acceptance-info">
+                <h4>🎉 Great News!</h4>
+                <p><strong>✅ Order Status:</strong> Accepted and in progress</p>
+                <p><strong>👨‍💼 Publisher:</strong> Working on your order</p>
+                <p><strong>⏰ Next Step:</strong> You'll be notified when the work is delivered</p>
+                <p><strong>💰 Payment:</strong> Secured in escrow, will be released upon completion</p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders/order-detail/${order.id}" class="button">
+                    📋 View Order Details
+                  </a>
+                </div>
+                
+                <p style="margin-top: 10px; font-weight: bold; color: #155724;">
+                  The publisher has started working on your order and will deliver it soon!
+                </p>
+              </div>
+            ` : `
+              <div class="confirmation-info">
+                <h4>✅ Acceptance Confirmed</h4>
+                <p><strong>Status:</strong> Order acceptance processed successfully</p>
+                <p><strong>Advertiser Notified:</strong> Yes, via email and notification</p>
+                <p><strong>Payment:</strong> Secured in escrow, awaiting delivery</p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button primary">
+                    📋 View Order Details
+                  </a>
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/my-orders" class="button">
+                    📋 My Orders
+                  </a>
+                </div>
+                
+                <p style="color: #666;">Remember to deliver the work on time to maintain your publisher rating!</p>
+              </div>
+            `}
+            
+            <p style="text-align: center; margin-top: 20px; color: #666;">
+              ${isAdvertiser ?
+        'Thank you for using SerpBays! You\'ll receive an update when the order is delivered.<br><small>Questions? Contact support@serpbays.com</small>' :
+        'Thank you for accepting this order! Keep up the great work!<br><small>For any questions: support@serpbays.com</small>'
+      }
             </p>
           </div>
         </div>
@@ -1002,7 +1153,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   generateRevisionRequestTemplate(order, recipient) {
     const isPublisher = recipient === 'publisher';
     const revisionDeadline = order.revisionDeadline ? new Date(order.revisionDeadline) : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
-    
+
     return `
       <!DOCTYPE html>
       <html>
@@ -1132,10 +1283,10 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             `}
             
             <p style="text-align: center; margin-top: 20px; color: #666;">
-              ${isPublisher ? 
-                'Thank you for maintaining quality standards on SerpBays!<br><small>For technical support: support@serpbays.com</small>' : 
-                'Thank you for using SerpBays! We appreciate your feedback.<br><small>Need help? Contact support@serpbays.com</small>'
-              }
+              ${isPublisher ?
+        'Thank you for maintaining quality standards on SerpBays!<br><small>For technical support: support@serpbays.com</small>' :
+        'Thank you for using SerpBays! We appreciate your feedback.<br><small>Need help? Contact support@serpbays.com</small>'
+      }
             </p>
           </div>
         </div>
@@ -1285,7 +1436,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     const currentDate = new Date();
     const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
     const expectedPaymentDate = new Date(currentDate.getTime() + 3 * 24 * 60 * 60 * 1000);
-    
+
     return `
       <!DOCTYPE html>
       <html>
@@ -1395,7 +1546,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     const currentDate = new Date();
     const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
     const processingTime = Math.ceil((currentDate - requestDate) / (1000 * 60 * 60 * 24)); // Days
-    
+
     return `
       <!DOCTYPE html>
       <html>
@@ -1501,7 +1652,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   generateWithdrawalDeniedTemplate(withdrawalRequest, reason) {
     const currentDate = new Date();
     const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
-    
+
     return `
       <!DOCTYPE html>
       <html>

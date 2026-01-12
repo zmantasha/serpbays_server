@@ -648,14 +648,51 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     }
 
     // Standard Strapi query for non-metric fields
-    const result = await super.find(ctx);
+    // IMPORTANT: We need to fetch WITH private fields (publisher_email) for ownership checks
+    // Then sanitize them ourselves in sanitizePublisherData
+    try {
+      // Get pagination params
+      const page = ctx.query.pagination?.page || 1;
+      const pageSize = ctx.query.pagination?.pageSize || 25;
 
-    // Sanitize publisher data for advertisers
-    if (result && result.data) {
-      result.data = this.sanitizePublisherData(result.data, user);
+      // Use db.query to get ALL fields including private ones
+      const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
+        where: ctx.query.filters,
+        orderBy: ctx.query.sort ? { [ctx.query.sort.split(':')[0]]: ctx.query.sort.split(':')[1] || 'asc' } : { updatedAt: 'desc' },
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+      });
+
+      // Get total count for pagination
+      const total = await strapi.db.query('api::marketplace.marketplace').count({
+        where: ctx.query.filters
+      });
+
+      console.log(`✅ Fetched ${entries.length} entries WITH private fields for ownership check`);
+
+      // Sanitize publisher data (this removes private fields for non-owners)
+      const sanitizedEntries = this.sanitizePublisherData(entries, user);
+
+      return {
+        data: sanitizedEntries,
+        meta: {
+          pagination: {
+            page,
+            pageSize,
+            pageCount: Math.ceil(total / pageSize),
+            total
+          }
+        }
+      };
+    } catch (error) {
+      console.error('❌ Error fetching marketplace data:', error);
+      // Fallback to super.find if db query fails
+      const result = await super.find(ctx);
+      if (result && result.data) {
+        result.data = this.sanitizePublisherData(result.data, user);
+      }
+      return result;
     }
-
-    return result;
   },
 
   async findOne(ctx) {
@@ -665,8 +702,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       console.log('🔍 findOne - User:', user ? { id: user.id, email: user.email, Advertiser: user.Advertiser, Publisher: user.Publisher } : 'No user');
       console.log('🔍 Requesting entry ID:', ctx.params.id);
 
-      // Check if entry exists directly
-      const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id);
+      // Fetch entry WITH private fields for ownership check
+      // Using db.query instead of entityService to bypass private field filtering
+      const entry = await strapi.db.query('api::marketplace.marketplace').findOne({
+        where: { id: ctx.params.id }
+      });
       console.log('🔍 Direct entry lookup:', entry ? 'Found' : 'Not found');
 
       if (!entry) {
