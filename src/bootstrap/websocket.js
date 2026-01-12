@@ -2,16 +2,22 @@
 
 module.exports = ({ strapi }) => {
   // Initialize Socket.IO
-const io = require('socket.io')(strapi.server.httpServer, {
-  // DO NOT force ['websocket']; allow default (websocket+polling)
- cors: {
-      origin:   "https://staging.serpbays.com",
+  const io = require('socket.io')(strapi.server.httpServer, {
+    cors: {
+      origin: [
+        "http://localhost:3000",           // Development
+        "https://staging.serpbays.com",    // Staging
+        "https://serpbays.com",            // Production
+        "https://www.serpbays.com"         // Production with www
+      ],
       methods: ['GET', 'POST'],
       allowedHeaders: ['Authorization'],
-      transports: ['polling'],
       credentials: true,
-    }
-
+    },
+    transports: ['websocket', 'polling'],  // Enable both WebSocket and polling
+    allowEIO3: true,                       // Support Engine.IO v3 clients
+    pingTimeout: 60000,                    // 60 seconds before timeout
+    pingInterval: 25000,                   // Ping every 25 seconds
   });
 
 
@@ -78,8 +84,8 @@ const io = require('socket.io')(strapi.server.httpServer, {
       });
 
       // Send initial connection success
-      socket.emit('connected', { 
-        status: 'success', 
+      socket.emit('connected', {
+        status: 'success',
         userId,
         socketId: socket.id
       });
