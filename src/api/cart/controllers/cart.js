@@ -4,17 +4,17 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
   async getUserCart(ctx) {
     try {
       const userId = ctx.state.user.id;
-      
+
       // Find user's cart
       const cart = await strapi.db.query('api::cart.cart').findOne({
         where: { user: userId },
         populate: ['user'],
       });
-      
+
       if (!cart) {
         return { items: [], formData: {}, sourceProjectId: null };
       }
-      
+
       // Fetch live marketplace data for cart items
       const itemsWithLiveData = [];
       if (cart.items && Array.isArray(cart.items)) {
@@ -24,30 +24,32 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
             const marketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { id: item.marketplaceId || item.website?.id }
             });
-            
+
             if (marketplace) {
               // Create updated item with live marketplace data
               const updatedItem = {
                 id: item.id,
                 quantity: item.quantity || 1,
                 isSensitive: item.isSensitive || false,
-                serviceType:item.serviceType || null,
+                serviceType: item.serviceType || null,
                 specialCategory: item.specialCategory || null,
                 website: {
                   id: marketplace.id,
                   domain: marketplace.url,
                   url: marketplace.url,
                   regularPrice: marketplace.price,
-                  sensitivePrice: item.isSensitive ? 
+                  sensitivePrice: item.isSensitive ?
                     (item.serviceType === 'link_insertion' ?
                       (item.specialCategory === 'CBD' ? marketplace.adv_li_cbd_pricing :
-                       item.specialCategory === 'Casino' ? marketplace.adv_li_casino_pricing :
-                       item.specialCategory === 'Crypto' ? marketplace.adv_li_crypto_pricing :
-                       marketplace.link_insertion_price) :
+                        item.specialCategory === 'Casino' ? marketplace.adv_li_casino_pricing :
+                          item.specialCategory === 'Crypto' ? marketplace.adv_li_crypto_pricing :
+                            item.specialCategory === 'Dating' ? marketplace.adv_li_dating_pricing :
+                              marketplace.link_insertion_price) :
                       (item.specialCategory === 'CBD' ? marketplace.adv_cbd_pricing :
-                       item.specialCategory === 'Casino' ? marketplace.adv_casino_pricing :
-                       item.specialCategory === 'Crypto' ? marketplace.adv_crypto_pricing :
-                       marketplace.price)) : 
+                        item.specialCategory === 'Casino' ? marketplace.adv_casino_pricing :
+                          item.specialCategory === 'Crypto' ? marketplace.adv_crypto_pricing :
+                            item.specialCategory === 'Dating' ? marketplace.adv_dating_pricing :
+                              marketplace.price)) :
                     (item.serviceType === 'link_insertion' ? marketplace.link_insertion_price : marketplace.price),
                   link_insertion_price: marketplace.link_insertion_price || 0,
                   da: marketplace.moz_da,
@@ -60,8 +62,8 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
                   description: marketplace.description || '',
                   category: marketplace.category,
                   traffic: marketplace.ahrefs_traffic,
-                  publisher_writing_price:marketplace.publisher_writing_price,
-                  backlinkType:marketplace.backlink_type
+                  publisher_writing_price: marketplace.publisher_writing_price,
+                  backlinkType: marketplace.backlink_type
                 }
               };
               itemsWithLiveData.push(updatedItem);
@@ -76,7 +78,7 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
           }
         }
       }
-      
+
       return {
         ...cart,
         items: itemsWithLiveData
@@ -90,12 +92,12 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
     try {
       const userId = ctx.state.user.id;
       const { items, formData, sourceProjectId } = ctx.request.body;
-      
+
       // Find existing cart
       let cart = await strapi.db.query('api::cart.cart').findOne({
         where: { user: userId },
       });
-      
+
       if (cart) {
         // Update existing cart
         cart = await strapi.db.query('api::cart.cart').update({
@@ -117,7 +119,7 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
           },
         });
       }
-      
+
       return cart;
     } catch (error) {
       ctx.throw(500, error);
@@ -127,12 +129,12 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
   async clearCart(ctx) {
     try {
       const userId = ctx.state.user.id;
-      
+
       // Find user's cart
       const cart = await strapi.db.query('api::cart.cart').findOne({
         where: { user: userId },
       });
-      
+
       if (cart) {
         // Update cart with empty data
         await strapi.db.query('api::cart.cart').update({
@@ -144,7 +146,7 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
           },
         });
       }
-      
+
       return { items: [], formData: {}, sourceProjectId: null };
     } catch (error) {
       ctx.throw(500, error);
