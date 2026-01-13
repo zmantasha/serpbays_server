@@ -3366,6 +3366,11 @@ export interface PluginUsersPermissionsUser
       'plugin::users-permissions.user'
     > &
       Schema.Attribute.Private;
+    marketplacePreferences: Schema.Attribute.JSON &
+      Schema.Attribute.Configurable &
+      Schema.Attribute.DefaultTo<{
+        showSensitive: false;
+      }>;
     notificationPreferences: Schema.Attribute.JSON &
       Schema.Attribute.Configurable &
       Schema.Attribute.DefaultTo<{

@@ -135,6 +135,7 @@ module.exports = {
                     pincode: user.pincode,
                     vatGstNumber: user.vatGstNumber,
                     notificationPreferences: user.notificationPreferences,
+                    marketplacePreferences: user.marketplacePreferences,
                     Advertiser: user.Advertiser,
                     Publisher: user.Publisher,
                 },
