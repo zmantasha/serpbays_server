@@ -37,7 +37,8 @@ module.exports = (plugin) => {
                 'city',
                 'pincode',
                 'vatGstNumber',
-                'notificationPreferences'
+                'notificationPreferences',
+                'marketplacePreferences'
             ];
 
             // Filter update data to only include allowed fields
