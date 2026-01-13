@@ -411,8 +411,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               // Default required fields
               content: orderData.description || '',
               title: defaultTitle,
-              // Default to 1000 words if not specified
-              minWordCount: 1000,
+              // Use website's min word count or default to 0
+              minWordCount: orderData.websiteMinWordCount || orderData.minWordCount || 0,
               // Important: establish the relationship with the order
               order: order.documentId
             };
