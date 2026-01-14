@@ -64,6 +64,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const {
           content,
           links,
+          anchorText,
           metaDescription,
           keywords,
           url,
@@ -75,7 +76,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Link Insertion specific fields
           serviceType,
           existingPostUrl,
-          anchorText,
+          anchorText: linkInsertionAnchorText,
           landingPageUrl,
           linkInsertionLanguage,
           linkInsertionDescription,
@@ -328,7 +329,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Add Link Insertion fields if this is a Link Insertion order
           serviceType: serviceType || null,
           existingPostUrl: existingPostUrl || null,
-          anchorText: anchorText || null,
+          anchorText: linkInsertionAnchorText || null,
           landingPageUrl: landingPageUrl || null,
           linkInsertionLanguage: linkInsertionLanguage || null,
           linkInsertionDescription: linkInsertionDescription || null
@@ -445,6 +446,17 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               // Try to get links directly from the request body
               contentData.links = formatLinks(ctx.request.body.links);
               console.log('Adding links from request body:', contentData.links);
+            }
+
+            // Add anchorText if provided - ensure it's stored as JSON
+            if (anchorText && (Array.isArray(anchorText) || typeof anchorText === 'string')) {
+              // Format anchor text similar to links
+              contentData.anchorText = formatLinks(anchorText);
+              console.log('Adding anchor text to order content:', contentData.anchorText);
+            } else if (ctx.request.body.anchorText) {
+              // Try to get anchorText directly from the request body
+              contentData.anchorText = formatLinks(ctx.request.body.anchorText);
+              console.log('Adding anchor text from request body:', contentData.anchorText);
             }
 
             // Add metaDescription if provided in the request

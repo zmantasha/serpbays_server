@@ -1438,6 +1438,7 @@ export interface ApiOrderContentOrderContent
     draftAndPublish: false;
   };
   attributes: {
+    anchorText: Schema.Attribute.JSON;
     content: Schema.Attribute.RichText & Schema.Attribute.Required;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
