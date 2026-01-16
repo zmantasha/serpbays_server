@@ -130,37 +130,35 @@ module.exports = {
         filters.similarweb_traffic = { ...(filters.similarweb_traffic || {}), $lte: parseInt(maxSimilarwebTraffic) };
       }
       
-      console.log(`Exporting up to ${limit} records with filters:`, JSON.stringify(filters));
+      
       
       // Debug: Check database values for dofollow_link
-      console.log('Checking database values for dofollow_link');
+      
       const debugEntries = await strapi.entityService.findMany('api::marketplace.marketplace', {
         fields: ['id', 'url', 'dofollow_link'],
         limit: 5,
       });
-      console.log('Sample entries from database:', debugEntries);
+    
       
       // After the debug entries, add a specific query for dofollow_link = 2
-      console.log('Specifically checking for dofollow_link = 2');
+ 
       const dofollow2Entries = await strapi.entityService.findMany('api::marketplace.marketplace', {
         filters: { dofollow_link: 2 },
         fields: ['id', 'url', 'dofollow_link'],
         limit: 5,
       });
-      console.log('Entries with dofollow_link = 2:', dofollow2Entries);
+     
       
       // Debug the exact query by adding this after the filter creation
-      console.log('Full query filters object:', JSON.stringify(filters, null, 2));
-      console.log('Looking for dofollow_link value exactly equal to:', typeof filters.dofollow_link === 'object' ? 
-        filters.dofollow_link.$eq : filters.dofollow_link);
+     
       
       // After the debug entries code but before the main query
-      console.log('Direct query test for dofollow_link = 2');
+
       try {
         const testQuery = await strapi.db.query('api::marketplace.marketplace').findMany({
           where: { dofollow_link: 2 }
         });
-        console.log(`Found ${testQuery.length} records with dofollow_link = 2 in direct query`);
+       
         if (testQuery.length > 0) {
           console.log('Sample record:', testQuery[0]);
         }

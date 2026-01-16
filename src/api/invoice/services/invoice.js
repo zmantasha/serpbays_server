@@ -111,7 +111,6 @@ module.exports = createCoreService('api::invoice.invoice', ({ strapi }) => ({
       //    await strapi.entityService.update('api::invoice.invoice', newInvoice.id, { data: { pdfUrl } });
       //    newInvoice.pdfUrl = pdfUrl; // Update in-memory object as well
 
-      console.log(`Successfully created invoice ${newInvoice.id} for transaction ${transaction.id}`);
       return newInvoice;
 
     } catch (error) {
