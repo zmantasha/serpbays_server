@@ -3313,16 +3313,7 @@ export interface PluginUsersPermissionsUser
   };
   options: {
     draftAndPublish: false;
-    privateAttributes: [
-      'email',
-      'resetPasswordToken',
-      'confirmationToken',
-      'provider',
-      'phoneNumber',
-      'billingAddress',
-      'registrationNumber',
-      'vatGstNumber',
-    ];
+    privateAttributes: ['resetPasswordToken', 'confirmationToken', 'provider'];
     timestamps: true;
   };
   attributes: {

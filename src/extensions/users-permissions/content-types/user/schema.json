@@ -12,14 +12,9 @@
     "draftAndPublish": false,
     "timestamps": true,
     "privateAttributes": [
-      "email",
       "resetPasswordToken",
       "confirmationToken",
-      "provider",
-      "phoneNumber",
-      "billingAddress",
-      "registrationNumber",
-      "vatGstNumber"
+      "provider"
     ]
   },
   "attributes": {
