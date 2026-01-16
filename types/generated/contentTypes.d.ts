@@ -1160,6 +1160,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
       >;
     publication_location: Schema.Attribute.Text;
     publishedAt: Schema.Attribute.DateTime;
+    publisher: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
     publisher_casino_pricing: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {

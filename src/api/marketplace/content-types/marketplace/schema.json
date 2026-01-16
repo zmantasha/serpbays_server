@@ -127,6 +127,12 @@
       "type": "email",
       "required": true
     },
+    "publisher": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Publisher who owns this marketplace listing"
+    },
     "publisher_price": {
       "type": "integer",
       "required": true,
