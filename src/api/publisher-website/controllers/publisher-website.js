@@ -39,11 +39,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // Check if this URL already exists for this publisher
+      // Check if this URL already exists for this publisher using ID relation
       const existingSubmission = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
         filters: {
           url: data.url,
-          publisherEmail: user.email
+          currentPublisherId: user.id
         }
       });
 
@@ -109,9 +109,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const pageSize = Math.min(parseInt(pagination.pageSize) || 20, 100); // Max 100 per page
       const offset = (page - 1) * pageSize;
 
-      // Build filters
+      // Build filters using immutable user ID relation (PRIMARY) or email (FALLBACK)
       const filters = {
-        publisherEmail: user.email
+        $or: [
+          { currentPublisherId: user.id },
+          { publisherEmail: user.email }
+        ]
       };
 
       // Add search filter if provided
@@ -299,12 +302,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to update a website.');
       }
 
-      // Check if this submission belongs to the user
+      // Check if this submission belongs to the user (using ID relation if possible, fallback to email for legacy)
       const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: ['updateRequests']
+        populate: ['updateRequests', 'currentPublisherId']
       });
 
-      if (!existing || existing.publisherEmail !== user.email) {
+      // Verification logic: prefer ID check, fallback to email
+      const isOwner = (existing.currentPublisherId && existing.currentPublisherId.id === user.id) ||
+        (existing.publisherEmail === user.email);
+
+      if (!existing || !isOwner) {
         return ctx.forbidden('You can only update your own website submissions.');
       }
 
@@ -459,7 +466,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.forbidden('Only administrators can approve websites.');
       }
 
-      const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId']
+      });
       console.log('Found submission:', submission?.url || 'No submission found');
 
       if (!submission) {
@@ -738,6 +747,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
         publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
         publisher_email: submission.publisherEmail,
+        // Map the immutable User ID relation
+        publisher: submission.currentPublisherId ? submission.currentPublisherId.id : null,
 
         // Map new content options
         sponsored: submission.sponsored,
