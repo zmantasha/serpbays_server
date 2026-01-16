@@ -109,9 +109,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const pageSize = Math.min(parseInt(pagination.pageSize) || 20, 100); // Max 100 per page
       const offset = (page - 1) * pageSize;
 
-      // Build filters using immutable immutable user ID relation
+      // Build filters using immutable user ID relation (PRIMARY) or email (FALLBACK)
       const filters = {
-        currentPublisherId: user.id
+        $or: [
+          { currentPublisherId: user.id },
+          { publisherEmail: user.email }
+        ]
       };
 
       // Add search filter if provided
