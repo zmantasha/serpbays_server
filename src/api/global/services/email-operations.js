@@ -29,7 +29,6 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       const emailResult = await strapi.plugins.email.services.email.send(emailData);
-      console.log(`Payment acceptance email sent for order ${orderId}`);
       return emailResult;
     } catch (error) {
       console.error('Error sending payment acceptance email:', error);
