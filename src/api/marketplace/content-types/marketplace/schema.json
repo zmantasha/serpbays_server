@@ -94,7 +94,7 @@
       "required": true
     },
     "ahrefs_dr": {
-      "type": "integer",
+      "type": "decimal",
       "min": 0,
       "max": 100
     },
@@ -111,7 +111,7 @@
       "min": 0
     },
     "moz_da": {
-      "type": "integer",
+      "type": "decimal",
       "max": 100,
       "min": 0
     },
@@ -150,7 +150,7 @@
       "description": "The price the publisher charges for writing content (outsourced content orders)"
     },
     "semrush_authority_score": {
-      "type": "integer",
+      "type": "decimal",
       "min": 0,
       "max": 100
     },
@@ -159,7 +159,7 @@
       "min": 0
     },
     "spam_score": {
-      "type": "integer",
+      "type": "decimal",
       "min": 0,
       "max": 100
     },

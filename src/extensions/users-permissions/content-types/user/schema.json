@@ -12,14 +12,9 @@
     "draftAndPublish": false,
     "timestamps": true,
     "privateAttributes": [
-      "email",
       "resetPasswordToken",
       "confirmationToken",
-      "provider",
-      "phoneNumber",
-      "billingAddress",
-      "registrationNumber",
-      "vatGstNumber"
+      "provider"
     ]
   },
   "attributes": {
@@ -206,6 +201,25 @@
       "relation": "oneToMany",
       "target": "api::saved-filter.saved-filter",
       "mappedBy": "users_permissions_user"
+    },
+    "onboardingState": {
+      "type": "json",
+      "configurable": true,
+      "private": false,
+      "default": {
+        "marketplace": {
+          "completed": false,
+          "skipped": false
+        }
+      }
+    },
+    "marketplacePreferences": {
+      "type": "json",
+      "configurable": true,
+      "private": false,
+      "default": {
+        "showSensitive": false
+      }
     }
   }
 }

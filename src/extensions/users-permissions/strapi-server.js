@@ -153,8 +153,8 @@ module.exports = (plugin) => {
     }
   };
 
-  // Add the custom routes
-  plugin.routes['content-api'].routes.push({
+  // Add update profile route (PUT /users/me)
+  plugin.routes['content-api'].routes.unshift({
     method: 'PUT',
     path: '/users/me',
     handler: 'user.updateMe',
@@ -164,7 +164,8 @@ module.exports = (plugin) => {
     }
   });
 
-  plugin.routes['content-api'].routes.push({
+  // Add role switching route
+  plugin.routes['content-api'].routes.unshift({
     method: 'POST',
     path: '/users/switch-role',
     handler: 'user.switchRole',

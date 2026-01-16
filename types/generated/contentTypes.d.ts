@@ -1037,7 +1037,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
-    ahrefs_dr: Schema.Attribute.Integer &
+    ahrefs_dr: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1135,7 +1135,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
-    moz_da: Schema.Attribute.Integer &
+    moz_da: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1256,7 +1256,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
       >;
     sample_links: Schema.Attribute.Text;
     sample_post: Schema.Attribute.Text;
-    semrush_authority_score: Schema.Attribute.Integer &
+    semrush_authority_score: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1282,7 +1282,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
         },
         number
       >;
-    spam_score: Schema.Attribute.Integer &
+    spam_score: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
           max: 100;
@@ -1438,6 +1438,7 @@ export interface ApiOrderContentOrderContent
     draftAndPublish: false;
   };
   attributes: {
+    anchorText: Schema.Attribute.JSON;
     content: Schema.Attribute.RichText & Schema.Attribute.Required;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
@@ -1494,6 +1495,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     deliveredDate: Schema.Attribute.DateTime;
+    deliveryMessage: Schema.Attribute.Text;
     deliveryProof: Schema.Attribute.String;
     description: Schema.Attribute.Text & Schema.Attribute.Required;
     disputeDate: Schema.Attribute.DateTime;
@@ -3311,16 +3313,7 @@ export interface PluginUsersPermissionsUser
   };
   options: {
     draftAndPublish: false;
-    privateAttributes: [
-      'email',
-      'resetPasswordToken',
-      'confirmationToken',
-      'provider',
-      'phoneNumber',
-      'billingAddress',
-      'registrationNumber',
-      'vatGstNumber',
-    ];
+    privateAttributes: ['resetPasswordToken', 'confirmationToken', 'provider'];
     timestamps: true;
   };
   attributes: {
@@ -3365,6 +3358,11 @@ export interface PluginUsersPermissionsUser
       'plugin::users-permissions.user'
     > &
       Schema.Attribute.Private;
+    marketplacePreferences: Schema.Attribute.JSON &
+      Schema.Attribute.Configurable &
+      Schema.Attribute.DefaultTo<{
+        showSensitive: false;
+      }>;
     notificationPreferences: Schema.Attribute.JSON &
       Schema.Attribute.Configurable &
       Schema.Attribute.DefaultTo<{
@@ -3382,6 +3380,14 @@ export interface PluginUsersPermissionsUser
         notifySecurityAlertsEmail: true;
         notifyWalletBillingUpdatesApp: true;
         notifyWalletBillingUpdatesEmail: true;
+      }>;
+    onboardingState: Schema.Attribute.JSON &
+      Schema.Attribute.Configurable &
+      Schema.Attribute.DefaultTo<{
+        marketplace: {
+          completed: false;
+          skipped: false;
+        };
       }>;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &

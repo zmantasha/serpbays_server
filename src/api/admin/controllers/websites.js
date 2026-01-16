@@ -71,6 +71,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         sortDirection = 'asc',
         search = '',
         status = '',
+        metricsStatus = '', // Metrics status filter (All/Ready/Live/Missing)
         userId = '',
         category = '',
         daFilter = '',
@@ -174,11 +175,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           addAndFilter({
             $and: [
               { moz_da: { $notNull: true } },
-              { moz_da: { $gt: 0 } },
+              { moz_da: { $gte: 0 } },
               { ahrefs_dr: { $notNull: true } },
-              { ahrefs_dr: { $gt: 0 } },
+              { ahrefs_dr: { $gte: 0 } },
               { ahrefs_traffic: { $notNull: true } },
-              { ahrefs_traffic: { $gt: 0 } }
+              { ahrefs_traffic: { $gte: 0 } }
             ]
           });
         } else {
@@ -336,6 +337,54 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
+      // Metrics status filter - filter by metrics availability and approval status
+      if (metricsStatus && metricsStatus !== 'All') {
+        console.log(`[ADMIN WEBSITES] Applying metrics status filter: ${metricsStatus}`);
+
+        if (metricsStatus === 'Ready') {
+          // "Ready (Has Metrics)" = has metrics AND NOT approved (pending with complete metrics)
+          // Status must be approval_pending (ready for approval)
+          filters.submissionStatus = 'approval_pending';
+
+          // Must have at least ONE valid metric (DA >= 0 OR DR >= 0 OR Traffic >= 0)
+          addAndFilter({
+            $or: [
+              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gte: 0 } }] },
+              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gte: 0 } }] },
+              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gte: 0 } }] }
+            ]
+          });
+          console.log('[ADMIN WEBSITES] Applied "Ready" filter: approval_pending + has metrics (including 0)');
+
+        } else if (metricsStatus === 'Live') {
+          // "Live (On Marketplace)" = has metrics AND approved (live on marketplace)
+          // Status must be approved
+          filters.submissionStatus = 'approved';
+
+          // Must have at least ONE valid metric (DA >= 0 OR DR >= 0 OR Traffic >= 0)
+          addAndFilter({
+            $or: [
+              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gte: 0 } }] },
+              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gte: 0 } }] },
+              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gte: 0 } }] }
+            ]
+          });
+          console.log('[ADMIN WEBSITES] Applied "Live" filter: approved + has metrics (including 0)');
+
+        } else if (metricsStatus === 'Missing') {
+          // "Metrics Missing" = lacks all metrics (DA, DR, and Traffic are all null)
+          // All three metrics must be null (0 is considered a valid value)
+          addAndFilter({
+            $and: [
+              { moz_da: { $null: true } },
+              { ahrefs_dr: { $null: true } },
+              { ahrefs_traffic: { $null: true } }
+            ]
+          });
+          console.log('[ADMIN WEBSITES] Applied "Missing" filter: all metrics are null (0 is valid)');
+        }
+      }
+
       // Only log filters in development mode
       if (process.env.NODE_ENV === 'development') {
         console.log('[ADMIN WEBSITES FILTERS]', JSON.stringify(filters, null, 2));
@@ -415,19 +464,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         },
         // SEO Metrics
         metrics: {
-          da: website.moz_da || 0,
-          dr: website.ahrefs_dr || 0,
-          traffic: website.ahrefs_traffic || 0,
-          backlinks: website.ahrefs_referring_domain || 0,
-          organicKeywords: website.ahrefs_keywords || 0,
+          da: website.moz_da ?? null,
+          dr: website.ahrefs_dr ?? null,
+          traffic: website.ahrefs_traffic ?? null,
+          backlinks: website.ahrefs_referring_domain ?? null,
+          organicKeywords: website.ahrefs_keywords ?? null,
           pageSpeed: website.pageSpeed || 'Normal',
           mobileFriendly: website.mobileFriendly || true,
           ssl: website.ssl || true,
           // Additional metrics fields
-          ahrefs_rank: website.ahrefs_rank || 0,
-          semrush_authority_score: website.semrush_authority_score || 0,
-          moz_spam_score: website.moz_spam_score || 0,
-          semrush_traffic: website.semrush_traffic || 0
+          ahrefs_rank: website.ahrefs_rank ?? null,
+          semrush_authority_score: website.semrush_authority_score ?? null,
+          moz_spam_score: website.moz_spam_score ?? null,
+          semrush_traffic: website.semrush_traffic ?? null
         },
         // Pricing information - return null for empty prices instead of 0
         pricing: {
@@ -626,18 +675,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         resellerCode: website.resellerCode,
         addedByReseller: website.addedByReseller || false,
         // SEO Metrics (placeholder for future API integration)
-        ahrefs_dr: website.ahrefs_dr || null,
-        ahrefs_traffic: website.ahrefs_traffic || null,
-        ahrefs_rank: website.ahrefs_rank || null,
-        moz_da: website.moz_da || null,
-        semrush_authority_score: website.semrush_authority_score || null,
-        semrush_traffic: website.semrush_traffic || null,
-        moz_spam_score: website.moz_spam_score || null,
-        ahrefs_referring_domain: website.ahrefs_referring_domain || null,
-        ahrefs_keywords: website.ahrefs_keywords || null,
-        metrics_last_updated: website.metrics_last_updated || null,
-        metrics_update_count: website.metrics_update_count || 0,
-        metrics_update_method: website.metrics_update_method || null
+        ahrefs_dr: website.ahrefs_dr ?? null,
+        ahrefs_traffic: website.ahrefs_traffic ?? null,
+        ahrefs_rank: website.ahrefs_rank ?? null,
+        moz_da: website.moz_da ?? null,
+        semrush_authority_score: website.semrush_authority_score ?? null,
+        semrush_traffic: website.semrush_traffic ?? null,
+        moz_spam_score: website.moz_spam_score ?? null,
+        ahrefs_referring_domain: website.ahrefs_referring_domain ?? null,
+        ahrefs_keywords: website.ahrefs_keywords ?? null,
+        metrics_last_updated: website.metrics_last_updated ?? null,
+        metrics_update_count: website.metrics_update_count ?? 0,
+        metrics_update_method: website.metrics_update_method ?? null
       };
 
       console.log('[ADMIN WEBSITE FIND ONE]', {
@@ -1110,9 +1159,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating website ${id}`, updateData);
 
+      // Get the website before update to preserve required private fields
+      const websiteBeforeUpdate = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId', 'originalPublisherId']
+      });
+
+      if (!websiteBeforeUpdate) {
+        return ctx.notFound('Website not found');
+      }
+
       // Map frontend field names to database field names
       const mappedData = {
         url: updateData.url,
+        // Preserve publisherEmail - it's required but private (sanitized from responses)
+        publisherEmail: websiteBeforeUpdate.publisherEmail,
         publisherName: updateData.publisherName,
         description: updateData.description,
         submissionStatus: updateData.submissionStatus,
@@ -1154,21 +1214,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         datingLinkInsertionPrice: updateData.datingLinkInsertionPrice,
         samplePosts: updateData.samplePosts,
         guidelines: updateData.guidelines,
-        description: updateData.description,
         publicationLocation: updateData.publicationLocation
       };
 
-      // Remove undefined values
+      // Remove undefined, null, and invalid values
       Object.keys(mappedData).forEach(key => {
-        if (mappedData[key] === undefined) {
+        const value = mappedData[key];
+        // Remove undefined or null
+        if (value === undefined || value === null) {
+          delete mappedData[key];
+        }
+        // Remove 0 for ahrefs_rank (schema has min: 1)
+        if (key === 'ahrefs_rank' && value === 0) {
           delete mappedData[key];
         }
       });
 
       console.log(`[ADMIN ACTION] Mapped update data:`, mappedData);
 
-      // Get the website before update to check if it's approved
-      const websiteBeforeUpdate = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      // Check if website was approved before update (already fetched above)
       const wasApproved = websiteBeforeUpdate?.submissionStatus === 'approved';
       const marketplaceId = websiteBeforeUpdate?.marketplaceId;
 
@@ -1397,9 +1461,72 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating metrics for website ${id}`, metricsData);
 
+      // Validate metrics data
+      const validationErrors = [];
+
+      // Helper function to validate numeric field
+      const validateNumericField = (fieldName, value, min, max) => {
+        if (value !== undefined && value !== null && value !== '') {
+          const num = parseFloat(value);
+          if (isNaN(num)) {
+            validationErrors.push(`${fieldName} must be a valid number`);
+          } else if (min !== undefined && num < min) {
+            validationErrors.push(`${fieldName} must be ${min} or greater`);
+          } else if (max !== undefined && num > max) {
+            validationErrors.push(`${fieldName} cannot exceed ${max}`);
+          }
+        }
+      };
+
+      // Validate each metric field
+      validateNumericField('ahrefs_dr', metricsData.ahrefs_dr, 0, 100);
+      validateNumericField('moz_da', metricsData.moz_da, 0, 100);
+      validateNumericField('moz_spam_score', metricsData.moz_spam_score, 0, 100);
+      validateNumericField('semrush_authority_score', metricsData.semrush_authority_score, 0, 100);
+      validateNumericField('ahrefs_rank', metricsData.ahrefs_rank, 1, undefined); // Rank must be at least 1
+      validateNumericField('ahrefs_traffic', metricsData.ahrefs_traffic, 0, undefined);
+      validateNumericField('semrush_traffic', metricsData.semrush_traffic, 0, undefined);
+      validateNumericField('ahrefs_referring_domain', metricsData.ahrefs_referring_domain, 0, undefined);
+      validateNumericField('ahrefs_keywords', metricsData.ahrefs_keywords, 0, undefined);
+
+      // If there are validation errors, return bad request
+      if (validationErrors.length > 0) {
+        console.log(`[ADMIN ACTION] Validation errors for metrics update:`, validationErrors);
+        return ctx.badRequest('Validation failed', {
+          errors: validationErrors
+        });
+      }
+
+      // Round decimal values to appropriate precision to prevent UI layout issues
+      // Percentage-based scores (0-100): 1 decimal place
+      // Traffic/counts: whole numbers
+      const roundMetric = (value, decimalPlaces = 1) => {
+        if (value === null || value === undefined || value === '') return value;
+        const num = parseFloat(value);
+        if (isNaN(num)) return value;
+        const multiplier = Math.pow(10, decimalPlaces);
+        return Math.round(num * multiplier) / multiplier;
+      };
+
+      // Apply precision limits
+      const processedMetrics = {
+        // Percentage scores (0-100): 1 decimal place
+        ahrefs_dr: roundMetric(metricsData.ahrefs_dr, 1),
+        moz_da: roundMetric(metricsData.moz_da, 1),
+        moz_spam_score: roundMetric(metricsData.moz_spam_score, 1),
+        semrush_authority_score: roundMetric(metricsData.semrush_authority_score, 1),
+
+        // Traffic and counts: whole numbers (0 decimal places)
+        ahrefs_traffic: roundMetric(metricsData.ahrefs_traffic, 0),
+        semrush_traffic: roundMetric(metricsData.semrush_traffic, 0),
+        ahrefs_referring_domain: roundMetric(metricsData.ahrefs_referring_domain, 0),
+        ahrefs_keywords: roundMetric(metricsData.ahrefs_keywords, 0),
+        ahrefs_rank: roundMetric(metricsData.ahrefs_rank, 0)
+      };
+
       // Add metrics update tracking
       const updateData = {
-        ...metricsData,
+        ...processedMetrics,
         metrics_last_updated: new Date(),
         metrics_update_count: (metricsData.metrics_update_count || 0) + 1,
         metrics_update_method: 'manual'

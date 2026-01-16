@@ -64,6 +64,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const {
           content,
           links,
+          anchorText,
           metaDescription,
           keywords,
           url,
@@ -75,7 +76,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Link Insertion specific fields
           serviceType,
           existingPostUrl,
-          anchorText,
+          anchorText: linkInsertionAnchorText,
           landingPageUrl,
           linkInsertionLanguage,
           linkInsertionDescription,
@@ -328,7 +329,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Add Link Insertion fields if this is a Link Insertion order
           serviceType: serviceType || null,
           existingPostUrl: existingPostUrl || null,
-          anchorText: anchorText || null,
+          anchorText: linkInsertionAnchorText || null,
           landingPageUrl: landingPageUrl || null,
           linkInsertionLanguage: linkInsertionLanguage || null,
           linkInsertionDescription: linkInsertionDescription || null
@@ -411,8 +412,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               // Default required fields
               content: orderData.description || '',
               title: defaultTitle,
-              // Default to 1000 words if not specified
-              minWordCount: 1000,
+              // Use website's min word count or default to 0
+              minWordCount: orderData.websiteMinWordCount || orderData.minWordCount || 0,
               // Important: establish the relationship with the order
               order: order.documentId
             };
@@ -445,6 +446,17 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               // Try to get links directly from the request body
               contentData.links = formatLinks(ctx.request.body.links);
               console.log('Adding links from request body:', contentData.links);
+            }
+
+            // Add anchorText if provided - ensure it's stored as JSON
+            if (anchorText && (Array.isArray(anchorText) || typeof anchorText === 'string')) {
+              // Format anchor text similar to links
+              contentData.anchorText = formatLinks(anchorText);
+              console.log('Adding anchor text to order content:', contentData.anchorText);
+            } else if (ctx.request.body.anchorText) {
+              // Try to get anchorText directly from the request body
+              contentData.anchorText = formatLinks(ctx.request.body.anchorText);
+              console.log('Adding anchor text from request body:', contentData.anchorText);
             }
 
             // Add metaDescription if provided in the request
@@ -908,7 +920,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 }
               ]
             },
-            populate: ['website', 'advertiser', 'outsourcedContent'],
+            populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
             sort: { orderDate: 'desc' }
           });
         }
@@ -944,7 +956,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                   orderDate: { $lt: transferredWebsite.ownershipTransferredAt },
                   advertiser: { id: { $ne: user.id } }
                 },
-                populate: ['website', 'advertiser', 'outsourcedContent'],
+                populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
                 sort: { orderDate: 'desc' }
               });
 
@@ -1020,6 +1032,32 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         } catch (notificationError) {
           console.error('Failed to create order accepted notification:', notificationError);
           // Don't fail the order acceptance if notification fails
+        }
+
+        // Send email notification for order acceptance
+        try {
+          // Get the updated order with full data for email
+          const fullOrder = await strapi.entityService.findOne('api::order.order', id, {
+            populate: ['website', 'advertiser', 'publisher']
+          });
+
+          // Get advertiser user data
+          const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: updatedOrder.advertiser?.id || updatedOrder.advertiser }
+          });
+
+          if (advertiserUser && advertiserUser.email) {
+            const emailService = strapi.service('api::global.email-operations');
+            await emailService.sendOrderAcceptanceEmail(
+              fullOrder,
+              advertiserUser.email,
+              user.email
+            );
+            console.log(`Order acceptance emails sent for order ${id}`);
+          }
+        } catch (emailError) {
+          console.error('Failed to send order acceptance emails:', emailError);
+          // Don't fail the acceptance if email fails
         }
 
         return {
@@ -1374,6 +1412,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             orderStatus: 'delivered',
             deliveredDate: new Date(),
             deliveryProof: body.proof || '',
+            deliveryMessage: body.message || '',
             // Only update revision status if it was in progress
             ...(order.revisionStatus === 'in_progress' && {
               revisionStatus: 'completed'
@@ -1393,13 +1432,25 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
           // Send email notification for order delivery
           try {
-            const emailService = strapi.service('api::global.email-operations');
-            await emailService.sendOrderDeliveryEmail(
-              updatedOrder,
-              order.advertiser.email,
-              user.email
-            );
-            console.log(`Order delivery emails sent for order ${order.id}`);
+            // Get the updated order with full data for email
+            const fullOrder = await strapi.entityService.findOne('api::order.order', id, {
+              populate: ['website', 'advertiser', 'publisher']
+            });
+
+            // Get advertiser user data
+            const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+              where: { id: order.advertiser?.id || order.advertiser }
+            });
+
+            if (advertiserUser && advertiserUser.email) {
+              const emailService = strapi.service('api::global.email-operations');
+              await emailService.sendOrderDeliveryEmail(
+                fullOrder,
+                advertiserUser.email,
+                user.email
+              );
+              console.log(`Order delivery emails sent for order ${id}`);
+            }
           } catch (emailError) {
             console.error('Failed to send order delivery emails:', emailError);
             // Don't fail delivery if email fails
@@ -1990,6 +2041,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Add delivery proof if provided
         if (deliveryProof) {
           updateData.deliveryProof = deliveryProof;
+        }
+
+        // Add delivery message if provided
+        if (message) {
+          updateData.deliveryMessage = message;
         }
 
         // Update order revision status and order status
