@@ -751,8 +751,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         description: submission.description, // Website description
         publication_location: submission.publicationLocation, // Where article will be published
         backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
-        publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
-        publisher_email: submission.publisherEmail,
+        // Use CURRENT email/name from user relation (always up-to-date), fallback to static fields for legacy records
+        publisher_name: submission.currentPublisherId?.username || submission.publisherName || submission.publisherEmail?.split('@')[0],
+        publisher_email: submission.currentPublisherId?.email || submission.publisherEmail,
         // Map the immutable User ID relation
         publisher: submission.currentPublisherId ? submission.currentPublisherId.id : null,
 

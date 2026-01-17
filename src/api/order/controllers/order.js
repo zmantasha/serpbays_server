@@ -214,8 +214,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             backlink_validity: marketplace.backlink_validity,
             category: marketplace.category,
             other_category: marketplace.other_category,
-            publisher_name: marketplace.publisher_name,
-            publisher_email: marketplace.publisher_email,
+            publisher_name: marketplace.publisher?.username || marketplace.publisher_name,
+            publisher_email: marketplace.publisher?.email || marketplace.publisher_email,
             publisher_price: marketplace.publisher_price,
             tat: marketplace.tat,
             dofollow_link: marketplace.dofollow_link,
@@ -259,8 +259,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           orderData.websiteBacklinkType = marketplace.backlink_type;
           orderData.websiteBacklinkValidity = marketplace.backlink_validity;
           orderData.websiteCategory = marketplace.category;
-          orderData.websitePublisherName = marketplace.publisher_name;
-          orderData.websitePublisherEmail = marketplace.publisher_email;
+          orderData.websitePublisherName = marketplace.publisher?.username || marketplace.publisher_name;
+          orderData.websitePublisherEmail = marketplace.publisher?.email || marketplace.publisher_email;
           orderData.websitePublisherPrice = marketplace.publisher_price;
           orderData.websiteTat = marketplace.tat * 24; // Convert days to hours for frontend calculation
           orderData.websiteDofollowLink = marketplace.dofollow_link;
@@ -537,9 +537,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Create notification for publisher (website owner) using snapshot data
         // NOTE: We already sent the internal notification above. Sending email here.
         try {
-          // Use publisher email from marketplace snapshot if available
+          // Use CURRENT publisher email from relation (always up-to-date), fallback to static field for legacy entries
           let publisherEmail = null;
-          if (marketplace && marketplace.publisher_email) {
+          if (marketplace && marketplace.publisher && marketplace.publisher.email) {
+            publisherEmail = marketplace.publisher.email;
+          } else if (marketplace && marketplace.publisher_email) {
             publisherEmail = marketplace.publisher_email;
           }
 

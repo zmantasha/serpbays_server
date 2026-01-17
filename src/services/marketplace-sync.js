@@ -34,7 +34,8 @@ module.exports = ({ strapi }) => ({
             // Fetch website
             const website = await strapi.entityService.findOne(
                 'api::publisher-website.publisher-website',
-                websiteId
+                websiteId,
+                { populate: ['currentPublisherId'] }
             );
 
             if (!website) {
@@ -334,8 +335,9 @@ module.exports = ({ strapi }) => ({
             language: website.languages,
 
             // Publisher
-            publisher_name: website.publisherName,
-            publisher_email: website.publisherEmail,
+            // Use CURRENT email/name from user relation (always up-to-date), fallback to static fields for legacy records
+            publisher_name: website.currentPublisherId?.username || website.publisherName,
+            publisher_email: website.currentPublisherId?.email || website.publisherEmail,
 
             // GSC
             gsc_verified: website.gscVerified || false,

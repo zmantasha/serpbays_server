@@ -223,10 +223,57 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating user ${id}`);
 
+      // Get current user email before update (for cascading email changes)
+      let oldEmail = null;
+      if (updateData.email) {
+        const existingUser = await strapi.entityService.findOne('plugin::users-permissions.user', id);
+        oldEmail = existingUser?.email;
+      }
+
       const updatedUser = await strapi.entityService.update('plugin::users-permissions.user', id, {
         data: updateData,
         populate: ['role', 'user_wallet']
       });
+
+      // If email changed, cascade update to all publisher websites
+      if (updateData.email && oldEmail && oldEmail !== updateData.email) {
+        console.log(`[ADMIN ACTION] Email changed from ${oldEmail} to ${updateData.email} - cascading to publisher websites`);
+
+        // Update publisher_email on marketplace listings owned by this user (by publisher relation)
+        const updatedListings = await strapi.db.query('api::marketplace.marketplace').updateMany({
+          where: { publisher: id },
+          data: { publisher_email: updateData.email },
+        });
+        console.log(`[ADMIN ACTION] Updated publisher_email on ${updatedListings?.count || 0} marketplace listings (by publisher relation)`);
+
+        // Also update legacy marketplace listings that match by old email (no publisher relation set)
+        const updatedLegacyListings = await strapi.db.query('api::marketplace.marketplace').updateMany({
+          where: { publisher_email: oldEmail },
+          data: { publisher_email: updateData.email },
+        });
+        console.log(`[ADMIN ACTION] Updated publisher_email on ${updatedLegacyListings?.count || 0} marketplace listings (by email match)`);
+
+        // Update publisher-website entries owned by this user (by currentPublisherId relation)
+        const updatedWebsites = await strapi.db.query('api::publisher-website.publisher-website').updateMany({
+          where: { currentPublisherId: id },
+          data: { publisherEmail: updateData.email },
+        });
+        console.log(`[ADMIN ACTION] Updated publisherEmail on ${updatedWebsites?.count || 0} publisher-websites (by currentPublisherId relation)`);
+
+        // Also update publisher-websites by originalPublisherId
+        const updatedOriginalWebsites = await strapi.db.query('api::publisher-website.publisher-website').updateMany({
+          where: { originalPublisherId: id },
+          data: { publisherEmail: updateData.email },
+        });
+        console.log(`[ADMIN ACTION] Updated publisherEmail on ${updatedOriginalWebsites?.count || 0} publisher-websites (by originalPublisherId relation)`);
+
+        // Also update any publisher-websites that match by old email (for legacy data)
+        const updatedLegacyWebsites = await strapi.db.query('api::publisher-website.publisher-website').updateMany({
+          where: { publisherEmail: oldEmail },
+          data: { publisherEmail: updateData.email },
+        });
+        console.log(`[ADMIN ACTION] Updated publisherEmail on ${updatedLegacyWebsites?.count || 0} publisher-websites (by email match)`);
+      }
 
       ctx.send({
         data: updatedUser

@@ -59,10 +59,61 @@ module.exports = {
                     publisherProvided: publisher !== undefined,
                 });
 
+                const oldEmail = user.email;
+
                 user = await strapi.query('plugin::users-permissions.user').update({
                     where: { id: user.id },
                     data: updateData,
                 });
+
+                // DEBUG: Log email comparison details
+                strapi.log.info(`[CLERK SYNC DEBUG] User ID: ${user.id}`);
+                strapi.log.info(`[CLERK SYNC DEBUG] Old email (from Strapi before update): "${oldEmail}"`);
+                strapi.log.info(`[CLERK SYNC DEBUG] New email (from Clerk request): "${email}"`);
+                strapi.log.info(`[CLERK SYNC DEBUG] Emails are different: ${oldEmail !== email}`);
+
+                // If email changed, cascade update to all publisher websites
+                if (email && oldEmail !== email) {
+                    strapi.log.info(`[CLERK SYNC] Email changed from ${oldEmail} to ${email} - cascading to publisher websites`);
+
+                    // Update publisher_email on marketplace listings owned by this user (by publisher relation)
+                    const updatedListings = await strapi.db.query('api::marketplace.marketplace').updateMany({
+                        where: { publisher: user.id },
+                        data: { publisher_email: email },
+                    });
+                    strapi.log.info(`[CLERK SYNC] Updated publisher_email on ${updatedListings?.count || 0} marketplace listings (by publisher relation)`);
+
+                    // Also update legacy marketplace listings that match by old email (no publisher relation set)
+                    const updatedLegacyListings = await strapi.db.query('api::marketplace.marketplace').updateMany({
+                        where: {
+                            publisher_email: oldEmail,
+                            publisher: null  // Only update orphan records
+                        },
+                        data: { publisher_email: email },
+                    });
+                    strapi.log.info(`[CLERK SYNC] Updated publisher_email on ${updatedLegacyListings?.count || 0} legacy marketplace listings (by email)`);
+
+                    // Update publisher-website entries owned by this user (by currentPublisherId relation)
+                    const updatedWebsites = await strapi.db.query('api::publisher-website.publisher-website').updateMany({
+                        where: { currentPublisherId: user.id },
+                        data: { publisherEmail: email },
+                    });
+                    strapi.log.info(`[CLERK SYNC] Updated publisherEmail on ${updatedWebsites?.count || 0} publisher-websites (by currentPublisherId relation)`);
+
+                    // Also update publisher-websites by originalPublisherId
+                    const updatedOriginalWebsites = await strapi.db.query('api::publisher-website.publisher-website').updateMany({
+                        where: { originalPublisherId: user.id },
+                        data: { publisherEmail: email },
+                    });
+                    strapi.log.info(`[CLERK SYNC] Updated publisherEmail on ${updatedOriginalWebsites?.count || 0} publisher-websites (by originalPublisherId relation)`);
+
+                    // Also update any publisher-websites that match by old email (for legacy data without relations)
+                    const updatedLegacyWebsites = await strapi.db.query('api::publisher-website.publisher-website').updateMany({
+                        where: { publisherEmail: oldEmail },
+                        data: { publisherEmail: email },
+                    });
+                    strapi.log.info(`[CLERK SYNC] Updated publisherEmail on ${updatedLegacyWebsites?.count || 0} publisher-websites (by email match)`);
+                }
             } else {
                 // Create new user
                 strapi.log.info(`Creating new user for Clerk ID: ${clerkId}`);
