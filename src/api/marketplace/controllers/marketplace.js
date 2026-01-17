@@ -157,9 +157,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const sanitized = { ...entry };
 
       // Check if this is the user's own website
-      // Check ONLY if email matches - don't check current role
-      // User might be in Advertiser mode but still own the website
-      const isOwnWebsite = user && entry.publisher_email === user.email;
+      // Check by userId (publisher relation) or email for legacy records
+      const isOwnWebsite = user && (
+        (entry.publisher && entry.publisher === user.id) ||
+        (!entry.publisher && entry.publisher_email === user.email)
+      );
 
       // Debug logging for EVERY website
       console.log(`🔍 [Ownership Check] ${entry.url}:`, {
@@ -270,9 +272,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Publisher filtering: Publishers can only update their own listings
     if (user && user.Advertiser === false) {
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
-        fields: ['publisher_email']
+        fields: ['publisher_email'],
+        populate: ['publisher']
       });
-      if (!entry || entry.publisher_email !== user.email) {
+      // Check ownership: prefer userId (publisher relation), fallback to email for legacy
+      const isOwner = entry && (
+        (entry.publisher && entry.publisher.id === user.id) ||
+        (!entry.publisher && entry.publisher_email === user.email)
+      );
+      if (!entry || !isOwner) {
         return ctx.unauthorized('You are not allowed to update this listing.');
       }
     }
@@ -287,9 +295,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Publisher filtering: Publishers can only delete their own listings
     if (user && user.Advertiser === false) {
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
-        fields: ['publisher_email']
+        fields: ['publisher_email'],
+        populate: ['publisher']
       });
-      if (!entry || entry.publisher_email !== user.email) {
+      // Check ownership: prefer userId (publisher relation), fallback to email for legacy
+      const isOwner = entry && (
+        (entry.publisher && entry.publisher.id === user.id) ||
+        (!entry.publisher && entry.publisher_email === user.email)
+      );
+      if (!entry || !isOwner) {
         return ctx.unauthorized('You are not allowed to delete this listing.');
       }
     }
@@ -310,8 +324,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Advertiser (user.Advertiser === true) can see all active listings
     // Publisher (user.Advertiser === false) only sees their listings
     if (user && user.Advertiser === false && user.Publisher === true) {
-      // Publishers see their own listings (all statuses)
-      ctx.query.filters.publisher_email = user.email;
+      // Publishers see their own listings (all statuses) - use userId OR email for legacy
+      ctx.query.filters.$or = [
+        { publisher: user.id },
+        { publisher_email: user.email }
+      ];
     } else {
       // Advertisers and public users only see active listings (hide paused/delisted listings)
       // Only show marketplace listings that have proper status and are not paused or delisted
@@ -716,8 +733,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Check user permissions
       if (user && user.Advertiser === false && user.Publisher === true) {
         console.log('🔍 User is a Publisher, checking ownership...');
-        if (entry.publisher_email !== user.email) {
-          console.log('🔍 Publisher not authorized - Entry email:', entry.publisher_email, 'User email:', user.email);
+        // Check ownership: prefer userId (publisher relation), fallback to email for legacy
+        const isOwner = (entry.publisher && entry.publisher === user.id) ||
+          (!entry.publisher && entry.publisher_email === user.email);
+        if (!isOwner) {
+          console.log('🔍 Publisher not authorized - Entry publisher:', entry.publisher, 'User ID:', user.id);
           return ctx.unauthorized('You are not allowed to view this listing.');
         }
         console.log('🔍 Publisher authorized to view their own listing');

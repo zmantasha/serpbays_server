@@ -153,7 +153,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const marketplaces = await strapi.db.query('api::marketplace.marketplace').findMany({
         where: {
           url: { $in: websiteUrls },
-          publisher_email: user.email
+          $or: [
+            { publisher: user.id },
+            { publisher_email: user.email }
+          ]
         },
         fields: ['id', 'url']
       });
@@ -270,17 +273,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to view website details.');
       }
 
-      // First find the website
+      // Find the website with publisher relation populated
       const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: '*'
+        populate: ['currentPublisherId']
       });
 
       if (!website) {
         return ctx.notFound('Website not found');
       }
 
-      // Check if the website belongs to the current user
-      if (website.publisherEmail !== user.email) {
+      // Check ownership: prefer userId, fallback to email for legacy records
+      const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
+        (!website.currentPublisherId && website.publisherEmail === user.email);
+
+      if (!isOwner) {
         return ctx.forbidden('You can only view your own website submissions.');
       }
 
@@ -875,18 +881,23 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // First find the website to check ownership
-      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId']
+      });
 
       if (!website) {
         return ctx.notFound('Website not found');
       }
 
-      // Check if the website belongs to the current user
-      if (website.publisherEmail !== user.email) {
+      // Check ownership: prefer userId, fallback to email for legacy records
+      const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
+        (!website.currentPublisherId && website.publisherEmail === user.email);
+
+      if (!isOwner) {
         return ctx.forbidden('You can only delete your own website submissions.');
       }
 
-      console.log(`Deleting website ID: ${id} for user: ${user.email}`);
+      console.log(`Deleting website ID: ${id} for user ID: ${user.id}`);
 
       // If website has a marketplace listing, delete it first
       if (website.marketplaceId) {
@@ -932,9 +943,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // Check if this submission belongs to the user and is approved
-      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId']
+      });
 
-      if (!existing || existing.publisherEmail !== user.email) {
+      // Check ownership: prefer userId, fallback to email for legacy records
+      const isOwner = existing && (
+        (existing.currentPublisherId && existing.currentPublisherId.id === user.id) ||
+        (!existing.currentPublisherId && existing.publisherEmail === user.email)
+      );
+
+      if (!existing || !isOwner) {
         return ctx.forbidden('You can only manage your own website listings.');
       }
 
@@ -985,9 +1004,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // Check if this submission belongs to the user and is paused
-      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId']
+      });
 
-      if (!existing || existing.publisherEmail !== user.email) {
+      // Check ownership: prefer userId, fallback to email for legacy records
+      const isOwner = existing && (
+        (existing.currentPublisherId && existing.currentPublisherId.id === user.id) ||
+        (!existing.currentPublisherId && existing.publisherEmail === user.email)
+      );
+
+      if (!existing || !isOwner) {
         return ctx.forbidden('You can only manage your own website listings.');
       }
 
@@ -1051,8 +1078,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Website not found');
       }
 
-      // Check if user is already the owner
-      if (existingWebsite.publisherEmail === user.email) {
+      // Check if user is already the owner (by userId or email for legacy)
+      const isAlreadyOwner = (existingWebsite.currentPublisherId && existingWebsite.currentPublisherId.id === user.id) ||
+        (!existingWebsite.currentPublisherId && existingWebsite.publisherEmail === user.email);
+
+      if (isAlreadyOwner) {
         return ctx.badRequest('You already own this website');
       }
 
@@ -1248,8 +1278,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Website not found');
       }
 
-      // Security: Verify ownership
-      if (website.publisherEmail !== user.email) {
+      // Security: Verify ownership (prefer userId, fallback to email for legacy)
+      const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
+        (!website.currentPublisherId && website.publisherEmail === user.email);
+
+      if (!isOwner) {
         return ctx.forbidden('You do not have permission to delete this website');
       }
 

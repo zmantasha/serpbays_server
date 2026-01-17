@@ -60,8 +60,12 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         escrowHeld
       });
 
-      // Check if user is trying to order from their own website
-      if (data.website && data.website.publisher_email === user.email) {
+      // Check if user is trying to order from their own website (prevent self-ordering)
+      // Check by userId (publisher relation) or email for legacy
+      if (data.website && (
+        (data.website.publisher && data.website.publisher === user.id) ||
+        (!data.website.publisher && data.website.publisher_email === user.email)
+      )) {
         throw new Error('You cannot order from your own website. This is not allowed to prevent self-ordering issues.');
       }
 
@@ -519,9 +523,15 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         return updatedOrder;
       }
 
-      // Normal case: Verify the publisher owns this website
+      // Normal case: Verify the publisher owns this website (by ID or email fallback)
       const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-        where: { id: order.website.id, publisher_email: user.email }
+        where: {
+          id: order.website.id,
+          $or: [
+            { publisher: user.id },
+            { publisher_email: user.email }
+          ]
+        }
       });
 
       if (!isWebsiteOwner) {
@@ -573,10 +583,16 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         // If no publisher assigned, check if current user can be assigned
         let canDeliver = false;
 
-        // If the order is for a website owned by this user
+        // If the order is for a website owned by this user (by ID or email fallback)
         if (order.website && order.website.id) {
           const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: { id: order.website.id, publisher_email: user.email }
+            where: {
+              id: order.website.id,
+              $or: [
+                { publisher: user.id },
+                { publisher_email: user.email }
+              ]
+            }
           });
 
           if (isWebsiteOwner) {
@@ -674,13 +690,20 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
     // Publisher cancellation rules
     if (cancelledBy === 'publisher') {
-      // Check if user is the direct publisher OR the website owner via email
+      // Check if user is the direct publisher OR the website owner via ID or email
       let isPublisher = order.publisher && order.publisher.id === userId;
 
-      if (!isPublisher && order.website && order.website.publisher_email) {
-        const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId);
-        if (user && user.email === order.website.publisher_email) {
+      if (!isPublisher && order.website) {
+        // Check by publisher relation first
+        if (order.website.publisher && order.website.publisher === userId) {
           isPublisher = true;
+        }
+        // Fallback to email for legacy records
+        else if (!order.website.publisher && order.website.publisher_email) {
+          const userRecord = await strapi.entityService.findOne('plugin::users-permissions.user', userId);
+          if (userRecord && userRecord.email === order.website.publisher_email) {
+            isPublisher = true;
+          }
         }
       }
 
