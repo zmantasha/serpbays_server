@@ -236,9 +236,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         console.log(`[RAZORPAY WEBHOOK] Using stored transaction amount: ${amountToCredit} ${creditCurrency} (Razorpay charged: ${razorpayAmountINR} ${currency})`);
 
         // ✅ ATOMIC OPERATION 1: Update transaction status
+        // Try to get payment ID from order.paid event (if available in payments array)
+        const paymentId = eventData.payload?.payment?.entity?.id || order.payments?.items?.[0]?.id || orderId;
+
         await strapi.entityService.update('api::transaction.transaction', transaction.id, {
           data: {
             transactionStatus: status === 'paid' ? 'success' : 'failed',
+            external_transaction_id: paymentId,
             updatedAt: new Date()
           }
         });
