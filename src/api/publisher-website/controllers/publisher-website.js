@@ -482,7 +482,6 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // Update submission status to approved
-      console.log('Updating submission status to approved...');
       const approved = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           submissionStatus: 'approved',
@@ -492,20 +491,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           approvedAt: new Date()
         }
       });
-      console.log('Submission updated:', approved.submissionStatus);
 
       // Create marketplace entry
-      console.log('Creating marketplace listing...');
+      // Use the original 'submission' which has currentPublisherId populated, not 'approved'
       try {
-        const marketplaceListing = await this.createMarketplaceListing(approved);
-        console.log('Marketplace listing created successfully:', marketplaceListing?.id);
+        const marketplaceListing = await this.createMarketplaceListing(submission);
+        console.log(`Website ${submission.url} approved and marketplace listing created (ID: ${marketplaceListing?.id})`);
       } catch (marketplaceError) {
         console.error('Failed to create marketplace listing:', marketplaceError);
         // Don't fail the approval if marketplace creation fails
       }
 
       // TODO: Send approval email notification
-      console.log('=== APPROVAL PROCESS COMPLETED ===');
 
       return { data: approved, message: 'Website approved and added to marketplace' };
     } catch (error) {
@@ -674,6 +671,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return validityMap[value] || 'Lifetime';
       };
 
+      // Extract publisher info BEFORE creating the marketplaceData object
+      // Handle both populated object and raw ID for currentPublisherId
+      const publisherUser = submission.currentPublisherId;
+      const publisherId = typeof publisherUser === 'object' && publisherUser !== null
+        ? publisherUser.id
+        : publisherUser;
+      const publisherEmailValue = (typeof publisherUser === 'object' && publisherUser !== null)
+        ? publisherUser.email
+        : submission.publisherEmail;
+      const publisherNameValue = (typeof publisherUser === 'object' && publisherUser !== null)
+        ? publisherUser.username
+        : (submission.publisherName || submission.publisherEmail?.split('@')[0]);
+
       // Map publisher-website fields to marketplace fields
       // IMPORTANT: Price should be null if not provided, never default to 0
       const marketplaceData = {
@@ -751,11 +761,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         description: submission.description, // Website description
         publication_location: submission.publicationLocation, // Where article will be published
         backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
-        // Use CURRENT email/name from user relation (always up-to-date), fallback to static fields for legacy records
-        publisher_name: submission.currentPublisherId?.username || submission.publisherName || submission.publisherEmail?.split('@')[0],
-        publisher_email: submission.currentPublisherId?.email || submission.publisherEmail,
+        // Use the pre-extracted publisher values
+        publisher_name: publisherNameValue,
+        publisher_email: publisherEmailValue,
         // Map the immutable User ID relation
-        publisher: submission.currentPublisherId ? submission.currentPublisherId.id : null,
+        publisher: publisherId || null,
 
         // Map new content options
         sponsored: submission.sponsored,

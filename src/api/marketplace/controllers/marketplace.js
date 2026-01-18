@@ -141,15 +141,6 @@ const validateType = (value, type, fieldName, schema) => {
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
   // Helper function to sanitize publisher data for advertisers
   sanitizePublisherData(entries, user) {
-    // Log user info for debugging
-    console.log('🔍 [sanitizePublisherData] User info:', {
-      email: user?.email,
-      Publisher: user?.Publisher,
-      Advertiser: user?.Advertiser,
-      isArray: Array.isArray(entries),
-      entryCount: Array.isArray(entries) ? entries.length : 1
-    });
-
     // For advertisers and public users, hide sensitive publisher information
     const sanitize = (entry) => {
       if (!entry) return entry;
@@ -158,27 +149,21 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Check if this is the user's own website
       // Check by userId (publisher relation) or email for legacy records
-      const isOwnWebsite = user && (
-        (entry.publisher && entry.publisher === user.id) ||
-        (!entry.publisher && entry.publisher_email === user.email)
-      );
+      // Handle both cases: publisher might be just ID (number) or populated object
+      const publisherId = typeof entry.publisher === 'object' && entry.publisher !== null
+        ? entry.publisher.id
+        : entry.publisher;
 
-      // Debug logging for EVERY website
-      console.log(`🔍 [Ownership Check] ${entry.url}:`, {
-        userEmail: user?.email,
-        publisherEmail: entry.publisher_email,
-        userIsPublisher: user?.Publisher,
-        userIsAdvertiser: user?.Advertiser,
-        emailsMatch: entry.publisher_email === user?.email,
-        isOwnWebsite
-      });
+      const isOwnWebsite = user && (
+        (publisherId && publisherId == user.id) ||  // Use == to handle string/number mismatch
+        (!publisherId && entry.publisher_email === user.email)
+      );
 
       // Add ownership flag (safe to expose, doesn't reveal publisher identity)
       sanitized.isOwnWebsite = isOwnWebsite;
 
       // If user is a publisher viewing their own listing, keep publisher data
       if (isOwnWebsite) {
-        console.log(`✅ [Ownership] User owns ${entry.url}, keeping publisher data`);
         return sanitized;
       }
 
