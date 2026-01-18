@@ -520,14 +520,23 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       try {
         const marketplaceListing = await this.createMarketplaceListing(submission);
         console.log(`Website ${submission.url} approved and marketplace listing created (ID: ${marketplaceListing?.id})`);
+
+        // TODO: Send approval email notification
+
+        return { data: approved, message: 'Website approved and added to marketplace' };
       } catch (marketplaceError) {
         console.error('Failed to create marketplace listing:', marketplaceError);
-        // Don't fail the approval if marketplace creation fails
+
+        // Revert approval status since marketplace creation failed
+        await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+          data: {
+            submissionStatus: 'verified_pending_review',  // Revert to pending review
+            reviewNotes: `Marketplace creation failed: ${marketplaceError.message}`
+          }
+        });
+
+        return ctx.badRequest(`Website approval failed: ${marketplaceError.message}`);
       }
-
-      // TODO: Send approval email notification
-
-      return { data: approved, message: 'Website approved and added to marketplace' };
     } catch (error) {
       console.error('Error approving website:', error);
       console.error('Error details:', error.message);

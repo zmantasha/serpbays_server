@@ -786,11 +786,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const pageSize = ctx.query.pagination?.pageSize || 25;
 
       // Use db.query to get ALL fields including private ones
+      // IMPORTANT: Populate publisher relation for ownership check in sanitizePublisherData
       const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
         where: ctx.query.filters,
         orderBy: ctx.query.sort ? { [ctx.query.sort.split(':')[0]]: ctx.query.sort.split(':')[1] || 'asc' } : { updatedAt: 'desc' },
         limit: pageSize,
         offset: (page - 1) * pageSize,
+        populate: ['publisher'],  // Required for isOwnWebsite check
       });
 
       // Get total count for pagination

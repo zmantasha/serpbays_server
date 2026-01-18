@@ -47,15 +47,42 @@ module.exports = {
       // STEP 1: Create marketplace listing for the newly approved website
       console.log(`📝 Creating marketplace listing for approved website ${updatedWebsiteId}`);
       try {
+        // IMPORTANT: Fetch the full submission with populated currentPublisherId
+        // The 'result' from event doesn't have relations populated
+        const fullSubmission = await strapi.entityService.findOne('api::publisher-website.publisher-website', updatedWebsiteId, {
+          populate: ['currentPublisherId']
+        });
+
+        if (!fullSubmission) {
+          throw new Error('Website not found after update');
+        }
+
         const controller = strapi.controller('api::publisher-website.publisher-website');
         if (controller && controller.createMarketplaceListing) {
-          await controller.createMarketplaceListing(result);
+          await controller.createMarketplaceListing(fullSubmission);
           console.log(`✅ Marketplace listing created for website ${updatedWebsiteId}`);
         } else {
           console.error('❌ createMarketplaceListing method not found');
         }
       } catch (marketplaceError) {
-        console.error('❌ Failed to create marketplace listing:', marketplaceError);
+        console.error('❌ Failed to create marketplace listing:', marketplaceError.message);
+        console.error('❌ Full error:', marketplaceError);
+
+        // Revert approval status since marketplace creation failed
+        try {
+          await strapi.entityService.update('api::publisher-website.publisher-website', updatedWebsiteId, {
+            data: {
+              submissionStatus: 'verified_pending_review',
+              reviewNotes: `Marketplace creation failed: ${marketplaceError.message}`
+            }
+          });
+          console.log(`⏪ Reverted website ${updatedWebsiteId} to verified_pending_review due to marketplace error`);
+        } catch (revertError) {
+          console.error('❌ Failed to revert approval status:', revertError);
+        }
+
+        // Don't throw - return to prevent further processing
+        return;
       }
 
       // STEP 2: Find all other websites with the same URL that need ownership transfer
