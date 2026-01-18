@@ -709,6 +709,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         imported: 0,
         updated: 0,
         skipped: 0,
+        linked: 0,      // Websites linked to existing users
+        orphaned: 0,    // Websites where no user was found (will be auto-claimed later)
         errors: []
       };
 
@@ -857,6 +859,30 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             normalizedOtherCategory
           });
 
+          // --- USER LOOKUP AND LINKING ---
+          let linkedPublisherId = null;
+          if (publisherEmail) {
+            const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+              where: { email: publisherEmail }
+            });
+            if (existingUser) {
+              linkedPublisherId = existingUser.id;
+              results.linked++;
+              console.log(`[BULK IMPORT] Linked ${domain} to user ID ${linkedPublisherId} (${publisherEmail})`);
+            } else {
+              results.orphaned++;
+              console.log(`[BULK IMPORT] No user found for ${publisherEmail}, website ${domain} will be orphaned (pending auto-claim)`);
+            }
+          } else {
+            results.orphaned++;
+            console.log(`[BULK IMPORT] No email provided for ${domain}, website will be orphaned`);
+          }
+
+          // Add publisher relation to the data if user was found
+          if (linkedPublisherId) {
+            websiteUpdateData.publisher = linkedPublisherId;
+          }
+
           // Always check for existing records when updating or when duplicate check is enabled
           if (duplicateCheck || replaceExisting) {
             const existing = await strapi.db.query('api::marketplace.marketplace').findOne({
@@ -896,9 +922,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         }
       }
 
-      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} bulk imported ${results.imported} websites, updated ${results.updated} websites, skipped ${results.skipped} websites`);
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} bulk imported ${results.imported} websites, updated ${results.updated} websites, skipped ${results.skipped} websites, linked ${results.linked}, orphaned ${results.orphaned}`);
 
-      ctx.send({ message: 'Bulk import completed', results });
+      ctx.send({
+        message: 'Bulk import completed',
+        results,
+        summary: `Imported: ${results.imported}, Updated: ${results.updated}, Skipped: ${results.skipped}, Linked to Users: ${results.linked}, Orphaned (pending claim): ${results.orphaned}, Errors: ${results.errors.length}`
+      });
 
     } catch (error) {
       console.error('[ADMIN MARKETPLACE BULK IMPORT ERROR]', error);
