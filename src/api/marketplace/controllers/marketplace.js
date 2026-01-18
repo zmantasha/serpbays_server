@@ -138,7 +138,57 @@ const validateType = (value, type, fieldName, schema) => {
   }
 };
 
+
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
+
+  // ============================================================
+  // SAFE POST-FETCH SORTING HELPER
+  // This function is applied AFTER fetching data to guarantee 
+  // that NULL values always appear at the bottom for metric fields.
+  // This is the SINGLE source of truth for metric sorting.
+  // ============================================================
+  applyPostFetchSorting(entries, sortField, sortDirection) {
+    // Only apply to metric fields that have the NULL issue
+    const metricFields = [
+      'ahrefs_dr', 'moz_da', 'semrush_authority_score',
+      'ahrefs_traffic', 'semrush_traffic', 'similarweb_traffic',
+      'price', 'link_insertion_price', 'spam_score'
+    ];
+
+    // If not a metric field or no entries, return as-is
+    if (!metricFields.includes(sortField) || !Array.isArray(entries) || entries.length === 0) {
+      return entries;
+    }
+
+    // Create a copy to avoid mutating original
+    const sorted = [...entries];
+
+    sorted.sort((a, b) => {
+      const valA = a[sortField];
+      const valB = b[sortField];
+
+      // Handle NULL/undefined - always push to bottom
+      const aIsEmpty = valA === null || valA === undefined;
+      const bIsEmpty = valB === null || valB === undefined;
+
+      // If both are empty, maintain order
+      if (aIsEmpty && bIsEmpty) return 0;
+      // If only A is empty, push A to bottom
+      if (aIsEmpty) return 1;
+      // If only B is empty, push B to bottom
+      if (bIsEmpty) return -1;
+
+      // Both have values - sort normally
+      if (sortDirection === 'desc') {
+        return (Number(valB) || 0) - (Number(valA) || 0);
+      } else {
+        return (Number(valA) || 0) - (Number(valB) || 0);
+      }
+    });
+
+    return sorted;
+  },
+
   // Helper function to sanitize publisher data for advertisers
   sanitizePublisherData(entries, user) {
     // For advertisers and public users, hide sensitive publisher information
@@ -599,11 +649,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // Sanitize publisher data
         const sanitizedResults = this.sanitizePublisherData(results, user);
 
-        console.log(`✅ Knex sorting applied: ${rawSortField}:${rawSortDirection} NULLS LAST - ${results.length} results`);
+        // Apply post-fetch sorting as final guarantee
+        const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection);
 
         // Return in Strapi v4 format
         return {
-          data: sanitizedResults,
+          data: sortedResults,
           meta: {
             pagination: {
               page,
@@ -629,6 +680,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
           if (results && results.results) {
             results.results = this.sanitizePublisherData(results.results, user);
+            // Apply post-fetch sorting as final guarantee
+            results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection);
           }
 
           return {
@@ -643,6 +696,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           const result = await super.find(ctx);
           if (result && result.data) {
             result.data = this.sanitizePublisherData(result.data, user);
+            // Apply post-fetch sorting as final guarantee
+            result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection);
           }
           return result;
         }
@@ -670,13 +725,17 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         where: ctx.query.filters
       });
 
-      console.log(`✅ Fetched ${entries.length} entries WITH private fields for ownership check`);
-
       // Sanitize publisher data (this removes private fields for non-owners)
       const sanitizedEntries = this.sanitizePublisherData(entries, user);
 
+      // Apply post-fetch sorting if sorting by a metric field
+      const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
+      const sortField = sortParts[0];
+      const sortDirection = sortParts[1] || 'desc';
+      const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection);
+
       return {
-        data: sanitizedEntries,
+        data: sortedEntries,
         meta: {
           pagination: {
             page,
@@ -692,6 +751,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const result = await super.find(ctx);
       if (result && result.data) {
         result.data = this.sanitizePublisherData(result.data, user);
+        // Apply post-fetch sorting for fallback too
+        const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
+        result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc');
       }
       return result;
     }
