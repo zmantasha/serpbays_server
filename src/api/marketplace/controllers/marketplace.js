@@ -286,6 +286,40 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       ctx.request.body.data.publisher_email = user.email;
     }
 
+    // CRITICAL: Ensure publisher user ID is always linked
+    const data = ctx.request.body.data || {};
+
+    // If publisher ID is already provided, verify it exists
+    if (data.publisher) {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { id: data.publisher }
+      });
+      if (!publisherUser) {
+        return ctx.badRequest('Invalid publisher ID: User does not exist');
+      }
+    }
+    // If no publisher ID but email is provided, look up user and set publisher
+    else if (data.publisher_email) {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { email: data.publisher_email }
+      });
+      if (publisherUser) {
+        ctx.request.body.data.publisher = publisherUser.id;
+        console.log(`[Marketplace Create] Linked publisher ${publisherUser.id} from email ${data.publisher_email}`);
+      } else {
+        return ctx.badRequest(`Cannot create listing: No user account found for email ${data.publisher_email}. Publisher must register first.`);
+      }
+    }
+    // If logged-in publisher is creating, link their user ID
+    else if (user && user.Advertiser === false) {
+      ctx.request.body.data.publisher = user.id;
+      console.log(`[Marketplace Create] Linked publisher ${user.id} (current user)`);
+    }
+    // No publisher info at all - reject
+    else {
+      return ctx.badRequest('Cannot create listing: Publisher information is required');
+    }
+
     return await super.create(ctx);
   },
 
@@ -317,6 +351,45 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       );
       if (!entry || !isOwner) {
         return ctx.unauthorized('You are not allowed to update this listing.');
+      }
+    }
+
+    // CRITICAL: Ensure publisher user ID is linked on updates
+    const data = ctx.request.body.data || {};
+
+    // If updating publisher ID, verify it exists
+    if (data.publisher) {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { id: data.publisher }
+      });
+      if (!publisherUser) {
+        return ctx.badRequest('Invalid publisher ID: User does not exist');
+      }
+    }
+    // If updating publisher_email and no publisher ID, try to link
+    else if (data.publisher_email && !data.publisher) {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { email: data.publisher_email }
+      });
+      if (publisherUser) {
+        ctx.request.body.data.publisher = publisherUser.id;
+        console.log(`[Marketplace Update] Linked publisher ${publisherUser.id} from email ${data.publisher_email}`);
+      }
+    }
+    // If entry has no publisher but has email, fix it during update
+    else {
+      const existingEntry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
+        fields: ['publisher_email'],
+        populate: ['publisher']
+      });
+      if (existingEntry && !existingEntry.publisher && existingEntry.publisher_email) {
+        const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { email: existingEntry.publisher_email }
+        });
+        if (publisherUser) {
+          ctx.request.body.data.publisher = publisherUser.id;
+          console.log(`[Marketplace Update] Fixed orphan: Linked publisher ${publisherUser.id} from email ${existingEntry.publisher_email}`);
+        }
       }
     }
 
