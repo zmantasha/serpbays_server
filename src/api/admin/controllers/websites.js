@@ -2228,6 +2228,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         errors: 0,
         conflicts: 0,
         duplicates: 0,
+        linked: 0,      // Websites linked to existing users
+        orphaned: 0,    // Websites where no user was found (pending auto-claim)
         details: []
       }
 
@@ -2397,6 +2399,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               } else {
                 // Replace existing website
                 const preparedData = this.prepareWebsiteData(websiteData, normalizedUrl)
+
+                // --- USER LOOKUP AND LINKING (for replacement) ---
+                if (preparedData.publisherEmail) {
+                  const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+                    where: { email: preparedData.publisherEmail }
+                  });
+                  if (existingUser) {
+                    preparedData.currentPublisherId = existingUser.id;
+                    results.linked++;
+                    console.log(`[BULK IMPORT] Linked (replace) ${normalizedUrl} to user ID ${existingUser.id} (${preparedData.publisherEmail})`);
+                  } else {
+                    results.orphaned++;
+                    console.log(`[BULK IMPORT] No user found for ${preparedData.publisherEmail}, website ${normalizedUrl} will be orphaned`);
+                  }
+                } else {
+                  results.orphaned++;
+                }
+
                 await strapi.entityService.update('api::publisher-website.publisher-website', existing.id, {
                   data: preparedData
                 })
@@ -2413,6 +2433,27 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
             // No conflict - create new website
             const preparedData = this.prepareWebsiteData(websiteData, normalizedUrl)
+
+            // --- USER LOOKUP AND LINKING ---
+            let linkedPublisherId = null;
+            if (preparedData.publisherEmail) {
+              const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+                where: { email: preparedData.publisherEmail }
+              });
+              if (existingUser) {
+                linkedPublisherId = existingUser.id;
+                preparedData.currentPublisherId = existingUser.id;
+                results.linked++;
+                console.log(`[BULK IMPORT] Linked ${normalizedUrl} to user ID ${linkedPublisherId} (${preparedData.publisherEmail})`);
+              } else {
+                results.orphaned++;
+                console.log(`[BULK IMPORT] No user found for ${preparedData.publisherEmail}, website ${normalizedUrl} will be orphaned (pending auto-claim)`);
+              }
+            } else {
+              results.orphaned++;
+              console.log(`[BULK IMPORT] No email provided for ${normalizedUrl}, website will be orphaned`);
+            }
+
             await strapi.entityService.create('api::publisher-website.publisher-website', {
               data: preparedData
             })
@@ -2460,7 +2501,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      console.log(`[BULK IMPORT] Completed: ${results.successful} successful, ${results.errors} errors, ${results.conflicts} conflicts`)
+      console.log(`[BULK IMPORT] Completed: ${results.successful} successful, ${results.errors} errors, ${results.conflicts} conflicts, ${results.linked} linked, ${results.orphaned} orphaned`)
 
       // Clear progress from memory map
       if (ctx.state.user && ctx.state.user.id) {
