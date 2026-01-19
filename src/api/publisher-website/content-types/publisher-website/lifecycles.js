@@ -142,6 +142,31 @@ module.exports = {
 
       console.log(`✅ Ownership transfer process completed for URL: ${updatedWebsiteUrl}`);
 
+      // CRITICAL: Ensure the NEWLY APPROVED website's marketplace entry is active
+      // This is needed because the delisting above might have delisted the same entry
+      // if the old and new websites share the same marketplaceId
+      if (result.marketplaceId) {
+        try {
+          const currentMarketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: result.marketplaceId }
+          });
+
+          if (currentMarketplace && currentMarketplace.status !== 'active') {
+            console.log(`🔄 Re-activating marketplace ${result.marketplaceId} for newly approved website ${result.url}`);
+            await strapi.entityService.update('api::marketplace.marketplace', result.marketplaceId, {
+              data: {
+                status: 'active',
+                delistedReason: null,
+                delistedAt: null
+              }
+            });
+            console.log(`✅ Marketplace ${result.marketplaceId} is now active for ${result.url}`);
+          }
+        } catch (reactivateError) {
+          console.error(`⚠️ Failed to re-activate marketplace ${result.marketplaceId}:`, reactivateError);
+        }
+      }
+
       // After first approval, ensure marketplace metrics are hydrated immediately
       try {
         const marketplaceList = await strapi.entityService.findMany('api::marketplace.marketplace', {
