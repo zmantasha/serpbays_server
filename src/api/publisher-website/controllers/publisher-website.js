@@ -1204,8 +1204,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           newOwnerWebsiteId: newOwnerWebsite.id, // Link to new owner's entry
 
           // Set relations correctly - find the original publisher's user ID
-          originalPublisherId: existingWebsite.currentPublisherId || null,
-          currentPublisherId: user.id, // New owner becomes current
+          // originalPublisherId: existingWebsite.currentPublisherId || null,
+          // currentPublisherId: user.id, // New owner becomes current
 
           // Keep ALL original data intact - just change status
           // Original publisher can still see all their historical data
