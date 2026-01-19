@@ -48,16 +48,11 @@ module.exports = {
                 if (firstName !== undefined) updateData.firstName = firstName;
                 if (lastName !== undefined) updateData.lastName = lastName;
 
-                // CRITICAL: Only update role fields if explicitly provided
-                // This prevents overwriting user roles on subsequent syncs
-                if (advertiser !== undefined) updateData.Advertiser = advertiser;
-                if (publisher !== undefined) updateData.Publisher = publisher;
-
-                strapi.log.info(`[CLERK SYNC] Updating user ${user.id} with:`, {
-                    providedFields: Object.keys(updateData),
-                    advertiserProvided: advertiser !== undefined,
-                    publisherProvided: publisher !== undefined,
-                });
+                // CRITICAL FIX: Do NOT overwrite role fields on existing user sync.
+                // Role values are managed by the switch-role API and should persist.
+                // Only new users get role values from the sync request.
+                // The user's current roles are preserved in the database.
+                strapi.log.info(`[CLERK SYNC] NOT overwriting roles for existing user ${user.id}. Current roles: Advertiser=${user.Advertiser}, Publisher=${user.Publisher}`);
 
                 const oldEmail = user.email;
 
