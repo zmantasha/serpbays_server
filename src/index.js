@@ -9,7 +9,7 @@ module.exports = {
    *
    * This gives you an opportunity to extend code.
    */
-  register(/*{ strapi }*/) {},
+  register(/*{ strapi }*/) { },
 
   /**
    * An asynchronous bootstrap function that runs before
@@ -19,6 +19,15 @@ module.exports = {
    * run jobs, or perform some special logic.
    */
   async bootstrap({ strapi }) {
+    // SUPPRESS LOGS IN PRODUCTION
+    if (process.env.NODE_ENV === 'production') {
+      const noop = () => { };
+      console.log = noop;
+      console.warn = noop;
+      console.info = noop;
+      // console.error is KEPT intentionally for critical failures
+    }
+
     // Initialize WebSocket after Strapi is ready
     await websocketBootstrap({ strapi });
 
@@ -49,14 +58,14 @@ module.exports = {
     strapi.server.use(async (ctx, next) => {
       // Log the request details for debugging
       console.log(`[${new Date().toISOString()}] ${ctx.method} ${ctx.url}`);
-      
+
       // Log authentication info
       if (ctx.state?.user?.id) {
         console.log(`Request by authenticated user: ${ctx.state.user.id}`);
       } else {
         console.log('Request by unauthenticated user');
       }
-      
+
       // Continue with the request
       await next();
     });

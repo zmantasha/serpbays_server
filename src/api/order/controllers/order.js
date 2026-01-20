@@ -214,8 +214,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             backlink_validity: marketplace.backlink_validity,
             category: marketplace.category,
             other_category: marketplace.other_category,
-            publisher_name: marketplace.publisher_name,
-            publisher_email: marketplace.publisher_email,
+            publisher_name: marketplace.publisher?.username || marketplace.publisher_name,
+            publisher_email: marketplace.publisher?.email || marketplace.publisher_email,
             publisher_price: marketplace.publisher_price,
             tat: marketplace.tat,
             dofollow_link: marketplace.dofollow_link,
@@ -259,8 +259,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           orderData.websiteBacklinkType = marketplace.backlink_type;
           orderData.websiteBacklinkValidity = marketplace.backlink_validity;
           orderData.websiteCategory = marketplace.category;
-          orderData.websitePublisherName = marketplace.publisher_name;
-          orderData.websitePublisherEmail = marketplace.publisher_email;
+          orderData.websitePublisherName = marketplace.publisher?.username || marketplace.publisher_name;
+          orderData.websitePublisherEmail = marketplace.publisher?.email || marketplace.publisher_email;
           orderData.websitePublisherPrice = marketplace.publisher_price;
           orderData.websiteTat = marketplace.tat * 24; // Convert days to hours for frontend calculation
           orderData.websiteDofollowLink = marketplace.dofollow_link;
@@ -537,9 +537,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Create notification for publisher (website owner) using snapshot data
         // NOTE: We already sent the internal notification above. Sending email here.
         try {
-          // Use publisher email from marketplace snapshot if available
+          // Use CURRENT publisher email from relation (always up-to-date), fallback to static field for legacy entries
           let publisherEmail = null;
-          if (marketplace && marketplace.publisher_email) {
+          if (marketplace && marketplace.publisher && marketplace.publisher.email) {
+            publisherEmail = marketplace.publisher.email;
+          } else if (marketplace && marketplace.publisher_email) {
             publisherEmail = marketplace.publisher_email;
           }
 
@@ -694,28 +696,29 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Include only orders where user is advertiser
           baseFilters.advertiser = user.id;
         } else if (type === 'publisher') {
-          // 1. Direct publisher assignment
-          // 2. Website owner (ID match - PREFERRED)
-          // 3. Fallback: Website owner (email match)
+          // Use ORDER's snapshot data, NOT live marketplace data
+          // This ensures orders stay with the publisher who was owner at order creation time
+          // 1. Direct publisher assignment (set when order was created)
+          // 2. Order's snapshotted publisher email (captured at order creation)
           baseFilters.$or = [
             { publisher: user.id },
-            { website: { publisher: user.id } },
-            { website: { publisher_email: user.email } }
+            { websitePublisherEmail: user.email }
           ];
 
           // Exclude orders where user is the advertiser (to prevent self-acceptance)
           baseFilters.advertiser = { $ne: user.id };
 
-          console.log(`[Order Filter] Publisher ${user.id} - filtering by direct publisher OR website owner (ID/Email)`);
+          console.log(`[Order Filter] Publisher ${user.id} - filtering by direct publisher OR order snapshot email`);
         } else if (type === 'all') {
           // Include orders where user is advertiser OR publisher
-          baseFilters.$or = [];
-          baseFilters.$or.push({ advertiser: user.id });
-          baseFilters.$or.push({ publisher: user.id });
-          baseFilters.$or.push({ website: { publisher: user.id } });
-          baseFilters.$or.push({ website: { publisher_email: user.email } });
+          // Use ORDER's snapshot data for publisher matching
+          baseFilters.$or = [
+            { advertiser: user.id },
+            { publisher: user.id },
+            { websitePublisherEmail: user.email }
+          ];
 
-          console.log(`[Order Filter] User ${user.id} - filtering by direct relationships (ID/Email)`);
+          console.log(`[Order Filter] User ${user.id} - filtering by direct relationships and order snapshot`);
         }
 
         // Add search filters
@@ -978,15 +981,36 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         }
 
-        // Combine current and historical orders
-        const combinedOrders = [...currentWebsiteOrders, ...historicalOrders];
+        // ALSO get pending orders where user is directly assigned via snapshot email
+        // This catches orders for websites where ownership transferred but order was placed when user owned it
+        const directlyAssignedOrders = await strapi.entityService.findMany('api::order.order', {
+          filters: {
+            $and: [
+              { websitePublisherEmail: user.email },
+              { orderStatus: 'pending' },
+              { advertiser: { id: { $ne: user.id } } },
+              {
+                $or: [
+                  { publisher: { $null: true } },
+                  { publisher: { id: user.id } }
+                ]
+              }
+            ]
+          },
+          populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
+          sort: { orderDate: 'desc' }
+        });
+        console.log(`[Available Orders] Found ${directlyAssignedOrders.length} orders via snapshot email ${user.email}`);
+
+        // Combine all sources: current + historical + directly assigned via snapshot
+        const combinedOrders = [...currentWebsiteOrders, ...historicalOrders, ...directlyAssignedOrders];
 
         // Remove duplicates (in case of any overlap)
         orders = combinedOrders.filter((order, index, self) =>
           index === self.findIndex(o => o.id === order.id)
         );
 
-        console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (${currentWebsiteOrders.length} current + ${historicalOrders.length} historical)`);
+        console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (${currentWebsiteOrders.length} current + ${historicalOrders.length} historical + ${directlyAssignedOrders.length} via snapshot)`);
 
         // Log all order IDs for debugging
         console.log('Available order IDs:', orders.map(order => order.id).join(', '));

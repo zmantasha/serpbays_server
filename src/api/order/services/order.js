@@ -523,18 +523,17 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         return updatedOrder;
       }
 
-      // Normal case: Verify the publisher owns this website (by ID or email fallback)
-      const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-        where: {
-          id: order.website.id,
-          $or: [
-            { publisher: user.id },
-            { publisher_email: user.email }
-          ]
-        }
-      });
+      // Normal case: Verify user can accept this order using ORDER's snapshot data
+      // NOT live marketplace data (which may have changed due to ownership transfer)
+      // User can accept if:
+      // 1. They are the directly assigned publisher on this order
+      // 2. The order's snapshotted publisher email matches their email
+      const isDirectPublisher = order.publisher && (order.publisher.id === user.id || order.publisher === user.id);
+      const isSnapshotPublisher = order.websitePublisherEmail === user.email;
 
-      if (!isWebsiteOwner) {
+      if (!isDirectPublisher && !isSnapshotPublisher) {
+        console.log(`[Accept Order] User ${user.id} (${user.email}) denied access to order ${id}`);
+        console.log(`[Accept Order] Order publisher: ${order.publisher?.id}, Snapshot email: ${order.websitePublisherEmail}`);
         throw new Error('You do not have permission to accept this order');
       }
 
@@ -583,22 +582,11 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         // If no publisher assigned, check if current user can be assigned
         let canDeliver = false;
 
-        // If the order is for a website owned by this user (by ID or email fallback)
-        if (order.website && order.website.id) {
-          const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: {
-              id: order.website.id,
-              $or: [
-                { publisher: user.id },
-                { publisher_email: user.email }
-              ]
-            }
-          });
-
-          if (isWebsiteOwner) {
-            console.log('User owns this website. Assigning as publisher.');
-            canDeliver = true;
-          }
+        // Check using ORDER's snapshot data (not live marketplace which may have changed)
+        // User can deliver if the order's snapshotted publisher email matches their email
+        if (order.websitePublisherEmail === user.email) {
+          console.log(`User ${user.email} matches order snapshot email. Assigning as publisher.`);
+          canDeliver = true;
         }
 
         // Or if they are the advertiser for their own order

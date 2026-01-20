@@ -481,8 +481,30 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Submission not found');
       }
 
+      // CRITICAL: Check if publisher is linked BEFORE approving
+      // Get publisher ID from relation or try to look up by email
+      let publisherId = submission.currentPublisherId?.id || submission.currentPublisherId;
+
+      if (!publisherId && submission.publisherEmail) {
+        // Try to find user by email
+        const userByEmail = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { email: submission.publisherEmail }
+        });
+        if (userByEmail) {
+          publisherId = userByEmail.id;
+          // Update the submission with the found publisher ID
+          await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+            data: { currentPublisherId: publisherId }
+          });
+          console.log(`[Approve] Linked publisher ${publisherId} from email ${submission.publisherEmail}`);
+        }
+      }
+
+      if (!publisherId) {
+        return ctx.badRequest(`Cannot approve website: No valid publisher account found for ${submission.url}. Publisher must register first.`);
+      }
+
       // Update submission status to approved
-      console.log('Updating submission status to approved...');
       const approved = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           submissionStatus: 'approved',
@@ -492,22 +514,29 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           approvedAt: new Date()
         }
       });
-      console.log('Submission updated:', approved.submissionStatus);
 
       // Create marketplace entry
-      console.log('Creating marketplace listing...');
+      // Use the original 'submission' which has currentPublisherId populated, not 'approved'
       try {
-        const marketplaceListing = await this.createMarketplaceListing(approved);
-        console.log('Marketplace listing created successfully:', marketplaceListing?.id);
+        const marketplaceListing = await this.createMarketplaceListing(submission);
+        console.log(`Website ${submission.url} approved and marketplace listing created (ID: ${marketplaceListing?.id})`);
+
+        // TODO: Send approval email notification
+
+        return { data: approved, message: 'Website approved and added to marketplace' };
       } catch (marketplaceError) {
         console.error('Failed to create marketplace listing:', marketplaceError);
-        // Don't fail the approval if marketplace creation fails
+
+        // Revert approval status since marketplace creation failed
+        await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+          data: {
+            submissionStatus: 'verified_pending_review',  // Revert to pending review
+            reviewNotes: `Marketplace creation failed: ${marketplaceError.message}`
+          }
+        });
+
+        return ctx.badRequest(`Website approval failed: ${marketplaceError.message}`);
       }
-
-      // TODO: Send approval email notification
-      console.log('=== APPROVAL PROCESS COMPLETED ===');
-
-      return { data: approved, message: 'Website approved and added to marketplace' };
     } catch (error) {
       console.error('Error approving website:', error);
       console.error('Error details:', error.message);
@@ -674,6 +703,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return validityMap[value] || 'Lifetime';
       };
 
+      // Extract publisher info BEFORE creating the marketplaceData object
+      // Handle both populated object and raw ID for currentPublisherId
+      const publisherUser = submission.currentPublisherId;
+      let publisherId = typeof publisherUser === 'object' && publisherUser !== null
+        ? publisherUser.id
+        : publisherUser;
+
+      // CRITICAL: Ensure we have a valid publisher ID
+      // If no publisherId from currentPublisherId, try to look up by email
+      if (!publisherId && submission.publisherEmail) {
+        const userByEmail = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { email: submission.publisherEmail }
+        });
+        if (userByEmail) {
+          publisherId = userByEmail.id;
+          console.log(`[createMarketplaceListing] Linked publisher ${publisherId} from email ${submission.publisherEmail}`);
+        }
+      }
+
+      // If still no publisher ID, reject the listing
+      if (!publisherId) {
+        throw new Error(`Cannot create marketplace listing: No valid publisher account found for ${submission.url}. Publisher email: ${submission.publisherEmail || 'not provided'}`);
+      }
+
+      const publisherEmailValue = (typeof publisherUser === 'object' && publisherUser !== null)
+        ? publisherUser.email
+        : submission.publisherEmail;
+      const publisherNameValue = (typeof publisherUser === 'object' && publisherUser !== null)
+        ? publisherUser.username
+        : (submission.publisherName || submission.publisherEmail?.split('@')[0]);
+
       // Map publisher-website fields to marketplace fields
       // IMPORTANT: Price should be null if not provided, never default to 0
       const marketplaceData = {
@@ -751,10 +811,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         description: submission.description, // Website description
         publication_location: submission.publicationLocation, // Where article will be published
         backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
-        publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
-        publisher_email: submission.publisherEmail,
+        // Use the pre-extracted publisher values
+        publisher_name: publisherNameValue,
+        publisher_email: publisherEmailValue,
         // Map the immutable User ID relation
-        publisher: submission.currentPublisherId ? submission.currentPublisherId.id : null,
+        publisher: publisherId, // Always required - validation above ensures this exists
 
         // Map new content options
         sponsored: submission.sponsored,
@@ -1143,8 +1204,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           newOwnerWebsiteId: newOwnerWebsite.id, // Link to new owner's entry
 
           // Set relations correctly - find the original publisher's user ID
-          originalPublisherId: existingWebsite.currentPublisherId || null,
-          currentPublisherId: user.id, // New owner becomes current
+          // originalPublisherId: existingWebsite.currentPublisherId || null,
+          // currentPublisherId: user.id, // New owner becomes current
 
           // Keep ALL original data intact - just change status
           // Original publisher can still see all their historical data
