@@ -815,6 +815,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   min_word_count: updatedWebsite.minWordCount || 500,
                   backlink_type: updatedWebsite.backlinkType || 'Do follow',
                   backlink_validity: updatedWebsite.backlinkValidity || 'lifetime',
+                  dofollow_link: updatedWebsite.allowedLinks || 1,
                   category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category : [updatedWebsite.category].filter(Boolean),
                   language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language : [updatedWebsite.language].filter(Boolean),
                   countries: updatedWebsite.countries,
@@ -851,6 +852,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                     (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
                     (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
                   )) || 1,
+                  dofollow_link: updatedWebsite.allowedLinks || 1,
                   publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
                   publisher_email: updatedWebsite.publisherEmail
                 }
