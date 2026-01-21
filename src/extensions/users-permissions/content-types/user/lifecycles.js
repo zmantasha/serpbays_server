@@ -23,27 +23,27 @@ module.exports = {
             });
 
             if (orphanedSites.length > 0) {
-                // console.log intentionally used here (if not suppressed) for audit trail, 
-                // or rely on console.error if needed. But standard log is fine as we handled suppression globally.
-                // We can use strapi.log.info if available, but console.log is standard.
-                // Given we just suppressed console.log in prod, maybe we should use strapi.log.info? 
-                // Strapi v5 logger: strapi.log.info(...)
-
                 strapi.log.info(`[Auto-Claim] Found ${orphanedSites.length} orphaned websites for new user ${userEmail} (ID: ${userId}). Linking now...`);
 
-                // 2. Bulk update them to set the new owner
-                const updateResult = await strapi.db.query('api::publisher-website.publisher-website').updateMany({
-                    where: {
-                        id: {
-                            $in: orphanedSites.map(site => site.id)
-                        }
-                    },
-                    data: {
-                        currentPublisherId: userId
+                // 2. Update each website individually using entityService
+                // IMPORTANT: updateMany doesn't work for relations stored in link tables
+                // We must use entityService.update() which properly creates relation entries
+                let linkedCount = 0;
+                for (const site of orphanedSites) {
+                    try {
+                        await strapi.entityService.update('api::publisher-website.publisher-website', site.id, {
+                            data: {
+                                currentPublisherId: userId,
+                                originalPublisherId: userId
+                            }
+                        });
+                        linkedCount++;
+                    } catch (updateErr) {
+                        strapi.log.error(`[Auto-Claim] Failed to link website ${site.id} (${site.url}):`, updateErr.message);
                     }
-                });
+                }
 
-                strapi.log.info(`[Auto-Claim] Successfully linked ${updateResult.count || orphanedSites.length} websites to user ID ${userId}.`);
+                strapi.log.info(`[Auto-Claim] Successfully linked ${linkedCount}/${orphanedSites.length} websites to user ID ${userId}.`);
             }
         } catch (error) {
             // Log error but DO NOT throw, to prevent blocking the user registration flow

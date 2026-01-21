@@ -156,11 +156,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Trim whitespace from search term
       const trimmedSearch = search ? String(search).trim() : '';
       if (trimmedSearch) {
+        const parsedId = parseInt(trimmedSearch) || 0;
         filters.$or = [
           { url: { $containsi: trimmedSearch } },
           { publisherName: { $containsi: trimmedSearch } },
+          { publisherEmail: { $containsi: trimmedSearch } },
           { description: { $containsi: trimmedSearch } },
-          { id: { $eq: parseInt(trimmedSearch) || 0 } }
+          { id: { $eq: parsedId } },
+          { currentPublisherId: { $eq: parsedId } },
+          { originalPublisherId: { $eq: parsedId } }
         ];
       }
 
@@ -2640,11 +2644,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Search filter
       if (search) {
+        const parsedId = parseInt(search) || 0;
         filters.$or = [
           { url: { $containsi: search } },
           { publisherName: { $containsi: search } },
+          { publisherEmail: { $containsi: search } },
           { description: { $containsi: search } },
-          { id: { $eq: parseInt(search) || 0 } }
+          { id: { $eq: parsedId } },
+          { currentPublisherId: { $eq: parsedId } },
+          { originalPublisherId: { $eq: parsedId } }
         ];
       }
 
