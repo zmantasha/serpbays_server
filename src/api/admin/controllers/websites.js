@@ -156,11 +156,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Trim whitespace from search term
       const trimmedSearch = search ? String(search).trim() : '';
       if (trimmedSearch) {
+        const parsedId = parseInt(trimmedSearch) || 0;
         filters.$or = [
           { url: { $containsi: trimmedSearch } },
           { publisherName: { $containsi: trimmedSearch } },
+          { publisherEmail: { $containsi: trimmedSearch } },
           { description: { $containsi: trimmedSearch } },
-          { id: { $eq: parseInt(trimmedSearch) || 0 } }
+          { id: { $eq: parsedId } },
+          { currentPublisherId: { $eq: parsedId } },
+          { originalPublisherId: { $eq: parsedId } }
         ];
       }
 
@@ -815,6 +819,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   min_word_count: updatedWebsite.minWordCount || 500,
                   backlink_type: updatedWebsite.backlinkType || 'Do follow',
                   backlink_validity: updatedWebsite.backlinkValidity || 'lifetime',
+                  dofollow_link: updatedWebsite.allowedLinks || 1,
                   category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category : [updatedWebsite.category].filter(Boolean),
                   language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language : [updatedWebsite.language].filter(Boolean),
                   countries: updatedWebsite.countries,
@@ -851,6 +856,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                     (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
                     (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
                   )) || 1,
+                  dofollow_link: updatedWebsite.allowedLinks || 1,
                   publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
                   publisher_email: updatedWebsite.publisherEmail
                 }
@@ -2638,11 +2644,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Search filter
       if (search) {
+        const parsedId = parseInt(search) || 0;
         filters.$or = [
           { url: { $containsi: search } },
           { publisherName: { $containsi: search } },
+          { publisherEmail: { $containsi: search } },
           { description: { $containsi: search } },
-          { id: { $eq: parseInt(search) || 0 } }
+          { id: { $eq: parsedId } },
+          { currentPublisherId: { $eq: parsedId } },
+          { originalPublisherId: { $eq: parsedId } }
         ];
       }
 
