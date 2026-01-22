@@ -47,15 +47,42 @@ module.exports = {
       // STEP 1: Create marketplace listing for the newly approved website
       console.log(`📝 Creating marketplace listing for approved website ${updatedWebsiteId}`);
       try {
+        // IMPORTANT: Fetch the full submission with populated currentPublisherId
+        // The 'result' from event doesn't have relations populated
+        const fullSubmission = await strapi.entityService.findOne('api::publisher-website.publisher-website', updatedWebsiteId, {
+          populate: ['currentPublisherId']
+        });
+
+        if (!fullSubmission) {
+          throw new Error('Website not found after update');
+        }
+
         const controller = strapi.controller('api::publisher-website.publisher-website');
         if (controller && controller.createMarketplaceListing) {
-          await controller.createMarketplaceListing(result);
+          await controller.createMarketplaceListing(fullSubmission);
           console.log(`✅ Marketplace listing created for website ${updatedWebsiteId}`);
         } else {
           console.error('❌ createMarketplaceListing method not found');
         }
       } catch (marketplaceError) {
-        console.error('❌ Failed to create marketplace listing:', marketplaceError);
+        console.error('❌ Failed to create marketplace listing:', marketplaceError.message);
+        console.error('❌ Full error:', marketplaceError);
+
+        // Revert approval status since marketplace creation failed
+        try {
+          await strapi.entityService.update('api::publisher-website.publisher-website', updatedWebsiteId, {
+            data: {
+              submissionStatus: 'verified_pending_review',
+              reviewNotes: `Marketplace creation failed: ${marketplaceError.message}`
+            }
+          });
+          console.log(`⏪ Reverted website ${updatedWebsiteId} to verified_pending_review due to marketplace error`);
+        } catch (revertError) {
+          console.error('❌ Failed to revert approval status:', revertError);
+        }
+
+        // Don't throw - return to prevent further processing
+        return;
       }
 
       // STEP 2: Find all other websites with the same URL that need ownership transfer
@@ -114,6 +141,31 @@ module.exports = {
       }
 
       console.log(`✅ Ownership transfer process completed for URL: ${updatedWebsiteUrl}`);
+
+      // CRITICAL: Ensure the NEWLY APPROVED website's marketplace entry is active
+      // This is needed because the delisting above might have delisted the same entry
+      // if the old and new websites share the same marketplaceId
+      if (result.marketplaceId) {
+        try {
+          const currentMarketplace = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { id: result.marketplaceId }
+          });
+
+          if (currentMarketplace && currentMarketplace.status !== 'active') {
+            console.log(`🔄 Re-activating marketplace ${result.marketplaceId} for newly approved website ${result.url}`);
+            await strapi.entityService.update('api::marketplace.marketplace', result.marketplaceId, {
+              data: {
+                status: 'active',
+                delistedReason: null,
+                delistedAt: null
+              }
+            });
+            console.log(`✅ Marketplace ${result.marketplaceId} is now active for ${result.url}`);
+          }
+        } catch (reactivateError) {
+          console.error(`⚠️ Failed to re-activate marketplace ${result.marketplaceId}:`, reactivateError);
+        }
+      }
 
       // After first approval, ensure marketplace metrics are hydrated immediately
       try {

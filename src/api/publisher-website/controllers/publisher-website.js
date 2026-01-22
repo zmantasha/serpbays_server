@@ -39,11 +39,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // Check if this URL already exists for this publisher
+      // Check if this URL already exists for this publisher using ID relation
       const existingSubmission = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
         filters: {
           url: data.url,
-          publisherEmail: user.email
+          currentPublisherId: user.id
         }
       });
 
@@ -109,9 +109,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const pageSize = Math.min(parseInt(pagination.pageSize) || 20, 100); // Max 100 per page
       const offset = (page - 1) * pageSize;
 
-      // Build filters
+      // Build filters using immutable user ID relation (PRIMARY) or email (FALLBACK)
       const filters = {
-        publisherEmail: user.email
+        $or: [
+          { currentPublisherId: user.id },
+          { publisherEmail: user.email }
+        ]
       };
 
       // Add search filter if provided
@@ -150,7 +153,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const marketplaces = await strapi.db.query('api::marketplace.marketplace').findMany({
         where: {
           url: { $in: websiteUrls },
-          publisher_email: user.email
+          $or: [
+            { publisher: user.id },
+            { publisher_email: user.email }
+          ]
         },
         fields: ['id', 'url']
       });
@@ -267,17 +273,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to view website details.');
       }
 
-      // First find the website
+      // Find the website with publisher relation populated
       const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: '*'
+        populate: ['currentPublisherId']
       });
 
       if (!website) {
         return ctx.notFound('Website not found');
       }
 
-      // Check if the website belongs to the current user
-      if (website.publisherEmail !== user.email) {
+      // Check ownership: prefer userId, fallback to email for legacy records
+      const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
+        (!website.currentPublisherId && website.publisherEmail === user.email);
+
+      if (!isOwner) {
         return ctx.forbidden('You can only view your own website submissions.');
       }
 
@@ -299,12 +308,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to update a website.');
       }
 
-      // Check if this submission belongs to the user
+      // Check if this submission belongs to the user (using ID relation if possible, fallback to email for legacy)
       const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: ['updateRequests']
+        populate: ['updateRequests', 'currentPublisherId']
       });
 
-      if (!existing || existing.publisherEmail !== user.email) {
+      // Verification logic: prefer ID check, fallback to email
+      const isOwner = (existing.currentPublisherId && existing.currentPublisherId.id === user.id) ||
+        (existing.publisherEmail === user.email);
+
+      if (!existing || !isOwner) {
         return ctx.forbidden('You can only update your own website submissions.');
       }
 
@@ -459,15 +472,39 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.forbidden('Only administrators can approve websites.');
       }
 
-      const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const submission = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId']
+      });
       console.log('Found submission:', submission?.url || 'No submission found');
 
       if (!submission) {
         return ctx.notFound('Submission not found');
       }
 
+      // CRITICAL: Check if publisher is linked BEFORE approving
+      // Get publisher ID from relation or try to look up by email
+      let publisherId = submission.currentPublisherId?.id || submission.currentPublisherId;
+
+      if (!publisherId && submission.publisherEmail) {
+        // Try to find user by email
+        const userByEmail = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { email: submission.publisherEmail }
+        });
+        if (userByEmail) {
+          publisherId = userByEmail.id;
+          // Update the submission with the found publisher ID
+          await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+            data: { currentPublisherId: publisherId }
+          });
+          console.log(`[Approve] Linked publisher ${publisherId} from email ${submission.publisherEmail}`);
+        }
+      }
+
+      if (!publisherId) {
+        return ctx.badRequest(`Cannot approve website: No valid publisher account found for ${submission.url}. Publisher must register first.`);
+      }
+
       // Update submission status to approved
-      console.log('Updating submission status to approved...');
       const approved = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           submissionStatus: 'approved',
@@ -477,22 +514,29 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           approvedAt: new Date()
         }
       });
-      console.log('Submission updated:', approved.submissionStatus);
 
       // Create marketplace entry
-      console.log('Creating marketplace listing...');
+      // Use the original 'submission' which has currentPublisherId populated, not 'approved'
       try {
-        const marketplaceListing = await this.createMarketplaceListing(approved);
-        console.log('Marketplace listing created successfully:', marketplaceListing?.id);
+        const marketplaceListing = await this.createMarketplaceListing(submission);
+        console.log(`Website ${submission.url} approved and marketplace listing created (ID: ${marketplaceListing?.id})`);
+
+        // TODO: Send approval email notification
+
+        return { data: approved, message: 'Website approved and added to marketplace' };
       } catch (marketplaceError) {
         console.error('Failed to create marketplace listing:', marketplaceError);
-        // Don't fail the approval if marketplace creation fails
+
+        // Revert approval status since marketplace creation failed
+        await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+          data: {
+            submissionStatus: 'verified_pending_review',  // Revert to pending review
+            reviewNotes: `Marketplace creation failed: ${marketplaceError.message}`
+          }
+        });
+
+        return ctx.badRequest(`Website approval failed: ${marketplaceError.message}`);
       }
-
-      // TODO: Send approval email notification
-      console.log('=== APPROVAL PROCESS COMPLETED ===');
-
-      return { data: approved, message: 'Website approved and added to marketplace' };
     } catch (error) {
       console.error('Error approving website:', error);
       console.error('Error details:', error.message);
@@ -659,6 +703,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return validityMap[value] || 'Lifetime';
       };
 
+      // Extract publisher info BEFORE creating the marketplaceData object
+      // Handle both populated object and raw ID for currentPublisherId
+      const publisherUser = submission.currentPublisherId;
+      let publisherId = typeof publisherUser === 'object' && publisherUser !== null
+        ? publisherUser.id
+        : publisherUser;
+
+      // CRITICAL: Ensure we have a valid publisher ID
+      // If no publisherId from currentPublisherId, try to look up by email
+      if (!publisherId && submission.publisherEmail) {
+        const userByEmail = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { email: submission.publisherEmail }
+        });
+        if (userByEmail) {
+          publisherId = userByEmail.id;
+          console.log(`[createMarketplaceListing] Linked publisher ${publisherId} from email ${submission.publisherEmail}`);
+        }
+      }
+
+      // If still no publisher ID, reject the listing
+      if (!publisherId) {
+        throw new Error(`Cannot create marketplace listing: No valid publisher account found for ${submission.url}. Publisher email: ${submission.publisherEmail || 'not provided'}`);
+      }
+
+      const publisherEmailValue = (typeof publisherUser === 'object' && publisherUser !== null)
+        ? publisherUser.email
+        : submission.publisherEmail;
+      const publisherNameValue = (typeof publisherUser === 'object' && publisherUser !== null)
+        ? publisherUser.username
+        : (submission.publisherName || submission.publisherEmail?.split('@')[0]);
+
       // Map publisher-website fields to marketplace fields
       // IMPORTANT: Price should be null if not provided, never default to 0
       const marketplaceData = {
@@ -736,8 +811,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         description: submission.description, // Website description
         publication_location: submission.publicationLocation, // Where article will be published
         backlink_validity: convertBacklinkValidity(submission.backlinkValidity),
-        publisher_name: submission.publisherName || submission.publisherEmail.split('@')[0],
-        publisher_email: submission.publisherEmail,
+        // Use the pre-extracted publisher values
+        publisher_name: publisherNameValue,
+        publisher_email: publisherEmailValue,
+        // Map the immutable User ID relation
+        publisher: publisherId, // Always required - validation above ensures this exists
 
         // Map new content options
         sponsored: submission.sponsored,
@@ -864,18 +942,23 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // First find the website to check ownership
-      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId']
+      });
 
       if (!website) {
         return ctx.notFound('Website not found');
       }
 
-      // Check if the website belongs to the current user
-      if (website.publisherEmail !== user.email) {
+      // Check ownership: prefer userId, fallback to email for legacy records
+      const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
+        (!website.currentPublisherId && website.publisherEmail === user.email);
+
+      if (!isOwner) {
         return ctx.forbidden('You can only delete your own website submissions.');
       }
 
-      console.log(`Deleting website ID: ${id} for user: ${user.email}`);
+      console.log(`Deleting website ID: ${id} for user ID: ${user.id}`);
 
       // If website has a marketplace listing, delete it first
       if (website.marketplaceId) {
@@ -921,9 +1004,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // Check if this submission belongs to the user and is approved
-      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId']
+      });
 
-      if (!existing || existing.publisherEmail !== user.email) {
+      // Check ownership: prefer userId, fallback to email for legacy records
+      const isOwner = existing && (
+        (existing.currentPublisherId && existing.currentPublisherId.id === user.id) ||
+        (!existing.currentPublisherId && existing.publisherEmail === user.email)
+      );
+
+      if (!existing || !isOwner) {
         return ctx.forbidden('You can only manage your own website listings.');
       }
 
@@ -974,9 +1065,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // Check if this submission belongs to the user and is paused
-      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
+        populate: ['currentPublisherId']
+      });
 
-      if (!existing || existing.publisherEmail !== user.email) {
+      // Check ownership: prefer userId, fallback to email for legacy records
+      const isOwner = existing && (
+        (existing.currentPublisherId && existing.currentPublisherId.id === user.id) ||
+        (!existing.currentPublisherId && existing.publisherEmail === user.email)
+      );
+
+      if (!existing || !isOwner) {
         return ctx.forbidden('You can only manage your own website listings.');
       }
 
@@ -1040,8 +1139,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Website not found');
       }
 
-      // Check if user is already the owner
-      if (existingWebsite.publisherEmail === user.email) {
+      // Check if user is already the owner (by userId or email for legacy)
+      const isAlreadyOwner = (existingWebsite.currentPublisherId && existingWebsite.currentPublisherId.id === user.id) ||
+        (!existingWebsite.currentPublisherId && existingWebsite.publisherEmail === user.email);
+
+      if (isAlreadyOwner) {
         return ctx.badRequest('You already own this website');
       }
 
@@ -1102,8 +1204,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           newOwnerWebsiteId: newOwnerWebsite.id, // Link to new owner's entry
 
           // Set relations correctly - find the original publisher's user ID
-          originalPublisherId: existingWebsite.currentPublisherId || null,
-          currentPublisherId: user.id, // New owner becomes current
+          // originalPublisherId: existingWebsite.currentPublisherId || null,
+          // currentPublisherId: user.id, // New owner becomes current
 
           // Keep ALL original data intact - just change status
           // Original publisher can still see all their historical data
@@ -1237,8 +1339,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Website not found');
       }
 
-      // Security: Verify ownership
-      if (website.publisherEmail !== user.email) {
+      // Security: Verify ownership (prefer userId, fallback to email for legacy)
+      const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
+        (!website.currentPublisherId && website.publisherEmail === user.email);
+
+      if (!isOwner) {
         return ctx.forbidden('You do not have permission to delete this website');
       }
 

@@ -88,32 +88,48 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const payment = eventData.payload.payment.entity;
       const orderId = payment.order_id;
       const paymentId = payment.id;
-      const amount = payment.amount / 100; // Convert from paise to currency unit
+      const razorpayAmountINR = payment.amount / 100; // This is INR amount from Razorpay
       const currency = payment.currency;
       const status = payment.status;
 
-      console.log(`[RAZORPAY WEBHOOK] Payment captured: ${paymentId} for order ${orderId}, amount: ${amount} ${currency}`);
+      console.log(`[RAZORPAY WEBHOOK] Payment captured: ${paymentId} for order ${orderId}, Razorpay amount: ${razorpayAmountINR} ${currency}`);
 
-      // Find the transaction by order ID
-      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
-        where: { gatewayTransactionId: orderId },
-        populate: ['user_wallet']
-      });
-
-      if (!transaction) {
-        console.error(`[RAZORPAY WEBHOOK] Transaction not found for order ID: ${orderId}`);
-        return;
-      }
-
-      // Check if already processed
-      if (transaction.transactionStatus === 'success') {
-        console.log(`[RAZORPAY WEBHOOK] Transaction ${transaction.id} already processed by verify endpoint`);
-        return;
-      }
-
-      // ✅ CRITICAL: Use atomic transaction for transaction update + wallet update
-      // Prevents audit trail breakage if server crashes between operations
+      // ✅ BEST PRACTICE: Use database transaction with row-level locking to prevent race conditions
+      // This ensures only ONE webhook can process the same transaction at a time
       await strapi.db.transaction(async ({ trx }) => {
+        // ✅ SECURE: Lock the transaction row first (SELECT FOR UPDATE equivalent)
+        // Find with lock - if another webhook is processing, this will wait
+        const knex = strapi.db.connection;
+        const lockedRows = await knex('transactions')
+          .where('gateway_transaction_id', orderId)
+          .forUpdate() // Database-level lock
+          .transacting(trx);
+
+        if (!lockedRows || lockedRows.length === 0) {
+          console.error(`[RAZORPAY WEBHOOK] Transaction not found for order ID: ${orderId}`);
+          return;
+        }
+
+        const transactionRow = lockedRows[0];
+
+        // ✅ CRITICAL IDEMPOTENCY CHECK: Now safe from race conditions
+        if (transactionRow.transaction_status === 'success') {
+          console.log(`[RAZORPAY WEBHOOK] ⚠️ Transaction ${transactionRow.id} already processed - skipping to prevent double credit`);
+          return;
+        }
+
+        // Get wallet info
+        const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+          where: { id: transactionRow.id },
+          populate: ['user_wallet']
+        });
+
+        // ✅ CRITICAL FIX: Use the stored USD baseAmount from transaction
+        const amountToCredit = parseFloat(transaction.amount);
+        const creditCurrency = transaction.currency || 'USD';
+
+        console.log(`[RAZORPAY WEBHOOK] Using stored transaction amount: ${amountToCredit} ${creditCurrency} (Razorpay charged: ${razorpayAmountINR} ${currency})`);
+
         // ✅ ATOMIC OPERATION 1: Update transaction status
         await strapi.entityService.update('api::transaction.transaction', transaction.id, {
           data: {
@@ -123,13 +139,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           }
         });
 
-        // ✅ ATOMIC OPERATION 2: Update wallet balance (if captured)
-        if (status === 'captured') {
-          await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
-          console.log(`[RAZORPAY WEBHOOK] ✅ Successfully processed payment ${paymentId} for wallet ${transaction.user_wallet.id}`);
+        // ✅ ATOMIC OPERATION 2: Update wallet balance with correct USD amount (if captured)
+        if (status === 'captured' && transaction.user_wallet) {
+          await this.updateWalletBalance(transaction.user_wallet.id, amountToCredit, creditCurrency);
+          console.log(`[RAZORPAY WEBHOOK] ✅ Successfully credited ${amountToCredit} ${creditCurrency} to wallet ${transaction.user_wallet.id}`);
         }
-
-        // Both operations succeed or both fail - no broken audit trail!
       });
 
     } catch (error) {
@@ -181,41 +195,63 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     try {
       const order = eventData.payload.order.entity;
       const orderId = order.id;
-      const amount = order.amount / 100;
+      const razorpayAmountINR = order.amount / 100; // This is INR amount from Razorpay
       const currency = order.currency;
       const status = order.status;
 
-      console.log(`[RAZORPAY WEBHOOK] Order paid: ${orderId}, amount: ${amount} ${currency}, status: ${status}`);
+      console.log(`[RAZORPAY WEBHOOK] Order paid: ${orderId}, Razorpay amount: ${razorpayAmountINR} ${currency}, status: ${status}`);
 
-      // Find the transaction
-      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
-        where: { gatewayTransactionId: orderId },
-        populate: ['user_wallet']
-      });
-
-      if (!transaction) {
-        console.error(`[RAZORPAY WEBHOOK] Transaction not found for order ID: ${orderId}`);
-        return;
-      }
-
-      // ✅ CRITICAL: Use atomic transaction for transaction update + wallet update
-      // Prevents audit trail breakage if server crashes between operations
+      // ✅ BEST PRACTICE: Use database transaction with row-level locking to prevent race conditions
       await strapi.db.transaction(async ({ trx }) => {
+        // ✅ SECURE: Lock the transaction row first (SELECT FOR UPDATE equivalent)
+        const knex = strapi.db.connection;
+        const lockedRows = await knex('transactions')
+          .where('gateway_transaction_id', orderId)
+          .forUpdate() // Database-level lock
+          .transacting(trx);
+
+        if (!lockedRows || lockedRows.length === 0) {
+          console.error(`[RAZORPAY WEBHOOK] Transaction not found for order ID: ${orderId}`);
+          return;
+        }
+
+        const transactionRow = lockedRows[0];
+
+        // ✅ CRITICAL IDEMPOTENCY CHECK: Now safe from race conditions
+        if (transactionRow.transaction_status === 'success') {
+          console.log(`[RAZORPAY WEBHOOK] ⚠️ Transaction ${transactionRow.id} already processed by payment.captured - skipping order.paid to prevent double credit`);
+          return;
+        }
+
+        // Get wallet info
+        const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+          where: { id: transactionRow.id },
+          populate: ['user_wallet']
+        });
+
+        // ✅ CRITICAL FIX: Use the stored USD baseAmount from transaction
+        const amountToCredit = parseFloat(transaction.amount);
+        const creditCurrency = transaction.currency || 'USD';
+
+        console.log(`[RAZORPAY WEBHOOK] Using stored transaction amount: ${amountToCredit} ${creditCurrency} (Razorpay charged: ${razorpayAmountINR} ${currency})`);
+
         // ✅ ATOMIC OPERATION 1: Update transaction status
+        // Try to get payment ID from order.paid event (if available in payments array)
+        const paymentId = eventData.payload?.payment?.entity?.id || order.payments?.items?.[0]?.id || orderId;
+
         await strapi.entityService.update('api::transaction.transaction', transaction.id, {
           data: {
             transactionStatus: status === 'paid' ? 'success' : 'failed',
+            external_transaction_id: paymentId,
             updatedAt: new Date()
           }
         });
 
-        // ✅ ATOMIC OPERATION 2: Update wallet balance (if paid)
-        if (status === 'paid') {
-          await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
-          console.log(`[RAZORPAY WEBHOOK] ✅ Successfully processed order ${orderId} for wallet ${transaction.user_wallet.id}`);
+        // ✅ ATOMIC OPERATION 2: Update wallet balance with correct USD amount (if paid)
+        if (status === 'paid' && transaction.user_wallet) {
+          await this.updateWalletBalance(transaction.user_wallet.id, amountToCredit, creditCurrency);
+          console.log(`[RAZORPAY WEBHOOK] ✅ Successfully credited ${amountToCredit} ${creditCurrency} to wallet ${transaction.user_wallet.id}`);
         }
-
-        // Both operations succeed or both fail - no broken audit trail!
       });
 
     } catch (error) {

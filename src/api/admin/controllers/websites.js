@@ -156,11 +156,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Trim whitespace from search term
       const trimmedSearch = search ? String(search).trim() : '';
       if (trimmedSearch) {
+        const parsedId = parseInt(trimmedSearch) || 0;
         filters.$or = [
           { url: { $containsi: trimmedSearch } },
           { publisherName: { $containsi: trimmedSearch } },
+          { publisherEmail: { $containsi: trimmedSearch } },
           { description: { $containsi: trimmedSearch } },
-          { id: { $eq: parseInt(trimmedSearch) || 0 } }
+          { id: { $eq: parsedId } },
+          { currentPublisherId: { $eq: parsedId } },
+          { originalPublisherId: { $eq: parsedId } }
         ];
       }
 
@@ -815,6 +819,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   min_word_count: updatedWebsite.minWordCount || 500,
                   backlink_type: updatedWebsite.backlinkType || 'Do follow',
                   backlink_validity: updatedWebsite.backlinkValidity || 'lifetime',
+                  dofollow_link: updatedWebsite.allowedLinks || 1,
                   category: Array.isArray(updatedWebsite.category) ? updatedWebsite.category : [updatedWebsite.category].filter(Boolean),
                   language: Array.isArray(updatedWebsite.language) ? updatedWebsite.language : [updatedWebsite.language].filter(Boolean),
                   countries: updatedWebsite.countries,
@@ -851,6 +856,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                     (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
                     (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
                   )) || 1,
+                  dofollow_link: updatedWebsite.allowedLinks || 1,
                   publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
                   publisher_email: updatedWebsite.publisherEmail
                 }
@@ -2228,6 +2234,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         errors: 0,
         conflicts: 0,
         duplicates: 0,
+        linked: 0,      // Websites linked to existing users
+        orphaned: 0,    // Websites where no user was found (pending auto-claim)
         details: []
       }
 
@@ -2397,6 +2405,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               } else {
                 // Replace existing website
                 const preparedData = this.prepareWebsiteData(websiteData, normalizedUrl)
+
+                // --- USER LOOKUP AND LINKING (for replacement) ---
+                if (preparedData.publisherEmail) {
+                  const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+                    where: { email: preparedData.publisherEmail }
+                  });
+                  if (existingUser) {
+                    preparedData.currentPublisherId = existingUser.id;
+                    results.linked++;
+                    console.log(`[BULK IMPORT] Linked (replace) ${normalizedUrl} to user ID ${existingUser.id} (${preparedData.publisherEmail})`);
+                  } else {
+                    results.orphaned++;
+                    console.log(`[BULK IMPORT] No user found for ${preparedData.publisherEmail}, website ${normalizedUrl} will be orphaned`);
+                  }
+                } else {
+                  results.orphaned++;
+                }
+
                 await strapi.entityService.update('api::publisher-website.publisher-website', existing.id, {
                   data: preparedData
                 })
@@ -2413,6 +2439,27 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
             // No conflict - create new website
             const preparedData = this.prepareWebsiteData(websiteData, normalizedUrl)
+
+            // --- USER LOOKUP AND LINKING ---
+            let linkedPublisherId = null;
+            if (preparedData.publisherEmail) {
+              const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+                where: { email: preparedData.publisherEmail }
+              });
+              if (existingUser) {
+                linkedPublisherId = existingUser.id;
+                preparedData.currentPublisherId = existingUser.id;
+                results.linked++;
+                console.log(`[BULK IMPORT] Linked ${normalizedUrl} to user ID ${linkedPublisherId} (${preparedData.publisherEmail})`);
+              } else {
+                results.orphaned++;
+                console.log(`[BULK IMPORT] No user found for ${preparedData.publisherEmail}, website ${normalizedUrl} will be orphaned (pending auto-claim)`);
+              }
+            } else {
+              results.orphaned++;
+              console.log(`[BULK IMPORT] No email provided for ${normalizedUrl}, website will be orphaned`);
+            }
+
             await strapi.entityService.create('api::publisher-website.publisher-website', {
               data: preparedData
             })
@@ -2460,7 +2507,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      console.log(`[BULK IMPORT] Completed: ${results.successful} successful, ${results.errors} errors, ${results.conflicts} conflicts`)
+      console.log(`[BULK IMPORT] Completed: ${results.successful} successful, ${results.errors} errors, ${results.conflicts} conflicts, ${results.linked} linked, ${results.orphaned} orphaned`)
 
       // Clear progress from memory map
       if (ctx.state.user && ctx.state.user.id) {
@@ -2597,11 +2644,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Search filter
       if (search) {
+        const parsedId = parseInt(search) || 0;
         filters.$or = [
           { url: { $containsi: search } },
           { publisherName: { $containsi: search } },
+          { publisherEmail: { $containsi: search } },
           { description: { $containsi: search } },
-          { id: { $eq: parseInt(search) || 0 } }
+          { id: { $eq: parsedId } },
+          { currentPublisherId: { $eq: parsedId } },
+          { originalPublisherId: { $eq: parsedId } }
         ];
       }
 

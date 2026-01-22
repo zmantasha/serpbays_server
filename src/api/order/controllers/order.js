@@ -186,12 +186,17 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // CRITICAL: Prevent users from ordering their own websites
         // Check if the user is trying to order their own website
-        if (marketplace && marketplace.publisher && marketplace.publisher.email === user.email) {
-          console.log(`🚫 Self-order prevented: User ${user.email} tried to order their own website ${marketplace.url}`);
+        // Check 1: Direct ID match if publisher relation exists
+        if (marketplace && marketplace.publisher && marketplace.publisher.id === user.id) {
+          console.log(`🚫 Self-order prevented: User ${user.id} tried to order their own website ${marketplace.url} (ID match)`);
           return ctx.badRequest('You cannot place an order on your own website. Please select a different website.');
-        } else if (marketplace && marketplace.publisher_email === user.email) {
-          // Fallback check using stored email string
-          console.log(`🚫 Self-order prevented: User ${user.email} tried to order their own website ${marketplace.url}`);
+        }
+        // Check 2: Email fallback
+        else if (marketplace && (
+          (marketplace.publisher && marketplace.publisher.email === user.email) ||
+          marketplace.publisher_email === user.email
+        )) {
+          console.log(`🚫 Self-order prevented: User ${user.email} tried to order their own website ${marketplace.url} (Email match)`);
           return ctx.badRequest('You cannot place an order on your own website. Please select a different website.');
         }
 
@@ -209,8 +214,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             backlink_validity: marketplace.backlink_validity,
             category: marketplace.category,
             other_category: marketplace.other_category,
-            publisher_name: marketplace.publisher_name,
-            publisher_email: marketplace.publisher_email,
+            publisher_name: marketplace.publisher?.username || marketplace.publisher_name,
+            publisher_email: marketplace.publisher?.email || marketplace.publisher_email,
             publisher_price: marketplace.publisher_price,
             tat: marketplace.tat,
             dofollow_link: marketplace.dofollow_link,
@@ -254,8 +259,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           orderData.websiteBacklinkType = marketplace.backlink_type;
           orderData.websiteBacklinkValidity = marketplace.backlink_validity;
           orderData.websiteCategory = marketplace.category;
-          orderData.websitePublisherName = marketplace.publisher_name;
-          orderData.websitePublisherEmail = marketplace.publisher_email;
+          orderData.websitePublisherName = marketplace.publisher?.username || marketplace.publisher_name;
+          orderData.websitePublisherEmail = marketplace.publisher?.email || marketplace.publisher_email;
           orderData.websitePublisherPrice = marketplace.publisher_price;
           orderData.websiteTat = marketplace.tat * 24; // Convert days to hours for frontend calculation
           orderData.websiteDofollowLink = marketplace.dofollow_link;
@@ -307,9 +312,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Create the order
         // First prepare order data with proper fields
 
-        // Find publisher user by email if we have marketplace data
+        // Find publisher ID: prioritize direct relation, fallback to email lookup
         let publisherId = null;
-        if (marketplace && marketplace.publisher_email) {
+        if (marketplace && marketplace.publisher && marketplace.publisher.id) {
+          publisherId = marketplace.publisher.id;
+        } else if (marketplace && marketplace.publisher_email) {
           const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
             where: { email: marketplace.publisher_email }
           });
@@ -321,7 +328,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const orderToCreate = {
           ...orderData,
           advertiser: user.id,
-          // Assign publisher found via email lookup
+          // Assign publisher found via ID or email lookup
           publisher: publisherId,
           orderDate: new Date(),
           isOutsourced: isOutsourced,
@@ -530,9 +537,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Create notification for publisher (website owner) using snapshot data
         // NOTE: We already sent the internal notification above. Sending email here.
         try {
-          // Use publisher email from marketplace snapshot if available
+          // Use CURRENT publisher email from relation (always up-to-date), fallback to static field for legacy entries
           let publisherEmail = null;
-          if (marketplace && marketplace.publisher_email) {
+          if (marketplace && marketplace.publisher && marketplace.publisher.email) {
+            publisherEmail = marketplace.publisher.email;
+          } else if (marketplace && marketplace.publisher_email) {
             publisherEmail = marketplace.publisher_email;
           }
 
@@ -687,25 +696,29 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Include only orders where user is advertiser
           baseFilters.advertiser = user.id;
         } else if (type === 'publisher') {
-          // 1. Direct publisher assignment
-          // 2. Fallback: Website owner (matched by email)
+          // Use ORDER's snapshot data, NOT live marketplace data
+          // This ensures orders stay with the publisher who was owner at order creation time
+          // 1. Direct publisher assignment (set when order was created)
+          // 2. Order's snapshotted publisher email (captured at order creation)
           baseFilters.$or = [
             { publisher: user.id },
-            { website: { publisher_email: user.email } }
+            { websitePublisherEmail: user.email }
           ];
 
           // Exclude orders where user is the advertiser (to prevent self-acceptance)
           baseFilters.advertiser = { $ne: user.id };
 
-          console.log(`[Order Filter] Publisher ${user.id} - filtering by direct publisher OR website owner email`);
+          console.log(`[Order Filter] Publisher ${user.id} - filtering by direct publisher OR order snapshot email`);
         } else if (type === 'all') {
-          // Include orders where user is advertiser OR publisher (direct relationships only)
-          baseFilters.$or = [];
-          baseFilters.$or.push({ advertiser: user.id });
-          baseFilters.$or.push({ publisher: user.id });
-          baseFilters.$or.push({ website: { publisher_email: user.email } });
+          // Include orders where user is advertiser OR publisher
+          // Use ORDER's snapshot data for publisher matching
+          baseFilters.$or = [
+            { advertiser: user.id },
+            { publisher: user.id },
+            { websitePublisherEmail: user.email }
+          ];
 
-          console.log(`[Order Filter] User ${user.id} - filtering by direct relationships`);
+          console.log(`[Order Filter] User ${user.id} - filtering by direct relationships and order snapshot`);
         }
 
         // Add search filters
@@ -853,12 +866,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
 
-        // Get publisher's websites by matching the email
+        // Get publisher's websites by matching ID or fallback to email
         // For available orders, we ONLY want active websites they currently own
-        // Historical orders are handled via the publisher field, not marketplace ownership
         const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
           where: {
-            publisher_email: user.email,
+            $or: [
+              { publisher: user.id },
+              { publisher_email: user.email }
+            ],
             status: 'active' // Only active websites for new available orders
           }
         });
@@ -966,15 +981,36 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         }
 
-        // Combine current and historical orders
-        const combinedOrders = [...currentWebsiteOrders, ...historicalOrders];
+        // ALSO get pending orders where user is directly assigned via snapshot email
+        // This catches orders for websites where ownership transferred but order was placed when user owned it
+        const directlyAssignedOrders = await strapi.entityService.findMany('api::order.order', {
+          filters: {
+            $and: [
+              { websitePublisherEmail: user.email },
+              { orderStatus: 'pending' },
+              { advertiser: { id: { $ne: user.id } } },
+              {
+                $or: [
+                  { publisher: { $null: true } },
+                  { publisher: { id: user.id } }
+                ]
+              }
+            ]
+          },
+          populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
+          sort: { orderDate: 'desc' }
+        });
+        console.log(`[Available Orders] Found ${directlyAssignedOrders.length} orders via snapshot email ${user.email}`);
+
+        // Combine all sources: current + historical + directly assigned via snapshot
+        const combinedOrders = [...currentWebsiteOrders, ...historicalOrders, ...directlyAssignedOrders];
 
         // Remove duplicates (in case of any overlap)
         orders = combinedOrders.filter((order, index, self) =>
           index === self.findIndex(o => o.id === order.id)
         );
 
-        console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (${currentWebsiteOrders.length} current + ${historicalOrders.length} historical)`);
+        console.log(`Retrieved ${orders.length} available orders for user ID ${user.id} (${currentWebsiteOrders.length} current + ${historicalOrders.length} historical + ${directlyAssignedOrders.length} via snapshot)`);
 
         // Log all order IDs for debugging
         console.log('Available order IDs:', orders.map(order => order.id).join(', '));
@@ -1118,7 +1154,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Verify the publisher owns this website (unless they are the advertiser)
         if (order.advertiser !== user.id) {
           const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: { id: order.website.id, publisher_email: user.email }
+            where: {
+              id: order.website.id,
+              $or: [
+                { publisher: user.id },
+                { publisher_email: user.email }
+              ]
+            }
           });
 
           if (!isWebsiteOwner) {
@@ -1230,7 +1272,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // If the order is for a website owned by this user
           if (order.website && order.website.id) {
             const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-              where: { id: order.website.id, publisher_email: user.email }
+              where: {
+                id: order.website.id,
+                $or: [
+                  { publisher: user.id },
+                  { publisher_email: user.email }
+                ]
+              }
             });
 
             if (isWebsiteOwner) {
@@ -1286,7 +1334,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             // Check if user is the current website owner for NEW orders only
             // For historical orders, only the originally assigned publisher can deliver
             const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-              where: { id: order.website.id, publisher_email: user.email }
+              where: {
+                id: order.website.id,
+                $or: [
+                  { publisher: user.id },
+                  { publisher_email: user.email }
+                ]
+              }
             });
 
             if (isWebsiteOwner) {

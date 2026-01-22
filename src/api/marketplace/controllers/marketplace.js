@@ -138,18 +138,59 @@ const validateType = (value, type, fieldName, schema) => {
   }
 };
 
+
 module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
-  // Helper function to sanitize publisher data for advertisers
-  sanitizePublisherData(entries, user) {
-    // Log user info for debugging
-    console.log('🔍 [sanitizePublisherData] User info:', {
-      email: user?.email,
-      Publisher: user?.Publisher,
-      Advertiser: user?.Advertiser,
-      isArray: Array.isArray(entries),
-      entryCount: Array.isArray(entries) ? entries.length : 1
+
+  // ============================================================
+  // SAFE POST-FETCH SORTING HELPER
+  // This function is applied AFTER fetching data to guarantee 
+  // that NULL values always appear at the bottom for metric fields.
+  // This is the SINGLE source of truth for metric sorting.
+  // ============================================================
+  applyPostFetchSorting(entries, sortField, sortDirection) {
+    // Only apply to metric fields that have the NULL issue
+    const metricFields = [
+      'ahrefs_dr', 'moz_da', 'semrush_authority_score',
+      'ahrefs_traffic', 'semrush_traffic', 'similarweb_traffic',
+      'price', 'link_insertion_price', 'spam_score'
+    ];
+
+    // If not a metric field or no entries, return as-is
+    if (!metricFields.includes(sortField) || !Array.isArray(entries) || entries.length === 0) {
+      return entries;
+    }
+
+    // Create a copy to avoid mutating original
+    const sorted = [...entries];
+
+    sorted.sort((a, b) => {
+      const valA = a[sortField];
+      const valB = b[sortField];
+
+      // Handle NULL/undefined - always push to bottom
+      const aIsEmpty = valA === null || valA === undefined;
+      const bIsEmpty = valB === null || valB === undefined;
+
+      // If both are empty, maintain order
+      if (aIsEmpty && bIsEmpty) return 0;
+      // If only A is empty, push A to bottom
+      if (aIsEmpty) return 1;
+      // If only B is empty, push B to bottom
+      if (bIsEmpty) return -1;
+
+      // Both have values - sort normally
+      if (sortDirection === 'desc') {
+        return (Number(valB) || 0) - (Number(valA) || 0);
+      } else {
+        return (Number(valA) || 0) - (Number(valB) || 0);
+      }
     });
 
+    return sorted;
+  },
+
+  // Helper function to sanitize publisher data for advertisers
+  sanitizePublisherData(entries, user) {
     // For advertisers and public users, hide sensitive publisher information
     const sanitize = (entry) => {
       if (!entry) return entry;
@@ -157,26 +198,22 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const sanitized = { ...entry };
 
       // Check if this is the user's own website
-      // Check ONLY if email matches - don't check current role
-      // User might be in Advertiser mode but still own the website
-      const isOwnWebsite = user && entry.publisher_email === user.email;
+      // Check by userId (publisher relation) or email for legacy records
+      // Handle both cases: publisher might be just ID (number) or populated object
+      const publisherId = typeof entry.publisher === 'object' && entry.publisher !== null
+        ? entry.publisher.id
+        : entry.publisher;
 
-      // Debug logging for EVERY website
-      console.log(`🔍 [Ownership Check] ${entry.url}:`, {
-        userEmail: user?.email,
-        publisherEmail: entry.publisher_email,
-        userIsPublisher: user?.Publisher,
-        userIsAdvertiser: user?.Advertiser,
-        emailsMatch: entry.publisher_email === user?.email,
-        isOwnWebsite
-      });
+      const isOwnWebsite = user && (
+        (publisherId && publisherId == user.id) ||  // Use == to handle string/number mismatch
+        (!publisherId && entry.publisher_email === user.email)
+      );
 
       // Add ownership flag (safe to expose, doesn't reveal publisher identity)
       sanitized.isOwnWebsite = isOwnWebsite;
 
       // If user is a publisher viewing their own listing, keep publisher data
       if (isOwnWebsite) {
-        console.log(`✅ [Ownership] User owns ${entry.url}, keeping publisher data`);
         return sanitized;
       }
 
@@ -249,6 +286,40 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       ctx.request.body.data.publisher_email = user.email;
     }
 
+    // CRITICAL: Ensure publisher user ID is always linked
+    const data = ctx.request.body.data || {};
+
+    // If publisher ID is already provided, verify it exists
+    if (data.publisher) {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { id: data.publisher }
+      });
+      if (!publisherUser) {
+        return ctx.badRequest('Invalid publisher ID: User does not exist');
+      }
+    }
+    // If no publisher ID but email is provided, look up user and set publisher
+    else if (data.publisher_email) {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { email: data.publisher_email }
+      });
+      if (publisherUser) {
+        ctx.request.body.data.publisher = publisherUser.id;
+        console.log(`[Marketplace Create] Linked publisher ${publisherUser.id} from email ${data.publisher_email}`);
+      } else {
+        return ctx.badRequest(`Cannot create listing: No user account found for email ${data.publisher_email}. Publisher must register first.`);
+      }
+    }
+    // If logged-in publisher is creating, link their user ID
+    else if (user && user.Advertiser === false) {
+      ctx.request.body.data.publisher = user.id;
+      console.log(`[Marketplace Create] Linked publisher ${user.id} (current user)`);
+    }
+    // No publisher info at all - reject
+    else {
+      return ctx.badRequest('Cannot create listing: Publisher information is required');
+    }
+
     return await super.create(ctx);
   },
 
@@ -270,10 +341,55 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Publisher filtering: Publishers can only update their own listings
     if (user && user.Advertiser === false) {
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
-        fields: ['publisher_email']
+        fields: ['publisher_email'],
+        populate: ['publisher']
       });
-      if (!entry || entry.publisher_email !== user.email) {
+      // Check ownership: prefer userId (publisher relation), fallback to email for legacy
+      const isOwner = entry && (
+        (entry.publisher && entry.publisher.id === user.id) ||
+        (!entry.publisher && entry.publisher_email === user.email)
+      );
+      if (!entry || !isOwner) {
         return ctx.unauthorized('You are not allowed to update this listing.');
+      }
+    }
+
+    // CRITICAL: Ensure publisher user ID is linked on updates
+    const data = ctx.request.body.data || {};
+
+    // If updating publisher ID, verify it exists
+    if (data.publisher) {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { id: data.publisher }
+      });
+      if (!publisherUser) {
+        return ctx.badRequest('Invalid publisher ID: User does not exist');
+      }
+    }
+    // If updating publisher_email and no publisher ID, try to link
+    else if (data.publisher_email && !data.publisher) {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { email: data.publisher_email }
+      });
+      if (publisherUser) {
+        ctx.request.body.data.publisher = publisherUser.id;
+        console.log(`[Marketplace Update] Linked publisher ${publisherUser.id} from email ${data.publisher_email}`);
+      }
+    }
+    // If entry has no publisher but has email, fix it during update
+    else {
+      const existingEntry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
+        fields: ['publisher_email'],
+        populate: ['publisher']
+      });
+      if (existingEntry && !existingEntry.publisher && existingEntry.publisher_email) {
+        const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { email: existingEntry.publisher_email }
+        });
+        if (publisherUser) {
+          ctx.request.body.data.publisher = publisherUser.id;
+          console.log(`[Marketplace Update] Fixed orphan: Linked publisher ${publisherUser.id} from email ${existingEntry.publisher_email}`);
+        }
       }
     }
 
@@ -287,9 +403,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Publisher filtering: Publishers can only delete their own listings
     if (user && user.Advertiser === false) {
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
-        fields: ['publisher_email']
+        fields: ['publisher_email'],
+        populate: ['publisher']
       });
-      if (!entry || entry.publisher_email !== user.email) {
+      // Check ownership: prefer userId (publisher relation), fallback to email for legacy
+      const isOwner = entry && (
+        (entry.publisher && entry.publisher.id === user.id) ||
+        (!entry.publisher && entry.publisher_email === user.email)
+      );
+      if (!entry || !isOwner) {
         return ctx.unauthorized('You are not allowed to delete this listing.');
       }
     }
@@ -310,8 +432,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Advertiser (user.Advertiser === true) can see all active listings
     // Publisher (user.Advertiser === false) only sees their listings
     if (user && user.Advertiser === false && user.Publisher === true) {
-      // Publishers see their own listings (all statuses)
-      ctx.query.filters.publisher_email = user.email;
+      // Publishers see their own listings (all statuses) - use userId OR email for legacy
+      ctx.query.filters.$or = [
+        { publisher: user.id },
+        { publisher_email: user.email }
+      ];
     } else {
       // Advertisers and public users only see active listings (hide paused/delisted listings)
       // Only show marketplace listings that have proper status and are not paused or delisted
@@ -597,11 +722,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // Sanitize publisher data
         const sanitizedResults = this.sanitizePublisherData(results, user);
 
-        console.log(`✅ Knex sorting applied: ${rawSortField}:${rawSortDirection} NULLS LAST - ${results.length} results`);
+        // Apply post-fetch sorting as final guarantee
+        const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection);
 
         // Return in Strapi v4 format
         return {
-          data: sanitizedResults,
+          data: sortedResults,
           meta: {
             pagination: {
               page,
@@ -627,6 +753,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
           if (results && results.results) {
             results.results = this.sanitizePublisherData(results.results, user);
+            // Apply post-fetch sorting as final guarantee
+            results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection);
           }
 
           return {
@@ -641,6 +769,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           const result = await super.find(ctx);
           if (result && result.data) {
             result.data = this.sanitizePublisherData(result.data, user);
+            // Apply post-fetch sorting as final guarantee
+            result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection);
           }
           return result;
         }
@@ -656,11 +786,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const pageSize = ctx.query.pagination?.pageSize || 25;
 
       // Use db.query to get ALL fields including private ones
+      // IMPORTANT: Populate publisher relation for ownership check in sanitizePublisherData
       const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
         where: ctx.query.filters,
         orderBy: ctx.query.sort ? { [ctx.query.sort.split(':')[0]]: ctx.query.sort.split(':')[1] || 'asc' } : { updatedAt: 'desc' },
         limit: pageSize,
         offset: (page - 1) * pageSize,
+        populate: ['publisher'],  // Required for isOwnWebsite check
       });
 
       // Get total count for pagination
@@ -668,13 +800,17 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         where: ctx.query.filters
       });
 
-      console.log(`✅ Fetched ${entries.length} entries WITH private fields for ownership check`);
-
       // Sanitize publisher data (this removes private fields for non-owners)
       const sanitizedEntries = this.sanitizePublisherData(entries, user);
 
+      // Apply post-fetch sorting if sorting by a metric field
+      const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
+      const sortField = sortParts[0];
+      const sortDirection = sortParts[1] || 'desc';
+      const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection);
+
       return {
-        data: sanitizedEntries,
+        data: sortedEntries,
         meta: {
           pagination: {
             page,
@@ -690,6 +826,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const result = await super.find(ctx);
       if (result && result.data) {
         result.data = this.sanitizePublisherData(result.data, user);
+        // Apply post-fetch sorting for fallback too
+        const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
+        result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc');
       }
       return result;
     }
@@ -716,8 +855,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Check user permissions
       if (user && user.Advertiser === false && user.Publisher === true) {
         console.log('🔍 User is a Publisher, checking ownership...');
-        if (entry.publisher_email !== user.email) {
-          console.log('🔍 Publisher not authorized - Entry email:', entry.publisher_email, 'User email:', user.email);
+        // Check ownership: prefer userId (publisher relation), fallback to email for legacy
+        const isOwner = (entry.publisher && entry.publisher === user.id) ||
+          (!entry.publisher && entry.publisher_email === user.email);
+        if (!isOwner) {
+          console.log('🔍 Publisher not authorized - Entry publisher:', entry.publisher, 'User ID:', user.id);
           return ctx.unauthorized('You are not allowed to view this listing.');
         }
         console.log('🔍 Publisher authorized to view their own listing');
