@@ -55,6 +55,56 @@ module.exports = (plugin) => {
             { data: { Publisher: true } }
           );
         }
+
+        // ========== AUTO-LINK ORPHANED WEBSITES ==========
+        // Find websites with matching email but no currentPublisherId linked
+        const userEmail = result.email;
+        const userId = result.id;
+
+        if (userEmail) {
+          console.log(`[Auto-Claim] Checking for orphaned websites for ${userEmail} (ID: ${userId})`);
+
+          // Use raw database query to find orphaned websites
+          // Strapi's $null operator doesn't work correctly for relations stored in link tables
+          const knex = strapi.db.connection;
+
+          const orphanedSites = await knex('publisher_websites AS pw')
+            .leftJoin('publisher_websites_current_publisher_id_lnk AS lnk', 'pw.id', 'lnk.publisher_website_id')
+            .whereNull('lnk.user_id')
+            .where('pw.publisher_email', userEmail)
+            .select('pw.id', 'pw.url', 'pw.publisher_email');
+
+          console.log(`[Auto-Claim] Found ${orphanedSites.length} orphaned sites for ${userEmail}:`, orphanedSites.map(s => s.url));
+
+          if (orphanedSites.length > 0) {
+            strapi.log.info(`[Auto-Claim] Found ${orphanedSites.length} orphaned websites for new user ${userEmail} (ID: ${userId}). Linking now...`);
+
+            // Update each website individually using entityService
+            let linkedCount = 0;
+            for (const site of orphanedSites) {
+              try {
+                console.log(`[Auto-Claim] Linking website ${site.id} (${site.url}) to user ${userId}`);
+                await strapi.entityService.update('api::publisher-website.publisher-website', site.id, {
+                  data: {
+                    currentPublisherId: userId,
+                    originalPublisherId: userId
+                  }
+                });
+                linkedCount++;
+                console.log(`[Auto-Claim] Successfully linked website ${site.id}`);
+              } catch (updateErr) {
+                console.error(`[Auto-Claim ERROR] Failed to link website ${site.id} (${site.url}):`, updateErr.message);
+              }
+            }
+
+            strapi.log.info(`[Auto-Claim] Successfully linked ${linkedCount}/${orphanedSites.length} websites to user ID ${userId}.`);
+            console.log(`[Auto-Claim] Finished: linked ${linkedCount}/${orphanedSites.length} websites`);
+          } else {
+            console.log(`[Auto-Claim] No orphaned sites found for ${userEmail}`);
+          }
+        }
+        // ========== END AUTO-LINK ORPHANED WEBSITES ==========
+
       } catch (error) {
         console.error('Error in user lifecycle hook:', error);
       }
