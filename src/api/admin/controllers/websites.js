@@ -538,6 +538,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         samplePosts: website.samplePosts || [],
         // Guidelines
         guidelines: website.guidelines || 'No guidelines provided',
+        publicationLocation: website.publicationLocation || '',
         // Additional metadata
         protocol: website.protocol || 'https',
         resellerCode: website.resellerCode,
@@ -672,6 +673,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         samplePosts: website.samplePosts || [],
         // Guidelines
         guidelines: website.guidelines || 'No guidelines provided',
+        publicationLocation: website.publicationLocation || '',
         rejectionReason: website.rejectionReason || null,
         rejectedBy: website.rejectedBy || null,
         // Additional metadata
@@ -1116,6 +1118,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         datingLinkInsertionPrice: parseInt(websiteData.datingLinkInsertionPrice) || 0,
         samplePosts: websiteData.samplePosts || [],
         guidelines: websiteData.guidelines,
+        publicationLocation: websiteData.publicationLocation,
         stepCompleted: 4, // Mark as completed since admin is adding it
         urlAddedAt: new Date(),
         detailsCompletedAt: new Date()
@@ -2587,6 +2590,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       datingLinkInsertionPrice: parseInt(websiteData.datingLinkInsertionPrice) || 0,
       samplePosts: websiteData.samplePosts ? websiteData.samplePosts.split(',').map(s => s.trim()) : [],
       guidelines: websiteData.guidelines || 'No guidelines provided',
+      publicationLocation: websiteData.publicationLocation || '',
       stepCompleted: 4,
       urlAddedAt: new Date(),
       detailsCompletedAt: new Date()
