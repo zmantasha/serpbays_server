@@ -196,7 +196,7 @@ module.exports = {
             ahrefs_traffic: result.ahrefs_traffic ?? null,
             ahrefs_rank: result.ahrefs_rank ?? null,
             moz_da: result.moz_da ?? null,
-            moz_spam_score: result.moz_spam_score ?? null,
+            spam_score: result.moz_spam_score ?? null,
             semrush_traffic: result.semrush_traffic ?? null,
             semrush_authority_score: result.semrush_authority_score ?? null,
             ahrefs_referring_domain: result.ahrefs_referring_domain ?? null,
@@ -283,7 +283,7 @@ module.exports = {
             ahrefs_traffic: dataUpdated.ahrefs_traffic ?? result.ahrefs_traffic ?? null,
             ahrefs_rank: dataUpdated.ahrefs_rank ?? result.ahrefs_rank ?? null,
             moz_da: dataUpdated.moz_da ?? result.moz_da ?? null,
-            moz_spam_score: dataUpdated.moz_spam_score ?? result.moz_spam_score ?? null,
+            spam_score: dataUpdated.moz_spam_score ?? result.moz_spam_score ?? null,
             semrush_traffic: dataUpdated.semrush_traffic ?? result.semrush_traffic ?? null,
             semrush_authority_score: dataUpdated.semrush_authority_score ?? result.semrush_authority_score ?? null,
             ahrefs_referring_domain: dataUpdated.ahrefs_referring_domain ?? result.ahrefs_referring_domain ?? null,
@@ -389,7 +389,7 @@ module.exports = {
 
         if (changedFields.length > 0) {
           const metricsFields = ['moz_da', 'ahrefs_dr', 'ahrefs_traffic', 'ahrefs_rank',
-            'semrush_authority_score', 'semrush_traffic', 'moz_spam_score'];
+            'semrush_authority_score', 'semrush_traffic', 'spam_score'];
 
           const pricingFields = ['generalGuestPostPrice', 'generalLinkInsertionPrice',
             'casinoGuestPostPrice', 'casinoLinkInsertionPrice', 'cryptoGuestPostPrice',
