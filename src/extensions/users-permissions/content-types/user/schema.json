@@ -78,11 +78,11 @@
     },
     "Advertiser": {
       "type": "boolean",
-      "default": false
+      "default": true
     },
     "Publisher": {
       "type": "boolean",
-      "default": true
+      "default": false
     },
     "withdrawalRequests": {
       "type": "relation",
