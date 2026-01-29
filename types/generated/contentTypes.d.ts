@@ -3343,6 +3343,7 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.Private;
     email: Schema.Attribute.Email &
       Schema.Attribute.Required &
+      Schema.Attribute.Unique &
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
