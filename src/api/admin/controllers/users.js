@@ -37,17 +37,34 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         ];
       }
 
-      // Role filter
+      // Role filter - use case-insensitive matching
       if (role) {
-        filters.role = { name: role };
+        filters.role = { name: { $containsi: role } };
       }
 
-      // Status filters
-      if (blocked !== '') {
+      // Status filter - convert status string to blocked/confirmed fields
+      if (status) {
+        switch (status.toLowerCase()) {
+          case 'blocked':
+            filters.blocked = true;
+            break;
+          case 'active':
+            filters.blocked = false;
+            filters.confirmed = true;
+            break;
+          case 'pending':
+            filters.confirmed = false;
+            filters.blocked = false;
+            break;
+        }
+      }
+
+      // Direct blocked/confirmed filters (for backwards compatibility)
+      if (blocked !== '' && !status) {
         filters.blocked = blocked === 'true';
       }
 
-      if (confirmed !== '') {
+      if (confirmed !== '' && !status) {
         filters.confirmed = confirmed === 'true';
       }
 
