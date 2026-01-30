@@ -51,14 +51,14 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         filters.confirmed = confirmed === 'true';
       }
 
-      // Get users with pagination
+      // Get users with pagination - use start/limit for Strapi entityService
+      const pageNum = parseInt(page);
+      const pageSizeNum = parseInt(pageSize);
       const users = await strapi.entityService.findMany('plugin::users-permissions.user', {
         filters,
         sort,
-        pagination: {
-          page: parseInt(page),
-          pageSize: parseInt(pageSize)
-        },
+        start: (pageNum - 1) * pageSizeNum,
+        limit: pageSizeNum,
         populate: {
           role: true,
           user_wallet: true,
@@ -117,9 +117,9 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         data: transformedUsers,
         meta: {
           pagination: {
-            page: parseInt(page),
-            pageSize: parseInt(pageSize),
-            pageCount: Math.ceil(total / pageSize),
+            page: pageNum,
+            pageSize: pageSizeNum,
+            pageCount: Math.ceil(total / pageSizeNum),
             total
           }
         }
