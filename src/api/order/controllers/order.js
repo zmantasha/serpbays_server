@@ -539,15 +539,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         try {
           // Use CURRENT publisher email from relation (always up-to-date), fallback to static field for legacy entries
           let publisherEmail = null;
+
+          console.log(`[ORDER ${order.id}] Determining publisher email for website ID: ${orderData.website}`);
+          console.log(`[ORDER ${order.id}] Marketplace publisher relation:`, marketplace?.publisher?.email || 'NONE');
+          console.log(`[ORDER ${order.id}] Marketplace publisher_email field:`, marketplace?.publisher_email || 'NONE');
+
           if (marketplace && marketplace.publisher && marketplace.publisher.email) {
             publisherEmail = marketplace.publisher.email;
+            console.log(`[ORDER ${order.id}] Using publisher.email: ${publisherEmail}`);
           } else if (marketplace && marketplace.publisher_email) {
             publisherEmail = marketplace.publisher_email;
+            console.log(`[ORDER ${order.id}] Using publisher_email field: ${publisherEmail}`);
           }
 
           if (publisherEmail) {
             // Send email notification for new order
             try {
+              console.log(`[ORDER ${order.id}] Sending order creation email to: ${publisherEmail}`);
               const emailService = strapi.service('api::global.email-operations');
               await emailService.sendOrderCreationEmail(
                 populatedOrder,
