@@ -440,7 +440,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     } else {
       // Advertisers and public users only see active listings (hide paused/delisted listings)
       // Only show marketplace listings that have proper status and are not paused or delisted
-      ctx.query.filters.$and = [
+      const mandatoryFilters = [
         // Must have proper marketplace status (active or legacy null/empty) - exclude delisted
         {
           $or: [
@@ -474,6 +474,18 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           ]
         }
       ];
+
+      // Merge with existing $and filters if any (don't overwrite client filters!)
+      if (ctx.query.filters.$and) {
+        if (Array.isArray(ctx.query.filters.$and)) {
+          ctx.query.filters.$and.push(...mandatoryFilters);
+        } else {
+          // Should be array, but if structure is weird, convert
+          ctx.query.filters.$and = [ctx.query.filters.$and, ...mandatoryFilters];
+        }
+      } else {
+        ctx.query.filters.$and = mandatoryFilters;
+      }
 
       console.log('🔍 Marketplace filters for public/advertisers:', JSON.stringify(ctx.query.filters, null, 2));
     }
@@ -653,6 +665,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                                 else if (operator === '$ne') orBuilder.orWhere(orField, '!=', opValue);
                                 else if (operator === '$null') orBuilder.orWhereNull(orField);
                                 else if (operator === '$notNull') orBuilder.orWhereNotNull(orField);
+                                else if (operator === '$contains') orBuilder.orWhere(orField, 'like', `%${opValue}%`);
+                                else if (operator === '$containsi') orBuilder.orWhereRaw('LOWER(??) LIKE ?', [orField, `%${String(opValue).toLowerCase()}%`]);
                               });
                             } else {
                               orBuilder.orWhere(orField, orValue);
@@ -671,6 +685,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                         else if (operator === '$ne') builder.where(field, '!=', opValue);
                         else if (operator === '$null') builder.whereNull(field);
                         else if (operator === '$notNull') builder.whereNotNull(field);
+                        else if (operator === '$contains') builder.where(field, 'like', `%${opValue}%`);
+                        else if (operator === '$containsi') builder.whereRaw('LOWER(??) LIKE ?', [field, `%${String(opValue).toLowerCase()}%`]);
                       });
                     } else {
                       builder.where(field, fieldValue);
