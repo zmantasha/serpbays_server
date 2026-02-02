@@ -28,7 +28,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text: `Payment of $${amount} is required for Order #${orderId}. Reply with CONFIRM-PAYMENT-${orderId} to proceed.`
       };
 
-      const emailResult = await strapi.plugins.email.services.email.send(emailData);
+      const emailResult = await strapi.service('api::global.autosend-service').send(emailData);
       return emailResult;
     } catch (error) {
       console.error('Error sending payment acceptance email:', error);
@@ -37,34 +37,74 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send order creation confirmation email
+   * Send order creation confirmation email using AutoSend template
    */
   async sendOrderCreationEmail(order, publisherEmail, advertiserEmail) {
     try {
-      // Email to publisher
+      console.log(`[EMAIL DEBUG] sendOrderCreationEmail called for order ${order.id}`);
+      console.log(`[EMAIL DEBUG] Publisher email: ${publisherEmail}`);
+      console.log(`[EMAIL DEBUG] Advertiser email: ${advertiserEmail}`);
+      console.log(`[EMAIL DEBUG] Order website: ${order.website?.url || 'N/A'}`);
+
+      // Email to publisher using AutoSend template
       const publisherEmailData = {
         to: publisherEmail,
-        subject: `New Order Received - Order #${order.id}`,
-        html: this.generateOrderCreationTemplate(order, 'publisher'),
-        text: `New order #${order.id} received. Reply with ACCEPT-${order.id} to accept or REJECT-${order.id} to reject.`
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_CREATED || 'A-887bd8e51845ac3ea25d',
+        dynamicData: {
+          // Order details - using snake_case to match AutoSend template
+          order_id: order.id,
+          order_status: 'created',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          advertiser_email: advertiserEmail,
+          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Website details
+          website_name: order.website?.name || order.website?.url || 'Website',
+          website_url: order.website?.url || '',
+
+          // Content details (if applicable)
+          content_type: order.contentType || 'N/A',
+          target_url: order.targetUrl || '',
+          anchor_text: order.anchorText || '',
+          min_word_count: order.minWordCount || 0,
+
+          // Item details for template
+          item_1_name: order.website?.name || 'Order Service',
+          item_1_qty: 1,
+          item_1_price: order.totalAmount || 0,
+          item_1_note: order.description || '',
+
+          subtotal: order.totalAmount || 0,
+          taxes: 0,
+
+          // Action URLs
+          accept_url: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
+          reject_url: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+
+          // Timestamp
+          order_date: new Date(order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          })
+        },
+        tags: ['order', 'order-created', 'publisher']
       };
 
-      // Email to advertiser
-      // const advertiserEmailData = {
-      //   to: advertiserEmail,
-      //   subject: `Order Created Successfully - Order #${order.id}`,
-      //   html: this.generateOrderCreationTemplate(order, 'advertiser'),
-      //   text: `Order #${order.id} created successfully. You will be notified when the publisher responds.`
-      // };
+      console.log(`[EMAIL DEBUG] About to send email to: ${publisherEmail}`);
+      await strapi.service('api::global.autosend-service').send(publisherEmailData);
+      console.log(`[EMAIL DEBUG] Email successfully sent to ${publisherEmail} for order ${order.id}`);
 
-      await Promise.all([
-        strapi.plugins.email.services.email.send(publisherEmailData)
-        // strapi.plugins.email.services.email.send(advertiserEmailData)
-      ]);
-
-      console.log(`Order creation emails sent for order ${order.id}`);
+      console.log(`Order creation email sent for order ${order.id} to ${publisherEmail}`);
     } catch (error) {
-      console.error('Error sending order creation emails:', error);
+      console.error('Error sending order creation email:', error);
       throw error;
     }
   },
@@ -89,8 +129,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       // };
 
       await Promise.all([
-        strapi.plugins.email.services.email.send(advertiserEmailData)
-        // strapi.plugins.email.services.email.send(publisherEmailData)
+        strapi.service('api::global.autosend-service').send(advertiserEmailData)
+        // strapi.service('api::global.autosend-service').send(publisherEmailData)
       ]);
 
       console.log(`Order rejection emails sent for order ${order.id}`);
@@ -120,8 +160,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       // };
 
       await Promise.all([
-        strapi.plugins.email.services.email.send(advertiserEmailData)
-        // strapi.plugins.email.services.email.send(publisherEmailData)
+        strapi.service('api::global.autosend-service').send(advertiserEmailData)
+        // strapi.service('api::global.autosend-service').send(publisherEmailData)
       ]);
 
       console.log(`Order acceptance emails sent for order ${order.id}`);
@@ -151,8 +191,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       // };
 
       await Promise.all([
-        strapi.plugins.email.services.email.send(publisherEmailData)
-        // strapi.plugins.email.services.email.send(advertiserEmailData)
+        strapi.service('api::global.autosend-service').send(publisherEmailData)
+        // strapi.service('api::global.autosend-service').send(advertiserEmailData)
       ]);
 
       console.log(`Revision request emails sent for order ${order.id}`);
@@ -182,8 +222,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       };
 
       await Promise.all([
-        strapi.plugins.email.services.email.send(advertiserEmailData),
-        strapi.plugins.email.services.email.send(publisherEmailData)
+        strapi.service('api::global.autosend-service').send(advertiserEmailData),
+        strapi.service('api::global.autosend-service').send(publisherEmailData)
       ]);
 
       console.log(`Order delivery emails sent for order ${order.id}`);
@@ -205,7 +245,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text: `Order #${order.id} has been completed. Payment of $${amount} has been released to your account.`
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
+      await strapi.service('api::global.autosend-service').send(emailData);
       console.log(`Order completion email sent for order ${order.id}`);
     } catch (error) {
       console.error('Error sending order completion email:', error);
@@ -225,7 +265,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text: `Your ${transaction.type} transaction #${transaction.id} for $${transaction.amount} has been approved.`
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
+      await strapi.service('api::global.autosend-service').send(emailData);
       console.log(`Transaction approval email sent for transaction ${transaction.id}`);
     } catch (error) {
       console.error('Error sending transaction approval email:', error);
@@ -245,7 +285,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text: `Your ${transaction.type} transaction #${transaction.id} for $${transaction.amount} has been denied. Reason: ${reason}`
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
+      await strapi.service('api::global.autosend-service').send(emailData);
       console.log(`Transaction denial email sent for transaction ${transaction.id}`);
     } catch (error) {
       console.error('Error sending transaction denial email:', error);
@@ -265,7 +305,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text: `Payment for transaction #${transaction.id} of $${transaction.amount} has been confirmed and processed.`
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
+      await strapi.service('api::global.autosend-service').send(emailData);
       console.log(`Payment confirmation email sent for transaction ${transaction.id}`);
     } catch (error) {
       console.error('Error sending payment confirmation email:', error);
@@ -310,7 +350,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
+      await strapi.service('api::global.autosend-service').send(emailData);
       console.log(`Withdrawal ${status} email sent for request ${withdrawalRequest.id}`);
     } catch (error) {
       console.error('Error sending withdrawal status email:', error);
