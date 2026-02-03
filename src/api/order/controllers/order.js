@@ -1506,6 +1506,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
             if (advertiserUser && advertiserUser.email) {
               const emailService = strapi.service('api::global.email-operations');
+              console.log("emailService", emailService)
               await emailService.sendOrderDeliveryEmail(
                 fullOrder,
                 advertiserUser.email,
