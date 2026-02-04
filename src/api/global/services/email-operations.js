@@ -639,6 +639,102 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
+   * Send withdrawal request email (when user creates a withdrawal request)
+   */
+  async sendWithdrawalRequestEmail(transaction, userEmail, withdrawalRequest) {
+    try {
+      console.log(`[EMAIL DEBUG] sendWithdrawalRequestEmail called for withdrawal request ${withdrawalRequest.id}`);
+
+      const emailData = {
+        to: userEmail,
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'pending',
+          transaction_type: 'withdrawal',
+          amount: transaction.amount || 0,
+          payment_gateway: transaction.gateway || withdrawalRequest.method,
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: transaction.notes || `Your withdrawal request has been received and is pending admin approval.`,
+
+          // Status message
+          status_message: `We've received your withdrawal request. Our team will review it and process it within 1-3 business days.`,
+
+          // Conditional: Withdrawal details (shown in template)
+          is_withdrawal: true,
+          withdrawal_timeline: this.getWithdrawalTimeline(withdrawalRequest.method),
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for withdrawal request
+          // is_earning: undefined
+          // order_id: undefined
+          // publisher_website: undefined
+        },
+        tags: ['transaction', 'withdrawal', 'request', 'pending']
+      };
+
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Withdrawal request email sent for withdrawal ${withdrawalRequest.id} to ${userEmail}`);
+    } catch (error) {
+      console.error('Error sending withdrawal request email:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Send withdrawal paid email (when admin marks withdrawal as paid)
+   */
+  async sendWithdrawalPaidEmail(transaction, userEmail, withdrawalRequest) {
+    try {
+      console.log(`[EMAIL DEBUG] sendWithdrawalPaidEmail called for withdrawal request ${withdrawalRequest.id}`);
+
+      const emailData = {
+        to: userEmail,
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'paid',
+          transaction_type: 'withdrawal',
+          amount: transaction.amount || withdrawalRequest.amount,
+          payment_gateway: transaction.gateway || withdrawalRequest.method,
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: `Your withdrawal has been completed and the funds have been transferred to your ${withdrawalRequest.method} account.`,
+
+          // Status message
+          status_message: `Great news! Your withdrawal request has been completed. The funds should appear in your account within 1-3 business days.`,
+
+          // Conditional: Withdrawal details (shown in template)
+          is_withdrawal: true,
+          withdrawal_timeline: 'Payment completed',
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for withdrawal paid
+          // is_earning: undefined
+          // order_id: undefined
+          // publisher_website: undefined
+        },
+        tags: ['transaction', 'withdrawal', 'paid', 'completed']
+      };
+
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Withdrawal paid email sent for withdrawal ${withdrawalRequest.id} to ${userEmail}`);
+    } catch (error) {
+      console.error('Error sending withdrawal paid email:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Helper: Get estimated withdrawal timeline based on payment gateway
    */
   getWithdrawalTimeline(gateway) {
