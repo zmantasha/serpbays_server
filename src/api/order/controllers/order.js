@@ -2247,6 +2247,36 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Don't fail the revision completion if notification fails
         }
 
+        // Send delivery email to advertiser
+        try {
+          const fullOrder = await strapi.entityService.findOne('api::order.order', orderId, {
+            populate: ['advertiser', 'publisher', 'website']
+          });
+
+          const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: order.advertiser?.id || order.advertiser }
+          });
+
+          if (advertiserUser && advertiserUser.email) {
+            const emailService = strapi.service('api::global.email-operations');
+            console.log(`[Revision Complete] Sending delivery email to ${advertiserUser.email}`);
+
+            // Update fullOrder with the latest delivery info
+            fullOrder.deliveryProofUrl = deliveryProof;
+            fullOrder.deliveryMessage = message;
+
+            await emailService.sendOrderDeliveryEmail(
+              fullOrder,
+              advertiserUser.email,
+              user.email
+            );
+            console.log(`Revision completion delivery email sent for order ${orderId}`);
+          }
+        } catch (emailError) {
+          console.error('Failed to send revision completion delivery email:', emailError);
+          // Don't fail the revision completion if email fails
+        }
+
         return {
           success: true,
           data: updated
