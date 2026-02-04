@@ -482,20 +482,52 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     }
   },
 
+  // ============================================
+  // TRANSACTION EMAIL FUNCTIONS
+  // ============================================
+
   /**
-   * Send transaction approval email
+   * Send transaction approval email (for withdrawal requests)
    */
   async sendTransactionApprovalEmail(transaction, userEmail) {
     try {
+      console.log(`[EMAIL DEBUG] sendTransactionApprovalEmail called for transaction ${transaction.id}`);
+
       const emailData = {
         to: userEmail,
-        subject: `Transaction Approved - ${transaction.type} #${transaction.id}`,
-        html: this.generateTransactionApprovalTemplate(transaction),
-        text: `Your ${transaction.type} transaction #${transaction.id} for $${transaction.amount} has been approved.`
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'approved',
+          transaction_type: transaction.type || 'withdrawal',
+          amount: transaction.amount || 0,
+          payment_gateway: transaction.gateway || 'system',
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: transaction.description || transaction.notes || '',
+
+          // Status message
+          status_message: `Your withdrawal request has been approved and will be processed soon.`,
+
+          // Conditional: Withdrawal details (shown in template)
+          is_withdrawal: true,
+          withdrawal_timeline: this.getWithdrawalTimeline(transaction.gateway),
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for withdrawal approval
+          // is_earning: undefined
+          // order_id: undefined
+          // publisher_website: undefined
+        },
+        tags: ['transaction', 'withdrawal', 'approved']
       };
 
       await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Transaction approval email sent for transaction ${transaction.id}`);
+      console.log(`Transaction approval email sent for transaction ${transaction.id} to ${userEmail}`);
     } catch (error) {
       console.error('Error sending transaction approval email:', error);
       throw error;
@@ -503,19 +535,47 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send transaction denial email
+   * Send transaction denial email (for rejected withdrawal requests)
    */
-  async sendTransactionDenialEmail(transaction, userEmail, reason) {
+  async sendTransactionDenialEmail(transaction, userEmail, denialReason) {
     try {
+      console.log(`[EMAIL DEBUG] sendTransactionDenialEmail called for transaction ${transaction.id}`);
+
       const emailData = {
         to: userEmail,
-        subject: `Transaction Denied - ${transaction.type} #${transaction.id}`,
-        html: this.generateTransactionDenialTemplate(transaction, reason),
-        text: `Your ${transaction.type} transaction #${transaction.id} for $${transaction.amount} has been denied. Reason: ${reason}`
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'denied',
+          transaction_type: transaction.type || 'withdrawal',
+          amount: transaction.amount || 0,
+          payment_gateway: transaction.gateway || 'system',
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: denialReason || transaction.notes || 'Your request did not meet our withdrawal criteria.',
+
+          // Status message
+          status_message: `We're sorry, but your withdrawal request has been denied. Please review the reason below and contact support if you need assistance.`,
+
+          // Conditional: Withdrawal details (shown in template)
+          is_withdrawal: true,
+          withdrawal_timeline: 'Request denied',
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for withdrawal denial
+          // is_earning: undefined
+          // order_id: undefined
+          // publisher_website: undefined
+        },
+        tags: ['transaction', 'withdrawal', 'denied']
       };
 
       await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Transaction denial email sent for transaction ${transaction.id}`);
+      console.log(`Transaction denial email sent for transaction ${transaction.id} to ${userEmail}`);
     } catch (error) {
       console.error('Error sending transaction denial email:', error);
       throw error;
@@ -523,19 +583,55 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send payment confirmation email
+   * Send payment confirmation email (for deposits and earnings)
    */
   async sendPaymentConfirmationEmail(transaction, userEmail) {
     try {
+      console.log(`[EMAIL DEBUG] sendPaymentConfirmationEmail called for transaction ${transaction.id}`);
+
+      // Check if this is an earning from an order
+      const isEarning = transaction.order ? true : false;
+
       const emailData = {
         to: userEmail,
-        subject: `Payment Confirmed - Transaction #${transaction.id}`,
-        html: this.generatePaymentConfirmationTemplate(transaction),
-        text: `Payment for transaction #${transaction.id} of $${transaction.amount} has been confirmed and processed.`
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'success',
+          transaction_type: transaction.type || 'payment',
+          amount: transaction.amount || 0,
+          payment_gateway: transaction.gateway || 'system',
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: transaction.description || transaction.notes || '',
+
+          // Status message
+          status_message: isEarning
+            ? `Congratulations! You've received payment for completing an order.`
+            : `Your payment has been successfully processed and credited to your wallet.`,
+
+          // Conditional: Earnings details (shown if transaction is from order)
+          is_earning: isEarning ? true : undefined,
+          order_id: transaction.order?.id || undefined,
+          publisher_website: transaction.order?.website?.name || transaction.order?.website?.url || undefined,
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          view_order_url: transaction.order ? `${process.env.CLIENT_URL}/orders/order-detail/${transaction.order.id}` : undefined,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for payment confirmation
+          // is_withdrawal: undefined
+          // withdrawal_timeline: undefined
+        },
+        tags: isEarning
+          ? ['transaction', 'earning', 'payment', 'success']
+          : ['transaction', 'deposit', 'payment', 'success']
       };
 
       await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Payment confirmation email sent for transaction ${transaction.id}`);
+      console.log(`Payment confirmation email sent for transaction ${transaction.id} to ${userEmail}`);
     } catch (error) {
       console.error('Error sending payment confirmation email:', error);
       throw error;
@@ -543,48 +639,17 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send withdrawal status email
+   * Helper: Get estimated withdrawal timeline based on payment gateway
    */
-  async sendWithdrawalStatusEmail(withdrawalRequest, userEmail, status, reason = null) {
-    try {
-      let subject, template, text;
+  getWithdrawalTimeline(gateway) {
+    const timelines = {
+      'paypal': '1-2 business days',
+      'stripe': '2-5 business days',
+      'bank_transfer': '3-7 business days',
+      'system': '1-3 business days'
+    };
 
-      switch (status) {
-        case 'approved':
-          subject = `Withdrawal Approved - Request #${withdrawalRequest.id}`;
-          template = this.generateWithdrawalApprovedTemplate(withdrawalRequest);
-          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been approved and will be processed soon.`;
-          break;
-
-        case 'paid':
-          subject = `Payment Completed - Withdrawal #${withdrawalRequest.id}`;
-          template = this.generateWithdrawalPaidTemplate(withdrawalRequest);
-          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been completed and paid to your account.`;
-          break;
-
-        case 'denied':
-          subject = `Withdrawal Denied - Request #${withdrawalRequest.id}`;
-          template = this.generateWithdrawalDeniedTemplate(withdrawalRequest, reason);
-          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been denied. Reason: ${reason || 'No reason provided'}`;
-          break;
-
-        default:
-          throw new Error('Invalid withdrawal status');
-      }
-
-      const emailData = {
-        to: userEmail,
-        subject,
-        html: template,
-        text
-      };
-
-      await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Withdrawal ${status} email sent for request ${withdrawalRequest.id}`);
-    } catch (error) {
-      console.error('Error sending withdrawal status email:', error);
-      throw error;
-    }
+    return timelines[gateway?.toLowerCase()] || '2-5 business days';
   },
 
   /**
