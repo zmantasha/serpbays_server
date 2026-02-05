@@ -704,7 +704,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           amount: transaction.amount || withdrawalRequest.amount,
           payment_gateway: transaction.gateway || withdrawalRequest.method,
           gateway_transaction_id: transaction.gatewayTransactionId || '',
-          notes: `Your withdrawal has been completed and the funds have been transferred to your ${withdrawalRequest.method} account.`,
+          notes: transaction.payment_notes || transaction.notes || `Your withdrawal has been completed and the funds have been transferred to your ${withdrawalRequest.method} account.`,
 
           // Status message
           status_message: `Great news! Your withdrawal request has been completed. The funds should appear in your account within 1-3 business days.`,
