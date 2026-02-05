@@ -337,10 +337,18 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.notFound('Wallet not found');
       }
 
-      const transactions = await strapi.db.query('api::transaction.transaction').findMany({
+      // Get pagination parameters
+      const { page = 1, pageSize = 10 } = ctx.query;
+      const limit = parseInt(pageSize);
+      const offset = (parseInt(page) - 1) * limit;
+
+      // Get transactions with pagination
+      const [transactions, total] = await strapi.db.query('api::transaction.transaction').findWithCount({
         where: { user_wallet: wallet.id },
         orderBy: { createdAt: 'DESC' },
-        populate: ['invoice', 'order']
+        populate: ['invoice', 'order'],
+        limit,
+        offset
       });
 
       // Transform the data to include invoice information
@@ -353,7 +361,17 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         } : null
       }));
 
-      return { data: transformedTransactions };
+      return {
+        data: transformedTransactions,
+        meta: {
+          pagination: {
+            page: parseInt(page),
+            pageSize: limit,
+            pageCount: Math.ceil(total / limit),
+            total
+          }
+        }
+      };
     } catch (error) {
       return ctx.badRequest('Failed to get transactions');
     }

@@ -131,8 +131,8 @@ module.exports = {
                         confirmed: true,
                         blocked: false,
                         role: defaultRole.id,
-                        Advertiser: advertiser || false,
-                        Publisher: publisher || false,
+                        Advertiser: advertiser ?? true,
+                        Publisher: publisher ?? false,
                     },
                 });
 
@@ -237,8 +237,8 @@ module.exports = {
                     confirmed: true,
                     blocked: false,
                     role: defaultRole.id,
-                    Advertiser: advertiser || false,
-                    Publisher: publisher || false,
+                    Advertiser: advertiser ?? true,
+                    Publisher: publisher ?? false,
                 },
             });
 

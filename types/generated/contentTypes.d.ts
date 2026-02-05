@@ -1898,7 +1898,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     allowedLinks: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
-          max: 3;
+          max: 10;
           min: 1;
         },
         number
@@ -3321,7 +3321,7 @@ export interface PluginUsersPermissionsUser
     timestamps: true;
   };
   attributes: {
-    Advertiser: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    Advertiser: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
     advertiserOrders: Schema.Attribute.Relation<
       'oneToMany',
       'api::order.order'
@@ -3403,7 +3403,7 @@ export interface PluginUsersPermissionsUser
     projects: Schema.Attribute.Relation<'oneToMany', 'api::project.project'>;
     provider: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
-    Publisher: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    Publisher: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     publisherOrders: Schema.Attribute.Relation<'oneToMany', 'api::order.order'>;
     registrationNumber: Schema.Attribute.String;
     resetPasswordToken: Schema.Attribute.String & Schema.Attribute.Private;
