@@ -469,8 +469,10 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         orderBy: { id: 'desc' }
       });
 
+      let finalTransaction;
+
       if (existingTransaction) {
-        await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
+        finalTransaction = await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
           data: {
             transactionStatus: 'paid',
             external_transaction_id: paymentReference,
@@ -481,7 +483,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.log(`[Admin] Updated withdrawal transaction ${existingTransaction.id} to paid status`);
       } else {
         console.log(`[Admin] Creating new transaction for withdrawal #${id}`);
-        await strapi.entityService.create('api::transaction.transaction', {
+        finalTransaction = await strapi.entityService.create('api::transaction.transaction', {
           data: {
             users_permissions_user: withdrawal.publisher.id,
             type: 'withdrawal',
@@ -497,6 +499,31 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
             payment_notes: paymentNotes
           }
         });
+      }
+
+      // Send email notification (non-blocking for response, but useful to log errors)
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        // Use updatedWithdrawal because it has the latest status 'paid', but withdrawal has publisher populated above
+        // We'll use 'withdrawal' for publisher info and 'updatedWithdrawal' if strict status needed, but withdrawal object is fine
+        // as long as we pass valid transaction and email.
+
+        // Note: verify withdrawal has publisher populated properly. 
+        // In lines 402-405, we fetched 'withdrawal' with populate: ['publisher'].
+
+        if (withdrawal.publisher && withdrawal.publisher.email) {
+          await emailService.sendWithdrawalPaidEmail(
+            finalTransaction,
+            withdrawal.publisher.email,
+            withdrawal
+          );
+          console.log(`[Admin] Sent withdrawal paid email to ${withdrawal.publisher.email}`);
+        } else {
+          console.warn(`[Admin] Could not send email: Publisher email missing for withdrawal #${id}`);
+        }
+      } catch (emailError) {
+        console.error('[Admin] Failed to send withdrawal paid email:', emailError);
+        // Do not throw, so the admin UI still shows success for the payment itself
       }
 
       ctx.send({
