@@ -116,6 +116,60 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     },
 
     /**
+     * Create a contact in AutoSend
+     * @param {Object} contactData 
+     * @param {string} contactData.email
+     * @param {string} [contactData.firstName]
+     * @param {string} [contactData.lastName]
+     * @param {string} [contactData.userId]
+     * @param {Object} [contactData.customFields]
+     * @returns {Promise<Object>} Created contact data
+     */
+    async createContact({ email, firstName, lastName, userId, customFields = {} }) {
+        try {
+            const apiKey = process.env.AUTOSEND_API_KEY;
+
+            if (!apiKey) {
+                console.warn('[AutoSend] API key not configured, skipping contact creation');
+                return null;
+            }
+
+            // Import AutoSend SDK
+            const { Autosend } = require('autosendjs');
+            const autosend = new Autosend(apiKey);
+
+            const contactPayload = {
+                email,
+                firstName,
+                lastName,
+                userId: userId ? String(userId) : undefined,
+                customFields
+            };
+
+            console.log(`[AutoSend] Creating contact for ${email}...`);
+
+            // Use the contacts.create API
+            const result = await autosend.contacts.create(contactPayload);
+
+            if (!result.success) {
+                // If it's a duplicate (already exists), it might return an error or success:false
+                // In some APIs create fails if exists, user asked for "Create Contact"
+                console.warn(`[AutoSend] Failed to create contact: ${result.error || 'Unknown error'}`);
+                // Don't throw, just return null so we don't block registration
+                return null;
+            }
+
+            console.log(`[AutoSend] Contact created successfully. Contact ID: ${result.data?.id}`);
+            return result.data;
+
+        } catch (error) {
+            console.error('[AutoSend] Error creating contact:', error.message);
+            // Non-blocking
+            return null;
+        }
+    },
+
+    /**
      * Verify AutoSend API key is configured and valid
      * @returns {Promise<boolean>} True if AutoSend is properly configured
      */
