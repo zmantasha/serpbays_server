@@ -2183,5 +2183,65 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       </body>
       </html>
     `;
+  },
+
+  /**
+   * Send new message notification email
+   * Triggered when an advertiser or publisher sends a message
+   * @param {Object} params
+   * @param {string} params.receiverEmail - Email of the message recipient
+   * @param {string} params.receiverName - Name of the recipient
+   * @param {string} params.senderRole - 'Advertiser' or 'Publisher'
+   * @param {string} params.messageText - The message content
+   * @param {Date} params.messageTime - When the message was sent
+   * @param {Object} params.order - Order object with id, orderStatus, createdAt
+   * @param {string} params.replyUrl - URL to reply to the message
+   */
+  async sendNewMessageEmail({ receiverEmail, receiverName, senderRole, messageText, messageTime, order, replyUrl }) {
+    try {
+      // Only send if messageText is present
+      if (!messageText || !messageText.trim()) {
+        console.log('[Email] Skipping new message email - no message text provided');
+        return null;
+      }
+
+      console.log(`[Email] Sending new message notification to ${receiverEmail}`);
+
+      const emailData = {
+        to: receiverEmail,
+        templateId: 'A-073201ea7356ec9df066',
+        dynamicData: {
+          sender_role: senderRole,
+          receiver_name: receiverName || 'User',
+          message_text: messageText,
+          message_time: messageTime ? new Date(messageTime).toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          }) : '',
+          order_id: order?.id ? String(order.id) : '',
+          order_status: order?.orderStatus || 'Active',
+          order_date: order?.createdAt ? new Date(order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+          }) : '',
+          reply_url: replyUrl || `${process.env.CLIENT_URL}/orders/${order?.id}`,
+          logo_url: `${process.env.CLIENT_URL}/logo.png`,
+          year: new Date().getFullYear().toString()
+        },
+        tags: ['communication', 'new-message', 'order-message']
+      };
+
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[Email] New message notification sent to ${receiverEmail}`);
+      return result;
+    } catch (error) {
+      console.error('[Email] Error sending new message notification:', error);
+      // Non-blocking - don't throw
+      return null;
+    }
   }
 }));
