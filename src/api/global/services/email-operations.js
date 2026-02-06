@@ -2209,7 +2209,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
       const emailData = {
         to: receiverEmail,
-        templateId: 'A-073201ea7356ec9df066',
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_MESSAGE || 'A-073201ea7356ec9df066',
         dynamicData: {
           sender_role: senderRole,
           receiver_name: receiverName || 'User',
