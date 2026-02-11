@@ -2015,7 +2015,7 @@ export interface ApiPublisherWebsitePublisherWebsite
       Schema.Attribute.DefaultTo<0>;
     description: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
-        maxLength: 200;
+        maxLength: 1000;
       }>;
     detailsCompletedAt: Schema.Attribute.DateTime;
     doCopywriting: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
@@ -2051,7 +2051,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     gscVerifiedAt: Schema.Attribute.DateTime;
     guidelines: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
-        maxLength: 600;
+        maxLength: 5000;
       }>;
     isPRSite: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     language: Schema.Attribute.JSON & Schema.Attribute.DefaultTo<['English']>;
@@ -3343,6 +3343,7 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.Private;
     email: Schema.Attribute.Email &
       Schema.Attribute.Required &
+      Schema.Attribute.Unique &
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;

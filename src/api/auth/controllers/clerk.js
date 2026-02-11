@@ -121,30 +121,48 @@ module.exports = {
                     return ctx.internalServerError('Default role not found');
                 }
 
-                user = await strapi.query('plugin::users-permissions.user').create({
-                    data: {
-                        clerkId,
-                        email,
-                        username: username || email.split('@')[0],
-                        firstName: firstName || '',
-                        lastName: lastName || '',
-                        confirmed: true,
-                        blocked: false,
-                        role: defaultRole.id,
-                        Advertiser: advertiser ?? true,
-                        Publisher: publisher ?? false,
-                    },
-                });
+                try {
+                    user = await strapi.query('plugin::users-permissions.user').create({
+                        data: {
+                            clerkId,
+                            email,
+                            username: username || email.split('@')[0],
+                            firstName: firstName || '',
+                            lastName: lastName || '',
+                            confirmed: true,
+                            blocked: false,
+                            role: defaultRole.id,
+                            Advertiser: advertiser ?? true,
+                            Publisher: publisher ?? false,
+                        },
+                    });
 
-                strapi.log.info(`[CLERK SYNC] User created with roles:`, {
-                    userId: user.id,
-                    advertiser: advertiser,
-                    publisher: publisher,
-                    resultAdvertiser: user.Advertiser,
-                    resultPublisher: user.Publisher
-                });
+                    strapi.log.info(`[CLERK SYNC] User created with roles:`, {
+                        userId: user.id,
+                        advertiser: advertiser,
+                        publisher: publisher,
+                        resultAdvertiser: user.Advertiser,
+                        resultPublisher: user.Publisher
+                    });
 
-                strapi.log.info(`User created successfully: ${user.id}`);
+                    strapi.log.info(`User created successfully: ${user.id}`);
+                } catch (err) {
+                    // Handle race condition: if create fails (likely due to unique constraint),
+                    // try to find the user again. It might have been created by a parallel request.
+                    strapi.log.warn(`[CLERK SYNC] User creation failed, checking if user exists (Race Condition Handler). Error: ${err.message}`);
+
+                    user = await strapi.query('plugin::users-permissions.user').findOne({
+                        where: { email },
+                    });
+
+                    if (!user) {
+                        // If still not found, it's a real error
+                        throw err;
+                    }
+                    strapi.log.info(`[CLERK SYNC] Recovered from race condition, found existing user: ${user.id}`);
+
+                    // Proceed using the found user (effectively treating this as a sync/login)
+                }
             }
 
             // Generate JWT token

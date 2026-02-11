@@ -273,7 +273,8 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         {
           description: `Earnings from order #${order.id}`,
           gateway: 'system',
-          gatewayTransactionId: `earnings_${order.id}_${Date.now()}`
+          gatewayTransactionId: `earnings_${order.id}_${Date.now()}`,
+          order: order.id // ✅ Link transaction to the order
         }
       );
 

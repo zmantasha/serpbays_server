@@ -814,6 +814,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           description: transactionData.description || (transactionType === 'refund' ? 'Refund to main balance' : 'Direct payment deposit'),
           user_wallet: wallet.id,
           users_permissions_user: userId,
+          order: transactionData.order || null, // ✅ Link to order if provided
           metadata: transactionData.metadata,
           publishedAt: new Date()
         }
