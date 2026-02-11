@@ -75,7 +75,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           taxes: 0,
 
           // Action URLs
-          order_link: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
+          order_link: `${process.env.CLIENT_URL}/publisher/available-orders`,
           dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
 
           // Timestamp
