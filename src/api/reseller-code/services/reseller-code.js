@@ -7,7 +7,7 @@
 const { createCoreService } = require('@strapi/strapi').factories;
 
 module.exports = createCoreService('api::reseller-code.reseller-code', ({ strapi }) => ({
-  
+
   /**
    * Generate a random reseller code
    */
@@ -30,7 +30,7 @@ module.exports = createCoreService('api::reseller-code.reseller-code', ({ strapi
         let code;
         let isUnique = false;
         let attempts = 0;
-        
+
         while (!isUnique && attempts < 10) {
           code = this.generateCode();
           const existing = await strapi.entityService.findMany('api::reseller-code.reseller-code', {
@@ -39,11 +39,11 @@ module.exports = createCoreService('api::reseller-code.reseller-code', ({ strapi
           isUnique = !existing || existing.length === 0;
           attempts++;
         }
-        
+
         if (!isUnique) {
           throw new Error('Could not generate unique code');
         }
-        
+
         data.code = code;
       }
 
@@ -100,7 +100,7 @@ module.exports = createCoreService('api::reseller-code.reseller-code', ({ strapi
   async useCode(code, userId) {
     try {
       const validation = await this.validateCode(code);
-      
+
       if (!validation.valid) {
         throw new Error(validation.reason);
       }
@@ -108,7 +108,7 @@ module.exports = createCoreService('api::reseller-code.reseller-code', ({ strapi
       const codeData = validation.codeData;
 
       // Update usage count
-      await strapi.entityService.update('api::reseller-code.reseller-code', codeData.id, {
+      const updateResult = await strapi.entityService.update('api::reseller-code.reseller-code', codeData.id, {
         data: {
           usedCount: codeData.usedCount + 1,
           lastUsedAt: new Date().toISOString(),
