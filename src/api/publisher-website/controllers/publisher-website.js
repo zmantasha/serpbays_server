@@ -321,6 +321,32 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.forbidden('You can only update your own website submissions.');
       }
 
+      // Handle reseller code if provided in update data
+      if (data.resellerCode) {
+
+        // Only process if this is a NEW code (not already used for this website)
+        // This prevents double-counting if user updates the website multiple times
+        if (!existing.resellerCode || existing.resellerCode !== data.resellerCode) {
+
+          try {
+            // Validate the code
+
+            const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(data.resellerCode);
+
+            if (!codeValidation.valid) {
+              return ctx.badRequest(`Invalid reseller code: ${codeValidation.reason}`);
+            }
+
+            // Use the code (increment counter)
+
+            const useResult = await strapi.service('api::reseller-code.reseller-code').useCode(data.resellerCode, user.id);
+
+          } catch (error) {
+            return ctx.badRequest('Failed to validate reseller code');
+          }
+        }
+      }
+
       // Filter out relation fields that shouldn't be updated directly
       const {
         originalPublisherId,
