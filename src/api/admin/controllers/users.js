@@ -37,45 +37,28 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         ];
       }
 
-      // Role filter - use case-insensitive matching
+      // Role filter
       if (role) {
-        filters.role = { name: { $containsi: role } };
+        filters.role = { name: role };
       }
 
-      // Status filter - convert status string to blocked/confirmed fields
-      if (status) {
-        switch (status.toLowerCase()) {
-          case 'blocked':
-            filters.blocked = true;
-            break;
-          case 'active':
-            filters.blocked = false;
-            filters.confirmed = true;
-            break;
-          case 'pending':
-            filters.confirmed = false;
-            filters.blocked = false;
-            break;
-        }
-      }
-
-      // Direct blocked/confirmed filters (for backwards compatibility)
-      if (blocked !== '' && !status) {
+      // Status filters
+      if (blocked !== '') {
         filters.blocked = blocked === 'true';
       }
 
-      if (confirmed !== '' && !status) {
+      if (confirmed !== '') {
         filters.confirmed = confirmed === 'true';
       }
 
-      // Get users with pagination - use start/limit for Strapi entityService
-      const pageNum = parseInt(page);
-      const pageSizeNum = parseInt(pageSize);
+      // Get users with pagination
       const users = await strapi.entityService.findMany('plugin::users-permissions.user', {
         filters,
         sort,
-        start: (pageNum - 1) * pageSizeNum,
-        limit: pageSizeNum,
+        pagination: {
+          page: parseInt(page),
+          pageSize: parseInt(pageSize)
+        },
         populate: {
           role: true,
           user_wallet: true,
@@ -134,9 +117,9 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         data: transformedUsers,
         meta: {
           pagination: {
-            page: pageNum,
-            pageSize: pageSizeNum,
-            pageCount: Math.ceil(total / pageSizeNum),
+            page: parseInt(page),
+            pageSize: parseInt(pageSize),
+            pageCount: Math.ceil(total / pageSize),
             total
           }
         }
