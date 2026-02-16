@@ -3227,6 +3227,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             }
           });
 
+          // CRITICAL: If website was published to marketplace, reject it there too
+          if (website.marketplaceId) {
+            try {
+              // Update marketplace entry: set approvalStatus to rejected
+              await strapi.db.query('api::marketplace.marketplace').update({
+                where: { id: website.marketplaceId },
+                data: {
+                  approvalStatus: 'rejected',
+                  status: 'rejected'
+                }
+              });
+              console.log(`[ADMIN BULK REJECT] Set marketplace entry ${website.marketplaceId} to rejected for website ${id}`);
+            } catch (marketplaceError) {
+              console.error(`[ADMIN BULK REJECT] Failed to reject marketplace entry ${website.marketplaceId}:`, marketplaceError);
+              // Don't fail the whole operation if marketplace update fails
+            }
+          }
+
           results.push({ id, status: 'rejected' });
 
         } catch (error) {
