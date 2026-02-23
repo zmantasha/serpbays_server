@@ -19,21 +19,21 @@ module.exports = {
           enabled: process.env.STRIPE_ENABLED === 'true',
           displayName: 'Stripe',
           description: 'Credit card payments via Stripe',
-          feePercentage: parseFloat(process.env.STRIPE_FEE_PERCENTAGE || '2.9'),
-          fixedFee: parseFloat(process.env.STRIPE_FIXED_FEE || '0.30')
+          feePercentage: 0,
+          fixedFee: 0
         },
         paypal: {
           enabled: process.env.PAYPAL_ENABLED === 'true',
           displayName: 'PayPal',
           description: 'PayPal payments',
-          feePercentage: parseFloat(process.env.PAYPAL_FEE_PERCENTAGE || '3.49'),
-          fixedFee: parseFloat(process.env.PAYPAL_FIXED_FEE || '0.49')
+          feePercentage: 0,
+          fixedFee: 0
         },
         razorpay: {
           enabled: process.env.RAZORPAY_ENABLED === 'true',
           displayName: 'Razorpay',
           description: 'Razorpay payment gateway',
-          feePercentage: parseFloat(process.env.RAZORPAY_FEE_PERCENTAGE || '2.0'),
+          feePercentage: 0,
           gstPercentage: parseFloat(process.env.RAZORPAY_GST_PERCENTAGE || '18.0'),
           conversionRate: parseFloat(process.env.USD_TO_INR_RATE || '83.25')
         },
@@ -41,7 +41,7 @@ module.exports = {
           enabled: process.env.PHONEPE_ENABLED === 'true',
           displayName: 'PhonePe',
           description: 'PhonePe UPI payments',
-          feePercentage: parseFloat(process.env.PHONEPE_FEE_PERCENTAGE || '2.0'),
+          feePercentage: 0,
           gstPercentage: parseFloat(process.env.PHONEPE_GST_PERCENTAGE || '18.0')
         },
         bank_transfer: {
@@ -97,41 +97,33 @@ module.exports = {
 
       switch (paymentMethod.toLowerCase()) {
         case 'stripe':
-          // Stripe: 2.9% + $0.30
-          const stripeFeePercentage = parseFloat(process.env.STRIPE_FEE_PERCENTAGE || '2.9');
-          const stripeFixedFee = parseFloat(process.env.STRIPE_FIXED_FEE || '0.30');
-          const stripeProcessingFee = baseAmount * (stripeFeePercentage / 100);
-          feeAmount = stripeProcessingFee + stripeFixedFee;
-          feePercentage = stripeFeePercentage;
+          // Stripe: No processing fees
+          feeAmount = 0;
+          feePercentage = 0;
           breakdown = {
-            processingFee: stripeProcessingFee,
-            fixedFee: stripeFixedFee
+            processingFee: 0,
+            fixedFee: 0
           };
           break;
 
         case 'paypal':
-          // PayPal: 3.49% + $0.49
-          const paypalFeePercentage = parseFloat(process.env.PAYPAL_FEE_PERCENTAGE || '3.49');
-          const paypalFixedFee = parseFloat(process.env.PAYPAL_FIXED_FEE || '0.49');
-          const paypalProcessingFee = baseAmount * (paypalFeePercentage / 100);
-          feeAmount = paypalProcessingFee + paypalFixedFee;
-          feePercentage = paypalFeePercentage;
+          // PayPal: No processing fees
+          feeAmount = 0;
+          feePercentage = 0;
           breakdown = {
-            processingFee: paypalProcessingFee,
-            fixedFee: paypalFixedFee
+            processingFee: 0,
+            fixedFee: 0
           };
           break;
 
         case 'razorpay':
-          // Razorpay: 2% + GST (18% on fee)
-          const razorpayFeePercentage = parseFloat(process.env.RAZORPAY_FEE_PERCENTAGE || '2.0');
+          // Razorpay: No processing fees, GST 18% on the amount
           const razorpayGstPercentage = parseFloat(process.env.RAZORPAY_GST_PERCENTAGE || '18.0');
-          const razorpayProcessingFee = baseAmount * (razorpayFeePercentage / 100);
-          const razorpayGstFee = razorpayProcessingFee * (razorpayGstPercentage / 100);
-          feeAmount = razorpayProcessingFee + razorpayGstFee;
-          feePercentage = razorpayFeePercentage + (razorpayFeePercentage * razorpayGstPercentage / 100);
+          const razorpayGstFee = baseAmount * (razorpayGstPercentage / 100);
+          feeAmount = razorpayGstFee;
+          feePercentage = 0;
           breakdown = {
-            processingFee: razorpayProcessingFee,
+            processingFee: 0,
             gstFee: razorpayGstFee
           };
 
@@ -146,15 +138,13 @@ module.exports = {
           break;
 
         case 'phonepe':
-          // PhonePe: 2% + GST (18% on fee)
-          const phonepeFeePercentage = parseFloat(process.env.PHONEPE_FEE_PERCENTAGE || '2.0');
+          // PhonePe: No processing fees, GST 18% on the amount
           const phonepeGstPercentage = parseFloat(process.env.PHONEPE_GST_PERCENTAGE || '18.0');
-          const phonepeProcessingFee = baseAmount * (phonepeFeePercentage / 100);
-          const phonepeGstFee = phonepeProcessingFee * (phonepeGstPercentage / 100);
-          feeAmount = phonepeProcessingFee + phonepeGstFee;
-          feePercentage = phonepeFeePercentage + (phonepeFeePercentage * phonepeGstPercentage / 100);
+          const phonepeGstFee = baseAmount * (phonepeGstPercentage / 100);
+          feeAmount = phonepeGstFee;
+          feePercentage = 0;
           breakdown = {
-            processingFee: phonepeProcessingFee,
+            processingFee: 0,
             gstFee: phonepeGstFee
           };
 
