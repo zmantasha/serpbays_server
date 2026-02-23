@@ -1578,7 +1578,14 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'manyToOne',
       'api::marketplace.marketplace'
     >;
-    websiteAhrefsDr: Schema.Attribute.Integer;
+    websiteAhrefsDr: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
     websiteAhrefsTraffic: Schema.Attribute.Integer;
     websiteBacklinkType: Schema.Attribute.String;
     websiteBacklinkValidity: Schema.Attribute.String;
@@ -1590,7 +1597,14 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     websiteLanguage: Schema.Attribute.JSON;
     websiteLinkInsertionPrice: Schema.Attribute.Integer;
     websiteMinWordCount: Schema.Attribute.Integer;
-    websiteMozDa: Schema.Attribute.Integer;
+    websiteMozDa: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
     websitePrice: Schema.Attribute.Integer;
     websitePublisherEmail: Schema.Attribute.String;
     websitePublisherName: Schema.Attribute.String;
@@ -2015,7 +2029,7 @@ export interface ApiPublisherWebsitePublisherWebsite
       Schema.Attribute.DefaultTo<0>;
     description: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
-        maxLength: 200;
+        maxLength: 1000;
       }>;
     detailsCompletedAt: Schema.Attribute.DateTime;
     doCopywriting: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
@@ -2051,7 +2065,7 @@ export interface ApiPublisherWebsitePublisherWebsite
     gscVerifiedAt: Schema.Attribute.DateTime;
     guidelines: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
-        maxLength: 600;
+        maxLength: 5000;
       }>;
     isPRSite: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     language: Schema.Attribute.JSON & Schema.Attribute.DefaultTo<['English']>;

@@ -273,7 +273,8 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         {
           description: `Earnings from order #${order.id}`,
           gateway: 'system',
-          gatewayTransactionId: `earnings_${order.id}_${Date.now()}`
+          gatewayTransactionId: `earnings_${order.id}_${Date.now()}`,
+          order: order.id // ✅ Link transaction to the order
         }
       );
 
@@ -858,26 +859,21 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
   // Cancellation Helper: Send notifications
   async sendCancellationNotifications(order, cancelledBy, reason) {
     const notificationService = strapi.service('api::notification.notification');
+    const emailService = strapi.service('api::global.email-operations');
 
-    // Email to advertiser
+    // Email to advertiser using universal template
     try {
       if (order.advertiser.email) {
-        await strapi.plugins['email'].services.email.send({
-          to: order.advertiser.email,
-          from: process.env.EMAIL_FROM || 'no-reply@serpbays.com',
-          subject: `Order #${order.id} Cancelled`,
-          html: `
-              <h2>Order Cancelled</h2>
-              <p>Your order #${order.id} has been cancelled.</p>
-              <p><strong>Cancelled by:</strong> ${cancelledBy}</p>
-              <p><strong>Reason:</strong> ${reason}</p>
-              <p><strong>Refund Amount:</strong> $${order.totalAmount}</p>
-              <p>The funds have been returned to your wallet and are available for immediate use.</p>
-          `
-        });
+        await emailService.sendOrderCancellationEmail(
+          order,
+          order.advertiser.email,
+          cancelledBy,
+          reason
+        );
+        console.log(`Cancellation email sent to advertiser ${order.advertiser.email}`);
       }
     } catch (e) {
-      console.error("Failed to send email to advertiser", e);
+      console.error("Failed to send cancellation email to advertiser", e);
     }
 
     // In-app notification to advertiser
@@ -897,24 +893,20 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.error("Failed to create notification for advertiser", e);
     }
 
-    // Email to publisher (if exists)
+    // Email to publisher (if exists) using universal template
     if (order.publisher) {
       try {
         if (order.publisher.email) {
-          await strapi.plugins['email'].services.email.send({
-            to: order.publisher.email,
-            from: process.env.EMAIL_FROM || 'no-reply@serpbays.com',
-            subject: `Order #${order.id} Cancelled`,
-            html: `
-                  <h2>Order Cancelled</h2>
-                  <p>Order #${order.id} has been cancelled by ${cancelledBy}.</p>
-                  <p><strong>Reason:</strong> ${reason}</p>
-                  <p>No further action is required from you.</p>
-              `
-          });
+          await emailService.sendOrderCancellationEmail(
+            order,
+            order.publisher.email,
+            cancelledBy,
+            reason
+          );
+          console.log(`Cancellation email sent to publisher ${order.publisher.email}`);
         }
       } catch (e) {
-        console.error("Failed to send email to publisher", e);
+        console.error("Failed to send cancellation email to publisher", e);
       }
 
       // In-app notification to publisher

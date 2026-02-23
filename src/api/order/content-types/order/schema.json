@@ -213,7 +213,9 @@
       "description": "Fast placement status at time of order (snapshot)"
     },
     "websiteAhrefsDr": {
-      "type": "integer",
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
       "description": "Ahrefs DR at time of order (snapshot)"
     },
     "websiteAhrefsTraffic": {
@@ -221,7 +223,9 @@
       "description": "Ahrefs traffic at time of order (snapshot)"
     },
     "websiteMozDa": {
-      "type": "integer",
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
       "description": "Moz DA at time of order (snapshot)"
     },
     "websiteLanguage": {

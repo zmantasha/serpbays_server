@@ -20,7 +20,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
         search = '',
         status = '',
         advertiserId = '',
-        publisherId = ''
+        publisherId = '',
+        serviceType = ''
       } = ctx.query;
 
       // Build filters
@@ -38,6 +39,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       // Status filter
       if (status) {
         filters.orderStatus = status;
+      }
+
+      // Service type filter
+      if (serviceType) {
+        filters.serviceType = serviceType;
       }
 
       // Advertiser filter
