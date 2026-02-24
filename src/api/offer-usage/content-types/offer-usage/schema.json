@@ -1,0 +1,44 @@
+{
+    "kind": "collectionType",
+    "collectionName": "offer_usages",
+    "info": {
+        "singularName": "offer-usage",
+        "pluralName": "offer-usages",
+        "displayName": "Offer Usage",
+        "description": "Tracks offer redemptions by users"
+    },
+    "options": {
+        "draftAndPublish": false
+    },
+    "attributes": {
+        "offer": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::offer.offer",
+            "inversedBy": "offer_usages"
+        },
+        "user": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "plugin::users-permissions.user"
+        },
+        "transactionId": {
+            "type": "string",
+            "required": true
+        },
+        "bonusAmount": {
+            "type": "decimal",
+            "required": true,
+            "min": 0
+        },
+        "rechargeAmount": {
+            "type": "decimal",
+            "required": true,
+            "min": 0
+        },
+        "redeemedAt": {
+            "type": "datetime",
+            "required": true
+        }
+    }
+}
