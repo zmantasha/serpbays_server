@@ -143,6 +143,96 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         if (status === 'captured' && transaction.user_wallet) {
           await this.updateWalletBalance(transaction.user_wallet.id, amountToCredit, creditCurrency);
           console.log(`[RAZORPAY WEBHOOK] ✅ Successfully credited ${amountToCredit} ${creditCurrency} to wallet ${transaction.user_wallet.id}`);
+
+          // ✅ OFFER ENGINE: Apply offer bonuses after successful payment
+          try {
+            const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+              where: { id: transaction.user_wallet.id },
+              populate: ['users_permissions_user']
+            });
+            if (wallet && wallet.users_permissions_user) {
+              const offerEngine = strapi.service('api::offer.offer-engine');
+              const couponCode = transaction.metadata?.couponCode || null;
+              const offerResult = await offerEngine.applyOffers(
+                wallet.users_permissions_user.id,
+                amountToCredit,
+                couponCode,
+                transaction.id  // Exclude current tx from deposit count
+              );
+
+              if (offerResult.totalBonus > 0) {
+                // Credit bonus to promoBalance
+                const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+                const newPromoBalance = currentPromoBalance + offerResult.totalBonus;
+                const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+                const newTotalBalance = currentMainBalance + amountToCredit + newPromoBalance;
+
+                await strapi.db.query('api::user-wallet.user-wallet').update({
+                  where: { id: wallet.id },
+                  data: {
+                    promoBalance: newPromoBalance,
+                    balance: newTotalBalance,
+                    updatedAt: new Date()
+                  }
+                });
+
+                // Record offer usage
+                for (const offer of offerResult.appliedOffers) {
+                  await offerEngine.recordUsage(
+                    offer.id,
+                    wallet.users_permissions_user.id,
+                    transaction.id,
+                    offer.bonusAmount,
+                    amountToCredit
+                  );
+                }
+
+                // Create a bonus transaction record so it appears in transaction history
+                await strapi.entityService.create('api::transaction.transaction', {
+                  data: {
+                    type: 'promo',
+                    amount: offerResult.totalBonus,
+                    netAmount: offerResult.totalBonus,
+                    currency: transaction.currency || 'USD',
+                    gateway: 'system',
+                    gatewayTransactionId: `OFFER-BONUS-${transaction.id}-${Date.now()}`,
+                    transactionStatus: 'success',
+                    user_wallet: wallet.id,
+                    users_permissions_user: wallet.users_permissions_user.id,
+                    fund_source: 'promo_fund',
+                    description: `Offer (${offerResult.appliedOffers.map(o => o.title).join(', ')})`,
+                    metadata: {
+                      appliedOffers: offerResult.appliedOffers,
+                      parentTransactionId: transaction.id,
+                      rechargeAmount: amountToCredit
+                    },
+                    publishedAt: new Date()
+                  }
+                });
+
+                // Store offer info in the original transaction metadata
+                await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+                  data: {
+                    metadata: {
+                      ...transaction.metadata,
+                      offerBonus: offerResult.totalBonus,
+                      appliedOffers: offerResult.appliedOffers.map(o => ({
+                        id: o.id,
+                        title: o.title,
+                        bonusAmount: o.bonusAmount
+                      }))
+                    }
+                  }
+                });
+
+                console.log(`[RAZORPAY WEBHOOK] 🎁 Offer bonus applied: +${offerResult.totalBonus} to promoBalance (was ${currentPromoBalance}, now ${newPromoBalance})`);
+              } else {
+                console.log('[RAZORPAY WEBHOOK] No applicable offers for this transaction');
+              }
+            }
+          } catch (offerError) {
+            console.error('[RAZORPAY WEBHOOK] ⚠️ Error applying offers (wallet still credited):', offerError);
+          }
         }
       });
 
@@ -251,6 +341,96 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         if (status === 'paid' && transaction.user_wallet) {
           await this.updateWalletBalance(transaction.user_wallet.id, amountToCredit, creditCurrency);
           console.log(`[RAZORPAY WEBHOOK] ✅ Successfully credited ${amountToCredit} ${creditCurrency} to wallet ${transaction.user_wallet.id}`);
+
+          // ✅ OFFER ENGINE: Apply offer bonuses after successful payment
+          try {
+            const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+              where: { id: transaction.user_wallet.id },
+              populate: ['users_permissions_user']
+            });
+            if (wallet && wallet.users_permissions_user) {
+              const offerEngine = strapi.service('api::offer.offer-engine');
+              const couponCode = transaction.metadata?.couponCode || null;
+              const offerResult = await offerEngine.applyOffers(
+                wallet.users_permissions_user.id,
+                amountToCredit,
+                couponCode,
+                transaction.id  // Exclude current tx from deposit count
+              );
+
+              if (offerResult.totalBonus > 0) {
+                // Credit bonus to promoBalance
+                const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+                const newPromoBalance = currentPromoBalance + offerResult.totalBonus;
+                const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+                const newTotalBalance = currentMainBalance + amountToCredit + newPromoBalance;
+
+                await strapi.db.query('api::user-wallet.user-wallet').update({
+                  where: { id: wallet.id },
+                  data: {
+                    promoBalance: newPromoBalance,
+                    balance: newTotalBalance,
+                    updatedAt: new Date()
+                  }
+                });
+
+                // Record offer usage
+                for (const offer of offerResult.appliedOffers) {
+                  await offerEngine.recordUsage(
+                    offer.id,
+                    wallet.users_permissions_user.id,
+                    transaction.id,
+                    offer.bonusAmount,
+                    amountToCredit
+                  );
+                }
+
+                // Create a bonus transaction record so it appears in transaction history
+                await strapi.entityService.create('api::transaction.transaction', {
+                  data: {
+                    type: 'promo',
+                    amount: offerResult.totalBonus,
+                    netAmount: offerResult.totalBonus,
+                    currency: transaction.currency || 'USD',
+                    gateway: 'system',
+                    gatewayTransactionId: `OFFER-BONUS-${transaction.id}-${Date.now()}`,
+                    transactionStatus: 'success',
+                    user_wallet: wallet.id,
+                    users_permissions_user: wallet.users_permissions_user.id,
+                    fund_source: 'promo_fund',
+                    description: `Offer (${offerResult.appliedOffers.map(o => o.title).join(', ')})`,
+                    metadata: {
+                      appliedOffers: offerResult.appliedOffers,
+                      parentTransactionId: transaction.id,
+                      rechargeAmount: amountToCredit
+                    },
+                    publishedAt: new Date()
+                  }
+                });
+
+                // Store offer info in the original transaction metadata
+                await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+                  data: {
+                    metadata: {
+                      ...transaction.metadata,
+                      offerBonus: offerResult.totalBonus,
+                      appliedOffers: offerResult.appliedOffers.map(o => ({
+                        id: o.id,
+                        title: o.title,
+                        bonusAmount: o.bonusAmount
+                      }))
+                    }
+                  }
+                });
+
+                console.log(`[RAZORPAY WEBHOOK] 🎁 Offer bonus applied (order.paid): +${offerResult.totalBonus} to promoBalance`);
+              } else {
+                console.log('[RAZORPAY WEBHOOK] No applicable offers for this transaction (order.paid)');
+              }
+            }
+          } catch (offerError) {
+            console.error('[RAZORPAY WEBHOOK] ⚠️ Error applying offers in order.paid (wallet still credited):', offerError);
+          }
         }
       });
 
@@ -554,6 +734,96 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         const currency = transaction.currency;
         await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
         console.log(`[RAZORPAY VERIFY] ✅ Updated wallet balance +${amount} ${currency} for transaction ${transaction.id}`);
+
+        // ✅ OFFER ENGINE: Apply offer bonuses after successful payment
+        try {
+          const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { id: transaction.user_wallet.id },
+            populate: ['users_permissions_user']
+          });
+          if (wallet && wallet.users_permissions_user) {
+            const offerEngine = strapi.service('api::offer.offer-engine');
+            const couponCode = transaction.metadata?.couponCode || null;
+            const offerResult = await offerEngine.applyOffers(
+              wallet.users_permissions_user.id,
+              parseFloat(amount),
+              couponCode,
+              transaction.id  // Exclude current tx from deposit count
+            );
+
+            if (offerResult.totalBonus > 0) {
+              // Credit bonus to promoBalance
+              const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+              const newPromoBalance = currentPromoBalance + offerResult.totalBonus;
+              const currentMainBalance = parseFloat(wallet.mainBalance || 0) + parseFloat(amount);
+              const newTotalBalance = currentMainBalance + newPromoBalance;
+
+              await strapi.db.query('api::user-wallet.user-wallet').update({
+                where: { id: wallet.id },
+                data: {
+                  promoBalance: newPromoBalance,
+                  balance: newTotalBalance,
+                  updatedAt: new Date()
+                }
+              });
+
+              // Record offer usage
+              for (const offer of offerResult.appliedOffers) {
+                await offerEngine.recordUsage(
+                  offer.id,
+                  wallet.users_permissions_user.id,
+                  transaction.id,
+                  offer.bonusAmount,
+                  parseFloat(amount)
+                );
+              }
+
+              // Create a bonus transaction record so it appears in transaction history
+              await strapi.entityService.create('api::transaction.transaction', {
+                data: {
+                  type: 'promo',
+                  amount: offerResult.totalBonus,
+                  netAmount: offerResult.totalBonus,
+                  currency: transaction.currency || 'USD',
+                  gateway: 'system',
+                  gatewayTransactionId: `OFFER-BONUS-${transaction.id}-${Date.now()}`,
+                  transactionStatus: 'success',
+                  user_wallet: wallet.id,
+                  users_permissions_user: wallet.users_permissions_user.id,
+                  fund_source: 'promo_fund',
+                  description: `Offer (${offerResult.appliedOffers.map(o => o.title).join(', ')})`,
+                  metadata: {
+                    appliedOffers: offerResult.appliedOffers,
+                    parentTransactionId: transaction.id,
+                    rechargeAmount: parseFloat(amount)
+                  },
+                  publishedAt: new Date()
+                }
+              });
+
+              // Store offer info in the original transaction metadata
+              await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+                data: {
+                  metadata: {
+                    ...transaction.metadata,
+                    offerBonus: offerResult.totalBonus,
+                    appliedOffers: offerResult.appliedOffers.map(o => ({
+                      id: o.id,
+                      title: o.title,
+                      bonusAmount: o.bonusAmount
+                    }))
+                  }
+                }
+              });
+
+              console.log(`[RAZORPAY VERIFY] 🎁 Offer bonus applied: +${offerResult.totalBonus} to promoBalance`);
+            } else {
+              console.log('[RAZORPAY VERIFY] No applicable offers for this transaction');
+            }
+          }
+        } catch (offerError) {
+          console.error('[RAZORPAY VERIFY] ⚠️ Error applying offers (wallet still credited):', offerError);
+        }
       } else if (status === 'success' && previousStatus === 'success') {
         console.log(`[RAZORPAY VERIFY] ⚠️ Transaction ${transaction.id} already successful - wallet already credited`);
       }
