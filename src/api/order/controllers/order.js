@@ -539,15 +539,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         try {
           // Use CURRENT publisher email from relation (always up-to-date), fallback to static field for legacy entries
           let publisherEmail = null;
+
+          console.log(`[ORDER ${order.id}] Determining publisher email for website ID: ${orderData.website}`);
+          console.log(`[ORDER ${order.id}] Marketplace publisher relation:`, marketplace?.publisher?.email || 'NONE');
+          console.log(`[ORDER ${order.id}] Marketplace publisher_email field:`, marketplace?.publisher_email || 'NONE');
+
           if (marketplace && marketplace.publisher && marketplace.publisher.email) {
             publisherEmail = marketplace.publisher.email;
+            console.log(`[ORDER ${order.id}] Using publisher.email: ${publisherEmail}`);
           } else if (marketplace && marketplace.publisher_email) {
             publisherEmail = marketplace.publisher_email;
+            console.log(`[ORDER ${order.id}] Using publisher_email field: ${publisherEmail}`);
           }
 
           if (publisherEmail) {
             // Send email notification for new order
             try {
+              console.log(`[ORDER ${order.id}] Sending order creation email to: ${publisherEmail}`);
               const emailService = strapi.service('api::global.email-operations');
               await emailService.sendOrderCreationEmail(
                 populatedOrder,
@@ -1498,6 +1506,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
             if (advertiserUser && advertiserUser.email) {
               const emailService = strapi.service('api::global.email-operations');
+              console.log("emailService", emailService)
               await emailService.sendOrderDeliveryEmail(
                 fullOrder,
                 advertiserUser.email,
@@ -2128,6 +2137,36 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         } catch (notificationError) {
           console.error('Failed to create revision completed notification:', notificationError);
           // Don't fail the revision completion if notification fails
+        }
+
+        // Send delivery email to advertiser
+        try {
+          const fullOrder = await strapi.entityService.findOne('api::order.order', orderId, {
+            populate: ['advertiser', 'publisher', 'website']
+          });
+
+          const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: order.advertiser?.id || order.advertiser }
+          });
+
+          if (advertiserUser && advertiserUser.email) {
+            const emailService = strapi.service('api::global.email-operations');
+            console.log(`[Revision Complete] Sending delivery email to ${advertiserUser.email}`);
+
+            // Update fullOrder with the latest delivery info
+            fullOrder.deliveryProofUrl = deliveryProof;
+            fullOrder.deliveryMessage = message;
+
+            await emailService.sendOrderDeliveryEmail(
+              fullOrder,
+              advertiserUser.email,
+              user.email
+            );
+            console.log(`Revision completion delivery email sent for order ${orderId}`);
+          }
+        } catch (emailError) {
+          console.error('Failed to send revision completion delivery email:', emailError);
+          // Don't fail the revision completion if email fails
         }
 
         return {
