@@ -109,7 +109,7 @@ function generateEmailTemplate(request, user) {
   };
 
   const requestTypeText = request.requestType === 'specific' ? 'Specific Domains' : 'Website Criteria';
-
+  
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #16a34a; border-bottom: 2px solid #16a34a; padding-bottom: 10px;">
