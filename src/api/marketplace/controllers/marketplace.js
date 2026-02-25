@@ -626,55 +626,114 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       ctx.query.sort = 'updatedAt:desc';
     }
 
-    // For metric field sorting, use a TWO-PHASE approach:
-    // Phase 1: Let Strapi handle ALL filtering (supports all operators natively)
-    // Phase 2: Use Knex only for NULL-safe sorting with NULLS LAST
-    // This is more maintainable than maintaining a custom filter parser
+    // For metric field sorting, use Knex with NULLS LAST for proper NULL/0 handling
     if (useRawSorting && rawSortField && rawSortDirection) {
+      const { filters, pagination } = ctx.query;
       const page = ctx.query.pagination?.page || 1;
       const pageSize = ctx.query.pagination?.pageSize || 25;
 
       try {
-        console.log('🔍 Using two-phase approach: Strapi filter → Knex sort');
-
-        // PHASE 1: Use Strapi's entityService to get filtered IDs
-        // This properly handles ALL Strapi operators ($containsi, $or, $and, etc.)
-        const filteredEntries = await strapi.entityService.findMany('api::marketplace.marketplace', {
-          filters: ctx.query.filters,
-          fields: ['id', rawSortField], // Only fetch ID and sort field for efficiency
-          populate: ['publisher'], // Need publisher for ownership check
-        });
-
-        if (!filteredEntries || filteredEntries.length === 0) {
-          return {
-            data: [],
-            meta: {
-              pagination: {
-                page,
-                pageSize,
-                pageCount: 0,
-                total: 0
-              }
-            }
-          };
-        }
-
-        // Get the IDs from filtered results
-        const filteredIds = filteredEntries.map(e => e.id);
-        const total = filteredIds.length;
-
-        console.log(`🔍 Phase 1 complete: ${total} entries matched filters`);
-
-        // PHASE 2: Use Knex to fetch full data with NULL-safe sorting
+        // Get Strapi's Knex connection
         const knex = strapi.db.connection;
 
-        const results = await knex('marketplaces')
-          .whereIn('id', filteredIds)
-          .orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField])
-          .limit(pageSize)
-          .offset((page - 1) * pageSize);
+        // Build base query
+        let query = knex('marketplaces');
 
-        console.log(`🔍 Phase 2 complete: Sorted ${results.length} entries with NULLS LAST`);
+        // Apply filters using Strapi's filter conversion
+        // Convert Strapi filters to Knex where clauses
+        const applyFilters = (query, filters) => {
+          if (!filters) return query;
+
+          Object.entries(filters).forEach(([key, value]) => {
+            if (key === '$and' && Array.isArray(value)) {
+              // Handle $and operator
+              value.forEach(condition => {
+                query.where(builder => {
+                  Object.entries(condition).forEach(([field, fieldValue]) => {
+                    if (field === '$or' && Array.isArray(fieldValue)) {
+                      // Nested $or inside $and
+                      builder.where(orBuilder => {
+                        fieldValue.forEach(orCondition => {
+                          Object.entries(orCondition).forEach(([orField, orValue]) => {
+                            if (typeof orValue === 'object' && orValue !== null) {
+                              Object.entries(orValue).forEach(([operator, opValue]) => {
+                                if (operator === '$gt') orBuilder.orWhere(orField, '>', opValue);
+                                else if (operator === '$gte') orBuilder.orWhere(orField, '>=', opValue);
+                                else if (operator === '$lt') orBuilder.orWhere(orField, '<', opValue);
+                                else if (operator === '$lte') orBuilder.orWhere(orField, '<=', opValue);
+                                else if (operator === '$eq') orBuilder.orWhere(orField, '=', opValue);
+                                else if (operator === '$ne') orBuilder.orWhere(orField, '!=', opValue);
+                                else if (operator === '$null') orBuilder.orWhereNull(orField);
+                                else if (operator === '$notNull') orBuilder.orWhereNotNull(orField);
+                                else if (operator === '$contains') orBuilder.orWhere(orField, 'like', `%${opValue}%`);
+                                else if (operator === '$containsi') orBuilder.orWhereRaw('LOWER(??) LIKE ?', [orField, `%${String(opValue).toLowerCase()}%`]);
+                              });
+                            } else {
+                              orBuilder.orWhere(orField, orValue);
+                            }
+                          });
+                        });
+                      });
+                    } else if (typeof fieldValue === 'object' && fieldValue !== null) {
+                      // Handle operators for regular fields
+                      Object.entries(fieldValue).forEach(([operator, opValue]) => {
+                        if (operator === '$gt') builder.where(field, '>', opValue);
+                        else if (operator === '$gte') builder.where(field, '>=', opValue);
+                        else if (operator === '$lt') builder.where(field, '<', opValue);
+                        else if (operator === '$lte') builder.where(field, '<=', opValue);
+                        else if (operator === '$eq') builder.where(field, '=', opValue);
+                        else if (operator === '$ne') builder.where(field, '!=', opValue);
+                        else if (operator === '$null') builder.whereNull(field);
+                        else if (operator === '$notNull') builder.whereNotNull(field);
+                        else if (operator === '$contains') builder.where(field, 'like', `%${opValue}%`);
+                        else if (operator === '$containsi') builder.whereRaw('LOWER(??) LIKE ?', [field, `%${String(opValue).toLowerCase()}%`]);
+                      });
+                    } else {
+                      builder.where(field, fieldValue);
+                    }
+                  });
+                });
+              });
+            } else if (typeof value === 'object' && value !== null) {
+              // Handle operators for top-level fields
+              Object.entries(value).forEach(([operator, opValue]) => {
+                if (operator === '$gt') query.where(key, '>', opValue);
+                else if (operator === '$gte') query.where(key, '>=', opValue);
+                else if (operator === '$lt') query.where(key, '<', opValue);
+                else if (operator === '$lte') query.where(key, '<=', opValue);
+                else if (operator === '$eq') query.where(key, '=', opValue);
+                else if (operator === '$ne') query.where(key, '!=', opValue);
+                else if (operator === '$null') query.whereNull(key);
+                else if (operator === '$notNull') query.whereNotNull(key);
+              });
+            } else {
+              query.where(key, value);
+            }
+          });
+
+          return query;
+        };
+
+        // Apply filters
+        query = applyFilters(query, ctx.query.filters);
+
+        // Apply NULL-safe sorting with NULLS LAST
+        // This ensures 0 and NULL values appear at the bottom when sorting DESC
+        query = query.orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
+
+        // Clone query for count (before pagination)
+        const countQuery = query.clone().count('* as count');
+
+        // Apply pagination
+        query = query.limit(pageSize).offset((page - 1) * pageSize);
+
+        // Execute queries
+        const [results, countResult] = await Promise.all([
+          query,
+          countQuery
+        ]);
+
+        const total = parseInt(countResult[0]?.count || 0);
 
         // Sanitize publisher data
         const sanitizedResults = this.sanitizePublisherData(results, user);
@@ -695,12 +754,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           }
         };
       } catch (error) {
-        console.error('❌ Two-phase sorting failed, falling back to entityService:', error.message);
+        console.error('❌ Knex sorting failed, falling back to default:', error.message);
         // Fallback to Strapi's default entityService (without NULLS LAST fix)
         try {
-          const page = ctx.query.pagination?.page || 1;
-          const pageSize = ctx.query.pagination?.pageSize || 25;
-
           const results = await strapi.entityService.findPage('api::marketplace.marketplace', {
             filters: ctx.query.filters,
             populate: ctx.query.populate || '*',

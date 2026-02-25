@@ -105,34 +105,6 @@ module.exports = (plugin) => {
         }
         // ========== END AUTO-LINK ORPHANED WEBSITES ==========
 
-        // ========== AUTOSEND CONTACT SYNC ==========
-        try {
-          const autoSendService = strapi.service('api::global.autosend-service');
-          if (autoSendService && typeof autoSendService.createContact === 'function') {
-            strapi.log.info(`[AutoSend] Syncing new user ${result.email} to AutoSend...`);
-
-            // Prepare custom fields based on user role/type
-            const customFields = {
-              role: 'user', // Default role
-              is_advertiser: result.Advertiser ? 'true' : 'false',
-              is_publisher: result.Publisher ? 'true' : 'false',
-              registration_date: new Date().toISOString().split('T')[0]
-            };
-
-            await autoSendService.createContact({
-              email: result.email,
-              firstName: result.firstName || '',
-              lastName: result.lastName || '',
-              userId: result.id,
-              customFields
-            });
-          }
-        } catch (autoSendError) {
-          // Double safety catch, though service handles its own errors
-          console.error('[AutoSend Sync Error]', autoSendError);
-        }
-        // ========== END AUTOSEND CONTACT SYNC ==========
-
       } catch (error) {
         console.error('Error in user lifecycle hook:', error);
       }

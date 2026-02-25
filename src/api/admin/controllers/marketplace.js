@@ -49,14 +49,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         filters.category = category;
       }
 
-      // CRITICAL: Always exclude rejected websites from marketplace
-      // If no status filter specified, default to showing only approved entries
       if (status && status !== 'All Status') {
         filters.status = status;
       }
-
-      // Exclude rejected entries by approvalStatus (CRITICAL for hiding rejected websites)
-      filters.approvalStatus = { $ne: 'rejected' };
 
       // Numerical range filters
       if (minDA || maxDA) {
@@ -525,35 +520,18 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   /**
    * Get marketplace statistics for admin dashboard
    */
-  /**
-   * Get marketplace statistics for admin dashboard
-   */
   async getStats(ctx) {
     try {
-      // CRITICAL: Always exclude rejected websites from stats to match the list view
-      const baseFilter = { approvalStatus: { $ne: 'rejected' } };
-
-      const total = await strapi.db.query('api::marketplace.marketplace').count({
-        where: baseFilter
-      });
-
+      const total = await strapi.db.query('api::marketplace.marketplace').count();
       const active = await strapi.db.query('api::marketplace.marketplace').count({
-        where: {
-          ...baseFilter,
-          publishedAt: { $notNull: true }
-        }
+        where: { publishedAt: { $notNull: true } }
       });
-
       const inactive = await strapi.db.query('api::marketplace.marketplace').count({
-        where: {
-          ...baseFilter,
-          publishedAt: { $null: true }
-        }
+        where: { publishedAt: { $null: true } }
       });
 
-      // Get category breakdown (excluding rejected)
+      // Get category breakdown
       const categories = await strapi.db.query('api::marketplace.marketplace').findMany({
-        where: baseFilter,
         select: ['category']
       });
 
@@ -563,9 +541,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
       });
 
-      // Calculate average metrics (excluding rejected)
+      // Calculate average metrics
       const metricsData = await strapi.db.query('api::marketplace.marketplace').findMany({
-        where: baseFilter,
         select: ['moz_da', 'ahrefs_dr', 'price', 'id']
       });
 

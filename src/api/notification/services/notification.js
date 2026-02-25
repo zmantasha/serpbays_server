@@ -188,7 +188,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       return await this.createNotification({
         title: 'New Message',
         message: `You have received a new message from ${sender.username || sender.email}.`,
-        type: 'communication',
+        type: 'message',
         action,
         recipientId,
         relatedOrderId: orderId,
