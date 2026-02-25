@@ -48,17 +48,5 @@ module.exports = {
         middlewares: []
       }
     },
-    {
-      method: 'POST',
-      path: '/api/wallet/redeem-promo-code',
-      handler: 'wallet.redeemPromoCode',
-      config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.redeemPromoCode']
-        },
-        policies: [],
-        middlewares: []
-      }
-    }
   ]
 }; 

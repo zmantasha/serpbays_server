@@ -422,38 +422,55 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       let codeData = null;
       let isVoucher = false;
 
-      // First, try to find a promo code
-      const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
-        where: {
-          code: promoCode,
-          promoStatus: 'active',
-          expiryDate: {
-            $gt: new Date()
-          }
-        }
-      }, queryOptions);
+      // First, try to find a promo code (with row-level locking via Knex)
+      // Strapi 5 keeps draft + published rows; only match published_at IS NOT NULL
+      const knex = strapi.db.connection;
+      const promoRows = await knex('promo_codes')
+        .where('code', promoCode)
+        .where('promo_status', 'active')
+        .where('expiry_date', '>', new Date())
+        .whereNotNull('published_at')
+        .forUpdate()
+        .transacting(transaction);
 
-      if (promo) {
-        codeData = promo;
+      if (promoRows.length > 0) {
+        const row = promoRows[0];
+        codeData = {
+          id: row.id,
+          documentId: row.document_id,
+          code: row.code,
+          amount: row.amount,
+          promoStatus: row.promo_status,
+          expiryDate: row.expiry_date,
+          currentRedemptions: row.current_redemptions,
+          maxRedemptions: row.max_redemptions,
+        };
         codeType = 'promo';
-        console.log(`[PROMO] Found promo code: ${promoCode}, amount: $${promo.amount}`);
+        console.log(`[PROMO] Found promo code: ${promoCode}, id: ${codeData.id}, docId: ${codeData.documentId}, amount: $${codeData.amount}`);
       } else {
-        // If not a promo code, try to find a voucher code
-        const voucher = await strapi.db.query('api::voucher-code.voucher-code').findOne({
-          where: {
-            code: promoCode,
-            voucherStatus: 'active',
-            expiryDate: {
-              $gt: new Date()
-            }
-          }
-        }, queryOptions);
+        // If not a promo code, try to find a voucher code (with row-level locking)
+        const voucherRows = await knex('voucher_codes')
+          .where('code', promoCode)
+          .where('voucher_status', 'active')
+          .where('expiry_date', '>', new Date())
+          .whereNotNull('published_at')
+          .forUpdate()
+          .transacting(transaction);
 
-        if (voucher) {
-          codeData = voucher;
+        if (voucherRows.length > 0) {
+          const row = voucherRows[0];
+          codeData = {
+            id: row.id,
+            documentId: row.document_id,
+            code: row.code,
+            amount: row.amount,
+            voucherStatus: row.voucher_status,
+            expiryDate: row.expiry_date,
+            usedBy: row.used_by,
+          };
           codeType = 'voucher';
           isVoucher = true;
-          console.log(`[VOUCHER] Found voucher code: ${promoCode}, amount: $${voucher.amount}`);
+          console.log(`[VOUCHER] Found voucher code: ${promoCode}, id: ${codeData.id}, docId: ${codeData.documentId}, amount: $${codeData.amount}`);
         } else {
           await transaction.rollback();
           return ctx.badRequest('Invalid or expired code');
@@ -486,15 +503,23 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           return ctx.badRequest('This voucher code has already been used');
         }
       } else {
-        // For promo codes, check if user has already used this promo code
-        const existingRedemption = await strapi.db.query('api::promo-redemption.promo-redemption').findOne({
-          where: {
-            promoCode: codeData.id,
-            user: userId
-          }
-        }, queryOptions);
+        // For promo codes, check if user has already used this promo code (with row-level locking)
+        // Match by document_id to catch redemptions against both draft & published rows
+        const allPromoRowIds = await knex('promo_codes')
+          .where('document_id', codeData.documentId)
+          .select('id')
+          .transacting(transaction);
+        const promoIdList = allPromoRowIds.map(r => r.id);
 
-        if (existingRedemption) {
+        const existingRedemptions = await knex('promo_redemptions')
+          .join('promo_redemptions_promo_code_lnk', 'promo_redemptions.id', 'promo_redemptions_promo_code_lnk.promo_redemption_id')
+          .join('promo_redemptions_user_lnk', 'promo_redemptions.id', 'promo_redemptions_user_lnk.promo_redemption_id')
+          .whereIn('promo_redemptions_promo_code_lnk.promo_code_id', promoIdList)
+          .where('promo_redemptions_user_lnk.user_id', userId)
+          .forUpdate()
+          .transacting(transaction);
+
+        if (existingRedemptions.length > 0) {
           await transaction.rollback();
           return ctx.badRequest('You have already used this promo code');
         }
@@ -611,7 +636,10 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     } catch (error) {
       console.error('Promo/Voucher redemption error:', error);
       await transaction.rollback();
-      // Return more specific error message
+      // Catch the DB trigger duplicate error
+      if (error.message && error.message.includes('Duplicate promo redemption')) {
+        return ctx.badRequest('You have already used this promo code');
+      }
       return ctx.badRequest(error.message || 'Failed to redeem code');
     }
   },

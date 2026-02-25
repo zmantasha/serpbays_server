@@ -299,91 +299,13 @@ module.exports = {
     }
   },
 
-  // Redeem promo code
+  // Deprecated — use POST /api/wallet/redeem-promo instead
   async redeemPromoCode(ctx) {
-    try {
-      const { user } = ctx.state;
-      const { promoCode } = ctx.request.body;
-      
-      if (!user) {
-        return ctx.unauthorized('You must be logged in');
-      }
-
-      if (!promoCode) {
-        return ctx.badRequest('Promo code is required');
-      }
-
-      // Here you would validate the promo code against your promo code system
-      // For now, we'll create a simple validation structure
-      const promoCodeData = await this.validatePromoCode(promoCode, user.id);
-      
-      if (!promoCodeData.valid) {
-        return ctx.badRequest(promoCodeData.error);
-      }
-
-      // Add promo funds
-      const result = await strapi.controller('api::user-wallet.user-wallet').addPromoFunds(
-        user.id, 
-        promoCodeData.amount, 
-        promoCodeData.id, 
-        { 
-          description: `Promo code redemption: ${promoCode}`,
-          metadata: { promoCode, originalAmount: promoCodeData.originalAmount }
-        }
-      );
-
-      return ctx.send({
-        success: true,
-        message: 'Promo code redeemed successfully',
-        data: {
-          promoCode,
-          amount: promoCodeData.amount,
-          newPromoBalance: result.newPromoBalance,
-          newTotalBalance: result.newTotalBalance
-        }
-      });
-
-    } catch (error) {
-      console.error('Error redeeming promo code:', error);
-      return ctx.badRequest(error.message || 'Failed to redeem promo code');
-    }
+    return ctx.badRequest('Deprecated. Use /api/wallet/redeem-promo');
   },
 
-  // Validate promo code (placeholder - implement your promo code logic here)
-  async validatePromoCode(promoCode, userId) {
-    // This is a placeholder implementation
-    // You should implement your actual promo code validation logic here
-    
-    // Example promo codes for testing
-    const validPromoCodes = {
-      'WELCOME50': { amount: 50, originalAmount: 100, id: 'welcome50' },
-      'SAVE20': { amount: 20, originalAmount: 20, id: 'save20' },
-      'BONUS100': { amount: 100, originalAmount: 100, id: 'bonus100' }
-    };
-
-    const promoData = validPromoCodes[promoCode.toUpperCase()];
-    
-    if (!promoData) {
-      return { valid: false, error: 'Invalid promo code' };
-    }
-
-    // Check if user has already used this promo code
-    const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
-      where: {
-        promo_code_id: promoData.id,
-        users_permissions_user: userId
-      }
-    });
-
-    if (existingTransaction) {
-      return { valid: false, error: 'Promo code already used' };
-    }
-
-    return {
-      valid: true,
-      amount: promoData.amount,
-      originalAmount: promoData.originalAmount,
-      id: promoData.id
-    };
+  // Deprecated — use POST /api/wallet/redeem-promo instead
+  async validatePromoCode(_promoCode, _userId) {
+    return { valid: false, error: 'Deprecated. Use /api/wallet/redeem-promo' };
   }
 }; 
