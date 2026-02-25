@@ -28,7 +28,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         text: `Payment of $${amount} is required for Order #${orderId}. Reply with CONFIRM-PAYMENT-${orderId} to proceed.`
       };
 
-      const emailResult = await strapi.plugins.email.services.email.send(emailData);
+      const emailResult = await strapi.service('api::global.autosend-service').send(emailData);
       return emailResult;
     } catch (error) {
       console.error('Error sending payment acceptance email:', error);
@@ -37,63 +37,126 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send order creation confirmation email
+   * Send order creation confirmation email using AutoSend template
    */
   async sendOrderCreationEmail(order, publisherEmail, advertiserEmail) {
     try {
-      // Email to publisher
+      console.log(`[EMAIL DEBUG] sendOrderCreationEmail called for order ${order.id}`);
+      console.log(`[EMAIL DEBUG] Publisher email: ${publisherEmail}`);
+      console.log(`[EMAIL DEBUG] Advertiser email: ${advertiserEmail}`);
+      console.log(`[EMAIL DEBUG] Order website: ${order.website?.url || 'N/A'}`);
+
+      // Email to publisher using universal AutoSend template
       const publisherEmailData = {
         to: publisherEmail,
-        subject: `New Order Received - Order #${order.id}`,
-        html: this.generateOrderCreationTemplate(order, 'publisher'),
-        text: `New order #${order.id} received. Reply with ACCEPT-${order.id} to accept or REJECT-${order.id} to reject.`
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
+        dynamicData: {
+          // Order details - using snake_case to match AutoSend template
+          order_id: order.id,
+          order_status: 'created',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Website details
+          website_name: order.website?.name || order.website?.url || 'Website',
+          website_url: order.website?.url || '',
+
+          // Item details for template
+          item_1_name: order.website?.name || 'Order Service',
+          item_1_qty: 1,
+          item_1_price: order.totalAmount || 0,
+          subtotal: order.totalAmount || 0,
+          taxes: 0,
+
+          // Action URLs
+          order_link: `${process.env.CLIENT_URL}/publisher/available-orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+
+          // Timestamp
+          order_date: new Date(order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          })
+        },
+        tags: ['order', 'order-created', 'publisher']
       };
 
-      // Email to advertiser
-      // const advertiserEmailData = {
-      //   to: advertiserEmail,
-      //   subject: `Order Created Successfully - Order #${order.id}`,
-      //   html: this.generateOrderCreationTemplate(order, 'advertiser'),
-      //   text: `Order #${order.id} created successfully. You will be notified when the publisher responds.`
-      // };
+      console.log(`[EMAIL DEBUG] About to send email to: ${publisherEmail}`);
+      await strapi.service('api::global.autosend-service').send(publisherEmailData);
+      console.log(`[EMAIL DEBUG] Email successfully sent to ${publisherEmail} for order ${order.id}`);
 
-      await Promise.all([
-        strapi.plugins.email.services.email.send(publisherEmailData)
-        // strapi.plugins.email.services.email.send(advertiserEmailData)
-      ]);
-
-      console.log(`Order creation emails sent for order ${order.id}`);
+      console.log(`Order creation email sent for order ${order.id} to ${publisherEmail}`);
     } catch (error) {
-      console.error('Error sending order creation emails:', error);
+      console.error('Error sending order creation email:', error);
       throw error;
     }
   },
 
   /**
-   * Send order rejection notification email
+   * Send order rejection notification email using universal template
    */
   async sendOrderRejectionEmail(order, advertiserEmail, publisherEmail) {
     try {
+      console.log(`[EMAIL DEBUG] sendOrderRejectionEmail called for order ${order.id}`);
+
+      // Email to advertiser using universal template
       const advertiserEmailData = {
         to: advertiserEmail,
-        subject: `Order Rejected - Order #${order.id}`,
-        html: this.generateOrderRejectionTemplate(order, 'advertiser'),
-        text: `Order #${order.id} has been rejected. Reason: ${order.rejectionReason}. Funds have been refunded to your wallet.`
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
+        dynamicData: {
+          // Core order details
+          order_id: order.id,
+          order_status: 'rejected',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+          order_date: new Date(order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+
+          // Website details
+          website_url: order.website?.url || '',
+          website_name: order.website?.name || order.website?.url || 'Website',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Item details
+          item_1_name: order.website?.name || 'Order Service',
+          item_1_qty: 1,
+          item_1_price: order.totalAmount || 0,
+          subtotal: order.totalAmount || 0,
+          taxes: 0,
+
+          // Action URLs
+          order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+
+          // Rejection-specific conditional fields (shown in template)
+          order_cancel_reason: order.rejectionReason || 'No reason provided',
+          amount_refunded: order.totalAmount || 0,
+
+          // Other conditional fields - not shown for rejection
+          // revision_request_description: undefined
+          // delivery_proof_url: undefined
+          // delivery_message: undefined
+        },
+        tags: ['order', 'order-rejected', 'advertiser']
       };
 
-      // const publisherEmailData = {
-      //   to: publisherEmail,
-      //   subject: `Order Rejection Confirmed - Order #${order.id}`,
-      //   html: this.generateOrderRejectionTemplate(order, 'publisher'),
-      //   text: `Order #${order.id} rejection confirmed. The advertiser has been notified.`
-      // };
-
-      await Promise.all([
-        strapi.plugins.email.services.email.send(advertiserEmailData)
-        // strapi.plugins.email.services.email.send(publisherEmailData)
-      ]);
-
-      console.log(`Order rejection emails sent for order ${order.id}`);
+      await strapi.service('api::global.autosend-service').send(advertiserEmailData);
+      console.log(`Order rejection email sent for order ${order.id} to ${advertiserEmail}`);
     } catch (error) {
       console.error('Error sending order rejection emails:', error);
       throw error;
@@ -101,30 +164,125 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send order acceptance notification email
+   * Send order cancellation email using universal template
+   */
+  async sendOrderCancellationEmail(order, recipientEmail, cancelledBy, reason) {
+    try {
+      console.log(`[EMAIL DEBUG] sendOrderCancellationEmail called for order ${order.id}`);
+
+      const emailData = {
+        to: recipientEmail,
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
+        dynamicData: {
+          // Core order details
+          order_id: order.id,
+          order_status: 'cancelled',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+          order_date: new Date(order.cancelledAt || order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+
+          // Website details
+          website_url: order.website?.url || '',
+          website_name: order.website?.name || order.website?.url || 'Website',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Item details
+          item_1_name: order.website?.name || 'Order Service',
+          item_1_qty: 1,
+          item_1_price: order.totalAmount || 0,
+          subtotal: order.totalAmount || 0,
+          taxes: 0,
+
+          // Action URLs
+          order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/orders`,
+
+          // Cancellation-specific conditional fields (shown in template)
+          order_cancel_reason: reason || order.cancellationReason || 'No reason provided',
+          amount_refunded: order.totalAmount || 0,
+          cancelled_by: cancelledBy || 'system',
+
+          // Other conditional fields - not shown for cancellation
+          // revision_request_description: undefined
+          // delivery_proof_url: undefined
+          // delivery_message: undefined
+        },
+        tags: ['order', 'order-cancelled', 'cancellation']
+      };
+
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Order cancellation email sent for order ${order.id} to ${recipientEmail}`);
+    } catch (error) {
+      console.error('Error sending order cancellation email:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Send order acceptance notification email using universal template
    */
   async sendOrderAcceptanceEmail(order, advertiserEmail, publisherEmail) {
     try {
+      console.log(`[EMAIL DEBUG] sendOrderAcceptanceEmail called for order ${order.id}`);
+
+      // Email to advertiser using universal template
       const advertiserEmailData = {
         to: advertiserEmail,
-        subject: `Order Accepted - Order #${order.id}`,
-        html: this.generateOrderAcceptanceTemplate(order, 'advertiser'),
-        text: `Order #${order.id} has been accepted by the publisher. Work will begin shortly and you'll be notified upon delivery.`
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
+        dynamicData: {
+          // Core order details
+          order_id: order.id,
+          order_status: 'accepted',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+          order_date: new Date(order.acceptedDate || order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+
+          // Website details
+          website_url: order.website?.url || '',
+          website_name: order.website?.name || order.website?.url || 'Website',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Item details
+          item_1_name: order.website?.name || 'Order Service',
+          item_1_qty: 1,
+          item_1_price: order.totalAmount || 0,
+          subtotal: order.totalAmount || 0,
+          taxes: 0,
+
+          // Action URLs
+          order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+
+          // Conditional fields - not shown for acceptance
+          // order_cancel_reason: undefined
+          // amount_refunded: undefined  
+          // revision_request_description: undefined
+          // delivery_proof_url: undefined
+          // delivery_message: undefined
+        },
+        tags: ['order', 'order-accepted', 'advertiser']
       };
 
-      // const publisherEmailData = {
-      //   to: publisherEmail,
-      //   subject: `Order Acceptance Confirmed - Order #${order.id}`,
-      //   html: this.generateOrderAcceptanceTemplate(order, 'publisher'),
-      //   text: `Order #${order.id} acceptance confirmed. The advertiser has been notified.`
-      // };
-
-      await Promise.all([
-        strapi.plugins.email.services.email.send(advertiserEmailData)
-        // strapi.plugins.email.services.email.send(publisherEmailData)
-      ]);
-
-      console.log(`Order acceptance emails sent for order ${order.id}`);
+      await strapi.service('api::global.autosend-service').send(advertiserEmailData);
+      console.log(`Order acceptance email sent for order ${order.id} to ${advertiserEmail}`);
     } catch (error) {
       console.error('Error sending order acceptance emails:', error);
       throw error;
@@ -132,30 +290,63 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send revision request notification email
+   * Send revision request notification email using universal template
    */
   async sendRevisionRequestEmail(order, publisherEmail, advertiserEmail) {
     try {
+      console.log(`[EMAIL DEBUG] sendRevisionRequestEmail called for order ${order.id}`);
+
+      // Email to publisher using universal template
       const publisherEmailData = {
         to: publisherEmail,
-        subject: `Revision Requested - Order #${order.id}`,
-        html: this.generateRevisionRequestTemplate(order, 'publisher'),
-        text: `Order #${order.id} revision requested. Reason: ${order.revisionMessage}. Please complete within 5 days.`
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
+        dynamicData: {
+          // Core order details
+          order_id: order.id,
+          order_status: 'revision_requested',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+          order_date: new Date(order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+
+          // Website details
+          website_url: order.website?.url || '',
+          website_name: order.website?.name || order.website?.url || 'Website',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Item details
+          item_1_name: order.website?.name || 'Order Service',
+          item_1_qty: 1,
+          item_1_price: order.totalAmount || 0,
+          subtotal: order.totalAmount || 0,
+          taxes: 0,
+
+          // Action URLs
+          order_link: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+
+          // Revision-specific conditional field (shown in template)
+          revision_request_description: order.revisionMessage || 'No revision details provided',
+
+          // Other conditional fields - not shown for revision
+          // order_cancel_reason: undefined
+          // amount_refunded: undefined
+          // delivery_proof_url: undefined
+          // delivery_message: undefined
+        },
+        tags: ['order', 'revision-requested', 'publisher']
       };
 
-      // const advertiserEmailData = {
-      //   to: advertiserEmail,
-      //   subject: `Revision Request Submitted - Order #${order.id}`,
-      //   html: this.generateRevisionRequestTemplate(order, 'advertiser'),
-      //   text: `Your revision request for order #${order.id} has been submitted. The publisher will work on it within 5 days.`
-      // };
-
-      await Promise.all([
-        strapi.plugins.email.services.email.send(publisherEmailData)
-        // strapi.plugins.email.services.email.send(advertiserEmailData)
-      ]);
-
-      console.log(`Revision request emails sent for order ${order.id}`);
+      await strapi.service('api::global.autosend-service').send(publisherEmailData);
+      console.log(`Revision request email sent for order ${order.id} to ${publisherEmail}`);
     } catch (error) {
       console.error('Error sending revision request emails:', error);
       throw error;
@@ -163,30 +354,63 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send order delivery notification email
+   * Send order delivery notification email using universal template
    */
   async sendOrderDeliveryEmail(order, advertiserEmail, publisherEmail) {
     try {
+      console.log(`[EMAIL DEBUG] sendOrderDeliveryEmail called for order ${order.id}`);
+
+      // Email to advertiser using universal template
       const advertiserEmailData = {
         to: advertiserEmail,
-        subject: `Order Delivered - Order #${order.id}`,
-        html: this.generateOrderDeliveryTemplate(order, 'advertiser'),
-        text: `Order #${order.id} has been delivered. Reply with APPROVE-${order.id} to approve or DISPUTE-${order.id} to dispute.`
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
+        dynamicData: {
+          // Core order details
+          order_id: order.id,
+          order_status: 'delivered',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+          order_date: new Date(order.deliveredDate || order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+
+          // Website details
+          website_url: order.website?.url || '',
+          website_name: order.website?.name || order.website?.url || 'Website',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Item details
+          item_1_name: order.website?.name || 'Order Service',
+          item_1_qty: 1,
+          item_1_price: order.totalAmount || 0,
+          subtotal: order.totalAmount || 0,
+          taxes: 0,
+
+          // Action URLs
+          order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+
+          // Delivery-specific conditional fields (shown in template)
+          delivery_proof_url: order.deliveryProofUrl || '',
+          delivery_message: order.deliveryMessage || '',
+
+          // Other conditional fields - not shown for delivery
+          // order_cancel_reason: undefined
+          // amount_refunded: undefined
+          // revision_request_description: undefined
+        },
+        tags: ['order', 'order-delivered', 'advertiser']
       };
 
-      const publisherEmailData = {
-        to: publisherEmail,
-        subject: `Order Delivery Confirmed - Order #${order.id}`,
-        html: this.generateOrderDeliveryTemplate(order, 'publisher'),
-        text: `Order #${order.id} delivery has been sent to the client. Awaiting their approval.`
-      };
-
-      await Promise.all([
-        strapi.plugins.email.services.email.send(advertiserEmailData),
-        strapi.plugins.email.services.email.send(publisherEmailData)
-      ]);
-
-      console.log(`Order delivery emails sent for order ${order.id}`);
+      await strapi.service('api::global.autosend-service').send(advertiserEmailData);
+      console.log(`Order delivery email sent for order ${order.id} to ${advertiserEmail}`);
     } catch (error) {
       console.error('Error sending order delivery emails:', error);
       throw error;
@@ -194,39 +418,116 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send order completion email with payment release
+   * Send order completion email with payment release using universal template
    */
   async sendOrderCompletionEmail(order, publisherEmail, amount) {
     try {
+      console.log(`[EMAIL DEBUG] sendOrderCompletionEmail called for order ${order.id}`);
+
+      // Email to publisher using universal template
       const emailData = {
         to: publisherEmail,
-        subject: `Payment Released - Order #${order.id} Completed`,
-        html: this.generateOrderCompletionTemplate(order, amount),
-        text: `Order #${order.id} has been completed. Payment of $${amount} has been released to your account.`
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
+        dynamicData: {
+          // Core order details
+          order_id: order.id,
+          order_status: 'completed',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+          order_date: new Date(order.completedDate || order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+
+          // Website details
+          website_url: order.website?.url || '',
+          website_name: order.website?.name || order.website?.url || 'Website',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Item details
+          item_1_name: order.website?.name || 'Order Service',
+          item_1_qty: 1,
+          item_1_price: order.totalAmount || 0,
+          subtotal: order.totalAmount || 0,
+          taxes: 0,
+
+          // Action URLs
+          order_link: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+
+          // Payment info
+          payment_amount: amount || order.totalAmount || 0,
+
+          // Conditional fields - not shown for completion
+          // order_cancel_reason: undefined
+          // amount_refunded: undefined
+          // revision_request_description: undefined
+          // delivery_proof_url: undefined
+          // delivery_message: undefined
+        },
+        tags: ['order', 'order-completed', 'publisher']
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
-      console.log(`Order completion email sent for order ${order.id}`);
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Order completion email sent for order ${order.id} to ${publisherEmail}`);
     } catch (error) {
       console.error('Error sending order completion email:', error);
       throw error;
     }
   },
 
+  // ============================================
+  // TRANSACTION EMAIL FUNCTIONS
+  // ============================================
+
   /**
-   * Send transaction approval email
+   * Send transaction approval email (for withdrawal requests)
    */
   async sendTransactionApprovalEmail(transaction, userEmail) {
     try {
+      console.log(`[EMAIL DEBUG] sendTransactionApprovalEmail called for transaction ${transaction.id}`);
+
       const emailData = {
         to: userEmail,
-        subject: `Transaction Approved - ${transaction.type} #${transaction.id}`,
-        html: this.generateTransactionApprovalTemplate(transaction),
-        text: `Your ${transaction.type} transaction #${transaction.id} for $${transaction.amount} has been approved.`
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'approved',
+          transaction_type: transaction.type || 'withdrawal',
+          amount: transaction.amount || 0,
+          payment_gateway: transaction.gateway || 'system',
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: transaction.description || transaction.notes || '',
+
+          // Status message
+          status_message: `Your withdrawal request has been approved and will be processed soon.`,
+
+          // Conditional: Withdrawal details (shown in template)
+          is_withdrawal: true,
+          withdrawal_timeline: this.getWithdrawalTimeline(transaction.gateway),
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for withdrawal approval
+          // is_earning: undefined
+          // order_id: undefined
+          // publisher_website: undefined
+        },
+        tags: ['transaction', 'withdrawal', 'approved']
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
-      console.log(`Transaction approval email sent for transaction ${transaction.id}`);
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Transaction approval email sent for transaction ${transaction.id} to ${userEmail}`);
     } catch (error) {
       console.error('Error sending transaction approval email:', error);
       throw error;
@@ -234,19 +535,47 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send transaction denial email
+   * Send transaction denial email (for rejected withdrawal requests)
    */
-  async sendTransactionDenialEmail(transaction, userEmail, reason) {
+  async sendTransactionDenialEmail(transaction, userEmail, denialReason) {
     try {
+      console.log(`[EMAIL DEBUG] sendTransactionDenialEmail called for transaction ${transaction.id}`);
+
       const emailData = {
         to: userEmail,
-        subject: `Transaction Denied - ${transaction.type} #${transaction.id}`,
-        html: this.generateTransactionDenialTemplate(transaction, reason),
-        text: `Your ${transaction.type} transaction #${transaction.id} for $${transaction.amount} has been denied. Reason: ${reason}`
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'denied',
+          transaction_type: transaction.type || 'withdrawal',
+          amount: transaction.amount || 0,
+          payment_gateway: transaction.gateway || 'system',
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: denialReason || transaction.notes || 'Your request did not meet our withdrawal criteria.',
+
+          // Status message
+          status_message: `We're sorry, but your withdrawal request has been denied. Please review the reason below and contact support if you need assistance.`,
+
+          // Conditional: Withdrawal details (shown in template)
+          is_withdrawal: true,
+          withdrawal_timeline: 'Request denied',
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for withdrawal denial
+          // is_earning: undefined
+          // order_id: undefined
+          // publisher_website: undefined
+        },
+        tags: ['transaction', 'withdrawal', 'denied']
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
-      console.log(`Transaction denial email sent for transaction ${transaction.id}`);
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Transaction denial email sent for transaction ${transaction.id} to ${userEmail}`);
     } catch (error) {
       console.error('Error sending transaction denial email:', error);
       throw error;
@@ -254,19 +583,55 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send payment confirmation email
+   * Send payment confirmation email (for deposits and earnings)
    */
   async sendPaymentConfirmationEmail(transaction, userEmail) {
     try {
+      console.log(`[EMAIL DEBUG] sendPaymentConfirmationEmail called for transaction ${transaction.id}`);
+
+      // Check if this is an earning from an order
+      const isEarning = transaction.order ? true : false;
+
       const emailData = {
         to: userEmail,
-        subject: `Payment Confirmed - Transaction #${transaction.id}`,
-        html: this.generatePaymentConfirmationTemplate(transaction),
-        text: `Payment for transaction #${transaction.id} of $${transaction.amount} has been confirmed and processed.`
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'success',
+          transaction_type: transaction.type || 'payment',
+          amount: transaction.amount || 0,
+          payment_gateway: transaction.gateway || 'system',
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: transaction.description || transaction.notes || '',
+
+          // Status message
+          status_message: isEarning
+            ? `Congratulations! You've received payment for completing an order.`
+            : `Your payment has been successfully processed and credited to your wallet.`,
+
+          // Conditional: Earnings details (shown if transaction is from order)
+          is_earning: isEarning ? true : undefined,
+          order_id: transaction.order?.id || undefined,
+          publisher_website: transaction.order?.website?.name || transaction.order?.website?.url || undefined,
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          view_order_url: transaction.order ? `${process.env.CLIENT_URL}/orders/order-detail/${transaction.order.id}` : undefined,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for payment confirmation
+          // is_withdrawal: undefined
+          // withdrawal_timeline: undefined
+        },
+        tags: isEarning
+          ? ['transaction', 'earning', 'payment', 'success']
+          : ['transaction', 'deposit', 'payment', 'success']
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
-      console.log(`Payment confirmation email sent for transaction ${transaction.id}`);
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Payment confirmation email sent for transaction ${transaction.id} to ${userEmail}`);
     } catch (error) {
       console.error('Error sending payment confirmation email:', error);
       throw error;
@@ -274,48 +639,113 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send withdrawal status email
+   * Send withdrawal request email (when user creates a withdrawal request)
    */
-  async sendWithdrawalStatusEmail(withdrawalRequest, userEmail, status, reason = null) {
+  async sendWithdrawalRequestEmail(transaction, userEmail, withdrawalRequest) {
     try {
-      let subject, template, text;
-
-      switch (status) {
-        case 'approved':
-          subject = `Withdrawal Approved - Request #${withdrawalRequest.id}`;
-          template = this.generateWithdrawalApprovedTemplate(withdrawalRequest);
-          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been approved and will be processed soon.`;
-          break;
-
-        case 'paid':
-          subject = `Payment Completed - Withdrawal #${withdrawalRequest.id}`;
-          template = this.generateWithdrawalPaidTemplate(withdrawalRequest);
-          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been completed and paid to your account.`;
-          break;
-
-        case 'denied':
-          subject = `Withdrawal Denied - Request #${withdrawalRequest.id}`;
-          template = this.generateWithdrawalDeniedTemplate(withdrawalRequest, reason);
-          text = `Your withdrawal request #${withdrawalRequest.id} for $${withdrawalRequest.amount} has been denied. Reason: ${reason || 'No reason provided'}`;
-          break;
-
-        default:
-          throw new Error('Invalid withdrawal status');
-      }
+      console.log(`[EMAIL DEBUG] sendWithdrawalRequestEmail called for withdrawal request ${withdrawalRequest.id}`);
 
       const emailData = {
         to: userEmail,
-        subject,
-        html: template,
-        text
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'pending',
+          transaction_type: 'withdrawal',
+          amount: transaction.amount || 0,
+          payment_gateway: transaction.gateway || withdrawalRequest.method,
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: transaction.notes || `Your withdrawal request has been received and is pending admin approval.`,
+
+          // Status message
+          status_message: `We've received your withdrawal request. Our team will review it and process it within 1-3 business days.`,
+
+          // Conditional: Withdrawal details (shown in template)
+          is_withdrawal: true,
+          withdrawal_timeline: this.getWithdrawalTimeline(withdrawalRequest.method),
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for withdrawal request
+          // is_earning: undefined
+          // order_id: undefined
+          // publisher_website: undefined
+        },
+        tags: ['transaction', 'withdrawal', 'request', 'pending']
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
-      console.log(`Withdrawal ${status} email sent for request ${withdrawalRequest.id}`);
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Withdrawal request email sent for withdrawal ${withdrawalRequest.id} to ${userEmail}`);
     } catch (error) {
-      console.error('Error sending withdrawal status email:', error);
+      console.error('Error sending withdrawal request email:', error);
       throw error;
     }
+  },
+
+  /**
+   * Send withdrawal paid email (when admin marks withdrawal as paid)
+   */
+  async sendWithdrawalPaidEmail(transaction, userEmail, withdrawalRequest) {
+    try {
+      console.log(`[EMAIL DEBUG] sendWithdrawalPaidEmail called for withdrawal request ${withdrawalRequest.id}`);
+
+      const emailData = {
+        to: userEmail,
+        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+        dynamicData: {
+          // Core transaction details
+          transaction_id: transaction.id,
+          transaction_status: 'paid',
+          transaction_type: 'withdrawal',
+          amount: transaction.amount || withdrawalRequest.amount,
+          payment_gateway: transaction.gateway || withdrawalRequest.method,
+          gateway_transaction_id: transaction.gatewayTransactionId || '',
+          notes: transaction.payment_notes || transaction.notes || `Your withdrawal has been completed and the funds have been transferred to your ${withdrawalRequest.method} account.`,
+
+          // Status message
+          status_message: `Great news! Your withdrawal request has been completed. The funds should appear in your account within 1-3 business days.`,
+
+          // Conditional: Withdrawal details (shown in template)
+          is_withdrawal: true,
+          withdrawal_timeline: 'Payment completed',
+
+          // Action URLs
+          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
+          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
+          support_url: `${process.env.CLIENT_URL}/support`,
+
+          // Not shown for withdrawal paid
+          // is_earning: undefined
+          // order_id: undefined
+          // publisher_website: undefined
+        },
+        tags: ['transaction', 'withdrawal', 'paid', 'completed']
+      };
+
+      await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`Withdrawal paid email sent for withdrawal ${withdrawalRequest.id} to ${userEmail}`);
+    } catch (error) {
+      console.error('Error sending withdrawal paid email:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Helper: Get estimated withdrawal timeline based on payment gateway
+   */
+  getWithdrawalTimeline(gateway) {
+    const timelines = {
+      'paypal': '1-2 business days',
+      'stripe': '2-5 business days',
+      'bank_transfer': '3-7 business days',
+      'system': '1-3 business days'
+    };
+
+    return timelines[gateway?.toLowerCase()] || '2-5 business days';
   },
 
   /**
@@ -1753,5 +2183,65 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       </body>
       </html>
     `;
+  },
+
+  /**
+   * Send new message notification email
+   * Triggered when an advertiser or publisher sends a message
+   * @param {Object} params
+   * @param {string} params.receiverEmail - Email of the message recipient
+   * @param {string} params.receiverName - Name of the recipient
+   * @param {string} params.senderRole - 'Advertiser' or 'Publisher'
+   * @param {string} params.messageText - The message content
+   * @param {Date} params.messageTime - When the message was sent
+   * @param {Object} params.order - Order object with id, orderStatus, createdAt
+   * @param {string} params.replyUrl - URL to reply to the message
+   */
+  async sendNewMessageEmail({ receiverEmail, receiverName, senderRole, messageText, messageTime, order, replyUrl }) {
+    try {
+      // Only send if messageText is present
+      if (!messageText || !messageText.trim()) {
+        console.log('[Email] Skipping new message email - no message text provided');
+        return null;
+      }
+
+      console.log(`[Email] Sending new message notification to ${receiverEmail}`);
+
+      const emailData = {
+        to: receiverEmail,
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_MESSAGE || 'A-073201ea7356ec9df066',
+        dynamicData: {
+          sender_role: senderRole,
+          receiver_name: receiverName || 'User',
+          message_text: messageText,
+          message_time: messageTime ? new Date(messageTime).toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          }) : '',
+          order_id: order?.id ? String(order.id) : '',
+          order_status: order?.orderStatus || 'Active',
+          order_date: order?.createdAt ? new Date(order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+          }) : '',
+          reply_url: replyUrl || `${process.env.CLIENT_URL}/orders/${order?.id}`,
+          logo_url: `${process.env.CLIENT_URL}/logo.png`,
+          year: new Date().getFullYear().toString()
+        },
+        tags: ['communication', 'new-message', 'order-message']
+      };
+
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[Email] New message notification sent to ${receiverEmail}`);
+      return result;
+    } catch (error) {
+      console.error('[Email] Error sending new message notification:', error);
+      // Non-blocking - don't throw
+      return null;
+    }
   }
 }));
