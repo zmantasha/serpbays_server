@@ -1389,6 +1389,218 @@ export interface ApiNotificationNotification
   };
 }
 
+export interface ApiOfferConditionOfferCondition
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'offer_conditions';
+  info: {
+    description: 'Extensible conditions for offers';
+    displayName: 'Offer Condition';
+    pluralName: 'offer-conditions';
+    singularName: 'offer-condition';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    conditionType: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::offer-condition.offer-condition'
+    > &
+      Schema.Attribute.Private;
+    offer: Schema.Attribute.Relation<'manyToOne', 'api::offer.offer'>;
+    operator: Schema.Attribute.Enumeration<
+      ['in', 'not_in', 'equals', 'gte', 'lte']
+    > &
+      Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    value: Schema.Attribute.JSON & Schema.Attribute.Required;
+  };
+}
+
+export interface ApiOfferUsageOfferUsage extends Struct.CollectionTypeSchema {
+  collectionName: 'offer_usages';
+  info: {
+    description: 'Tracks offer redemptions by users';
+    displayName: 'Offer Usage';
+    pluralName: 'offer-usages';
+    singularName: 'offer-usage';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    bonusAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::offer-usage.offer-usage'
+    > &
+      Schema.Attribute.Private;
+    offer: Schema.Attribute.Relation<'manyToOne', 'api::offer.offer'>;
+    publishedAt: Schema.Attribute.DateTime;
+    rechargeAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    redeemedAt: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    transactionId: Schema.Attribute.String & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    user: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+  };
+}
+
+export interface ApiOfferOffer extends Struct.CollectionTypeSchema {
+  collectionName: 'offers';
+  info: {
+    description: 'Offer management system for wallet recharge bonuses';
+    displayName: 'Offer';
+    pluralName: 'offers';
+    singularName: 'offer';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: true;
+    };
+  };
+  attributes: {
+    applicableUserType: Schema.Attribute.Enumeration<
+      ['new', 'existing', 'all']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'all'>;
+    bonusType: Schema.Attribute.Enumeration<['percentage', 'flat']> &
+      Schema.Attribute.Required;
+    bonusValue: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    couponCode: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 50;
+      }>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    endDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    globalLimit: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    isEnabled: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    isStackable: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::offer.offer'> &
+      Schema.Attribute.Private;
+    maxBonusCap: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    metadata: Schema.Attribute.JSON;
+    minRechargeAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    offer_conditions: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::offer-condition.offer-condition'
+    >;
+    offer_usages: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::offer-usage.offer-usage'
+    >;
+    offerType: Schema.Attribute.Enumeration<
+      [
+        'first_recharge',
+        'percentage_bonus',
+        'flat_bonus',
+        'limited_time',
+        'coupon_based',
+        'min_recharge',
+        'user_specific',
+        'campaign',
+      ]
+    > &
+      Schema.Attribute.Required;
+    perUserLimit: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    priority: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 1;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<10>;
+    publishedAt: Schema.Attribute.DateTime;
+    startDate: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    title: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiOrderAuditLogOrderAuditLog
   extends Struct.CollectionTypeSchema {
   collectionName: 'order_audit_logs';
@@ -3483,6 +3695,9 @@ declare module '@strapi/strapi' {
       'api::marketplace-list.marketplace-list': ApiMarketplaceListMarketplaceList;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
       'api::notification.notification': ApiNotificationNotification;
+      'api::offer-condition.offer-condition': ApiOfferConditionOfferCondition;
+      'api::offer-usage.offer-usage': ApiOfferUsageOfferUsage;
+      'api::offer.offer': ApiOfferOffer;
       'api::order-audit-log.order-audit-log': ApiOrderAuditLogOrderAuditLog;
       'api::order-content.order-content': ApiOrderContentOrderContent;
       'api::order.order': ApiOrderOrder;
