@@ -39,6 +39,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
+      // Normalize URL to lowercase to prevent case-sensitive duplicates
+      data.url = data.url ? data.url.toLowerCase() : data.url;
+
       // Check if this URL already exists for this publisher using ID relation
       const existingSubmission = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
         filters: {
@@ -1273,8 +1276,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.badRequest('Domain is required');
       }
 
-      // Clean the domain
-      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      // Clean the domain and normalize to lowercase
+      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
 
       // Find all websites by URL
       const allWebsites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
