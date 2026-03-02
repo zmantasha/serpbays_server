@@ -521,6 +521,38 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
                 console.log(`✅ Wallet balance updated successfully: Main=${newMainBalance}, Total=${newTotalBalance}`);
 
+                // ========== AUTOSEND: WALLET FUNDED, NO ORDER LIST ==========
+                try {
+                  const walletNoOrderListId = process.env.AUTOSEND_WALLET_NO_ORDER_LIST_ID;
+                  if (walletNoOrderListId && wallet.users_permissions_user) {
+                    const userEmail = wallet.users_permissions_user.email;
+                    if (userEmail) {
+                      // Check if user has any non-cancelled orders as advertiser
+                      const orderCount = await strapi.db.query('api::order.order').count({
+                        where: {
+                          advertiser: wallet.users_permissions_user.id,
+                          orderStatus: { $ne: 'cancelled' }
+                        }
+                      });
+
+                      if (orderCount === 0) {
+                        // User has funded wallet but no orders → add to list
+                        const autoSendService = strapi.service('api::global.autosend-service');
+                        if (autoSendService) {
+                          autoSendService.addToList({ email: userEmail, listId: walletNoOrderListId })
+                            .catch(err => console.error('[Wallet] AutoSend addToList error:', err.message));
+                          console.log(`[AutoSend] User ${userEmail} added to wallet-no-order list (0 orders)`);
+                        }
+                      } else {
+                        console.log(`[AutoSend] User ${userEmail} already has ${orderCount} orders, skipping wallet-no-order list`);
+                      }
+                    }
+                  }
+                } catch (autoSendErr) {
+                  console.error('[Wallet] AutoSend sync error (non-blocking):', autoSendErr.message);
+                }
+                // ========== END AUTOSEND ==========
+
                 // Update the transaction to link it to the wallet and set fund_source
                 await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
                   data: {

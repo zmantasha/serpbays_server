@@ -758,8 +758,7 @@ export interface ApiCommunicationCommunication
   };
 }
 
-export interface ApiGlobalConfigGlobalConfig
-  extends Struct.CollectionTypeSchema {
+export interface ApiGlobalConfigGlobalConfig extends Struct.SingleTypeSchema {
   collectionName: 'global_configs';
   info: {
     displayName: 'Global Config';
@@ -788,6 +787,8 @@ export interface ApiGlobalConfigGlobalConfig
     minPayoutAmount: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<10>;
+    newsletterEnabled: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
     paymentGateways: Schema.Attribute.JSON &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<{
