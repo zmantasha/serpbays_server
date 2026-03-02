@@ -125,7 +125,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
      * @param {Object} [contactData.customFields]
      * @returns {Promise<Object>} Created contact data
      */
-    async createContact({ email, firstName, lastName, userId, customFields = {} }) {
+    async createContact({ email, firstName, lastName, userId, customFields = {}, listIds = [] }) {
         try {
             const apiKey = process.env.AUTOSEND_API_KEY;
 
@@ -143,7 +143,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 firstName,
                 lastName,
                 userId: userId ? String(userId) : undefined,
-                customFields
+                customFields,
+                listIds: listIds.length > 0 ? listIds : undefined
             };
 
             console.log(`[AutoSend] Creating contact for ${email}...`);
