@@ -624,6 +624,40 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               autoSendService.removeFromList({ email: user.email, listId: winbackListId })
                 .catch(err => console.error('[Order] AutoSend removeFromList (winback) error:', err.message));
             }
+
+            // Remove ordered item from favorites & clean up favorite reminder list
+            const favoriteListId = process.env.AUTOSEND_FAVORITE_REMINDER_LIST_ID;
+            if (orderData.website) {
+              try {
+                // Find and delete the shortlisted item for this marketplace + user
+                const shortlistedItem = await strapi.db.query('api::shortlist.shortlist').findOne({
+                  where: {
+                    marketplace: orderData.website,
+                    owner: user.id,
+                  },
+                });
+
+                if (shortlistedItem) {
+                  await strapi.entityService.delete('api::shortlist.shortlist', shortlistedItem.id);
+                  console.log(`[Order] Removed marketplace ${orderData.website} from user ${user.id} shortlist`);
+
+                  // Check if user has any remaining favorites
+                  if (favoriteListId) {
+                    const remainingCount = await strapi.db.query('api::shortlist.shortlist').count({
+                      where: { owner: user.id },
+                    });
+
+                    if (remainingCount === 0) {
+                      autoSendService.removeFromList({ email: user.email, listId: favoriteListId })
+                        .catch(err => console.error('[Order] AutoSend removeFromList (favorite) error:', err.message));
+                      console.log(`[Order] Removed ${user.email} from favorite reminder list (no favorites left)`);
+                    }
+                  }
+                }
+              } catch (shortlistErr) {
+                console.error('[Order] Shortlist cleanup error (non-blocking):', shortlistErr.message);
+              }
+            }
           }
         } catch (autoSendErr) {
           console.error('[Order] AutoSend sync error (non-blocking):', autoSendErr.message);
