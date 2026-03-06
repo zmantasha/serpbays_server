@@ -1139,7 +1139,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Get the order
         const order = await strapi.db.query('api::order.order').findOne({
           where: { id },
-          populate: ['website', 'advertiser']
+          populate: ['website', 'advertiser', 'publisher']
         });
 
         if (!order) {
@@ -1151,19 +1151,16 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.badRequest('Only pending orders can be rejected');
         }
 
-        // Verify the publisher owns this website (unless they are the advertiser)
+        // Verify the publisher can reject this order using ORDER's snapshot data
+        // NOT live marketplace data (which may have changed due to ownership transfer)
+        // This matches the approach used in acceptOrder
         if (order.advertiser !== user.id) {
-          const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: {
-              id: order.website.id,
-              $or: [
-                { publisher: user.id },
-                { publisher_email: user.email }
-              ]
-            }
-          });
+          const isDirectPublisher = order.publisher && (order.publisher.id === user.id || order.publisher === user.id);
+          const isSnapshotPublisher = order.websitePublisherEmail === user.email;
 
-          if (!isWebsiteOwner) {
+          if (!isDirectPublisher && !isSnapshotPublisher) {
+            console.log(`[Reject Order] User ${user.id} (${user.email}) denied access to order ${id}`);
+            console.log(`[Reject Order] Order publisher: ${order.publisher?.id}, Snapshot email: ${order.websitePublisherEmail}`);
             return ctx.forbidden('You do not have permission to reject this order');
           }
         }
