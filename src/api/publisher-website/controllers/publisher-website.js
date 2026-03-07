@@ -142,6 +142,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         where: filters
       });
 
+      // Get approved count across ALL pages (using base user ownership filters, ignoring search/status filters)
+      const baseOwnershipFilters = {
+        $or: [
+          { currentPublisherId: user.id },
+          { publisherEmail: user.email }
+        ],
+        submissionStatus: 'approved'
+      };
+      const approvedCount = await strapi.db.query('api::publisher-website.publisher-website').count({
+        where: baseOwnershipFilters
+      });
+
       // Fetch paginated submissions using database query API for better performance
       const submissions = await strapi.db.query('api::publisher-website.publisher-website').findMany({
         where: filters,
@@ -257,7 +269,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             pageSize: pageSize,
             pageCount: pageCount,
             total: total
-          }
+          },
+          approvedCount: approvedCount
         }
       };
     } catch (error) {
