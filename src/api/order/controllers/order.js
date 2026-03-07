@@ -201,6 +201,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.badRequest('You cannot place an order on your own website. Please select a different website.');
         }
 
+        // Validate existingPostUrl belongs to the same domain (Link Insertion orders)
+        if (serviceType === 'link_insertion' && existingPostUrl && marketplace) {
+          try {
+            const urlToCheck = existingPostUrl.trim().startsWith('http://') || existingPostUrl.trim().startsWith('https://')
+              ? existingPostUrl.trim()
+              : `https://${existingPostUrl.trim()}`;
+            const urlObj = new URL(urlToCheck);
+            const urlHostname = urlObj.hostname.replace(/^www\./, '');
+            const expectedDomain = marketplace.url.replace(/^www\./, '').replace(/^https?:\/\//, '');
+            if (urlHostname !== expectedDomain && !urlHostname.endsWith('.' + expectedDomain)) {
+              return ctx.badRequest(`Existing post URL must be from ${marketplace.url}, not ${urlHostname}`);
+            }
+          } catch (e) {
+            return ctx.badRequest('Invalid existing post URL format');
+          }
+        }
+
         // Create marketplace snapshot to preserve historical data
         if (marketplace) {
           console.log('Creating marketplace snapshot for order');
