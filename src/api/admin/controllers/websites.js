@@ -1006,12 +1006,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         populate: ['currentPublisherId', 'originalPublisherId']
       });
 
-      // If the website was previously approved, remove it from the marketplace
+      // If the website was previously approved, delist it from the marketplace (soft delete)
+      // We do NOT hard-delete the marketplace record because orders have FK references to it.
+      // Deleting would orphan those orders and break order visibility for both publishers and advertisers.
       if (wasPreviouslyApproved && websiteUrl) {
-        console.log(`[ADMIN ACTION] Website ${websiteUrl} was previously approved, removing from marketplace`);
+        console.log(`[ADMIN ACTION] Website ${websiteUrl} was previously approved, delisting from marketplace`);
 
         try {
-          // Find and remove the marketplace record
           const marketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
             filters: { url: websiteUrl },
             limit: 1
@@ -1019,19 +1020,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
           if (marketplaceRecord && marketplaceRecord.length > 0) {
             const marketplaceId = marketplaceRecord[0].id;
-            console.log(`[ADMIN ACTION] Removing marketplace record ${marketplaceId} for website ${websiteUrl}`);
+            console.log(`[ADMIN ACTION] Delisting marketplace record ${marketplaceId} for website ${websiteUrl}`);
 
-            await strapi.entityService.delete('api::marketplace.marketplace', marketplaceId);
-            console.log(`[ADMIN ACTION] Successfully removed marketplace record for website ${websiteUrl}`);
+            await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+              data: {
+                status: 'delisted',
+                delistedReason: 'admin_action',
+                delistedAt: new Date()
+              }
+            });
+            console.log(`[ADMIN ACTION] Successfully delisted marketplace record for website ${websiteUrl}`);
 
             // Log the action for audit purposes
-            console.log(`[ADMIN AUDIT] Website ${websiteUrl} (ID: ${id}) rejected and removed from marketplace by admin ${ctx.state.user.id} at ${new Date().toISOString()}. Reason: ${reason}`);
+            console.log(`[ADMIN AUDIT] Website ${websiteUrl} (ID: ${id}) rejected and delisted from marketplace by admin ${ctx.state.user.id} at ${new Date().toISOString()}. Reason: ${reason}`);
           } else {
             console.log(`[ADMIN ACTION] No marketplace record found for website ${websiteUrl}`);
           }
         } catch (marketplaceError) {
-          console.error(`[ADMIN ACTION] Error removing marketplace record for website ${websiteUrl}:`, marketplaceError);
-          // Don't fail the rejection if marketplace removal fails
+          console.error(`[ADMIN ACTION] Error delisting marketplace record for website ${websiteUrl}:`, marketplaceError);
+          // Don't fail the rejection if marketplace delisting fails
         }
       } else if (!wasPreviouslyApproved) {
         console.log(`[ADMIN ACTION] Website ${websiteUrl} was not previously approved (status: ${websiteBeforeUpdate.submissionStatus}), no marketplace action needed`);
