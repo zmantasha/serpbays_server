@@ -1013,16 +1013,23 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         console.log(`[ADMIN ACTION] Website ${websiteUrl} was previously approved, delisting from marketplace`);
 
         try {
-          const marketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
-            filters: { url: websiteUrl },
-            limit: 1
-          });
+          // Use stored marketplaceId for reliable direct lookup, fall back to URL search
+          let marketplaceRecordId = websiteBeforeUpdate.marketplaceId;
 
-          if (marketplaceRecord && marketplaceRecord.length > 0) {
-            const marketplaceId = marketplaceRecord[0].id;
-            console.log(`[ADMIN ACTION] Delisting marketplace record ${marketplaceId} for website ${websiteUrl}`);
+          if (!marketplaceRecordId && websiteUrl) {
+            const marketplaceByUrl = await strapi.entityService.findMany('api::marketplace.marketplace', {
+              filters: { url: websiteUrl },
+              limit: 1
+            });
+            if (marketplaceByUrl && marketplaceByUrl.length > 0) {
+              marketplaceRecordId = marketplaceByUrl[0].id;
+            }
+          }
 
-            await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+          if (marketplaceRecordId) {
+            console.log(`[ADMIN ACTION] Delisting marketplace record ${marketplaceRecordId} for website ${websiteUrl}`);
+
+            await strapi.entityService.update('api::marketplace.marketplace', marketplaceRecordId, {
               data: {
                 status: 'delisted',
                 delistedReason: 'admin_action',
@@ -3224,6 +3231,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             continue;
           }
 
+          const wasPreviouslyApproved = website.submissionStatus === 'approved';
+
           // Reject the website
           await strapi.entityService.update('api::publisher-website.publisher-website', id, {
             data: {
@@ -3233,6 +3242,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               rejectedBy: ctx.state.user.id
             }
           });
+
+          // Delist marketplace record if website was previously approved
+          if (wasPreviouslyApproved) {
+            try {
+              let marketplaceRecordId = website.marketplaceId;
+
+              if (!marketplaceRecordId && website.url) {
+                const marketplaceByUrl = await strapi.entityService.findMany('api::marketplace.marketplace', {
+                  filters: { url: website.url },
+                  limit: 1
+                });
+                if (marketplaceByUrl && marketplaceByUrl.length > 0) {
+                  marketplaceRecordId = marketplaceByUrl[0].id;
+                }
+              }
+
+              if (marketplaceRecordId) {
+                await strapi.entityService.update('api::marketplace.marketplace', marketplaceRecordId, {
+                  data: {
+                    status: 'delisted',
+                    delistedReason: 'admin_action',
+                    delistedAt: new Date()
+                  }
+                });
+                console.log(`[ADMIN BULK ACTION] Delisted marketplace record ${marketplaceRecordId} for website ${website.url}`);
+              }
+            } catch (marketplaceError) {
+              console.error(`[ADMIN BULK ACTION] Error delisting marketplace for website ${website.url}:`, marketplaceError);
+            }
+          }
 
           results.push({ id, status: 'rejected' });
 
