@@ -229,6 +229,14 @@
     "payoneerEmail": {
       "type": "string",
       "maxLength": 255
+    },
+    "withdrawalOtp": {
+      "type": "string",
+      "private": true
+    },
+    "withdrawalOtpExpiry": {
+      "type": "datetime",
+      "private": true
     }
   }
 }

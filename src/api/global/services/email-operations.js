@@ -319,6 +319,66 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
+   * Send withdrawal OTP verification email
+   */
+  async sendWithdrawalOtpEmail(otpCode, userEmail, amount) {
+    try {
+      const emailData = {
+        to: userEmail,
+        subject: 'Serpbays - Withdrawal Verification Code',
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+              .content { padding: 30px; background: #f9f9f9; }
+              .otp-box { background: white; padding: 30px; margin: 20px 0; border-radius: 8px; border: 2px solid #2563eb; text-align: center; }
+              .otp-code { font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #2563eb; margin: 10px 0; }
+              .info { background: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 15px 0; }
+              .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>Withdrawal Verification</h1>
+              </div>
+              <div class="content">
+                <p>You have requested a withdrawal of <strong>$${amount}</strong> from your Serpbays account.</p>
+                <p>Please use the following verification code to confirm your withdrawal:</p>
+
+                <div class="otp-box">
+                  <p style="margin: 0; color: #666; font-size: 14px;">Your verification code</p>
+                  <div class="otp-code">${otpCode}</div>
+                  <p style="margin: 0; color: #666; font-size: 13px;">This code expires in 5 minutes</p>
+                </div>
+
+                <div class="info">
+                  <strong>Security Notice:</strong> If you did not request this withdrawal, please ignore this email and secure your account immediately.
+                </div>
+              </div>
+              <div class="footer">
+                <p>This is an automated message from Serpbays. Please do not reply to this email.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+        text: `Your Serpbays withdrawal verification code is: ${otpCode}. This code expires in 5 minutes. If you did not request this withdrawal, please ignore this email.`
+      };
+
+      await strapi.plugins.email.services.email.send(emailData);
+      console.log(`Withdrawal OTP email sent to ${userEmail}`);
+    } catch (error) {
+      console.error('Error sending withdrawal OTP email:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Parse incoming email for commands
    */
   async parseEmailCommand(emailBody, senderEmail) {

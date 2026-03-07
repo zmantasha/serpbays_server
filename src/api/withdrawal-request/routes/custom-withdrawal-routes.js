@@ -1,5 +1,18 @@
 module.exports = {
   routes: [
+    // Route for sending withdrawal OTP verification
+    {
+      method: 'POST',
+      path: '/withdrawal-requests/send-otp',
+      handler: 'withdrawal-request.sendWithdrawalOtp',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::withdrawal-request.withdrawal-request.create']
+        }
+      },
+    },
     // Route for users to create withdrawal requests
     {
       method: 'POST',

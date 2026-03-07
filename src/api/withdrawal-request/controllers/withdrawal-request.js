@@ -7,7 +7,66 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 
 module.exports = createCoreController('api::withdrawal-request.withdrawal-request', ({ strapi }) => ({
-  
+
+  // Send OTP for withdrawal verification
+  async sendWithdrawalOtp(ctx) {
+    try {
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      const { amount } = ctx.request.body;
+      if (!amount || parseFloat(amount) <= 0) {
+        return ctx.badRequest('Valid withdrawal amount is required');
+      }
+
+      const userId = ctx.state.user.id;
+
+      // Rate limit: check if OTP was sent less than 60 seconds ago
+      const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId, {
+        fields: ['withdrawalOtpExpiry']
+      });
+
+      if (user.withdrawalOtpExpiry) {
+        const expiryTime = new Date(user.withdrawalOtpExpiry).getTime();
+        const otpSentTime = expiryTime - (5 * 60 * 1000); // OTP was sent 5 min before expiry
+        const timeSinceSent = Date.now() - otpSentTime;
+        if (timeSinceSent < 60 * 1000) {
+          const waitSeconds = Math.ceil((60 * 1000 - timeSinceSent) / 1000);
+          return ctx.badRequest(`Please wait ${waitSeconds} seconds before requesting a new OTP`);
+        }
+      }
+
+      // Generate 6-digit OTP
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+      // Store OTP on user record
+      await strapi.entityService.update('plugin::users-permissions.user', userId, {
+        data: {
+          withdrawalOtp: otpCode,
+          withdrawalOtpExpiry: otpExpiry
+        }
+      });
+
+      // Send OTP email
+      const emailService = strapi.service('api::global.email-operations');
+      await emailService.sendWithdrawalOtpEmail(otpCode, ctx.state.user.email, amount);
+
+      console.log(`[WithdrawalOTP] OTP sent to user ${userId} for withdrawal of $${amount}`);
+
+      return {
+        data: {
+          message: 'Verification code sent to your email',
+          expiresAt: otpExpiry.toISOString()
+        }
+      };
+    } catch (error) {
+      console.error('[WithdrawalOTP] Error sending OTP:', error);
+      return ctx.badRequest('Failed to send verification code');
+    }
+  },
+
   // Create a new withdrawal request
   async create(ctx) {
     try {
@@ -20,15 +79,47 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       console.log('User authenticated with ID:', ctx.state.user.id);
       
       // Get the request body
-      const { amount, method, details } = ctx.request.body.data || ctx.request.body;
-      
-      console.log('Received withdrawal request:', { amount, method, details: JSON.stringify(details) });
-      
+      const { amount, method, details, otpCode } = ctx.request.body.data || ctx.request.body;
+
+      console.log('Received withdrawal request:', { amount, method, details: JSON.stringify(details), hasOtp: !!otpCode });
+
       // Validate required fields
       if (!amount || !method || !details) {
         console.log('Missing required fields:', { amount, method, details: !!details });
         return ctx.badRequest('Missing required fields: amount, method, and details are required');
       }
+
+      // Verify OTP
+      if (!otpCode) {
+        return ctx.badRequest('Verification code is required');
+      }
+
+      const userWithOtp = await strapi.entityService.findOne('plugin::users-permissions.user', ctx.state.user.id, {
+        fields: ['withdrawalOtp', 'withdrawalOtpExpiry']
+      });
+
+      if (!userWithOtp.withdrawalOtp || !userWithOtp.withdrawalOtpExpiry) {
+        return ctx.badRequest('No verification code found. Please request a new one.');
+      }
+
+      if (new Date(userWithOtp.withdrawalOtpExpiry) < new Date()) {
+        // Clear expired OTP
+        await strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
+          data: { withdrawalOtp: null, withdrawalOtpExpiry: null }
+        });
+        return ctx.badRequest('Verification code has expired. Please request a new one.');
+      }
+
+      if (userWithOtp.withdrawalOtp !== otpCode) {
+        return ctx.badRequest('Invalid verification code');
+      }
+
+      // Clear OTP after successful verification (one-time use)
+      await strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
+        data: { withdrawalOtp: null, withdrawalOtpExpiry: null }
+      });
+
+      console.log(`[WithdrawalOTP] OTP verified for user ${ctx.state.user.id}`);
       
       // Ensure details is a valid JSON object
       let formattedDetails = details;
