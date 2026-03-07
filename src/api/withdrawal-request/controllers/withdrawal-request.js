@@ -158,8 +158,20 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         requestAmount
       });
       
-      if (mainBalance < requestAmount) {
-        return ctx.badRequest(`Insufficient withdrawable funds. Available for withdrawal: ${mainBalance}, Requested: ${requestAmount}. Note: Promo credits (${promoBalance}) cannot be withdrawn.`);
+      // Calculate 20% platform fee
+      const PLATFORM_FEE_RATE = 0.20;
+      const platformFee = Math.round((requestAmount / (1 - PLATFORM_FEE_RATE)) * PLATFORM_FEE_RATE * 100) / 100;
+      const totalDeduction = Math.round((requestAmount + platformFee) * 100) / 100;
+
+      console.log('Platform fee calculation:', {
+        requestAmount,
+        platformFeeRate: PLATFORM_FEE_RATE,
+        platformFee,
+        totalDeduction
+      });
+
+      if (mainBalance < totalDeduction) {
+        return ctx.badRequest(`Insufficient withdrawable funds. Available for withdrawal: ${mainBalance}, Total required (including 20% platform fee): ${totalDeduction}. Note: Promo credits (${promoBalance}) cannot be withdrawn.`);
       }
         
       // The rest of the create method continues from here...
@@ -230,13 +242,13 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'withdrawal',
-          amount: requestAmount,
+          amount: totalDeduction,
           netAmount: requestAmount,
-          fee: 0,
+          fee: platformFee,
           transactionStatus: 'pending',
           gateway: method,
           gatewayTransactionId: uniqueRequestId, // 🔒 Use unique ID to prevent duplicates
-          description: `Withdrawal request #${withdrawalRequest.id} via ${method} for $${requestAmount}`,
+          description: `Withdrawal request #${withdrawalRequest.id} via ${method} — $${requestAmount} payout + $${platformFee} platform fee (20%)`,
           user_wallet: publisherWallet.id,
           users_permissions_user: ctx.state.user.id
         }
@@ -245,16 +257,19 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       console.log(`[DUPLICATE PREVENTION] Created unique transaction ${transactionRecord.id} with gateway ID: ${uniqueRequestId}`);
       
       // Update the wallet balance when withdrawal is requested
+      // Deduct totalDeduction (withdrawal amount + 20% platform fee) from main balance
       console.log('Updating wallet balance after withdrawal request:', {
         previousBalance: publisherWallet.balance,
-        previousEscrow: publisherWallet.escrowBalance,
-        withdrawalAmount: requestAmount
+        previousMainBalance: publisherWallet.mainBalance,
+        withdrawalAmount: requestAmount,
+        platformFee,
+        totalDeduction
       });
-      
-      // Subtract the withdrawal amount from MAIN balance and add to pendingWithdrawalBalance
-      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) - requestAmount;
+
+      // Subtract the TOTAL (withdrawal + fee) from MAIN balance, track only requestAmount as pending withdrawal
+      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) - totalDeduction;
       const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
-      
+
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
         data: {
@@ -263,8 +278,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           pendingWithdrawalBalance: (parseFloat(publisherWallet.pendingWithdrawalBalance) || 0) + requestAmount
         }
       });
-      
-      console.log(`Subtracted $${requestAmount} from wallet balance. New balance: ${(parseFloat(publisherWallet.balance) || 0) - requestAmount}`);
+
+      console.log(`Subtracted $${totalDeduction} from wallet (payout: $${requestAmount} + fee: $${platformFee}). New main balance: ${newMainBalance}`);
       
       return {
         data: withdrawalRequest,
