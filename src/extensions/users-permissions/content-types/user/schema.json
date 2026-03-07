@@ -221,6 +221,14 @@
       "default": {
         "showSensitive": false
       }
+    },
+    "paypalEmail": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "payoneerEmail": {
+      "type": "string",
+      "maxLength": 255
     }
   }
 }
