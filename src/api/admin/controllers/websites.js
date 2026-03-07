@@ -1013,8 +1013,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         console.log(`[ADMIN ACTION] Website ${websiteUrl} was previously approved, delisting from marketplace`);
 
         try {
-          // Use stored marketplaceId for reliable direct lookup, fall back to URL search
+          // Use stored marketplaceId for direct lookup, fall back to URL search
           let marketplaceRecordId = websiteBeforeUpdate.marketplaceId;
+
+          // Safety check: verify the stored marketplaceId actually belongs to this URL
+          // (stale IDs can point to a different website's marketplace record after hard-deletes)
+          if (marketplaceRecordId) {
+            const marketplaceRecord = await strapi.entityService.findOne('api::marketplace.marketplace', marketplaceRecordId);
+            if (!marketplaceRecord || marketplaceRecord.url !== websiteUrl) {
+              console.warn(`[ADMIN ACTION] Stored marketplaceId ${marketplaceRecordId} does not match URL ${websiteUrl} (found: ${marketplaceRecord?.url || 'deleted'}). Falling back to URL lookup.`);
+              marketplaceRecordId = null;
+            }
+          }
 
           if (!marketplaceRecordId && websiteUrl) {
             const marketplaceByUrl = await strapi.entityService.findMany('api::marketplace.marketplace', {
@@ -3247,6 +3257,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           if (wasPreviouslyApproved) {
             try {
               let marketplaceRecordId = website.marketplaceId;
+
+              // Safety check: verify the stored marketplaceId actually belongs to this URL
+              if (marketplaceRecordId) {
+                const marketplaceRecord = await strapi.entityService.findOne('api::marketplace.marketplace', marketplaceRecordId);
+                if (!marketplaceRecord || marketplaceRecord.url !== website.url) {
+                  console.warn(`[ADMIN BULK ACTION] Stored marketplaceId ${marketplaceRecordId} does not match URL ${website.url} (found: ${marketplaceRecord?.url || 'deleted'}). Falling back to URL lookup.`);
+                  marketplaceRecordId = null;
+                }
+              }
 
               if (!marketplaceRecordId && website.url) {
                 const marketplaceByUrl = await strapi.entityService.findMany('api::marketplace.marketplace', {
