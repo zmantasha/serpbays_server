@@ -138,7 +138,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         let websiteSnapshot = null;
 
         // If website is passed as a string ID, convert it to the proper format
-        if (typeof orderData.website === 'string' && !isNaN(parseInt(orderData.website))) {
+        // Use strict numeric check - parseInt('100test.com') returns 100 which would incorrectly match domains starting with numbers
+        if (typeof orderData.website === 'string' && /^\d+$/.test(orderData.website)) {
           console.log(`Website appears to be a string ID: ${orderData.website}, looking up by ID`);
           // Try to find the website by ID
           const websiteId = parseInt(orderData.website);
