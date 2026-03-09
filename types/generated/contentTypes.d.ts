@@ -3625,6 +3625,14 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.SetMinMaxLength<{
         minLength: 8;
       }>;
+    payoneerEmail: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    paypalEmail: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
     phoneNumber: Schema.Attribute.String;
     pincode: Schema.Attribute.String;
     projects: Schema.Attribute.Relation<'oneToMany', 'api::project.project'>;
@@ -3662,6 +3670,8 @@ export interface PluginUsersPermissionsUser
       }>;
     vatGstNumber: Schema.Attribute.String;
     website: Schema.Attribute.String;
+    withdrawalOtp: Schema.Attribute.String & Schema.Attribute.Private;
+    withdrawalOtpExpiry: Schema.Attribute.DateTime & Schema.Attribute.Private;
     withdrawalRequests: Schema.Attribute.Relation<
       'oneToMany',
       'api::withdrawal-request.withdrawal-request'
