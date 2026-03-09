@@ -39,6 +39,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
+      // Normalize URL to lowercase to prevent case-sensitive duplicates
+      data.url = data.url ? data.url.toLowerCase() : data.url;
+
       // Check if this URL already exists for this publisher using ID relation
       const existingSubmission = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
         filters: {
@@ -137,6 +140,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Get total count for pagination (before fetching data)
       const total = await strapi.db.query('api::publisher-website.publisher-website').count({
         where: filters
+      });
+
+      // Get approved count across ALL pages (using base user ownership filters, ignoring search/status filters)
+      const baseOwnershipFilters = {
+        $or: [
+          { currentPublisherId: user.id },
+          { publisherEmail: user.email }
+        ],
+        submissionStatus: 'approved'
+      };
+      const approvedCount = await strapi.db.query('api::publisher-website.publisher-website').count({
+        where: baseOwnershipFilters
       });
 
       // Fetch paginated submissions using database query API for better performance
@@ -254,7 +269,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             pageSize: pageSize,
             pageCount: pageCount,
             total: total
-          }
+          },
+          approvedCount: approvedCount
         }
       };
     } catch (error) {
@@ -1273,8 +1289,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.badRequest('Domain is required');
       }
 
-      // Clean the domain
-      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      // Clean the domain and normalize to lowercase
+      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
 
       // Find all websites by URL
       const allWebsites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {

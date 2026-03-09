@@ -138,7 +138,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         let websiteSnapshot = null;
 
         // If website is passed as a string ID, convert it to the proper format
-        if (typeof orderData.website === 'string' && !isNaN(parseInt(orderData.website))) {
+        // Use strict numeric check - parseInt('100test.com') returns 100 which would incorrectly match domains starting with numbers
+        if (typeof orderData.website === 'string' && /^\d+$/.test(orderData.website)) {
           console.log(`Website appears to be a string ID: ${orderData.website}, looking up by ID`);
           // Try to find the website by ID
           const websiteId = parseInt(orderData.website);
@@ -198,6 +199,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         )) {
           console.log(`🚫 Self-order prevented: User ${user.email} tried to order their own website ${marketplace.url} (Email match)`);
           return ctx.badRequest('You cannot place an order on your own website. Please select a different website.');
+        }
+
+        // Validate existingPostUrl belongs to the same domain (Link Insertion orders)
+        if (serviceType === 'link_insertion' && existingPostUrl && marketplace) {
+          try {
+            const urlToCheck = existingPostUrl.trim().startsWith('http://') || existingPostUrl.trim().startsWith('https://')
+              ? existingPostUrl.trim()
+              : `https://${existingPostUrl.trim()}`;
+            const urlObj = new URL(urlToCheck);
+            const urlHostname = urlObj.hostname.replace(/^www\./, '');
+            const expectedDomain = marketplace.url.replace(/^www\./, '').replace(/^https?:\/\//, '');
+            if (urlHostname !== expectedDomain && !urlHostname.endsWith('.' + expectedDomain)) {
+              return ctx.badRequest(`Existing post URL must be from ${marketplace.url}, not ${urlHostname}`);
+            }
+          } catch (e) {
+            return ctx.badRequest('Invalid existing post URL format');
+          }
         }
 
         // Create marketplace snapshot to preserve historical data
@@ -1139,7 +1157,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Get the order
         const order = await strapi.db.query('api::order.order').findOne({
           where: { id },
-          populate: ['website', 'advertiser']
+          populate: ['website', 'advertiser', 'publisher']
         });
 
         if (!order) {
@@ -1151,19 +1169,16 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.badRequest('Only pending orders can be rejected');
         }
 
-        // Verify the publisher owns this website (unless they are the advertiser)
+        // Verify the publisher can reject this order using ORDER's snapshot data
+        // NOT live marketplace data (which may have changed due to ownership transfer)
+        // This matches the approach used in acceptOrder
         if (order.advertiser !== user.id) {
-          const isWebsiteOwner = await strapi.db.query('api::marketplace.marketplace').findOne({
-            where: {
-              id: order.website.id,
-              $or: [
-                { publisher: user.id },
-                { publisher_email: user.email }
-              ]
-            }
-          });
+          const isDirectPublisher = order.publisher && (order.publisher.id === user.id || order.publisher === user.id);
+          const isSnapshotPublisher = order.websitePublisherEmail === user.email;
 
-          if (!isWebsiteOwner) {
+          if (!isDirectPublisher && !isSnapshotPublisher) {
+            console.log(`[Reject Order] User ${user.id} (${user.email}) denied access to order ${id}`);
+            console.log(`[Reject Order] Order publisher: ${order.publisher?.id}, Snapshot email: ${order.websitePublisherEmail}`);
             return ctx.forbidden('You do not have permission to reject this order');
           }
         }

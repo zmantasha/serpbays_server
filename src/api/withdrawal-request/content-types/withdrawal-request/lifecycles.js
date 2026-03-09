@@ -150,25 +150,31 @@ async function handleDeniedWithdrawal(result) {
         return;
       }
 
-      // Refund the amount - add back to wallet balance and deduct from pending withdrawals
-      const refundAmount = parseFloat(withdrawalRequest.amount);
-      const currentWalletBalance = parseFloat(publisherWallet.balance || 0);
+      // Refund the full amount (withdrawal + 20% platform fee) back to wallet
+      const PLATFORM_FEE_RATE = 0.20;
+      const withdrawalAmount = parseFloat(withdrawalRequest.amount);
+      const platformFee = Math.round((withdrawalAmount / (1 - PLATFORM_FEE_RATE)) * PLATFORM_FEE_RATE * 100) / 100;
+      const totalRefund = Math.round((withdrawalAmount + platformFee) * 100) / 100;
+
+      const currentMainBalance = parseFloat(publisherWallet.mainBalance || 0);
       const currentPendingBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
-      
-      const newWalletBalance = currentWalletBalance + refundAmount;
-      const newPendingBalance = Math.max(0, currentPendingBalance - refundAmount);
-      
+
+      const newMainBalance = currentMainBalance + totalRefund;
+      const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
+      const newPendingBalance = Math.max(0, currentPendingBalance - withdrawalAmount);
+
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
         data: {
-          balance: newWalletBalance,
+          mainBalance: newMainBalance,
+          balance: newTotalBalance,
           pendingWithdrawalBalance: newPendingBalance
         }
       });
-      
+
       console.log(`[Lifecycle] ✅ Refunded withdrawal ${result.id}:`);
-      console.log(`   - Wallet balance: ${currentWalletBalance} → ${newWalletBalance} (+$${refundAmount})`);
-      console.log(`   - Pending balance: ${currentPendingBalance} → ${newPendingBalance} (-$${refundAmount})`);
+      console.log(`   - Main balance: ${currentMainBalance} → ${newMainBalance} (+$${totalRefund} = $${withdrawalAmount} payout + $${platformFee} fee)`);
+      console.log(`   - Pending balance: ${currentPendingBalance} → ${newPendingBalance} (-$${withdrawalAmount})`);
       
       // Send email notification for withdrawal denial
       try {
@@ -238,10 +244,10 @@ async function handleDeniedWithdrawal(result) {
           data: {
             users_permissions_user: withdrawalRequest.publisher.id,
             type: 'refund',
-            amount: Math.abs(refundAmount), // Ensure positive amount for refunds
-            netAmount: Math.abs(refundAmount), // Ensure positive amount for refunds
+            amount: Math.abs(totalRefund), // Full refund including platform fee
+            netAmount: Math.abs(totalRefund),
             transactionStatus: 'refunded',
-            description: `Refund for denied withdrawal request #${result.id}`,
+            description: `Refund for denied withdrawal request #${result.id} ($${withdrawalAmount} payout + $${platformFee} platform fee)`,
             gateway: 'system',
             gatewayTransactionId: `REFUND_WR_${result.id}_${Date.now()}`,
             user_wallet: publisherWallet.id,
@@ -249,8 +255,8 @@ async function handleDeniedWithdrawal(result) {
             transactionDate: new Date()
           }
         });
-        
-        console.log(`[Lifecycle] ✅ Created refund transaction #${refundTransaction.id} for +$${refundAmount}`);
+
+        console.log(`[Lifecycle] ✅ Created refund transaction #${refundTransaction.id} for +$${totalRefund}`);
       } catch (refundError) {
         console.error(`[Lifecycle] ❌ Failed to create refund transaction:`, refundError);
       }

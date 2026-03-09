@@ -38,7 +38,9 @@ module.exports = (plugin) => {
                 'pincode',
                 'vatGstNumber',
                 'notificationPreferences',
-                'marketplacePreferences'
+                'marketplacePreferences',
+                'paypalEmail',
+                'payoneerEmail'
             ];
 
             // Filter update data to only include allowed fields

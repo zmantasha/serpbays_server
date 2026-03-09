@@ -7,7 +7,66 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 
 module.exports = createCoreController('api::withdrawal-request.withdrawal-request', ({ strapi }) => ({
-  
+
+  // Send OTP for withdrawal verification
+  async sendWithdrawalOtp(ctx) {
+    try {
+      if (!ctx.state.user) {
+        return ctx.unauthorized('Authentication required');
+      }
+
+      const { amount } = ctx.request.body;
+      if (!amount || parseFloat(amount) <= 0) {
+        return ctx.badRequest('Valid withdrawal amount is required');
+      }
+
+      const userId = ctx.state.user.id;
+
+      // Rate limit: check if OTP was sent less than 60 seconds ago
+      const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId, {
+        fields: ['withdrawalOtpExpiry']
+      });
+
+      if (user.withdrawalOtpExpiry) {
+        const expiryTime = new Date(user.withdrawalOtpExpiry).getTime();
+        const otpSentTime = expiryTime - (5 * 60 * 1000); // OTP was sent 5 min before expiry
+        const timeSinceSent = Date.now() - otpSentTime;
+        if (timeSinceSent < 60 * 1000) {
+          const waitSeconds = Math.ceil((60 * 1000 - timeSinceSent) / 1000);
+          return ctx.badRequest(`Please wait ${waitSeconds} seconds before requesting a new OTP`);
+        }
+      }
+
+      // Generate 6-digit OTP
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+      // Store OTP on user record
+      await strapi.entityService.update('plugin::users-permissions.user', userId, {
+        data: {
+          withdrawalOtp: otpCode,
+          withdrawalOtpExpiry: otpExpiry
+        }
+      });
+
+      // Send OTP email
+      const emailService = strapi.service('api::global.email-operations');
+      await emailService.sendWithdrawalOtpEmail(otpCode, ctx.state.user.email, amount);
+
+      console.log(`[WithdrawalOTP] OTP sent to user ${userId} for withdrawal of $${amount}`);
+
+      return {
+        data: {
+          message: 'Verification code sent to your email',
+          expiresAt: otpExpiry.toISOString()
+        }
+      };
+    } catch (error) {
+      console.error('[WithdrawalOTP] Error sending OTP:', error);
+      return ctx.badRequest('Failed to send verification code');
+    }
+  },
+
   // Create a new withdrawal request
   async create(ctx) {
     try {
@@ -20,15 +79,47 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       console.log('User authenticated with ID:', ctx.state.user.id);
       
       // Get the request body
-      const { amount, method, details } = ctx.request.body.data || ctx.request.body;
-      
-      console.log('Received withdrawal request:', { amount, method, details: JSON.stringify(details) });
-      
+      const { amount, method, details, otpCode } = ctx.request.body.data || ctx.request.body;
+
+      console.log('Received withdrawal request:', { amount, method, details: JSON.stringify(details), hasOtp: !!otpCode });
+
       // Validate required fields
       if (!amount || !method || !details) {
         console.log('Missing required fields:', { amount, method, details: !!details });
         return ctx.badRequest('Missing required fields: amount, method, and details are required');
       }
+
+      // Verify OTP
+      if (!otpCode) {
+        return ctx.badRequest('Verification code is required');
+      }
+
+      const userWithOtp = await strapi.entityService.findOne('plugin::users-permissions.user', ctx.state.user.id, {
+        fields: ['withdrawalOtp', 'withdrawalOtpExpiry']
+      });
+
+      if (!userWithOtp.withdrawalOtp || !userWithOtp.withdrawalOtpExpiry) {
+        return ctx.badRequest('No verification code found. Please request a new one.');
+      }
+
+      if (new Date(userWithOtp.withdrawalOtpExpiry) < new Date()) {
+        // Clear expired OTP
+        await strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
+          data: { withdrawalOtp: null, withdrawalOtpExpiry: null }
+        });
+        return ctx.badRequest('Verification code has expired. Please request a new one.');
+      }
+
+      if (userWithOtp.withdrawalOtp !== otpCode) {
+        return ctx.badRequest('Invalid verification code');
+      }
+
+      // Clear OTP after successful verification (one-time use)
+      await strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
+        data: { withdrawalOtp: null, withdrawalOtpExpiry: null }
+      });
+
+      console.log(`[WithdrawalOTP] OTP verified for user ${ctx.state.user.id}`);
       
       // Ensure details is a valid JSON object
       let formattedDetails = details;
@@ -158,8 +249,20 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         requestAmount
       });
       
-      if (mainBalance < requestAmount) {
-        return ctx.badRequest(`Insufficient withdrawable funds. Available for withdrawal: ${mainBalance}, Requested: ${requestAmount}. Note: Promo credits (${promoBalance}) cannot be withdrawn.`);
+      // Calculate 20% platform fee
+      const PLATFORM_FEE_RATE = 0.20;
+      const platformFee = Math.round((requestAmount / (1 - PLATFORM_FEE_RATE)) * PLATFORM_FEE_RATE * 100) / 100;
+      const totalDeduction = Math.round((requestAmount + platformFee) * 100) / 100;
+
+      console.log('Platform fee calculation:', {
+        requestAmount,
+        platformFeeRate: PLATFORM_FEE_RATE,
+        platformFee,
+        totalDeduction
+      });
+
+      if (mainBalance < totalDeduction) {
+        return ctx.badRequest(`Insufficient withdrawable funds. Available for withdrawal: ${mainBalance}, Total required (including 20% platform fee): ${totalDeduction}. Note: Promo credits (${promoBalance}) cannot be withdrawn.`);
       }
         
       // The rest of the create method continues from here...
@@ -230,13 +333,13 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'withdrawal',
-          amount: requestAmount,
+          amount: totalDeduction,
           netAmount: requestAmount,
-          fee: 0,
+          fee: platformFee,
           transactionStatus: 'pending',
           gateway: method,
           gatewayTransactionId: uniqueRequestId, // 🔒 Use unique ID to prevent duplicates
-          description: `Withdrawal request #${withdrawalRequest.id} via ${method} for $${requestAmount}`,
+          description: `Withdrawal request #${withdrawalRequest.id} via ${method} — $${requestAmount} payout + $${platformFee} platform fee (20%)`,
           user_wallet: publisherWallet.id,
           users_permissions_user: ctx.state.user.id
         }
@@ -245,16 +348,19 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       console.log(`[DUPLICATE PREVENTION] Created unique transaction ${transactionRecord.id} with gateway ID: ${uniqueRequestId}`);
       
       // Update the wallet balance when withdrawal is requested
+      // Deduct totalDeduction (withdrawal amount + 20% platform fee) from main balance
       console.log('Updating wallet balance after withdrawal request:', {
         previousBalance: publisherWallet.balance,
-        previousEscrow: publisherWallet.escrowBalance,
-        withdrawalAmount: requestAmount
+        previousMainBalance: publisherWallet.mainBalance,
+        withdrawalAmount: requestAmount,
+        platformFee,
+        totalDeduction
       });
-      
-      // Subtract the withdrawal amount from MAIN balance and add to pendingWithdrawalBalance
-      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) - requestAmount;
+
+      // Subtract the TOTAL (withdrawal + fee) from MAIN balance, track only requestAmount as pending withdrawal
+      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) - totalDeduction;
       const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
-      
+
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
         data: {
@@ -263,8 +369,8 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           pendingWithdrawalBalance: (parseFloat(publisherWallet.pendingWithdrawalBalance) || 0) + requestAmount
         }
       });
-      
-      console.log(`Subtracted $${requestAmount} from wallet balance. New balance: ${(parseFloat(publisherWallet.balance) || 0) - requestAmount}`);
+
+      console.log(`Subtracted $${totalDeduction} from wallet (payout: $${requestAmount} + fee: $${platformFee}). New main balance: ${newMainBalance}`);
       
       return {
         data: withdrawalRequest,

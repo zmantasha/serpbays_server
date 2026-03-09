@@ -270,7 +270,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             responseTime: website.tat ? `${website.tat}h` : 'Not specified',
             revenue: orders.filter(o => o.orderStatus === 'completed').reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0)
           },
-          status: website.publishedAt ? 'Active' : 'Inactive',
+          status: website.status || (website.publishedAt ? 'active' : 'inactive'),
           approvalDate: website.publishedAt,
           lastUpdated: website.updatedAt,
           createdAt: website.createdAt
@@ -498,7 +498,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           phone: '', // Default since not in schema
           website: website.url
         },
-        status: website.publishedAt ? 'Active' : 'Inactive',
+        status: website.status || (website.publishedAt ? 'active' : 'inactive'),
         approvalDate: website.publishedAt,
         lastUpdated: website.updatedAt,
         createdAt: website.createdAt,

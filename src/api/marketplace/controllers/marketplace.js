@@ -903,8 +903,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     }
 
     try {
-      // Clean the domain (remove protocol and trailing slashes)
-      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      // Clean the domain (remove protocol and trailing slashes) and normalize to lowercase
+      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
 
       // Check if domain exists in marketplace
       const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
