@@ -120,6 +120,30 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
         });
       }
 
+      // ========== AUTOSEND ABANDONED CART LIST SYNC ==========
+      try {
+        const abandonedCartListId = process.env.AUTOSEND_ABANDONED_CART_LIST_ID;
+        if (abandonedCartListId) {
+          const autoSendService = strapi.service('api::global.autosend-service');
+          const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId);
+
+          if (user && user.email && autoSendService) {
+            if (items && Array.isArray(items) && items.length > 0) {
+              // Cart has items → add user to abandoned cart list
+              autoSendService.addToList({ email: user.email, listId: abandonedCartListId })
+                .catch(err => console.error('[Cart] AutoSend addToList error:', err.message));
+            } else {
+              // Cart is empty → remove user from abandoned cart list
+              autoSendService.removeFromList({ email: user.email, listId: abandonedCartListId })
+                .catch(err => console.error('[Cart] AutoSend removeFromList error:', err.message));
+            }
+          }
+        }
+      } catch (autoSendErr) {
+        console.error('[Cart] AutoSend sync error (non-blocking):', autoSendErr.message);
+      }
+      // ========== END AUTOSEND ABANDONED CART LIST SYNC ==========
+
       return cart;
     } catch (error) {
       ctx.throw(500, error);
@@ -145,6 +169,23 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
             sourceProjectId: null,
           },
         });
+
+        // ========== AUTOSEND: REMOVE FROM ABANDONED CART LIST ==========
+        try {
+          const abandonedCartListId = process.env.AUTOSEND_ABANDONED_CART_LIST_ID;
+          if (abandonedCartListId) {
+            const autoSendService = strapi.service('api::global.autosend-service');
+            const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId);
+
+            if (user && user.email && autoSendService) {
+              autoSendService.removeFromList({ email: user.email, listId: abandonedCartListId })
+                .catch(err => console.error('[Cart] AutoSend removeFromList error:', err.message));
+            }
+          }
+        } catch (autoSendErr) {
+          console.error('[Cart] AutoSend clear sync error (non-blocking):', autoSendErr.message);
+        }
+        // ========== END AUTOSEND ==========
       }
 
       return { items: [], formData: {}, sourceProjectId: null };

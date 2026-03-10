@@ -119,12 +119,17 @@ module.exports = (plugin) => {
               registration_date: new Date().toISOString().split('T')[0]
             };
 
+            // Get the list ID from environment to add new users to mailing list
+            const listId = process.env.AUTOSEND_LIST_ID;
+            const listIds = listId ? [listId] : [];
+
             await autoSendService.createContact({
               email: result.email,
               firstName: result.firstName || '',
               lastName: result.lastName || '',
               userId: result.id,
-              customFields
+              customFields,
+              listIds
             });
           }
         } catch (autoSendError) {

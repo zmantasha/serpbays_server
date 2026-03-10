@@ -125,7 +125,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
      * @param {Object} [contactData.customFields]
      * @returns {Promise<Object>} Created contact data
      */
-    async createContact({ email, firstName, lastName, userId, customFields = {} }) {
+    async createContact({ email, firstName, lastName, userId, customFields = {}, listIds = [] }) {
         try {
             const apiKey = process.env.AUTOSEND_API_KEY;
 
@@ -143,7 +143,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 firstName,
                 lastName,
                 userId: userId ? String(userId) : undefined,
-                customFields
+                customFields,
+                listIds: listIds.length > 0 ? listIds : undefined
             };
 
             console.log(`[AutoSend] Creating contact for ${email}...`);
@@ -170,6 +171,84 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     },
 
     /**
+     * Add a contact to an AutoSend list
+     * Uses upsert so it works whether the contact already exists or not
+     * @param {Object} params
+     * @param {string} params.email - Contact email
+     * @param {string} params.listId - List ID to add the contact to
+     * @returns {Promise<Object|null>} Result or null on error
+     */
+    async addToList({ email, listId }) {
+        try {
+            const apiKey = process.env.AUTOSEND_API_KEY;
+            if (!apiKey) {
+                console.warn('[AutoSend] API key not configured, skipping addToList');
+                return null;
+            }
+
+            const { Autosend } = require('autosendjs');
+            const autosend = new Autosend(apiKey);
+
+            console.log(`[AutoSend] Adding ${email} to list ${listId}...`);
+
+            const result = await autosend.contacts.upsert({
+                email,
+                listIds: [listId]
+            });
+
+            if (!result.success) {
+                console.warn(`[AutoSend] Failed to add to list: ${result.error || 'Unknown error'}`);
+                return null;
+            }
+
+            console.log(`[AutoSend] Successfully added ${email} to list ${listId}`);
+            return result.data;
+
+        } catch (error) {
+            console.error('[AutoSend] Error adding contact to list:', error.message);
+            return null;
+        }
+    },
+
+    /**
+     * Remove a contact from an AutoSend list
+     * Uses direct API call: DELETE /contacts/lists/:listId/email/:email
+     * @param {Object} params
+     * @param {string} params.email - Contact email
+     * @param {string} params.listId - List ID to remove the contact from
+     * @returns {Promise<boolean>} True if successful
+     */
+    async removeFromList({ email, listId }) {
+        try {
+            const apiKey = process.env.AUTOSEND_API_KEY;
+            if (!apiKey) {
+                console.warn('[AutoSend] API key not configured, skipping removeFromList');
+                return false;
+            }
+
+            const { Autosend } = require('autosendjs');
+            const autosend = new Autosend(apiKey);
+
+            console.log(`[AutoSend] Removing ${email} from list ${listId}...`);
+
+            // Use the SDK's http client for direct API call
+            const result = await autosend.http.delete(`/contacts/lists/${listId}/email/${encodeURIComponent(email)}`);
+
+            if (!result.success) {
+                console.warn(`[AutoSend] Failed to remove from list: ${result.error || 'Unknown error'}`);
+                return false;
+            }
+
+            console.log(`[AutoSend] Successfully removed ${email} from list ${listId}`);
+            return true;
+
+        } catch (error) {
+            console.error('[AutoSend] Error removing contact from list:', error.message);
+            return false;
+        }
+    },
+
+    /**
      * Verify AutoSend API key is configured and valid
      * @returns {Promise<boolean>} True if AutoSend is properly configured
      */
@@ -190,6 +269,78 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         } catch (error) {
             console.error('[AutoSend] Configuration verification failed:', error);
             return false;
+        }
+    },
+
+    /**
+     * Send newsletter email to multiple recipients with dynamic data
+     * @param {Object} params
+     * @param {string} params.templateId - Autosend template ID
+     * @param {Object} params.dynamicData - Template variables (shared across all recipients)
+     * @param {Array<{email: string, firstName?: string}>} params.recipients - List of recipients
+     * @param {string} [params.unsubscribeGroupId] - Unsubscribe group ID
+     * @returns {Promise<{sent: number, failed: number}>}
+     */
+    async sendNewsletter({ templateId, dynamicData, recipients, unsubscribeGroupId }) {
+        try {
+            const apiKey = process.env.AUTOSEND_API_KEY;
+            if (!apiKey) {
+                console.warn('[AutoSend] API key not configured, skipping newsletter');
+                return { sent: 0, failed: 0 };
+            }
+
+            const { Autosend } = require('autosendjs');
+            const autosend = new Autosend(apiKey);
+
+            console.log(`[AutoSend Newsletter] Sending to ${recipients.length} recipients...`);
+
+            let sent = 0;
+            let failed = 0;
+
+            // Send in batches of 50 to avoid API rate limits
+            const batchSize = 50;
+            for (let i = 0; i < recipients.length; i += batchSize) {
+                const batch = recipients.slice(i, i + batchSize);
+
+                const batchPromises = batch.map(async (recipient) => {
+                    try {
+                        const emailPayload = {
+                            from: { email: process.env.EMAIL_FROM || 'noreply@serpbays.com' },
+                            to: { email: recipient.email },
+                            templateId,
+                            dynamicData: {
+                                ...dynamicData,
+                                firstName: recipient.firstName || 'there',
+                            },
+                            tags: ['serpbays', 'newsletter'],
+                        };
+
+                        if (unsubscribeGroupId) {
+                            emailPayload.unsubscribeGroupId = unsubscribeGroupId;
+                        }
+
+                        await autosend.emails.send(emailPayload);
+                        sent++;
+                    } catch (err) {
+                        failed++;
+                        console.error(`[AutoSend Newsletter] Failed for ${recipient.email}:`, err.message);
+                    }
+                });
+
+                await Promise.all(batchPromises);
+
+                // Small delay between batches
+                if (i + batchSize < recipients.length) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+
+            console.log(`[AutoSend Newsletter] Complete: ${sent} sent, ${failed} failed`);
+            return { sent, failed };
+
+        } catch (error) {
+            console.error('[AutoSend Newsletter] Error:', error.message);
+            throw error;
         }
     }
 
