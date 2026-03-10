@@ -52,7 +52,12 @@ const MISSING_FIELDS = [
     'forbidden_li_price'
 ];
 export default {
-    bootstrap() { },
+    config: {
+        locales: ['en'],
+    },
+    bootstrap(app) {
+        console.log('Admin app loaded');
+    },
     registerTrads() {
         return __awaiter(this, void 0, void 0, function* () {
             return [];
@@ -2310,5 +2315,5 @@ export default {
                 }
             });
         }
-    },
+                        }
 };

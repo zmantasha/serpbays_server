@@ -8,7 +8,7 @@
     "description": "Link building orders between advertisers and publishers"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "pluginOptions": {},
   "attributes": {
@@ -38,18 +38,6 @@
       "min": 0.01,
       "required": true
     },
-    "feeRate": {
-      "type": "decimal",
-      "min": 0,
-      "max": 1,
-      "default": 0.1
-    },
-    "platformFee": {
-      "type": "decimal",
-      "min": 0,
-      "required": true,
-      "description": "Calculated fee amount (totalAmount * feeRate)"
-    },
     "escrowHeld": {
       "type": "decimal",
       "min": 0,
@@ -61,6 +49,10 @@
     },
     "deliveryProof": {
       "type": "string"
+    },
+    "deliveryMessage": {
+      "type": "text",
+      "description": "Optional message from publisher when delivering work"
     },
     "orderDate": {
       "type": "datetime",
@@ -131,6 +123,18 @@
       "target": "api::communication.communication",
       "mappedBy": "order"
     },
+    "chatroom": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::chatroom.chatroom",
+      "inversedBy": "order"
+    },
+    "project": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::project.project",
+      "inversedBy": "orders"
+    },
     "revisionRequestedAt": {
       "type": "datetime",
       "description": "When the revision was requested"
@@ -147,6 +151,147 @@
         "completed"
       ],
       "description": "Current status of the revision request"
+    },
+    "websiteSnapshot": {
+      "type": "json",
+      "description": "Snapshot of marketplace/website data at the time of order creation to preserve historical state"
+    },
+    "websiteUrl": {
+      "type": "string",
+      "description": "Website URL at time of order (snapshot)"
+    },
+    "websitePrice": {
+      "type": "integer",
+      "description": "Website price at time of order (snapshot)"
+    },
+    "websiteLinkInsertionPrice": {
+      "type": "integer",
+      "description": "Link insertion price at time of order (snapshot)"
+    },
+    "websiteMinWordCount": {
+      "type": "integer",
+      "description": "Minimum word count at time of order (snapshot)"
+    },
+    "websiteGuidelines": {
+      "type": "text",
+      "description": "Guidelines at time of order (snapshot)"
+    },
+    "websiteBacklinkType": {
+      "type": "string",
+      "description": "Backlink type at time of order (snapshot)"
+    },
+    "websiteBacklinkValidity": {
+      "type": "string",
+      "description": "Backlink validity at time of order (snapshot)"
+    },
+    "websiteCategory": {
+      "type": "json",
+      "description": "Website categories at time of order (snapshot)"
+    },
+    "websitePublisherName": {
+      "type": "string",
+      "description": "Publisher name at time of order (snapshot)"
+    },
+    "websitePublisherEmail": {
+      "type": "string",
+      "description": "Publisher email at time of order (snapshot)"
+    },
+    "websitePublisherPrice": {
+      "type": "integer",
+      "description": "Publisher price at time of order (snapshot)"
+    },
+    "websiteTat": {
+      "type": "integer",
+      "description": "Turnaround time at time of order (snapshot)"
+    },
+    "websiteDofollowLink": {
+      "type": "integer",
+      "description": "Dofollow link count at time of order (snapshot)"
+    },
+    "websiteFastPlacement": {
+      "type": "boolean",
+      "description": "Fast placement status at time of order (snapshot)"
+    },
+    "websiteAhrefsDr": {
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
+      "description": "Ahrefs DR at time of order (snapshot)"
+    },
+    "websiteAhrefsTraffic": {
+      "type": "integer",
+      "description": "Ahrefs traffic at time of order (snapshot)"
+    },
+    "websiteMozDa": {
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
+      "description": "Moz DA at time of order (snapshot)"
+    },
+    "websiteLanguage": {
+      "type": "json",
+      "description": "Website languages at time of order (snapshot)"
+    },
+    "websiteCountries": {
+      "type": "json",
+      "description": "Website countries at time of order (snapshot)"
+    },
+    "serviceType": {
+      "type": "string",
+      "description": "Type of service (e.g., 'link_insertion', 'guest_post', etc.)"
+    },
+    "specialCategory": {
+      "type": "string",
+      "description": "Special pricing category (e.g., 'CBD', 'Casino', 'Crypto')"
+    },
+    "existingPostUrl": {
+      "type": "string",
+      "description": "URL of the existing post where the link will be inserted"
+    },
+    "anchorText": {
+      "type": "string",
+      "description": "The clickable text that will contain the link"
+    },
+    "landingPageUrl": {
+      "type": "string",
+      "description": "The URL where the link should point to"
+    },
+    "linkInsertionLanguage": {
+      "type": "string",
+      "description": "Language for the link insertion order"
+    },
+    "linkInsertionDescription": {
+      "type": "text",
+      "description": "Additional instructions or context for the link insertion"
+    },
+    "metadata": {
+      "type": "json",
+      "description": "Additional metadata for the order (e.g., spending breakdown for refunds)"
+    },
+    "cancellationReason": {
+      "type": "string",
+      "description": "Reason provided for cancellation"
+    },
+    "cancelledBy": {
+      "type": "string",
+      "enum": [
+        "advertiser",
+        "publisher",
+        "system"
+      ],
+      "description": "Who cancelled the order"
+    },
+    "cancelledAt": {
+      "type": "datetime",
+      "description": "When the order was cancelled"
+    },
+    "warningNotificationSentAt": {
+      "type": "datetime",
+      "description": "When the 30-day warning notification was sent"
+    },
+    "cancellationNotes": {
+      "type": "text",
+      "description": "Additional notes regarding cancellation"
     }
   }
 }

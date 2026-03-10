@@ -51,6 +51,19 @@ module.exports = {
         }
       },
     },
+    // Route to migrate marketplace snapshots to existing orders
+    {
+      method: 'POST',
+      path: '/orders/migrate-snapshots',
+      handler: 'order.migrateSnapshots',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update']
+        }
+      },
+    },
     // Route to fix links in order content
     {
       method: 'POST',
@@ -191,6 +204,19 @@ module.exports = {
         policies: [],
         auth: {
           scope: ['api::order.order.update'],
+        },
+      },
+    },
+    // Route for cancelling an order
+    {
+      method: 'POST',
+      path: '/orders/:id/cancel',
+      handler: 'order.cancelOrder',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.cancelOrder'],
         },
       },
     },

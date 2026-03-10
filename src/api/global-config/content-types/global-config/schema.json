@@ -1,5 +1,5 @@
 {
-  "kind": "collectionType",
+  "kind": "singleType",
   "collectionName": "global_configs",
   "info": {
     "singularName": "global-config",
@@ -22,13 +22,45 @@
     },
     "supportedCurrencies": {
       "type": "json",
-      "default": ["USD"],
+      "default": [
+        "USD"
+      ],
       "required": true
     },
     "autoApproveDays": {
       "type": "integer",
       "default": 5,
       "required": true
+    },
+    "paymentGateways": {
+      "type": "json",
+      "default": {
+        "stripe": {
+          "enabled": true,
+          "displayName": "Stripe",
+          "description": "Credit card payments via Stripe"
+        },
+        "paypal": {
+          "enabled": true,
+          "displayName": "PayPal",
+          "description": "PayPal payments"
+        },
+        "razorpay": {
+          "enabled": true,
+          "displayName": "Razorpay",
+          "description": "Razorpay payment gateway"
+        },
+        "phonepe": {
+          "enabled": true,
+          "displayName": "PhonePe",
+          "description": "PhonePe UPI payments"
+        }
+      },
+      "required": true
+    },
+    "newsletterEnabled": {
+      "type": "boolean",
+      "default": false
     }
   }
 }

@@ -10,22 +10,11 @@ module.exports = {
     // For development, handle requests without authentication
     if (!user && process.env.NODE_ENV !== 'production') {
       try {
-        // Find or create a demo wallet
-        let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-          where: { type: 'advertiser' }
-        });
+        // Find a demo wallet - any wallet will work since they're unified
+        let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({});
 
-        // If demo wallet doesn't exist, create one
         if (!wallet) {
-          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-            data: {
-              type: 'advertiser',
-              balance: 0.0,
-              escrowBalance: 0.0,
-              currency: 'USD',
-              publishedAt: new Date()
-            },
-          });
+          return ctx.notFound('Wallet not found');
         }
 
         return {
@@ -49,23 +38,19 @@ module.exports = {
         populate: ['user']
       });
 
-      // If wallet doesn't exist, create one
       if (!wallet) {
-        wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-          data: {
-            user: user.id,
-            type: 'advertiser',
-            balance: 0,
-            escrowBalance: 0,
-            currency: 'USD',
-            publishedAt: new Date()
-          },
-        });
+        return ctx.notFound('Wallet not found');
       }
 
+      // Get updated balance with separate tracking
+      const balanceData = await strapi.controller('api::user-wallet.user-wallet').getWalletBalance(user ? user.id : wallet.users_permissions_user);
+      
       return {
         id: wallet.id,
-        balance: wallet.balance,
+        balance: balanceData.totalBalance,
+        mainBalance: balanceData.mainBalance,
+        promoBalance: balanceData.promoBalance,
+        withdrawableBalance: balanceData.withdrawableBalance,
         escrowBalance: wallet.escrowBalance,
         currency: wallet.currency,
         type: wallet.type
@@ -101,28 +86,13 @@ module.exports = {
       let wallet;
       
       if (!user && process.env.NODE_ENV !== 'production') {
-        console.log('Creating transaction for development (no user)');
+        console.log('Checking for development wallet');
         
-        // Find an existing wallet
-        wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-          where: { type: 'advertiser' }
-        });
+        // Find an existing wallet - any wallet works since they're unified
+        wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({});
         
-        // If no wallet exists, create one
         if (!wallet) {
-          console.log('Creating a new advertiser wallet');
-          wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-            data: {
-              type: 'advertiser',
-              balance: 0.0,
-              escrowBalance: 0.0,
-              currency: 'USD',
-              publishedAt: new Date()
-            },
-          });
-          console.log('Created new wallet with ID:', wallet.id);
-        } else {
-          console.log('Found existing wallet with ID:', wallet.id);
+          return ctx.notFound('Wallet not found');
         }
       } else if (!user) {
         return ctx.unauthorized('You must be logged in');
@@ -133,14 +103,14 @@ module.exports = {
         });
         
         if (!wallet) {
-          return ctx.badRequest('Wallet not found');
+          return ctx.notFound('Wallet not found');
         }
       }
 
       // Double check that we have a valid wallet
       if (!wallet || !wallet.id) {
         console.error('Invalid wallet object:', wallet);
-        return ctx.badRequest('Could not find or create a valid wallet');
+        return ctx.notFound('Wallet not found');
       }
 
       console.log('Creating transaction with data:', {
@@ -159,7 +129,9 @@ module.exports = {
             netAmount: parsedAmount,
             transactionStatus: 'pending',
             gateway,
+            fund_source: 'main_fund', // Direct payments go to main balance
             user_wallet: wallet.id,
+            users_permissions_user: userId,
             publishedAt: new Date()
           },
         });
@@ -233,21 +205,11 @@ module.exports = {
     let wallet;
     
     if (!user && process.env.NODE_ENV !== 'production') {
-      // Find or create a demo wallet
-      wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { type: 'advertiser' }
-      });
+      // Find a demo wallet - any wallet works since they're unified
+      wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({});
       
       if (!wallet) {
-        wallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
-          data: {
-            type: 'advertiser',
-            balance: 1000,
-            escrowBalance: 200,
-            currency: 'USD',
-            publishedAt: new Date()
-          },
-        });
+        return ctx.notFound('Wallet not found');
       }
     } else if (!user) {
       return ctx.unauthorized('You must be logged in');
@@ -296,5 +258,132 @@ module.exports = {
     } catch (error) {
       ctx.throw(500, error);
     }
+  },
+
+  // Add promo funds to wallet
+  async addPromoFunds(ctx) {
+    try {
+      const { user } = ctx.state;
+      const { amount, promoCodeId, description } = ctx.request.body;
+      
+      if (!user) {
+        return ctx.unauthorized('You must be logged in');
+      }
+
+      const parsedAmount = parseFloat(amount);
+      if (!parsedAmount || parsedAmount <= 0) {
+        return ctx.badRequest('Invalid amount');
+      }
+
+      // Add promo funds using the new method
+      const result = await strapi.controller('api::user-wallet.user-wallet').addPromoFunds(
+        user.id, 
+        parsedAmount, 
+        promoCodeId, 
+        { description }
+      );
+
+      return ctx.send({
+        success: true,
+        message: 'Promo funds added successfully',
+        data: {
+          amount: parsedAmount,
+          newPromoBalance: result.newPromoBalance,
+          newTotalBalance: result.newTotalBalance
+        }
+      });
+
+    } catch (error) {
+      console.error('Error adding promo funds:', error);
+      return ctx.badRequest(error.message || 'Failed to add promo funds');
+    }
+  },
+
+  // Redeem promo code
+  async redeemPromoCode(ctx) {
+    try {
+      const { user } = ctx.state;
+      const { promoCode } = ctx.request.body;
+      
+      if (!user) {
+        return ctx.unauthorized('You must be logged in');
+      }
+
+      if (!promoCode) {
+        return ctx.badRequest('Promo code is required');
+      }
+
+      // Here you would validate the promo code against your promo code system
+      // For now, we'll create a simple validation structure
+      const promoCodeData = await this.validatePromoCode(promoCode, user.id);
+      
+      if (!promoCodeData.valid) {
+        return ctx.badRequest(promoCodeData.error);
+      }
+
+      // Add promo funds
+      const result = await strapi.controller('api::user-wallet.user-wallet').addPromoFunds(
+        user.id, 
+        promoCodeData.amount, 
+        promoCodeData.id, 
+        { 
+          description: `Promo code redemption: ${promoCode}`,
+          metadata: { promoCode, originalAmount: promoCodeData.originalAmount }
+        }
+      );
+
+      return ctx.send({
+        success: true,
+        message: 'Promo code redeemed successfully',
+        data: {
+          promoCode,
+          amount: promoCodeData.amount,
+          newPromoBalance: result.newPromoBalance,
+          newTotalBalance: result.newTotalBalance
+        }
+      });
+
+    } catch (error) {
+      console.error('Error redeeming promo code:', error);
+      return ctx.badRequest(error.message || 'Failed to redeem promo code');
+    }
+  },
+
+  // Validate promo code (placeholder - implement your promo code logic here)
+  async validatePromoCode(promoCode, userId) {
+    // This is a placeholder implementation
+    // You should implement your actual promo code validation logic here
+    
+    // Example promo codes for testing
+    const validPromoCodes = {
+      'WELCOME50': { amount: 50, originalAmount: 100, id: 'welcome50' },
+      'SAVE20': { amount: 20, originalAmount: 20, id: 'save20' },
+      'BONUS100': { amount: 100, originalAmount: 100, id: 'bonus100' }
+    };
+
+    const promoData = validPromoCodes[promoCode.toUpperCase()];
+    
+    if (!promoData) {
+      return { valid: false, error: 'Invalid promo code' };
+    }
+
+    // Check if user has already used this promo code
+    const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+      where: {
+        promo_code_id: promoData.id,
+        users_permissions_user: userId
+      }
+    });
+
+    if (existingTransaction) {
+      return { valid: false, error: 'Promo code already used' };
+    }
+
+    return {
+      valid: true,
+      amount: promoData.amount,
+      originalAmount: promoData.originalAmount,
+      id: promoData.id
+    };
   }
 }; 

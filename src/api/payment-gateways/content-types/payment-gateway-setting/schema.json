@@ -1,0 +1,80 @@
+{
+  "kind": "singleType",
+  "collectionName": "payment_gateway_settings",
+  "info": {
+    "singularName": "payment-gateway-setting",
+    "pluralName": "payment-gateway-settings",
+    "displayName": "Payment Gateway Settings",
+    "description": "Payment gateway configuration settings"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": false
+    },
+    "content-type-builder": {
+      "visible": false
+    }
+  },
+  "attributes": {
+    "stripeEnabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "paypalEnabled": {
+      "type": "boolean", 
+      "default": false
+    },
+    "razorpayEnabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "phonepeEnabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "bankTransferEnabled": {
+      "type": "boolean",
+      "default": true
+    },
+    "stripeFeePercentage": {
+      "type": "decimal",
+      "default": 2.9
+    },
+    "stripeFixedFee": {
+      "type": "decimal",
+      "default": 0.30
+    },
+    "paypalFeePercentage": {
+      "type": "decimal",
+      "default": 3.49
+    },
+    "paypalFixedFee": {
+      "type": "decimal",
+      "default": 0.49
+    },
+    "razorpayFeePercentage": {
+      "type": "decimal",
+      "default": 2.0
+    },
+    "razorpayGstPercentage": {
+      "type": "decimal",
+      "default": 18.0
+    },
+    "phonepeFeePercentage": {
+      "type": "decimal",
+      "default": 2.0
+    },
+    "phonepeGstPercentage": {
+      "type": "decimal",
+      "default": 18.0
+    },
+    "usdToInrRate": {
+      "type": "decimal",
+      "default": 83.25
+    }
+  }
+}
+

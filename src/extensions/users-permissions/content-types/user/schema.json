@@ -10,12 +10,18 @@
   },
   "options": {
     "draftAndPublish": false,
-    "timestamps": true
+    "timestamps": true,
+    "privateAttributes": [
+      "resetPasswordToken",
+      "confirmationToken",
+      "provider"
+    ]
   },
   "attributes": {
     "username": {
       "type": "string",
       "minLength": 3,
+      "maxLength": 30,
       "unique": true,
       "configurable": false,
       "required": true
@@ -24,7 +30,8 @@
       "type": "email",
       "minLength": 6,
       "configurable": false,
-      "required": true
+      "required": true,
+      "unique": true
     },
     "provider": {
       "type": "string",
@@ -32,7 +39,7 @@
     },
     "password": {
       "type": "password",
-      "minLength": 6,
+      "minLength": 8,
       "configurable": false,
       "private": true,
       "searchable": false
@@ -59,6 +66,10 @@
       "default": false,
       "configurable": false
     },
+    "clerkId": {
+      "type": "string",
+      "unique": true
+    },
     "role": {
       "type": "relation",
       "relation": "manyToOne",
@@ -67,7 +78,12 @@
       "configurable": false
     },
     "Advertiser": {
-      "type": "boolean"
+      "type": "boolean",
+      "default": true
+    },
+    "Publisher": {
+      "type": "boolean",
+      "default": false
     },
     "withdrawalRequests": {
       "type": "relation",
@@ -93,6 +109,12 @@
       "target": "api::order.order",
       "mappedBy": "publisher"
     },
+    "projects": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::project.project",
+      "mappedBy": "owner"
+    },
     "communications": {
       "type": "relation",
       "relation": "oneToMany",
@@ -100,10 +122,12 @@
       "mappedBy": "sender"
     },
     "firstName": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 50
     },
     "lastName": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 50
     },
     "businessName": {
       "type": "string"
@@ -111,11 +135,11 @@
     "billingAddress": {
       "type": "string"
     },
-    "registrationNumber":{
-      "type":"string"
+    "registrationNumber": {
+      "type": "string"
     },
-    "city":{
-      "type":"string"
+    "city": {
+      "type": "string"
     },
     "country": {
       "type": "string"
@@ -134,7 +158,11 @@
     },
     "identity": {
       "type": "enumeration",
-      "enum": ["SEO", "Agency", "Other"]
+      "enum": [
+        "SEO",
+        "Agency",
+        "Other"
+      ]
     },
     "invoices": {
       "type": "relation",
@@ -143,11 +171,11 @@
       "mappedBy": "user"
     },
     "transactions": {
-          "type": "relation",
-          "relation": "oneToMany",
-          "target": "api::transaction.transaction",
-          "mappedBy": "users_permissions_user"
-        },
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::transaction.transaction",
+      "mappedBy": "users_permissions_user"
+    },
     "notificationPreferences": {
       "type": "json",
       "configurable": true,
@@ -167,6 +195,31 @@
         "notifyPlatformNewsApp": true,
         "notifyPromotionsEmail": false,
         "notifyPromotionsApp": false
+      }
+    },
+    "saved_filters": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::saved-filter.saved-filter",
+      "mappedBy": "users_permissions_user"
+    },
+    "onboardingState": {
+      "type": "json",
+      "configurable": true,
+      "private": false,
+      "default": {
+        "marketplace": {
+          "completed": false,
+          "skipped": false
+        }
+      }
+    },
+    "marketplacePreferences": {
+      "type": "json",
+      "configurable": true,
+      "private": false,
+      "default": {
+        "showSensitive": false
       }
     }
   }

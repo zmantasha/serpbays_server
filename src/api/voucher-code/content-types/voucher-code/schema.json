@@ -1,0 +1,51 @@
+{
+  "kind": "collectionType",
+  "collectionName": "voucher_codes",
+  "info": {
+    "singularName": "voucher-code",
+    "pluralName": "voucher-codes",
+    "displayName": "Voucher Code",
+    "description": ""
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "code": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "amount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "voucherStatus": {
+      "type": "enumeration",
+      "enum": [
+        "active",
+        "used",
+        "expired",
+        "inactive"
+      ],
+      "default": "active",
+      "required": true
+    },
+    "expiryDate": {
+      "type": "datetime",
+      "required": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "usedBy": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "usedAt": {
+      "type": "datetime"
+    }
+  }
+}

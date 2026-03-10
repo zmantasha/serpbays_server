@@ -1,0 +1,190 @@
+# Admin Panel API Tests
+# First, start your Strapi server with: npm run develop
+
+### 1. Admin Login
+POST http://localhost:1337/api/admin/login
+Content-Type: application/json
+
+{
+  "identifier": "admin@serpbays.com",
+  "password": "admin123"
+}
+
+### Store the JWT token from the login response and use it in subsequent requests
+@token = {{LOGIN_RESPONSE.jwt}}
+
+### 2. Get Admin Dashboard Stats
+GET http://localhost:1337/api/admin/dashboard/stats
+Authorization: Bearer {{token}}
+
+### 3. Get Admin User Info
+GET http://localhost:1337/api/admin/me
+Authorization: Bearer {{token}}
+
+### 4. Get Recent Activities
+GET http://localhost:1337/api/admin/dashboard/activities
+Authorization: Bearer {{token}}
+
+### 5. Get Users List
+GET http://localhost:1337/api/admin/users?page=1&pageSize=10
+Authorization: Bearer {{token}}
+
+### 6. Get User Statistics
+GET http://localhost:1337/api/admin/users/stats
+Authorization: Bearer {{token}}
+
+### 7. Get Specific User Details
+GET http://localhost:1337/api/admin/users/1
+Authorization: Bearer {{token}}
+
+### 8. Update User Status (Block/Unblock)
+PUT http://localhost:1337/api/admin/users/1/block
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "blocked": false
+}
+
+### 9. Get Orders List
+GET http://localhost:1337/api/admin/orders?page=1&pageSize=10
+Authorization: Bearer {{token}}
+
+### 10. Get Order Statistics
+GET http://localhost:1337/api/admin/orders/stats
+Authorization: Bearer {{token}}
+
+### 11. Get Transactions List
+GET http://localhost:1337/api/admin/transactions?page=1&pageSize=10
+Authorization: Bearer {{token}}
+
+### 12. Get Transaction Statistics
+GET http://localhost:1337/api/admin/transactions/stats
+Authorization: Bearer {{token}}
+
+### 13. Get Withdrawals List
+GET http://localhost:1337/api/admin/withdrawals?page=1&pageSize=10
+Authorization: Bearer {{token}}
+
+### 14. Get Withdrawal Statistics
+GET http://localhost:1337/api/admin/withdrawals/stats
+Authorization: Bearer {{token}}
+
+### 15. Get Communications List
+GET http://localhost:1337/api/admin/communications?page=1&pageSize=10
+Authorization: Bearer {{token}}
+
+### 16. Get Communication Statistics
+GET http://localhost:1337/api/admin/communications/stats
+Authorization: Bearer {{token}}
+
+### 17. Get Marketplace Websites List
+GET http://localhost:1337/api/admin/marketplace?page=1&pageSize=10
+Authorization: Bearer {{token}}
+
+### 18. Get Marketplace Statistics
+GET http://localhost:1337/api/admin/marketplace/stats
+Authorization: Bearer {{token}}
+
+### 19. Send Admin Message
+POST http://localhost:1337/api/admin/communications/send
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "orderId": 1,
+  "message": "This is an admin message for testing",
+  "messageType": "admin_notification"
+}
+
+### 20. Update Order Status
+PUT http://localhost:1337/api/admin/orders/1/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "orderStatus": "in_progress",
+  "adminNotes": "Order reviewed and approved by admin"
+}
+
+### 21. Approve Transaction
+PUT http://localhost:1337/api/admin/transactions/1/approve
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "notes": "Transaction approved after verification"
+}
+
+### 22. Approve Withdrawal Request
+PUT http://localhost:1337/api/admin/withdrawals/1/approve
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "adminNotes": "Withdrawal approved",
+  "paymentReference": "PAY-123456789"
+}
+
+### 23. Update Marketplace Website
+PUT http://localhost:1337/api/admin/marketplace/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Updated Website Title",
+  "category": "Technology",
+  "metrics": {
+    "da": 45,
+    "dr": 40,
+    "traffic": "50K"
+  },
+  "financial": {
+    "price": 200,
+    "commission": 20
+  }
+}
+
+### 24. Toggle Marketplace Website Status
+PUT http://localhost:1337/api/admin/marketplace/1/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "active": true
+}
+
+### 25. Generate Transaction Report
+GET http://localhost:1337/api/admin/transactions/report?startDate=2024-01-01&endDate=2024-12-31
+Authorization: Bearer {{token}}
+
+### 26. Bulk Import Marketplace Websites
+POST http://localhost:1337/api/admin/marketplace/bulk-import
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "websites": [
+    {
+      "domain": "example-blog.com",
+      "title": "Example Blog",
+      "category": "Technology",
+      "da": 35,
+      "traffic": "25K",
+      "price": 150,
+      "status": "Active"
+    },
+    {
+      "domain": "test-website.com",
+      "title": "Test Website",
+      "category": "Business",
+      "da": 28,
+      "traffic": "15K",
+      "price": 120,
+      "status": "Active"
+    }
+  ],
+  "duplicateCheck": true,
+  "replaceExisting": false
+}
+

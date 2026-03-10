@@ -7,12 +7,12 @@
 const { createCoreService } = require('@strapi/strapi').factories;
 
 module.exports = createCoreService('api::notification.notification', ({ strapi }) => ({
-  
+
   // Create a notification
   async createNotification(data) {
     try {
       console.log(`[NotificationService] Creating notification with data:`, JSON.stringify(data, null, 2));
-      
+
       // Validate required fields
       if (!data.recipientId) {
         throw new Error('recipientId is required');
@@ -38,7 +38,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
         console.log(`[NotificationService] Notification skipped for user ${data.recipientId} due to preferences`);
         return null;
       }
-      
+
       const notification = await strapi.entityService.create('api::notification.notification', {
         data: {
           title: data.title,
@@ -51,7 +51,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
           isRead: false
         }
       });
-      
+
       console.log(`[NotificationService] Notification created successfully: ${notification.id} for user ${data.recipientId} - Action: ${data.action}`);
       return notification;
     } catch (error) {
@@ -114,6 +114,11 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
           title = 'Delivery Accepted';
           message = `Your delivery for order #${orderId} has been accepted by the advertiser.`;
           break;
+        case 'order_cancelled':
+          recipientId = additionalData.recipientId;
+          title = 'Order Cancelled';
+          message = `Order #${orderId} has been cancelled by ${additionalData.cancelledBy}.${additionalData.reason ? ` Reason: ${additionalData.reason}` : ''}`;
+          break;
         default:
           throw new Error(`Unknown order action: ${action}`);
       }
@@ -132,7 +137,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       throw error;
     }
   },
-  
+
   // Create payment-related notifications
   async createPaymentNotification(userId, action, amount, orderId = null) {
     try {
@@ -174,16 +179,16 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       throw error;
     }
   },
-  
+
   // Create communication-related notifications
   async createCommunicationNotification(recipientId, senderId, orderId, action = 'message_received') {
     try {
       const sender = await strapi.entityService.findOne('plugin::users-permissions.user', senderId);
-      
+
       return await this.createNotification({
         title: 'New Message',
         message: `You have received a new message from ${sender.username || sender.email}.`,
-        type: 'message',
+        type: 'communication',
         action,
         recipientId,
         relatedOrderId: orderId,
@@ -195,12 +200,12 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       throw error;
     }
   },
-  
+
   // Create system notifications
   async createSystemNotification(userId, title, message, action = 'system_update') {
     try {
       console.log(`[NotificationService] Creating system notification - User: ${userId}, Action: ${action}`);
-      
+
       return await this.createNotification({
         title,
         message,
@@ -213,17 +218,17 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       throw error;
     }
   },
-  
+
   // Bulk create notifications for multiple users
   async createBulkNotifications(notifications) {
     try {
       const createdNotifications = [];
-      
+
       for (const notificationData of notifications) {
         const notification = await this.createNotification(notificationData);
         createdNotifications.push(notification);
       }
-      
+
       console.log(`Created ${createdNotifications.length} bulk notifications`);
       return createdNotifications;
     } catch (error) {
@@ -231,28 +236,28 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       throw error;
     }
   },
-  
+
   // Get notification statistics for a user
   async getUserNotificationStats(userId) {
     try {
       const total = await strapi.db.query('api::notification.notification').count({
         where: { recipient: userId }
       });
-      
+
       const unread = await strapi.db.query('api::notification.notification').count({
         where: { recipient: userId, isRead: false }
       });
-      
+
       const byType = await strapi.db.query('api::notification.notification').findMany({
         where: { recipient: userId },
         select: ['type'],
       });
-      
+
       const typeStats = byType.reduce((acc, notification) => {
         acc[notification.type] = (acc[notification.type] || 0) + 1;
         return acc;
       }, {});
-      
+
       return {
         total,
         unread,

@@ -30,6 +30,10 @@
       "type": "text",
       "description": "Comma-separated keywords"
     },
+    "anchorText": {
+      "type": "json",
+      "description": "Array of anchor texts"
+    },
     "links": {
       "type": "json",
       "description": "Array of links included in the content"

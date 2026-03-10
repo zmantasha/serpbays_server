@@ -1,0 +1,52 @@
+{
+  "kind": "collectionType",
+  "collectionName": "admin_audit_logs",
+  "info": {
+    "singularName": "admin-audit-log",
+    "pluralName": "admin-audit-logs",
+    "displayName": "Admin Audit Log",
+    "description": "Track all admin operations for security and compliance"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "adminUser": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "required": true
+    },
+    "action": {
+      "type": "string",
+      "required": true,
+      "maxLength": 100
+    },
+    "targetUser": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "details": {
+      "type": "json",
+      "required": true
+    },
+    "ipAddress": {
+      "type": "string",
+      "maxLength": 45
+    },
+    "userAgent": {
+      "type": "text"
+    },
+    "createdAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "updatedAt": {
+      "type": "datetime",
+      "required": true
+    }
+  }
+}
+

@@ -39,6 +39,19 @@ module.exports = {
         }
       },
     },
+    // Route for exporting all my withdrawals
+    {
+      method: 'GET',
+      path: '/withdrawal-requests/my/export',
+      handler: 'withdrawal-request.exportAllMyWithdrawals',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::withdrawal-request.withdrawal-request.find']
+        }
+      },
+    },
     // Route for admins to approve a withdrawal request
     {
       method: 'POST',

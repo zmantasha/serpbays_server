@@ -8,18 +8,21 @@
     "description": "Wallet system for advertisers and publishers"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
-  "pluginOptions": {},
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": true
+    }
+  },
   "attributes": {
     "type": {
-      "type": "enumeration",
-      "enum": [
-        "advertiser",
-        "publisher"
-      ],
-      "required": true,
-      "unique": false
+      "type": "string",
+      "default": "unified",
+      "required": true
     },
     "currency": {
       "type": "string",
@@ -30,7 +33,22 @@
       "type": "decimal",
       "default": 0,
       "required": true,
-      "min": 0
+      "min": 0,
+      "description": "Total balance (mainBalance + promoBalance) - computed field"
+    },
+    "mainBalance": {
+      "type": "decimal",
+      "default": 0,
+      "required": true,
+      "min": 0,
+      "description": "Withdrawable funds from direct payments"
+    },
+    "promoBalance": {
+      "type": "decimal",
+      "default": 0,
+      "required": true,
+      "min": 0,
+      "description": "Non-withdrawable funds from vouchers/promo codes"
     },
     "escrowBalance": {
       "type": "decimal",
@@ -38,15 +56,12 @@
       "required": true,
       "min": 0
     },
-    "status": {
-      "type": "enumeration",
-      "enum": [
-        "active",
-        "suspended",
-        "closed"
-      ],
-      "default": "active",
-      "required": true
+    "pendingWithdrawalBalance": {
+      "type": "decimal",
+      "default": 0,
+      "required": true,
+      "min": 0,
+      "description": "Amount requested for withdrawal but not yet processed"
     },
     "users_permissions_user": {
       "type": "relation",

@@ -8,13 +8,14 @@
     "description": "Wallet transactions for deposits, withdrawals, and escrow"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "attributes": {
     "type": {
       "type": "enumeration",
       "enum": [
         "deposit",
+        "promo",
         "escrow_hold",
         "escrow_release",
         "payment",
@@ -32,7 +33,16 @@
     },
     "transactionStatus": {
       "type": "enumeration",
-      "enum":  ["pending", "success", "failed", "cancelled", "refunded"],
+      "enum": [
+        "pending",
+        "success",
+        "failed",
+        "cancelled",
+        "approved",
+        "refunded",
+        "denied",
+        "paid"
+      ],
       "default": "pending",
       "required": true
     },
@@ -42,7 +52,9 @@
         "stripe",
         "paypal",
         "razorpay",
-        "test"
+        "promo",
+        "voucher",
+        "system"
       ],
       "required": true
     },
@@ -88,6 +100,31 @@
       "type": "relation",
       "relation": "oneToOne",
       "target": "api::invoice.invoice"
+    },
+    "external_transaction_id": {
+      "type": "string",
+      "maxLength": 255,
+      "description": "External payment transaction ID (PayPal, Bank, etc.)"
+    },
+    "payment_notes": {
+      "type": "text",
+      "description": "Payment notes from withdrawal request"
+    },
+    "denial_reason": {
+      "type": "text",
+      "description": "Reason for denying withdrawal request"
+    },
+    "promo_code_id": {
+      "type": "string",
+      "description": "ID of the promo code used for this transaction"
+    },
+    "fund_source": {
+      "type": "enumeration",
+      "enum": [
+        "main_fund",
+        "promo_fund"
+      ],
+      "description": "Source of funds for this transaction"
     }
   }
 }

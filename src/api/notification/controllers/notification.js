@@ -7,35 +7,15 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 
 module.exports = createCoreController('api::notification.notification', ({ strapi }) => ({
-  
+
   // Helper function to check if notification should be sent based on user preferences
   async shouldSendNotification(userId, type, isEmail) {
     try {
-      // Get user with notification preferences
-      const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId, {
-        populate: ['notificationPreferences']
-      });
-
-      if (!user || !user.notificationPreferences) {
-        return true; // Default to sending if no preferences set
-      }
-
-      const prefs = user.notificationPreferences;
-      
-      // Map notification type to preference key
-      const prefMap = {
-        'order': isEmail ? 'notifyOrderStatusChangeEmail' : 'notifyOrderStatusChangeApp',
-        'message': isEmail ? 'notifyOrderMessagesEmail' : 'notifyOrderMessagesApp',
-        'marketplace': isEmail ? 'notifyMarketplaceNewItemEmail' : 'notifyMarketplaceNewItemApp',
-        'payment': isEmail ? 'notifyWalletBillingUpdatesEmail' : 'notifyWalletBillingUpdatesApp',
-        'system': isEmail ? 'notifySecurityAlertsEmail' : 'notifySecurityAlertsApp',
-        'promotion': isEmail ? 'notifyPromotionsEmail' : 'notifyPromotionsApp'
-      };
-
-      const prefKey = prefMap[type];
-      return prefKey ? prefs[prefKey] : true;
+      // TODO: Implement user notification preferences
+      // For now, always send notifications
+      return true;
     } catch (error) {
-      console.error('Error checking notification preferences:', error);
+      console.error('[Notification] Error checking notification preferences:', error);
       return true; // Default to sending on error
     }
   },
@@ -47,29 +27,29 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
       const { type, isRead, action, limit = 50, offset = 0 } = ctx.query;
-      
+
       // Build filters
       const filters = {
         recipient: { id: userId }
       };
-      
+
       if (type) {
         filters.type = type;
       }
-      
+
       if (isRead !== undefined) {
         filters.isRead = isRead === 'true';
       }
-      
+
       if (action) {
         filters.action = action;
       }
-      
+
       console.log(`[NotificationController] getMyNotifications for user ${userId} with filters:`, JSON.stringify(filters, null, 2));
-      
+
       // Get notifications
       const notifications = await strapi.entityService.findMany('api::notification.notification', {
         filters,
@@ -78,10 +58,10 @@ module.exports = createCoreController('api::notification.notification', ({ strap
         start: parseInt(offset),
         populate: ['recipient']
       });
-      
+
       console.log(`[NotificationController] Raw notifications from DB for user ${userId}:`, JSON.stringify(notifications, null, 2));
       console.log(`Retrieved ${notifications.length} notifications for user ${userId}`);
-      
+
       return {
         data: notifications,
         meta: {
@@ -93,7 +73,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       return ctx.internalServerError('An error occurred while fetching notifications');
     }
   },
-  
+
   // Mark a notification as read
   async markAsRead(ctx) {
     try {
@@ -101,32 +81,50 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const { id } = ctx.params;
       const userId = ctx.state.user.id;
-      
+
       // Get the notification and verify ownership
       const notification = await strapi.entityService.findOne('api::notification.notification', id, {
         populate: ['recipient']
       });
-      
+
       if (!notification) {
         return ctx.notFound('Notification not found');
       }
-      
+
       if (notification.recipient.id !== userId) {
         return ctx.forbidden('You can only mark your own notifications as read');
       }
-      
+
       // Update the notification
       const updatedNotification = await strapi.entityService.update('api::notification.notification', id, {
         data: {
           isRead: true
         }
       });
-      
+
+      // Get updated unread count
+      const unreadCount = await strapi.db.query('api::notification.notification').count({
+        where: {
+          recipient: userId,
+          isRead: false
+        }
+      });
+
+      // Emit updated unread count via WebSocket
+      if (userId && strapi.io && strapi.io.emitToUser) {
+        const userChannel = `user_${userId}_notification`;
+        console.log(`📤 Emitting unread count update to ${userChannel}: ${unreadCount}`);
+        strapi.io.emitToUser(userId, userChannel, {
+          type: 'notification_count',
+          data: { unreadCount }
+        });
+      }
+
       console.log(`Notification ${id} marked as read by user ${userId}`);
-      
+
       return {
         data: updatedNotification,
         meta: {
@@ -138,7 +136,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       return ctx.internalServerError('An error occurred while marking notification as read');
     }
   },
-  
+
   // Mark all notifications as read for the current user
   async markAllAsRead(ctx) {
     try {
@@ -146,9 +144,9 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
-      
+
       // Get all unread notifications for the user
       const unreadNotifications = await strapi.entityService.findMany('api::notification.notification', {
         filters: {
@@ -156,18 +154,28 @@ module.exports = createCoreController('api::notification.notification', ({ strap
           isRead: false
         }
       });
-      
+
       // Update all unread notifications
       const updatePromises = unreadNotifications.map(notification =>
         strapi.entityService.update('api::notification.notification', notification.id, {
           data: { isRead: true }
         })
       );
-      
+
       await Promise.all(updatePromises);
-      
+
+      // Emit zero unread count via WebSocket
+      if (userId && strapi.io && strapi.io.emitToUser) {
+        const userChannel = `user_${userId}_notification`;
+        console.log(`📤 Emitting unread count update to ${userChannel}: 0`);
+        strapi.io.emitToUser(userId, userChannel, {
+          type: 'notification_count',
+          data: { unreadCount: 0 }
+        });
+      }
+
       console.log(`Marked ${unreadNotifications.length} notifications as read for user ${userId}`);
-      
+
       return {
         data: { updatedCount: unreadNotifications.length },
         meta: {
@@ -179,7 +187,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       return ctx.internalServerError('An error occurred while marking all notifications as read');
     }
   },
-  
+
   // Delete a notification
   async deleteNotification(ctx) {
     try {
@@ -187,28 +195,28 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const { id } = ctx.params;
       const userId = ctx.state.user.id;
-      
+
       // Get the notification and verify ownership
       const notification = await strapi.entityService.findOne('api::notification.notification', id, {
         populate: ['recipient']
       });
-      
+
       if (!notification) {
         return ctx.notFound('Notification not found');
       }
-      
+
       if (notification.recipient.id !== userId) {
         return ctx.forbidden('You can only delete your own notifications');
       }
-      
+
       // Delete the notification
       await strapi.entityService.delete('api::notification.notification', id);
-      
+
       console.log(`Notification ${id} deleted by user ${userId}`);
-      
+
       return {
         data: { id },
         meta: {
@@ -220,7 +228,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       return ctx.internalServerError('An error occurred while deleting notification');
     }
   },
-  
+
   // Get unread notification count
   async getUnreadCount(ctx) {
     try {
@@ -228,9 +236,9 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
-      
+
       // Count unread notifications
       const count = await strapi.db.query('api::notification.notification').count({
         where: {
@@ -238,7 +246,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
           isRead: false
         }
       });
-      
+
       return {
         count
       };
@@ -247,7 +255,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       return ctx.internalServerError('An error occurred while getting unread count');
     }
   },
-  
+
   // Create a test notification (for development)
   async createTestNotification(ctx) {
     try {
@@ -255,10 +263,10 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const { title, message, type, action, relatedOrderId } = ctx.request.body;
       const userId = ctx.state.user.id;
-      
+
       // Create the notification
       const notification = await strapi.entityService.create('api::notification.notification', {
         data: {
@@ -271,9 +279,9 @@ module.exports = createCoreController('api::notification.notification', ({ strap
           isRead: false
         }
       });
-      
+
       console.log(`Test notification created for user ${userId}:`, notification.id);
-      
+
       return {
         data: notification,
         meta: {
@@ -293,14 +301,14 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const { orderId, action = 'new_order' } = ctx.request.body;
       const userId = ctx.state.user.id;
-      
+
       if (!orderId) {
         return ctx.badRequest('orderId is required');
       }
-      
+
       // Test creating an order notification
       const notification = await strapi.service('api::notification.notification').createOrderNotification(
         orderId,
@@ -308,9 +316,9 @@ module.exports = createCoreController('api::notification.notification', ({ strap
         userId, // advertiserId (same user for testing)
         action
       );
-      
+
       console.log(`Test order notification created:`, notification.id);
-      
+
       return {
         data: notification,
         meta: {
@@ -330,13 +338,13 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
       const testOrderId = 1; // Use a test order ID
       const testAmount = 100;
-      
+
       const results = [];
-      
+
       // Test all order notification types
       const orderActions = [
         'new_order',
@@ -348,7 +356,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
         'revision_completed',
         'delivery_accepted_by_advertiser'
       ];
-      
+
       for (const action of orderActions) {
         try {
           const notification = await strapi.service('api::notification.notification').createOrderNotification(
@@ -362,10 +370,10 @@ module.exports = createCoreController('api::notification.notification', ({ strap
           results.push({ action, status: 'error', error: error.message });
         }
       }
-      
+
       // Test payment notification types
       const paymentActions = ['payment_received', 'withdrawal_approved', 'withdrawal_denied', 'withdrawal_paid'];
-      
+
       for (const action of paymentActions) {
         try {
           const notification = await strapi.service('api::notification.notification').createPaymentNotification(
@@ -379,7 +387,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
           results.push({ action, status: 'error', error: error.message });
         }
       }
-      
+
       // Test communication notification
       try {
         const notification = await strapi.service('api::notification.notification').createCommunicationNotification(
@@ -392,7 +400,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       } catch (error) {
         results.push({ action: 'message_received', status: 'error', error: error.message });
       }
-      
+
       // Test system notification
       try {
         const notification = await strapi.service('api::notification.notification').createSystemNotification(
@@ -405,9 +413,9 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       } catch (error) {
         results.push({ action: 'system_update', status: 'error', error: error.message });
       }
-      
+
       console.log(`Test notifications created. Results:`, results);
-      
+
       return {
         data: results,
         meta: {
@@ -430,10 +438,10 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
       console.log(`[NotificationController] Testing basic notification for user ${userId}`);
-      
+
       // Test creating a simple notification directly
       const notification = await strapi.entityService.create('api::notification.notification', {
         data: {
@@ -445,9 +453,9 @@ module.exports = createCoreController('api::notification.notification', ({ strap
           isRead: false
         }
       });
-      
+
       console.log(`[NotificationController] Basic notification created: ${notification.id}`);
-      
+
       return {
         data: notification,
         meta: {
@@ -467,25 +475,25 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
       const testAmount = 100;
-      
+
       const results = [];
-      
+
       // Test all withdrawal notification types
       const withdrawalActions = ['withdrawal_approved', 'withdrawal_denied', 'withdrawal_paid'];
-      
+
       for (const action of withdrawalActions) {
         try {
           console.log(`[NotificationController] Testing ${action} notification for user ${userId}`);
-          
+
           const notification = await strapi.service('api::notification.notification').createPaymentNotification(
             userId,
             action,
             testAmount
           );
-          
+
           results.push({ action, status: 'success', notificationId: notification.id });
           console.log(`[NotificationController] Successfully created ${action} notification: ${notification.id}`);
         } catch (error) {
@@ -493,9 +501,9 @@ module.exports = createCoreController('api::notification.notification', ({ strap
           results.push({ action, status: 'error', error: error.message });
         }
       }
-      
+
       console.log(`[NotificationController] Withdrawal notification test results:`, results);
-      
+
       return {
         data: results,
         meta: {
@@ -518,7 +526,7 @@ module.exports = createCoreController('api::notification.notification', ({ strap
 
       // Check if notification should be sent based on user preferences
       const shouldSend = await this.shouldSendNotification(recipientId, type, isEmail);
-      
+
       if (!shouldSend) {
         return {
           data: null,
@@ -578,7 +586,7 @@ const createNotification = async (strapi, data) => {
         isRead: false
       }
     });
-    
+
     console.log(`Notification created: ${notification.id} for user ${data.recipientId}`);
     return notification;
   } catch (error) {

@@ -1,0 +1,72 @@
+{
+  "kind": "collectionType",
+  "collectionName": "reseller_codes",
+  "info": {
+    "singularName": "reseller-code",
+    "pluralName": "reseller-codes",
+    "displayName": "Reseller Code",
+    "description": "Codes for resellers to bypass website verification"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "code": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "maxLength": 50,
+      "description": "Unique reseller code"
+    },
+    "assignedTo": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Publisher who owns this code"
+    },
+    "assignedToName": {
+      "type": "string",
+      "description": "Name/identifier of the reseller"
+    },
+    "usageLimit": {
+      "type": "integer",
+      "default": null,
+      "description": "Maximum number of times this code can be used (null = unlimited)"
+    },
+    "usedCount": {
+      "type": "integer",
+      "default": 0,
+      "description": "Number of times this code has been used"
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this code is currently active"
+    },
+    "expiresAt": {
+      "type": "datetime",
+      "description": "When this code expires (null = never expires)"
+    },
+    "createdBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "admin::user",
+      "description": "Admin who created this code"
+    },
+    "notes": {
+      "type": "text",
+      "description": "Admin notes about this code"
+    },
+    "lastUsedAt": {
+      "type": "datetime",
+      "description": "When this code was last used"
+    },
+    "lastUsedBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Last user who used this code"
+    }
+  }
+}

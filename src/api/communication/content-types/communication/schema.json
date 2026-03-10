@@ -28,6 +28,12 @@
       "target": "api::order.order",
       "inversedBy": "communications"
     },
+    "chatroom": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::chatroom.chatroom",
+      "inversedBy": "communications"
+    },
     "communicationStatus": {
       "type": "enumeration",
       "enum": [
@@ -36,6 +42,10 @@
         "in_progress"
       ],
       "default": "requested"
+    },
+    "isUnread": {
+      "type": "boolean",
+      "default": true
     }
   }
-} 
+}

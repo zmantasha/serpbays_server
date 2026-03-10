@@ -23,7 +23,12 @@
     },
     "type": {
       "type": "enumeration",
-      "enum": ["order", "payment", "system", "communication"],
+      "enum": [
+        "order",
+        "payment",
+        "system",
+        "communication"
+      ],
       "required": true,
       "default": "system"
     },
@@ -31,7 +36,7 @@
       "type": "enumeration",
       "enum": [
         "new_order",
-        "order_accepted", 
+        "order_accepted",
         "order_rejected",
         "order_delivered",
         "order_completed",
@@ -44,7 +49,8 @@
         "withdrawal_paid",
         "message_received",
         "delivery_accepted_by_advertiser",
-        "system_update"
+        "system_update",
+        "order_cancelled"
       ],
       "required": true
     },
@@ -69,4 +75,4 @@
       "target": "plugin::users-permissions.user"
     }
   }
-} 
+}

@@ -1,0 +1,34 @@
+{
+  "kind": "collectionType",
+  "collectionName": "shortlists",
+  "info": {
+    "singularName": "shortlist",
+    "pluralName": "shortlists",
+    "displayName": "Shortlist",
+    "description": "User-shortlisted marketplace items for projects"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": true
+    }
+  },
+  "attributes": {
+    "marketplace": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::marketplace.marketplace",
+      "inversedBy": "shortlists"
+    },
+    "owner": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    }
+  }
+}

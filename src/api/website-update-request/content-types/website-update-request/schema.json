@@ -1,0 +1,73 @@
+{
+  "kind": "collectionType",
+  "collectionName": "website_update_requests",
+  "info": {
+    "singularName": "website-update-request",
+    "pluralName": "website-update-requests",
+    "displayName": "Website Update Request",
+    "description": "Pending changes submitted for a marketplace website"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "superseded"
+      ],
+      "default": "pending",
+      "required": true
+    },
+    "source": {
+      "type": "enumeration",
+      "enum": [
+        "publisher",
+        "admin"
+      ],
+      "default": "publisher",
+      "required": true
+    },
+    "changes": {
+      "type": "json",
+      "required": true
+    },
+    "baseSnapshot": {
+      "type": "json"
+    },
+    "notes": {
+      "type": "text"
+    },
+    "submittedBy": {
+      "type": "string"
+    },
+    "reviewedBy": {
+      "type": "string"
+    },
+    "submittedAt": {
+      "type": "datetime"
+    },
+    "reviewedAt": {
+      "type": "datetime"
+    },
+    "marketplace": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::marketplace.marketplace",
+      "inversedBy": "updateRequests"
+    },
+    "publisherWebsite": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::publisher-website.publisher-website",
+      "inversedBy": "updateRequests"
+    },
+    "dataVersion": {
+      "type": "integer",
+      "default": 0
+    }
+  }
+}

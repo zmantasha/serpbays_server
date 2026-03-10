@@ -8,7 +8,12 @@
     "description": ""
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "publisher_name",
+      "publisher_email",
+      "gsc_refresh_token"
+    ]
   },
   "attributes": {
     "url": {
@@ -18,25 +23,43 @@
     },
     "price": {
       "type": "integer",
-      "required": true
+      "required": true,
+      "min": 0
     },
     "link_insertion_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "tat": {
       "type": "integer"
     },
+    "placement_speed": {
+      "type": "enumeration",
+      "enum": [
+        "Ultra Fast",
+        "Fast",
+        "Normal",
+        "Slow"
+      ],
+      "default": "Normal"
+    },
     "min_word_count": {
       "type": "integer",
-      "required": true
+      "required": true,
+      "min": 0
     },
-    "forbidden_gp_price": {
-      "type": "integer"
+    "adv_li_cbd_pricing": {
+      "type": "integer",
+      "min": 0
     },
-    "forbidden_li_price": {
-      "type": "integer"
+    "adv_li_casino_pricing": {
+      "type": "integer",
+      "min": 0
     },
     "sample_post": {
+      "type": "text"
+    },
+    "sample_links": {
       "type": "text"
     },
     "backlink_type": {
@@ -56,24 +79,41 @@
       "type": "json"
     },
     "guidelines": {
+      "type": "text"
+    },
+    "description": {
       "type": "text",
-      "default": "N/A"
+      "description": "Website description and audience information"
+    },
+    "publication_location": {
+      "type": "text",
+      "description": "Where the article will be published - publisher-defined text describing publication location"
     },
     "backlink_validity": {
       "type": "string",
       "required": true
     },
     "ahrefs_dr": {
-      "type": "integer"
+      "type": "decimal",
+      "min": 0,
+      "max": 100
     },
     "ahrefs_traffic": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "ahrefs_rank": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
+    },
+    "ahrefs_keywords": {
+      "type": "integer",
+      "min": 0
     },
     "moz_da": {
-      "type": "integer"
+      "type": "decimal",
+      "max": 100,
+      "min": 0
     },
     "fast_placement_status": {
       "type": "boolean",
@@ -87,51 +127,107 @@
       "type": "email",
       "required": true
     },
+    "publisher": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Publisher who owns this marketplace listing"
+    },
     "publisher_price": {
       "type": "integer",
-      "required": true
+      "required": true,
+      "min": 0
     },
     "publisher_forbidden_gp_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_forbidden_li_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_link_insertion_price": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_writing_price": {
+      "type": "integer",
+      "min": 0,
+      "description": "The price the publisher charges for writing content (outsourced content orders)"
     },
     "semrush_authority_score": {
-      "type": "integer"
+      "type": "decimal",
+      "min": 0,
+      "max": 100
     },
     "semrush_traffic": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "spam_score": {
-      "type": "integer"
+      "type": "decimal",
+      "min": 0,
+      "max": 100
     },
     "adv_crypto_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "adv_casino_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "adv_cbd_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_crypto_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_casino_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "publisher_cbd_pricing": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
+    },
+    "adv_dating_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "adv_li_dating_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_dating_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_li_dating_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_li_casino_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_li_cbd_pricing": {
+      "type": "integer",
+      "min": 0
+    },
+    "publisher_li_crypto_pricing": {
+      "type": "integer",
+      "min": 0
     },
     "similarweb_traffic": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "ahrefs_referring_domain": {
-      "type": "integer"
+      "type": "integer",
+      "min": 0
     },
     "domain_zone": {
       "type": "string"
@@ -155,15 +251,120 @@
       ],
       "default": "active"
     },
+    "website_status": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "active",
+        "draft",
+        "rejected"
+      ],
+      "default": "pending",
+      "description": "Status of the website submission process"
+    },
+    "sponsored": {
+      "type": "boolean",
+      "default": false
+    },
+    "ugc": {
+      "type": "boolean",
+      "default": false
+    },
     "dofollow_link": {
       "type": "integer",
-      "default": 1
+      "default": 1,
+      "min": 0
     },
     "orders": {
       "type": "relation",
       "relation": "oneToMany",
       "target": "api::order.order",
       "mappedBy": "website"
+    },
+    "shortlists": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::shortlist.shortlist",
+      "mappedBy": "marketplace"
+    },
+    "adv_li_crypto_pricing": {
+      "min": 0,
+      "type": "integer"
+    },
+    "digital_pr": {
+      "type": "boolean",
+      "default": false
+    },
+    "gsc_verified": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the website is verified through Google Search Console"
+    },
+    "gsc_verified_at": {
+      "type": "datetime",
+      "description": "Timestamp when Google Search Console verification was completed"
+    },
+    "gsc_permission_level": {
+      "type": "enumeration",
+      "enum": [
+        "siteOwner",
+        "siteFullUser",
+        "siteUnverifiedUser",
+        "siteRestrictedUser"
+      ],
+      "description": "Permission level in Google Search Console"
+    },
+    "gsc_refresh_token": {
+      "type": "text",
+      "private": true,
+      "description": "Encrypted Google Search Console refresh token for API access"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "active",
+        "paused",
+        "draft",
+        "rejected",
+        "delisted"
+      ],
+      "default": "active",
+      "description": "Current status of the marketplace listing"
+    },
+    "delistedReason": {
+      "type": "enumeration",
+      "enum": [
+        "ownership_transferred",
+        "admin_action",
+        "violation",
+        "other"
+      ],
+      "description": "Reason why the listing was delisted"
+    },
+    "delistedAt": {
+      "type": "datetime",
+      "description": "When the listing was delisted"
+    },
+    "approvalStatus": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "default": "approved",
+      "description": "Manual approval gate for marketplace visibility"
+    },
+    "dataVersion": {
+      "type": "integer",
+      "default": 0,
+      "description": "Incremental version for concurrency control"
+    },
+    "updateRequests": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::website-update-request.website-update-request",
+      "mappedBy": "marketplace"
     }
   }
 }
