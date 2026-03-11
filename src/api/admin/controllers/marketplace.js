@@ -167,118 +167,139 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       console.log('[MARKETPLACE FIND] Total count:', total);
 
-      // Transform data for admin panel with real order counts
-      const transformedWebsites = await Promise.all(websites.map(async (website) => {
-        // Best-effort metrics hydration from publisher-website if marketplace metrics are missing
-        let metricsSource = { ...website };
-        if (
-          (metricsSource.moz_da == null || metricsSource.moz_da === 0) ||
-          (metricsSource.ahrefs_dr == null || metricsSource.ahrefs_dr === 0) ||
-          (metricsSource.ahrefs_traffic == null || metricsSource.ahrefs_traffic === 0)
-        ) {
-          try {
-            const publisherWebsite = await strapi.db.query('api::publisher-website.publisher-website').findOne({
-              where: { url: website.url }
-            });
-            if (publisherWebsite) {
-              metricsSource = {
-                ...metricsSource,
-                moz_da: metricsSource.moz_da ?? publisherWebsite.moz_da ?? 0,
-                moz_spam_score: metricsSource.moz_spam_score ?? publisherWebsite.moz_spam_score ?? 0,
-                ahrefs_dr: metricsSource.ahrefs_dr ?? publisherWebsite.ahrefs_dr ?? 0,
-                ahrefs_traffic: metricsSource.ahrefs_traffic ?? publisherWebsite.ahrefs_traffic ?? 0,
-                ahrefs_rank: metricsSource.ahrefs_rank ?? publisherWebsite.ahrefs_rank ?? 0,
-                ahrefs_referring_domain: metricsSource.ahrefs_referring_domain ?? publisherWebsite.ahrefs_referring_domain ?? 0,
-                ahrefs_keywords: metricsSource.ahrefs_keywords ?? publisherWebsite.ahrefs_keywords ?? 0,
-                semrush_traffic: metricsSource.semrush_traffic ?? publisherWebsite.semrush_traffic ?? 0,
-                semrush_authority_score: metricsSource.semrush_authority_score ?? publisherWebsite.semrush_authority_score ?? 0,
-              };
+      // Batch-fetch order counts for all fetched websites in ONE query instead of N+1
+      const websiteIds = websites.map(w => w.id);
+      let orderCountMap = {};  // { websiteId: { total, lastMonth, completed, revenue } }
+      if (websiteIds.length > 0) {
+        try {
+          const lastMonth = new Date();
+          lastMonth.setMonth(lastMonth.getMonth() - 1);
+
+          // Use Strapi query API with $in filter - fetches all orders for these websites in 1 query
+          const allOrders = await strapi.db.query('api::order.order').findMany({
+            where: { website: { id: { $in: websiteIds } } },
+            select: ['id', 'orderStatus', 'totalAmount', 'createdAt'],
+            populate: { website: { select: ['id'] } }
+          });
+
+          // Group order stats by website ID in JavaScript
+          allOrders.forEach(order => {
+            const wId = order.website?.id;
+            if (!wId) return;
+            if (!orderCountMap[wId]) {
+              orderCountMap[wId] = { total: 0, completed: 0, lastMonth: 0, revenue: 0 };
             }
-          } catch (e) {
-            console.warn('[MARKETPLACE] Failed to hydrate metrics from publisher-website for', website.url, e.message);
-          }
+            orderCountMap[wId].total++;
+            if (order.orderStatus === 'completed') {
+              orderCountMap[wId].completed++;
+              orderCountMap[wId].revenue += parseFloat(order.totalAmount || 0);
+            }
+            if (new Date(order.createdAt) >= lastMonth) {
+              orderCountMap[wId].lastMonth++;
+            }
+          });
+        } catch (e) {
+          console.warn('[MARKETPLACE FIND] Batch order query failed, falling back to zero counts:', e.message);
         }
-        // Get orders for this website
-        const orders = await strapi.db.query('api::order.order').findMany({
-          where: { website: website.id }
-        });
+      }
 
-        // Calculate order counts for this website
-        const totalOrders = orders.length;
+      // Batch-fetch publisher-website metrics for websites that need hydration
+      const urlsNeedingHydration = websites
+        .filter(w => !w.moz_da || !w.ahrefs_dr || !w.ahrefs_traffic)
+        .map(w => w.url);
+      let metricsMap = {};  // { url: publisherWebsite }
+      if (urlsNeedingHydration.length > 0) {
+        try {
+          const publisherWebsites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+            where: { url: { $in: urlsNeedingHydration } }
+          });
+          publisherWebsites.forEach(pw => {
+            metricsMap[pw.url] = pw;
+          });
+        } catch (e) {
+          console.warn('[MARKETPLACE FIND] Batch metrics hydration failed:', e.message);
+        }
+      }
 
-        // Calculate last month orders
-        const lastMonth = new Date();
-        lastMonth.setMonth(lastMonth.getMonth() - 1);
-        const lastMonthOrders = orders.filter(order => {
-          const orderDate = new Date(order.createdAt);
-          return orderDate >= lastMonth;
-        }).length;
+      // Transform data for admin panel using pre-fetched data (no more per-record queries)
+      const transformedWebsites = websites.map(website => {
+        // Hydrate metrics from publisher-website if needed
+        let metricsSource = { ...website };
+        const pw = metricsMap[website.url];
+        if (pw) {
+          metricsSource = {
+            ...metricsSource,
+            moz_da: metricsSource.moz_da ?? pw.moz_da ?? 0,
+            moz_spam_score: metricsSource.moz_spam_score ?? pw.moz_spam_score ?? 0,
+            ahrefs_dr: metricsSource.ahrefs_dr ?? pw.ahrefs_dr ?? 0,
+            ahrefs_traffic: metricsSource.ahrefs_traffic ?? pw.ahrefs_traffic ?? 0,
+            ahrefs_rank: metricsSource.ahrefs_rank ?? pw.ahrefs_rank ?? 0,
+            ahrefs_referring_domain: metricsSource.ahrefs_referring_domain ?? pw.ahrefs_referring_domain ?? 0,
+            ahrefs_keywords: metricsSource.ahrefs_keywords ?? pw.ahrefs_keywords ?? 0,
+            semrush_traffic: metricsSource.semrush_traffic ?? pw.semrush_traffic ?? 0,
+            semrush_authority_score: metricsSource.semrush_authority_score ?? pw.semrush_authority_score ?? 0,
+          };
+        }
 
-        console.log(`[DEBUG] Website ${website.id} (${website.url}): totalOrders=${totalOrders}, lastMonthOrders=${lastMonthOrders}`);
+        // Use pre-fetched order counts
+        const orderData = orderCountMap[website.id] || { total: 0, completed: 0, lastMonth: 0, revenue: 0 };
 
-        const transformed = {
+        return {
           id: website.id,
           domain: website.url,
           title: website.publisher_name || website.url,
           category: website.category,
           subcategory: website.other_category,
           metrics: {
-            // Ahrefs
             dr: metricsSource.ahrefs_dr,
             ahrefsTraffic: metricsSource.ahrefs_traffic,
             ahrefsRank: metricsSource.ahrefs_rank,
             ahrefsRefDomains: metricsSource.ahrefs_referring_domain,
             ahrefsKeywords: metricsSource.ahrefs_keywords,
-            // Moz
             da: metricsSource.moz_da,
             mozSpamScore: metricsSource.moz_spam_score,
-            // Semrush
             semrushTraffic: metricsSource.semrush_traffic,
             semrushAuthorityScore: metricsSource.semrush_authority_score,
-            // UI helpers
             pageSpeed: website.placement_speed,
             mobileFriendly: website.fast_placement_status,
-            ssl: true // Default to true since there's no SSL field in schema
+            ssl: true
           },
           content: {
-            language: website.language, // Default since not in schema
-            country: website.countries, // Default since not in schema
+            language: website.language,
+            country: website.countries,
             updateFrequency: website.placement_speed || 'Normal',
-            contentType: 'Blog Articles', // Default since not in schema
-            topics: [] // Default since not in schema
+            contentType: 'Blog Articles',
+            topics: []
           },
           financial: {
             price: parseFloat(website.price || 0),
-            currency: 'USD', // Default since not in schema
+            currency: 'USD',
             commission: parseFloat(website.publisher_price || 0),
             netAmount: parseFloat(website.price || 0) - parseFloat(website.publisher_price || 0)
           },
           publisher: {
             name: website.publisher_name || 'Unknown Publisher',
             email: website.publisher_email || 'N/A',
-            phone: '', // Default since not in schema
-            rating: 4.5, // Default rating since not in schema
-            completedOrders: totalOrders, // Real order count
+            phone: '',
+            rating: 4.5,
+            completedOrders: orderData.total,
             joinDate: website.createdAt,
-            specialization: 'General' // Default since not in schema
+            specialization: 'General'
           },
           performance: {
-            lastMonthOrders: lastMonthOrders, // Real last month orders
-            totalOrders: totalOrders, // Real total orders
-            averageRating: 4.5, // Default since not in schema
-            completionRate: totalOrders > 0 ? Math.round((orders.filter(o => o.orderStatus === 'completed').length / totalOrders) * 100) : 0,
+            lastMonthOrders: orderData.lastMonth,
+            totalOrders: orderData.total,
+            averageRating: 4.5,
+            completionRate: orderData.total > 0 ? Math.round((orderData.completed / orderData.total) * 100) : 0,
             responseTime: website.tat ? `${website.tat}h` : 'Not specified',
-            revenue: orders.filter(o => o.orderStatus === 'completed').reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0)
+            revenue: orderData.revenue
           },
           status: website.status || (website.publishedAt ? 'active' : 'inactive'),
           approvalDate: website.publishedAt,
           lastUpdated: website.updatedAt,
           createdAt: website.createdAt
         };
-
-        console.log(`[DEBUG] Transformed website:`, transformed);
-        return transformed;
-      }));
+      });
 
       // Return the transformed data in the expected format
       return {
@@ -522,49 +543,64 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
    */
   async getStats(ctx) {
     try {
-      const total = await strapi.db.query('api::marketplace.marketplace').count();
-      const active = await strapi.db.query('api::marketplace.marketplace').count({
-        where: { publishedAt: { $notNull: true } }
-      });
-      const inactive = await strapi.db.query('api::marketplace.marketplace').count({
-        where: { publishedAt: { $null: true } }
-      });
+      const knex = strapi.db.connection;
 
-      // Get category breakdown
-      const categories = await strapi.db.query('api::marketplace.marketplace').findMany({
-        select: ['category']
-      });
+      // Single query for total/active/inactive counts
+      const [total, active, inactive] = await Promise.all([
+        strapi.db.query('api::marketplace.marketplace').count(),
+        strapi.db.query('api::marketplace.marketplace').count({
+          where: { publishedAt: { $notNull: true } }
+        }),
+        strapi.db.query('api::marketplace.marketplace').count({
+          where: { publishedAt: { $null: true } }
+        })
+      ]);
 
-      const categoryBreakdown = {};
-      categories.forEach(website => {
-        const cat = website.category || 'Uncategorized';
-        categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
-      });
-
-      // Calculate average metrics
-      const metricsData = await strapi.db.query('api::marketplace.marketplace').findMany({
-        select: ['moz_da', 'ahrefs_dr', 'price', 'id']
-      });
-
-      const avgDA = metricsData.reduce((sum, w) => sum + (parseFloat(w.moz_da) || 0), 0) / metricsData.length || 0;
-      const avgDR = metricsData.reduce((sum, w) => sum + (parseFloat(w.ahrefs_dr) || 0), 0) / metricsData.length || 0;
-      const avgPrice = metricsData.reduce((sum, w) => sum + (parseFloat(w.price) || 0), 0) / metricsData.length || 0;
-
-      // Calculate real totalRevenue and avgRating
-      let totalRevenue = 0;
-      let totalCompletedOrders = 0;
-      let totalOrders = 0;
-
-      for (const website of metricsData) {
-        const orders = await strapi.db.query('api::order.order').findMany({
-          where: { website: website.id },
-          select: ['orderStatus', 'totalAmount']
+      // Category breakdown via SQL aggregation instead of loading all 41K records
+      let categoryBreakdown = {};
+      try {
+        const categoryRows = await knex('marketplaces')
+          .select('category')
+          .count('* as count')
+          .groupBy('category');
+        categoryRows.forEach(row => {
+          categoryBreakdown[row.category || 'Uncategorized'] = parseInt(row.count) || 0;
         });
+      } catch (e) {
+        console.warn('[MARKETPLACE STATS] Category breakdown query failed, using fallback:', e.message);
+      }
 
-        totalOrders += orders.length;
-        const completedOrders = orders.filter(o => o.orderStatus === 'completed');
-        totalCompletedOrders += completedOrders.length;
-        totalRevenue += completedOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0);
+      // Average metrics via SQL aggregation instead of loading all records
+      let avgDA = 0, avgDR = 0, avgPrice = 0;
+      try {
+        const [metricsRow] = await knex('marketplaces')
+          .avg('moz_da as avgDA')
+          .avg('ahrefs_dr as avgDR')
+          .avg('price as avgPrice');
+        avgDA = parseFloat(metricsRow?.avgDA) || 0;
+        avgDR = parseFloat(metricsRow?.avgDR) || 0;
+        avgPrice = parseFloat(metricsRow?.avgPrice) || 0;
+      } catch (e) {
+        console.warn('[MARKETPLACE STATS] Metrics aggregation failed:', e.message);
+      }
+
+      // Revenue and order stats using Strapi query API
+      let totalRevenue = 0, totalCompletedOrders = 0, totalOrders = 0;
+      try {
+        totalOrders = await strapi.db.query('api::order.order').count({
+          where: { website: { id: { $notNull: true } } }
+        });
+        const completedOrders = await strapi.db.query('api::order.order').findMany({
+          where: {
+            website: { id: { $notNull: true } },
+            orderStatus: 'completed'
+          },
+          select: ['totalAmount']
+        });
+        totalCompletedOrders = completedOrders.length;
+        totalRevenue = completedOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0);
+      } catch (e) {
+        console.warn('[MARKETPLACE STATS] Order stats query failed:', e.message);
       }
 
       const avgRating = totalOrders > 0
