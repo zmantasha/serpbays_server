@@ -892,7 +892,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               { publisher: user.id },
               { publisher_email: user.email }
             ],
-            status: 'active' // Only active websites for new available orders
+            status: { $in: ['active', 'delisted'] } // Include delisted websites so pending orders remain visible after admin rejection
           }
         });
 
