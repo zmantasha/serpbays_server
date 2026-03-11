@@ -737,6 +737,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         console.log(`[ADMIN ACTION] Adding approved website ${updatedWebsite.url} to marketplace`);
 
         try {
+          // CRITICAL: If a marketplace record already exists (e.g. previously rejected/delisted),
+          // reactivate it immediately before the full sync below. This ensures the marketplace
+          // status is always set to 'active' on re-approval, even if createMarketplaceListing fails.
+          const existingRecord = await strapi.db.query('api::marketplace.marketplace').findOne({
+            where: { url: updatedWebsite.url }
+          });
+          if (existingRecord && existingRecord.status !== 'active') {
+            console.log(`[ADMIN ACTION] Reactivating delisted marketplace record ${existingRecord.id} for ${updatedWebsite.url}`);
+            await strapi.db.query('api::marketplace.marketplace').update({
+              where: { id: existingRecord.id },
+              data: {
+                status: 'active',
+                delistedReason: null,
+                delistedAt: null,
+                approvalStatus: 'approved',
+                publishedAt: existingRecord.publishedAt || new Date()
+              }
+            });
+          }
           // Use the createMarketplaceListing helper from publisher-website controller for proper field mapping
           try {
             const publisherWebsiteController = strapi.controller('api::publisher-website.publisher-website');
@@ -3183,6 +3202,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                     publisherWebsite: updatedWebsite.id,
                     createdAt: new Date(),
                     updatedAt: new Date()
+                  }
+                });
+              } else if (existingMarketplaceRecord[0].status !== 'active') {
+                // Reactivate existing delisted marketplace record (e.g. after rejection then re-approval)
+                console.log(`[ADMIN BULK ACTION] Reactivating delisted marketplace record ${existingMarketplaceRecord[0].id} for ${updatedWebsite.url}`);
+                await strapi.db.query('api::marketplace.marketplace').update({
+                  where: { id: existingMarketplaceRecord[0].id },
+                  data: {
+                    status: 'active',
+                    delistedReason: null,
+                    delistedAt: null,
+                    approvalStatus: 'approved',
+                    publishedAt: existingMarketplaceRecord[0].publishedAt || new Date()
                   }
                 });
               }
