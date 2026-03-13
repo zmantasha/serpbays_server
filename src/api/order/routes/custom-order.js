@@ -77,6 +77,19 @@ module.exports = {
         }
       },
     },
+    // Lightweight route to get only order counts for navbar badges
+    {
+      method: 'GET',
+      path: '/orders/counts',
+      handler: 'order.getCounts',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.find'],
+        },
+      },
+    },
     // Route to get orders available for publishers to accept
     {
       method: 'GET',
