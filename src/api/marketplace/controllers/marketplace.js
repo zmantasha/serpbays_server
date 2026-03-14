@@ -622,8 +622,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         console.log(`🔍 Applied standard sorting: ${mappedField}:${sortDirection}`);
       }
     } else {
-      // Default sort if none provided
-      ctx.query.sort = 'updatedAt:desc';
+      // Default sort if none provided — featured websites first
+      ctx.query.sort = 'isFeatured:desc,updatedAt:desc';
     }
 
     // For metric field sorting, use Knex with NULLS LAST for proper NULL/0 handling
@@ -718,8 +718,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         query = applyFilters(query, ctx.query.filters);
 
         // Apply NULL-safe sorting with NULLS LAST
-        // This ensures 0 and NULL values appear at the bottom when sorting DESC
-        query = query.orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
+        // Featured websites always appear first, then sort by the requested metric field
+        // NOTE: Use snake_case 'is_featured' because Knex raw SQL bypasses Strapi's ORM column name mapping
+        query = query
+          .orderByRaw('COALESCE(??, false) DESC', ['is_featured'])
+          .orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
 
         // Clone query for count (before pagination)
         const countQuery = query.clone().count('* as count');
@@ -803,9 +806,19 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Use db.query to get ALL fields including private ones
       // IMPORTANT: Populate publisher relation for ownership check in sanitizePublisherData
+      const sortParts = (ctx.query.sort || 'updatedAt:desc').split(',');
+      const orderByArray = sortParts.map(part => {
+        const [field, dir] = part.split(':');
+        return { [field]: dir || 'asc' };
+      });
+      // Always ensure isFeatured is the first sort criterion
+      const hasIsFeatured = orderByArray.some(obj => 'isFeatured' in obj);
+      if (!hasIsFeatured) {
+        orderByArray.unshift({ isFeatured: 'desc' });
+      }
       const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
         where: ctx.query.filters,
-        orderBy: ctx.query.sort ? { [ctx.query.sort.split(':')[0]]: ctx.query.sort.split(':')[1] || 'asc' } : { updatedAt: 'desc' },
+        orderBy: orderByArray,
         limit: pageSize,
         offset: (page - 1) * pageSize,
         populate: ['publisher'],  // Required for isOwnWebsite check
@@ -820,9 +833,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const sanitizedEntries = this.sanitizePublisherData(entries, user);
 
       // Apply post-fetch sorting if sorting by a metric field
-      const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
-      const sortField = sortParts[0];
-      const sortDirection = sortParts[1] || 'desc';
+      const postSortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
+      const sortField = postSortParts[0];
+      const sortDirection = postSortParts[1] || 'desc';
       const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection);
 
       return {

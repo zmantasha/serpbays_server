@@ -360,6 +360,11 @@
       "default": 0,
       "description": "Incremental version for concurrency control"
     },
+    "isFeatured": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, website appears at the top of marketplace listings"
+    },
     "updateRequests": {
       "type": "relation",
       "relation": "oneToMany",
