@@ -141,8 +141,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         filters.content_type = contentType;
       }
 
-      // Sort options
-      const sort = { createdAt: 'desc' };
+      // Sort options — featured websites appear first
+      const sort = [{ isFeatured: 'desc' }, { createdAt: 'desc' }];
 
       // Calculate offset and limit for proper pagination
       const pageNum = parseInt(page);
@@ -294,6 +294,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             responseTime: website.tat ? `${website.tat}h` : 'Not specified',
             revenue: orderData.revenue
           },
+          isFeatured: website.isFeatured || false,
           status: website.status || (website.publishedAt ? 'active' : 'inactive'),
           approvalDate: website.publishedAt,
           lastUpdated: website.updatedAt,
@@ -666,6 +667,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       }
 
       if (updateData.tat) strapiData.tat = updateData.tat;
+      if (updateData.isFeatured !== undefined) strapiData.isFeatured = updateData.isFeatured;
 
       const updatedWebsite = await strapi.entityService.update('api::marketplace.marketplace', id, {
         data: strapiData
