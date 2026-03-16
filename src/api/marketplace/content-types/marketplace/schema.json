@@ -363,7 +363,17 @@
     "isFeatured": {
       "type": "boolean",
       "default": false,
-      "description": "When true, website appears at the top of marketplace listings"
+      "description": "Legacy field - kept for backward compatibility. Use isFeaturedGuestPost / isFeaturedLinkInsertion instead."
+    },
+    "isFeaturedGuestPost": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, website appears at the top of Guest Post marketplace listings"
+    },
+    "isFeaturedLinkInsertion": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, website appears at the top of Link Insertion marketplace listings"
     },
     "updateRequests": {
       "type": "relation",
