@@ -164,6 +164,14 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     const sorted = [...entries];
 
     sorted.sort((a, b) => {
+      // Featured websites always appear first regardless of metric sort.
+      // Raw Knex results use snake_case (is_featured); Strapi ORM uses camelCase (isFeatured).
+      const aFeatured = a.isFeatured || a.is_featured || false;
+      const bFeatured = b.isFeatured || b.is_featured || false;
+      if (aFeatured !== bFeatured) {
+        return bFeatured ? 1 : -1;
+      }
+
       const valA = a[sortField];
       const valB = b[sortField];
 
