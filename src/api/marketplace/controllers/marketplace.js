@@ -165,9 +165,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
     sorted.sort((a, b) => {
       // Featured websites always appear first regardless of metric sort.
-      // Raw Knex results use snake_case (is_featured); Strapi ORM uses camelCase (isFeatured).
-      const aFeatured = a.isFeatured || a.is_featured || false;
-      const bFeatured = b.isFeatured || b.is_featured || false;
+      // Generic: featured if featured for ANY service type (GP or LI).
+      // Client-side re-sorts based on the active service type filter.
+      // Raw Knex results use snake_case; Strapi ORM uses camelCase.
+      const aFeatured = (a.isFeaturedGuestPost || a.is_featured_guest_post || false) || (a.isFeaturedLinkInsertion || a.is_featured_link_insertion || false);
+      const bFeatured = (b.isFeaturedGuestPost || b.is_featured_guest_post || false) || (b.isFeaturedLinkInsertion || b.is_featured_link_insertion || false);
       if (aFeatured !== bFeatured) {
         return bFeatured ? 1 : -1;
       }
@@ -613,25 +615,23 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const mappedField = sortMapping[field] || field;
       const sortDirection = direction === 'asc' ? 'asc' : 'desc';
 
-      // Check if this is a metric field that needs NULL-safe sorting
-      if (metricFields.includes(mappedField)) {
-        // Flag for raw SQL sorting (handled after Strapi's default find)
-        useRawSorting = true;
-        rawSortField = mappedField;
-        rawSortDirection = sortDirection;
+      // Route ALL sort fields through raw SQL for NULL-safe featured sorting.
+      // PostgreSQL puts NULLs FIRST in DESC order by default, which buries
+      // featured websites behind thousands of NULL records on large datasets.
+      // The raw SQL path uses COALESCE(is_featured, false) DESC to fix this.
+      useRawSorting = true;
+      rawSortField = mappedField;
+      rawSortDirection = sortDirection;
 
-        // Don't set ctx.query.sort - we'll handle it with raw SQL
-        delete ctx.query.sort;
+      // Don't set ctx.query.sort - we'll handle it with raw SQL
+      delete ctx.query.sort;
 
-        console.log(`🔍 Will apply NULL-safe raw SQL sorting: ${mappedField}:${sortDirection}`);
-      } else {
-        // Standard fields can use Strapi's default sorting
-        ctx.query.sort = `${mappedField}:${sortDirection}`;
-        console.log(`🔍 Applied standard sorting: ${mappedField}:${sortDirection}`);
-      }
+      console.log(`🔍 Will apply NULL-safe raw SQL sorting: ${mappedField}:${sortDirection}`);
     } else {
-      // Default sort if none provided — featured websites first
-      ctx.query.sort = 'isFeatured:desc,updatedAt:desc';
+      // Default sort: featured first, then ahrefs_traffic descending (NULL-safe via raw SQL)
+      useRawSorting = true;
+      rawSortField = 'ahrefs_traffic';
+      rawSortDirection = 'desc';
     }
 
     // For metric field sorting, use Knex with NULLS LAST for proper NULL/0 handling
@@ -727,13 +727,16 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
         // Apply NULL-safe sorting with NULLS LAST
         // Featured websites always appear first, then sort by the requested metric field
-        // NOTE: Use snake_case 'is_featured' because Knex raw SQL bypasses Strapi's ORM column name mapping
+        // NOTE: Use snake_case because Knex raw SQL bypasses Strapi's ORM column name mapping
+        // Featured = site is featured for ANY service type (GP or LI)
+        // Client-side re-sorts based on the active service type filter after receiving data
         query = query
-          .orderByRaw('COALESCE(??, false) DESC', ['is_featured'])
+          .orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC')
           .orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
 
         // Clone query for count (before pagination)
-        const countQuery = query.clone().count('* as count');
+        // clearOrder() removes ORDER BY clauses which are invalid on aggregate COUNT queries in PostgreSQL
+        const countQuery = query.clone().clearOrder().count('* as count');
 
         // Apply pagination
         query = query.limit(pageSize).offset((page - 1) * pageSize);
@@ -819,10 +822,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const [field, dir] = part.split(':');
         return { [field]: dir || 'asc' };
       });
-      // Always ensure isFeatured is the first sort criterion
-      const hasIsFeatured = orderByArray.some(obj => 'isFeatured' in obj);
+      // Always ensure featured fields are the first sort criteria
+      // Sites featured for any service type appear first
+      const hasIsFeatured = orderByArray.some(obj => 'isFeaturedGuestPost' in obj || 'isFeaturedLinkInsertion' in obj);
       if (!hasIsFeatured) {
-        orderByArray.unshift({ isFeatured: 'desc' });
+        orderByArray.unshift({ isFeaturedGuestPost: 'desc' }, { isFeaturedLinkInsertion: 'desc' });
       }
       const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
         where: ctx.query.filters,

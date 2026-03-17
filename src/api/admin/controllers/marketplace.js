@@ -141,9 +141,6 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         filters.content_type = contentType;
       }
 
-      // Sort options — featured websites appear first
-      const sort = [{ isFeatured: 'desc' }, { createdAt: 'desc' }];
-
       // Calculate offset and limit for proper pagination
       const pageNum = parseInt(page);
       const pageSizeNum = parseInt(pageSize);
@@ -152,18 +149,76 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       console.log('[MARKETPLACE FIND] Pagination params:', { page: pageNum, pageSize: pageSizeNum, offset, limit });
 
-      // Get marketplace websites with pagination using query API for proper limit/offset
-      const websites = await strapi.db.query('api::marketplace.marketplace').findMany({
-        where: filters,
-        orderBy: sort,
-        limit,
-        offset
+      // Use Knex raw SQL for NULL-safe featured sorting.
+      // PostgreSQL puts NULLs FIRST in DESC order by default, which causes featured
+      // websites (is_featured=true) to be buried behind thousands of NULL records.
+      // COALESCE(is_featured, false) treats NULL as false, so true sorts first.
+      const knex = strapi.db.connection;
+      let query = knex('marketplaces');
+
+      // Apply filters to Knex query
+      if (filters.$or) {
+        // Search filter: url, publisher_name, publisher_email
+        query = query.where(function () {
+          filters.$or.forEach((condition) => {
+            Object.entries(condition).forEach(([field, value]) => {
+              if (typeof value === 'object' && value !== null && value.$containsi) {
+                this.orWhereRaw('LOWER(??) LIKE ?', [field, `%${String(value.$containsi).toLowerCase()}%`]);
+              }
+            });
+          });
+        });
+      }
+
+      // Apply simple equality and range filters
+      const rangeFilterMap = {
+        category: 'category',
+        status: 'status',
+        sensitive_category: 'sensitive_category',
+        language: 'language',
+        countries: 'countries',
+        allowed_links: 'allowed_links',
+        placement_speed: 'placement_speed',
+        sponsored: 'sponsored',
+        ugc: 'ugc',
+        backlink_type: 'backlink_type',
+        content_type: 'content_type',
+      };
+
+      Object.entries(filters).forEach(([key, value]) => {
+        if (key === '$or') return; // Already handled above
+
+        if (typeof value === 'object' && value !== null) {
+          // Range filters: $gte, $lte, $containsi
+          if (value.$gte !== undefined) query = query.where(key, '>=', value.$gte);
+          if (value.$lte !== undefined) query = query.where(key, '<=', value.$lte);
+          if (value.$containsi) {
+            query = query.whereRaw('LOWER(??) LIKE ?', [key, `%${String(value.$containsi).toLowerCase()}%`]);
+          }
+        } else {
+          // Simple equality
+          query = query.where(key, value);
+        }
       });
 
-      console.log('[MARKETPLACE FIND] Fetched websites count:', websites.length);
+      // NULL-safe sort: featured first (COALESCE treats NULL as false), then newest
+      // A website is "featured" in the admin listing if it's featured for EITHER GP or LI
+      query = query
+        .orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC')
+        .orderBy('created_at', 'desc');
 
-      // Get total count for pagination
-      const total = await strapi.db.query('api::marketplace.marketplace').count({ where: filters });
+      // Count query (without ORDER BY — PostgreSQL rejects ORDER BY on aggregates)
+      const countQuery = query.clone().clearOrder().count('* as count');
+
+      // Paginate
+      query = query.limit(limit).offset(offset);
+
+      // Execute both queries in parallel
+      const [websites, countResult] = await Promise.all([query, countQuery]);
+      const total = parseInt(countResult[0]?.count || 0);
+
+      console.log('[MARKETPLACE FIND] Fetched websites count:', websites.length);
+      console.log('[MARKETPLACE FIND] Total count:', total);
 
       console.log('[MARKETPLACE FIND] Total count:', total);
 
@@ -273,6 +328,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           },
           financial: {
             price: parseFloat(website.price || 0),
+            linkInsertionPrice: parseFloat(website.link_insertion_price || 0),
             currency: 'USD',
             commission: parseFloat(website.publisher_price || 0),
             netAmount: parseFloat(website.price || 0) - parseFloat(website.publisher_price || 0)
@@ -283,7 +339,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             phone: '',
             rating: 4.5,
             completedOrders: orderData.total,
-            joinDate: website.createdAt,
+            joinDate: website.createdAt || website.created_at,
             specialization: 'General'
           },
           performance: {
@@ -294,11 +350,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             responseTime: website.tat ? `${website.tat}h` : 'Not specified',
             revenue: orderData.revenue
           },
-          isFeatured: website.isFeatured || false,
-          status: website.status || (website.publishedAt ? 'active' : 'inactive'),
-          approvalDate: website.publishedAt,
-          lastUpdated: website.updatedAt,
-          createdAt: website.createdAt
+          isFeatured: website.isFeatured || website.is_featured || false,
+          isFeaturedGuestPost: website.isFeaturedGuestPost || website.is_featured_guest_post || false,
+          isFeaturedLinkInsertion: website.isFeaturedLinkInsertion || website.is_featured_link_insertion || false,
+          status: website.status || ((website.publishedAt || website.published_at) ? 'active' : 'inactive'),
+          approvalDate: website.publishedAt || website.published_at,
+          lastUpdated: website.updatedAt || website.updated_at,
+          createdAt: website.createdAt || website.created_at
         };
       });
 
@@ -668,6 +726,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       if (updateData.tat) strapiData.tat = updateData.tat;
       if (updateData.isFeatured !== undefined) strapiData.isFeatured = updateData.isFeatured;
+      if (updateData.isFeaturedGuestPost !== undefined) strapiData.isFeaturedGuestPost = updateData.isFeaturedGuestPost;
+      if (updateData.isFeaturedLinkInsertion !== undefined) strapiData.isFeaturedLinkInsertion = updateData.isFeaturedLinkInsertion;
 
       const updatedWebsite = await strapi.entityService.update('api::marketplace.marketplace', id, {
         data: strapiData
