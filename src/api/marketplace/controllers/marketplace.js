@@ -713,6 +713,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                 else if (operator === '$ne') query.where(key, '!=', opValue);
                 else if (operator === '$null') query.whereNull(key);
                 else if (operator === '$notNull') query.whereNotNull(key);
+                else if (operator === '$contains') query.where(key, 'like', `%${opValue}%`);
+                else if (operator === '$containsi') query.whereRaw('LOWER(??) LIKE ?', [key, `%${String(opValue).toLowerCase()}%`]);
+                else if (operator === '$endsWith') query.where(key, 'like', `%${opValue}`);
+                else if (operator === '$startsWith') query.where(key, 'like', `${opValue}%`);
+                else if (operator === '$in' && Array.isArray(opValue)) query.whereIn(key, opValue);
               });
             } else {
               query.where(key, value);
