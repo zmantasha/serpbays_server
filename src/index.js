@@ -28,6 +28,60 @@ module.exports = {
       // console.error is KEPT intentionally for critical failures
     }
 
+    // Ensure database-level unique indexes exist on the users table.
+    // Strapi's schema "unique: true" only enforces at the ORM level,
+    // which doesn't prevent duplicates under concurrent requests.
+    // These DB indexes are the ultimate safety net.
+    try {
+      const knex = strapi.db.connection;
+
+      // Detect DB client — Strapi/Knex exposes this in multiple places
+      const clientName = (
+        knex.client.config.client ||
+        knex.client.constructor.name ||
+        ''
+      ).toLowerCase();
+      const isSQLite = clientName.includes('sqlite') || clientName.includes('better-sqlite');
+      const isPostgres = clientName.includes('pg') || clientName.includes('postgres');
+
+      strapi.log.info(`[BOOTSTRAP] Database client detected: "${clientName}" (sqlite=${isSQLite}, pg=${isPostgres})`);
+
+      if (isSQLite || isPostgres) {
+        // SQLite and PostgreSQL both support CREATE UNIQUE INDEX IF NOT EXISTS
+        // and partial indexes with WHERE clause
+        await knex.raw(
+          'CREATE UNIQUE INDEX IF NOT EXISTS "up_users_clerk_id_unique" ON "up_users" ("clerk_id") WHERE "clerk_id" IS NOT NULL'
+        ).catch((err) => {
+          strapi.log.warn(`[BOOTSTRAP] Could not create clerk_id unique index: ${err.message}`);
+        });
+        await knex.raw(
+          'CREATE UNIQUE INDEX IF NOT EXISTS "up_users_email_unique" ON "up_users" ("email") WHERE "email" IS NOT NULL'
+        ).catch((err) => {
+          strapi.log.warn(`[BOOTSTRAP] Could not create email unique index: ${err.message}`);
+        });
+      } else {
+        // MySQL — use ALTER TABLE with IGNORE for idempotency
+        await knex.raw(
+          'CREATE UNIQUE INDEX `up_users_clerk_id_unique` ON `up_users` (`clerk_id`)'
+        ).catch((err) => {
+          // Error code 1061 = Duplicate key name (index already exists) — safe to ignore
+          if (err.errno !== 1061) {
+            strapi.log.warn(`[BOOTSTRAP] Could not create clerk_id unique index: ${err.message}`);
+          }
+        });
+        await knex.raw(
+          'CREATE UNIQUE INDEX `up_users_email_unique` ON `up_users` (`email`)'
+        ).catch((err) => {
+          if (err.errno !== 1061) {
+            strapi.log.warn(`[BOOTSTRAP] Could not create email unique index: ${err.message}`);
+          }
+        });
+      }
+      strapi.log.info('[BOOTSTRAP] Database unique indexes ensured on up_users (clerk_id, email)');
+    } catch (err) {
+      strapi.log.warn(`[BOOTSTRAP] Could not verify/create unique indexes: ${err.message}`);
+    }
+
     // Initialize WebSocket after Strapi is ready
     await websocketBootstrap({ strapi });
 
