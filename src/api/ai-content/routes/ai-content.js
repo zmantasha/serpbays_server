@@ -26,5 +26,15 @@ module.exports = {
                 middlewares: [],
             },
         },
+        {
+            method: 'GET',
+            path: '/ai-content/status',
+            handler: 'ai-content.status',
+            config: {
+                auth: false,
+                policies: [],
+                middlewares: [],
+            },
+        },
     ],
 };

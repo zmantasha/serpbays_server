@@ -3552,6 +3552,7 @@ export interface PluginUsersPermissionsUser
       'oneToMany',
       'api::order.order'
     >;
+    aiGenerationCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
     billingAddress: Schema.Attribute.String;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     businessName: Schema.Attribute.String;
