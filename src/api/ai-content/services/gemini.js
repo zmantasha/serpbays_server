@@ -162,6 +162,85 @@ function splitLongParagraphs(html, maxSentences = 3) {
 }
 
 /**
+ * Merge consecutive very short paragraphs to prevent choppy reading.
+ * Two adjacent <p> tags that are each under maxWords get combined.
+ */
+function mergeShortParagraphs(html, maxWords = 25) {
+    // Match two consecutive <p>...</p> blocks
+    let changed = true;
+    let passes = 0;
+    while (changed && passes < 3) {
+        changed = false;
+        passes++;
+        html = html.replace(/<p>([\s\S]*?)<\/p>\s*<p>([\s\S]*?)<\/p>/gi, (match, first, second) => {
+            const firstText = first.replace(/<[^>]*>/g, '').trim();
+            const secondText = second.replace(/<[^>]*>/g, '').trim();
+            const firstWords = firstText.split(/\s+/).filter(Boolean).length;
+            const secondWords = secondText.split(/\s+/).filter(Boolean).length;
+
+            // Only merge if both are very short and combined is reasonable
+            if (firstWords <= maxWords && secondWords <= maxWords && (firstWords + secondWords) <= 50) {
+                changed = true;
+                return `<p>${first.trim()} ${second.trim()}</p>`;
+            }
+            return match;
+        });
+    }
+    return html;
+}
+
+/**
+ * Final readability cleanup pass.
+ * - Caps paragraph length at ~80 words by splitting oversized ones
+ * - Cleans up punctuation artifacts from phrase replacements
+ */
+function improveReadability(html) {
+    // Split any paragraph over 80 words
+    html = html.replace(/<p>([\s\S]*?)<\/p>/gi, (match, inner) => {
+        const content = inner.trim();
+        const plainText = content.replace(/<[^>]*>/g, '');
+        const wordCount = plainText.split(/\s+/).filter(Boolean).length;
+
+        if (wordCount <= 80) return match;
+
+        // Use sentence splitting to find a good break point
+        const sentences = splitSentences(plainText);
+        if (sentences.length <= 1) return match;
+
+        // Split at roughly the halfway word count
+        let currentWords = 0;
+        let splitAt = 0;
+        for (let i = 0; i < sentences.length; i++) {
+            currentWords += sentences[i].split(/\s+/).filter(Boolean).length;
+            if (currentWords >= wordCount / 2) {
+                splitAt = i + 1;
+                break;
+            }
+        }
+        if (splitAt === 0 || splitAt >= sentences.length) return match;
+
+        const firstHalf = sentences.slice(0, splitAt).join(' ');
+        const secondHalf = sentences.slice(splitAt).join(' ');
+        if (firstHalf && secondHalf) {
+            return `<p>${firstHalf}</p>\n<p>${secondHalf}</p>`;
+        }
+        return match;
+    });
+
+    // Clean up punctuation artifacts
+    html = html.replace(/  +/g, ' ');                    // double spaces
+    html = html.replace(/<p>\s*<\/p>/g, '');             // empty paragraphs
+    html = html.replace(/,\s*,/g, ',');                  // double commas
+    html = html.replace(/\.\s*\./g, '.');                // double periods
+    html = html.replace(/\s+([.,;:!?])/g, '$1');         // space before punctuation
+    html = html.replace(/([.!?])\s*,/g, '$1');           // period followed by comma
+    html = html.replace(/<p>\s+/g, '<p>');               // leading space in paragraphs
+    html = html.replace(/\s+<\/p>/g, '</p>');            // trailing space in paragraphs
+
+    return html;
+}
+
+/**
  * Replace banned AI phrases with natural alternatives.
  * This runs AFTER Gemini generation to guarantee removal.
  */
@@ -175,20 +254,33 @@ function removeBannedPhrases(html) {
 
         // Multi-word phrases first (order matters — longer matches before shorter)
         [/\bIn today'?s world\b/gi, 'Today'],
+        [/\bIn today'?s (digital|modern|fast-paced|competitive) (world|age|era)\b/gi, 'Today'],
         [/\bIt'?s worth noting( that)?\b/gi, ''],
+        [/\bIt'?s no secret( that)?\b/gi, ''],
         [/\bIn conclusion\b/gi, 'Overall'],
-        [/\bplays a crucial role\b/gi, 'matters greatly'],
-        [/\bIt'?s important to note( that)?\b/gi, ''],
+        [/\bplays a (crucial|vital|key|important|critical) role\b/gi, 'matters'],
+        [/\bIt'?s important to (note|remember|understand)( that)?\b/gi, ''],
         [/\bat the end of the day\b/gi, 'ultimately'],
         [/\bwhen it comes to\b/gi, 'for'],
         [/\bIn this article\b/gi, 'Here'],
-        [/\bLet'?s explore\b/gi, 'Consider'],
+        [/\bLet'?s (explore|dive in|take a look|examine)\b/gi, 'Consider'],
         [/\bWithout further ado\b/gi, ''],
         [/\bIn an era\b/gi, 'With'],
+        [/\bIn the realm of\b/gi, 'In'],
+        [/\bAt its core\b/gi, ''],
+        [/\bThe reality is( that)?\b/gi, ''],
+        [/\bNeedless to say\b/gi, ''],
+        [/\bIt goes without saying( that)?\b/gi, ''],
+        [/\bstands as a testament to\b/gi, 'shows'],
+        [/\bserves as a reminder( that)?\b/gi, 'reminds us'],
+        [/\bhas (become|emerged as) a (cornerstone|pillar|foundation) of\b/gi, 'is central to'],
+        [/\bNot only .{5,40}? but also\b/gi, ''],
+        [/\bOn the other hand\b/gi, 'But'],
         [/\btake your .+? to the next level\b/gi, 'improve your results'],
-        [/\bunlock the potential\b/gi, 'use the full power'],
+        [/\bunlock the (full )?potential\b/gi, 'make the most of'],
         [/\block no further\b/gi, 'consider this'],
         [/\bharness the power\b/gi, 'use the strength'],
+        [/\bAs we (look|move) (ahead|forward)\b/gi, 'Going forward'],
         [/\bdeep dive\b/gi, 'close look'],
         [/\bdive into\b/gi, 'look at'],
         [/\bdiving into\b/gi, 'looking at'],
@@ -199,8 +291,11 @@ function removeBannedPhrases(html) {
         [/\bstate-of-the-art\b/gi, 'modern'],
         [/\bnext-generation\b/gi, 'modern'],
         [/\bever-evolving\b/gi, 'changing'],
+        [/\bever-changing\b/gi, 'changing'],
         [/\bcutting-edge\b/gi, 'modern'],
         [/\bgame-changer\b/gi, 'major shift'],
+        [/\ba myriad of\b/gi, 'many'],
+        [/\ba plethora of\b/gi, 'many'],
 
         // Single words (case-insensitive, whole word)
         [/\blandscape\b/gi, 'space'],
@@ -254,6 +349,22 @@ function removeBannedPhrases(html) {
         [/\belevating\b/gi, 'improving'],
         [/\bresonate\b/gi, 'connect'],
         [/\bresonating\b/gi, 'connecting'],
+        [/\bplethora\b/gi, 'many'],
+        [/\bmyriad\b/gi, 'many'],
+        [/\baforementioned\b/gi, 'previous'],
+        [/\butilize\b/gi, 'use'],
+        [/\butilizing\b/gi, 'using'],
+        [/\butilization\b/gi, 'use'],
+        [/\bfacilitate\b/gi, 'help'],
+        [/\bfacilitating\b/gi, 'helping'],
+        [/\bcommence\b/gi, 'start'],
+        [/\bcommencing\b/gi, 'starting'],
+        [/\bascertain\b/gi, 'find out'],
+        [/\bsubsequently\b/gi, 'then'],
+        [/\bnevertheless\b/gi, 'still'],
+        [/\bnonetheless\b/gi, 'still'],
+        [/\bConsequently\b/g, 'So'],
+        [/\bHenceforth\b/g, 'From now on'],
     ];
 
     for (const [pattern, replacement] of replacements) {
@@ -292,9 +403,9 @@ module.exports = {
         // Build the link placement instructions
         const linkInstructions = links.map((link, i) => {
             const placement = i === 0
-                ? 'Place this link in the 2nd or 3rd paragraph of the article, woven into a sentence where it adds context.'
+                ? 'Place this link in the 2nd or 3rd paragraph.'
                 : `Place this link in a later section, at least 2 paragraphs after the previous link.`;
-            return `Link ${i + 1}: anchor text "${link.anchorText}" pointing to ${link.url}\n  HTML: <a href="${link.url}">${link.anchorText}</a>\n  ${placement}`;
+            return `Link ${i + 1}: anchor text "${link.anchorText}" → ${link.url}\n  HTML: <a href="${link.url}">${link.anchorText}</a>\n  ${placement}\n  CRITICAL: The anchor text MUST appear as part of a full sentence, not on its own line. Example: "Many companies now invest in <a href="...">seo market</a> research to stay competitive." NEVER write the link as a standalone word or on a separate line.`;
         }).join('\n\n');
 
         const titleInstruction = title
@@ -305,7 +416,7 @@ module.exports = {
             ? `CRITICAL: Write the entire article in ${language}. Every single word, heading, and sentence must be in ${language}. Do not mix languages.`
             : '';
 
-        const prompt = `You are an experienced journalist writing for a major publication. Write an 850-word article. This is NOT optional. The article MUST be at least 850 words.
+        const prompt = `You are a seasoned freelance writer known for clear, engaging articles that readers actually finish. Write an 850+ word article that is easy to read and understand.
 
 ${languageInstruction}
 
@@ -314,59 +425,49 @@ ${description ? `Topic: ${description}` : `Write an informative article related 
 Links to embed naturally:
 ${linkInstructions}
 
-STRUCTURE — follow this EXACTLY:
+STRUCTURE:
 
 ${titleInstruction}
 
-<h2>[Descriptive heading about the background/context]</h2>
-<p>Paragraph 1: 3-4 sentences</p>
-<p>Paragraph 2: 3-4 sentences</p>
-<p>Paragraph 3: 3-4 sentences</p>
+Write 5 sections, each with an <h2> heading. Each section should have 2-3 paragraphs. Include a closing paragraph without a heading.
 
-<h2>[Descriptive heading about core strategies/methods]</h2>
-<p>Paragraph 4: 3-4 sentences</p>
-<p>Paragraph 5: 3-4 sentences</p>
-<p>Paragraph 6: 3-4 sentences</p>
+Section topics (replace with real, specific headings — NEVER use "Section 1:" or numbering):
+1. Background/context — why this topic matters right now
+2. Core strategies or methods — the main approaches or ideas
+3. Practical applications — real-world examples and how-tos
+4. Common mistakes or pro tips — what most people get wrong
+5. What's next — future trends or actionable next steps
 
-<h2>[Descriptive heading about practical applications]</h2>
-<p>Paragraph 7: 3-4 sentences</p>
-<p>Paragraph 8: 3-4 sentences</p>
-<p>Paragraph 9: 3-4 sentences</p>
+You MAY use a <ul> or <ol> list (3-5 items) in ONE section where it helps readability. Lists should have brief, scannable items.
 
-<h2>[Descriptive heading about common mistakes or tips]</h2>
-<p>Paragraph 10: 3-4 sentences</p>
-<p>Paragraph 11: 3-4 sentences</p>
-<p>Paragraph 12: 3-4 sentences</p>
+READABILITY — this is critical:
+- Average sentence length: 12-18 words. Mix short sentences (5-8 words) with medium ones (15-22 words). Never write a sentence over 30 words.
+- Paragraphs: 1-3 sentences each. Vary the length. A single-sentence paragraph is great for emphasis.
+- Use "you" and "your" to speak directly to the reader. Write as if explaining to a smart friend.
+- Start each section with a hook: a surprising fact, a question, or a bold statement.
+- Use concrete examples, specific numbers, and real scenarios. Never be vague. Say "a 2024 study found 67% of teams..." not "studies show that many teams..."
+- Transition between sections naturally. The last sentence of one section should set up the next.
 
-<h2>[Descriptive heading about future trends or next steps]</h2>
-<p>Paragraph 13: 3-4 sentences</p>
-<p>Paragraph 14: 3-4 sentences</p>
-
-<p>Closing paragraph: 3-4 sentences (no heading)</p>
-
-That is 5 sections with <h2> headings, 15 paragraphs total, each 3-4 sentences. Write EVERY single paragraph. Do NOT skip, merge, or shorten any.
-
-Replace the [Descriptive heading...] placeholders with real, specific headings related to the topic. NEVER use "Section 1:" or numbering in headings.
-
-SEO rules:
-- Include the primary keyword from the anchor text in the <h1> title.
-- Use related keywords naturally throughout.
-- Front-load important keywords in the first 100 words.
-- Each <h2> should contain a relevant keyword.
-- Include specific data, numbers, or real examples.
-
-Writing style:
-- Write like a human journalist. Short punchy sentences mixed with medium ones.
+WRITING STYLE:
+- Plain language. Prefer simple words: "use" not "utilize", "help" not "facilitate", "start" not "commence".
+- Active voice only. "Teams use agile methods" not "Agile methods are used by teams."
 - Never use em dashes. Use commas, periods, or semicolons.
-- Never start a paragraph with "However," "Additionally," "Furthermore," or "That said,".
-- First sentence must deliver value or a fact immediately. No filler intros.
-- Use active voice. Be direct.
+- Never start a paragraph with: "However,", "Additionally,", "Furthermore,", "That said,", "In today's world,", "It's worth noting", "It's important to note", "In the realm of", "When it comes to", "It goes without saying", "Needless to say", "At its core", "In conclusion".
+- First sentence of the article must deliver a fact or insight immediately. No filler intros.
+- Avoid cliches and corporate jargon. Write like a real person, not a press release.
+- Never use these words: leverage, delve, landscape, navigate, robust, seamless, comprehensive, holistic, paradigm, synergy, ecosystem, stakeholders, foster, empower, groundbreaking, cutting-edge, game-changer, spearhead, pivotal, cornerstone, multifaceted, tapestry, realm, revolutionize, unlock.
 
-Format:
-- <h1> for article title (Title Case). <h2> for section headings. <p> for paragraphs.
-- No code fences, no markdown. Raw HTML only.
-- No author bio, disclaimers, or meta info.
-- Each link appears exactly once, woven naturally into a sentence.`;
+SEO (apply subtly — readability comes first):
+- Include the primary keyword from the anchor text in the <h1> title.
+- Use related keywords naturally in headings and the first 100 words.
+- Each <h2> should contain a relevant keyword phrase.
+
+FORMAT:
+- <h1> for article title (Title Case). <h2> for section headings. <p> for paragraphs. <ul>/<ol> + <li> for lists.
+- Raw HTML only. No code fences, no markdown.
+- No author bio, disclaimers, or meta commentary.
+- Each link appears exactly once, INLINE within a full sentence. The anchor text must be part of a natural sentence, never on its own line or in its own paragraph. WRONG: "<p><a href='...'>seo market</a></p>". RIGHT: "<p>Understanding the <a href='...'>seo market</a> helps businesses plan ahead.</p>".
+- The article MUST be at least 850 words. This is NOT optional.`;
 
         // Single API call — prompt is structured to reliably produce 800+ words
         let html = await callGemini(apiKey, prompt, 0.8, 8192);
@@ -388,6 +489,26 @@ Format:
             return `${closingTag}\n<p>${trimmed}</p>`;
         });
 
+        // Post-process: fix broken anchor links across paragraph boundaries
+        // Case 1: <p>...only an <a> tag...</p> — merge into previous or next paragraph
+        html = html.replace(/<\/p>\s*<p>\s*(<a\s[^>]*>[^<]*<\/a>)\s*<\/p>/gi, (match, link) => {
+            return ` ${link}</p>`;
+        });
+        html = html.replace(/<p>\s*(<a\s[^>]*>[^<]*<\/a>)\s*<\/p>\s*<p>/gi, (match, link) => {
+            return `<p>${link} `;
+        });
+        // Case 2: paragraph ends mid-sentence, next paragraph starts with <a> + short text
+        // e.g. "</p><p><a href="...">seo</a> can transform your strategy.</p>"
+        // Merge: append the link-starting paragraph to the previous one
+        html = html.replace(/<\/p>\s*<p>\s*(<a\s[^>]*>[^<]*<\/a>[^<]{0,80}<\/p>)/gi, (match, linkPara) => {
+            return ` ${linkPara}`;
+        });
+        // Case 3: paragraph ends with incomplete sentence (no period) before a new <p>
+        // e.g. "...the core principles of</p><p>..." — merge next paragraph into this one
+        html = html.replace(/([a-z,;])\s*<\/p>\s*<p>\s*(<a\s[^>]*>)/gi, (match, lastChar, linkStart) => {
+            return `${lastChar} ${linkStart}`;
+        });
+
         // Post-process: strip "Section X:" prefixes from headings
         html = html.replace(/<h2>(\s*)Section\s*\d+\s*[:.\-]\s*/gi, '<h2>$1');
 
@@ -399,6 +520,12 @@ Format:
         html = splitLongParagraphs(html, 3);
         const parasAfter = (html.match(/<p>/gi) || []).length;
         strapi.log.info(`[AI CONTENT] Paragraph split: ${parasBefore} → ${parasAfter}`);
+
+        // Post-process: merge consecutive very short paragraphs to avoid choppy reading
+        html = mergeShortParagraphs(html, 25);
+
+        // Post-process: final readability cleanup (cap paragraph length, fix punctuation)
+        html = improveReadability(html);
 
         // Extract the title from the first <h1> tag
         const titleMatch = html.match(/<h1[^>]*>(.*?)<\/h1>/i);
@@ -478,7 +605,31 @@ Rules:
         if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
         jsonStr = jsonStr.trim();
 
-        const meta = JSON.parse(jsonStr);
+        // Sanitize common Gemini JSON issues: trailing commas, single-line comments
+        jsonStr = jsonStr.replace(/,\s*([\]}])/g, '$1'); // trailing commas
+        jsonStr = jsonStr.replace(/\/\/.*$/gm, '');       // single-line comments
+
+        let meta;
+        try {
+            meta = JSON.parse(jsonStr);
+        } catch (parseErr) {
+            strapi.log.error(`[AI CONTENT] JSON parse failed, attempting regex extraction. Raw: ${jsonStr.slice(0, 200)}`);
+            // Fallback: extract fields via regex
+            const extractField = (field) => {
+                const match = jsonStr.match(new RegExp(`"${field}"\\s*:\\s*"([^"]*?)"`));
+                return match ? match[1] : '';
+            };
+            const keywordsMatch = jsonStr.match(/"keywords"\s*:\s*\[([^\]]*)\]/);
+            const keywords = keywordsMatch
+                ? keywordsMatch[1].match(/"([^"]*?)"/g)?.map(k => k.replace(/"/g, '')) || []
+                : [];
+            meta = {
+                title: extractField('title'),
+                metaDescription: extractField('metaDescription'),
+                slug: extractField('slug'),
+                keywords,
+            };
+        }
 
         strapi.log.info(`[AI CONTENT] Generated meta: title="${meta.title}", slug="${meta.slug}"`);
 

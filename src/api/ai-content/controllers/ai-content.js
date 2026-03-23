@@ -64,7 +64,7 @@ module.exports = {
             const isFree = generationCount < FREE_GENERATION_LIMIT;
 
             if (!isFree) {
-                // Check wallet balance and charge $0.20
+                // Check wallet balance (don't charge yet — charge only after successful generation)
                 const walletController = strapi.controller('api::user-wallet.user-wallet');
                 const wallet = await walletController.getOrCreateWallet(userId);
                 const totalAvailable = parseFloat(wallet.mainBalance || 0) + parseFloat(wallet.promoBalance || 0);
@@ -78,8 +78,24 @@ module.exports = {
                         costPerGeneration: COST_PER_GENERATION,
                     }, 402);
                 }
+            } else {
+                strapi.log.info(`[AI CONTENT] Free generation for user ${userId} (${generationCount + 1}/${FREE_GENERATION_LIMIT})`);
+            }
 
-                // Deduct from wallet
+            // --- Generate content first, then charge ---
+            strapi.log.info(`[AI CONTENT] Generate request from user ${userId}: ${linkEntries.length} link(s), lang=${language || 'English'}`);
+
+            const result = await geminiService.generateContent({
+                links: linkEntries.map(l => ({ anchorText: l.anchorText.trim(), url: l.url.trim() })),
+                description: description?.trim() || '',
+                title: title?.trim() || '',
+                language: language || 'English',
+                minWordCount: minWordCount || 800,
+            });
+
+            // --- Charge AFTER successful generation ---
+            if (!isFree) {
+                const walletController = strapi.controller('api::user-wallet.user-wallet');
                 const topicLabel = description?.trim()
                     ? description.trim().substring(0, 80)
                     : linkEntries[0]?.anchorText || 'Untitled';
@@ -96,20 +112,7 @@ module.exports = {
                 });
 
                 strapi.log.info(`[AI CONTENT] Charged $${COST_PER_GENERATION} from user ${userId} (generation #${generationCount + 1})`);
-            } else {
-                strapi.log.info(`[AI CONTENT] Free generation for user ${userId} (${generationCount + 1}/${FREE_GENERATION_LIMIT})`);
             }
-
-            // --- Generate content ---
-            strapi.log.info(`[AI CONTENT] Generate request from user ${userId}: ${linkEntries.length} link(s), lang=${language || 'English'}`);
-
-            const result = await geminiService.generateContent({
-                links: linkEntries.map(l => ({ anchorText: l.anchorText.trim(), url: l.url.trim() })),
-                description: description?.trim() || '',
-                title: title?.trim() || '',
-                language: language || 'English',
-                minWordCount: minWordCount || 800,
-            });
 
             // Increment generation count after successful generation
             await strapi.query('plugin::users-permissions.user').update({
