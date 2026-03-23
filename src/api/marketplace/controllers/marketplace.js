@@ -702,6 +702,31 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                   });
                 });
               });
+            } else if (key === '$or' && Array.isArray(value)) {
+              // Handle root-level $or operator (used by bulk domain search)
+              query.where(builder => {
+                value.forEach(orCondition => {
+                  Object.entries(orCondition).forEach(([orField, orValue]) => {
+                    if (typeof orValue === 'object' && orValue !== null) {
+                      Object.entries(orValue).forEach(([operator, opVal]) => {
+                        if (operator === '$containsi') builder.orWhereRaw('LOWER(??) LIKE ?', [orField, `%${String(opVal).toLowerCase()}%`]);
+                        else if (operator === '$contains') builder.orWhere(orField, 'like', `%${opVal}%`);
+                        else if (operator === '$eq') builder.orWhere(orField, '=', opVal);
+                        else if (operator === '$gt') builder.orWhere(orField, '>', opVal);
+                        else if (operator === '$gte') builder.orWhere(orField, '>=', opVal);
+                        else if (operator === '$lt') builder.orWhere(orField, '<', opVal);
+                        else if (operator === '$lte') builder.orWhere(orField, '<=', opVal);
+                        else if (operator === '$ne') builder.orWhere(orField, '!=', opVal);
+                        else if (operator === '$startsWith') builder.orWhere(orField, 'like', `${opVal}%`);
+                        else if (operator === '$endsWith') builder.orWhere(orField, 'like', `%${opVal}`);
+                        else if (operator === '$in' && Array.isArray(opVal)) builder.orWhereIn(orField, opVal);
+                      });
+                    } else {
+                      builder.orWhere(orField, orValue);
+                    }
+                  });
+                });
+              });
             } else if (typeof value === 'object' && value !== null) {
               // Handle operators for top-level fields
               Object.entries(value).forEach(([operator, opValue]) => {
