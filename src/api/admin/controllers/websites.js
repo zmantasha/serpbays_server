@@ -2592,6 +2592,34 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       return 'Do follow'
     }
 
+    // Normalize backlinkValidity to match schema enum values
+    const normalizeBacklinkValidity = (value) => {
+      if (!value) return 'three_years' // Default
+
+      // Trim, lowercase, strip all spaces/underscores to create a slug
+      const slug = String(value).trim().toLowerCase().replace(/[\s_-]+/g, '')
+
+      const map = {
+        // one_year variants
+        'oneyear': 'one_year', '1year': 'one_year', '12months': 'one_year',
+        'one_year': 'one_year', '1_year': 'one_year', '12_months': 'one_year',
+        '1': 'one_year',
+        // three_years variants
+        'threeyears': 'three_years', '3years': 'three_years', '36months': 'three_years',
+        'three_years': 'three_years', '3_years': 'three_years', '36_months': 'three_years',
+        '3': 'three_years',
+        // five_years variants
+        'fiveyears': 'five_years', '5years': 'five_years', '60months': 'five_years',
+        'five_years': 'five_years', '5_years': 'five_years', '60_months': 'five_years',
+        '5': 'five_years',
+        // lifetime variants
+        'lifetime': 'lifetime', 'forever': 'lifetime', 'permanent': 'lifetime',
+        'unlimited': 'lifetime', 'life': 'lifetime',
+      }
+
+      return map[slug] || null
+    }
+
     return {
       url: normalizedUrl,
       protocol: 'https',
@@ -2612,7 +2640,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       countries: websiteData.countries ? websiteData.countries.split(',').map(c => c.trim()) : ['United States'],
       language: websiteData.language ? websiteData.language.split(',').map(l => l.trim()) : ['English'],
       backlinkType: normalizeBacklinkType(websiteData.backlinkType),
-      backlinkValidity: websiteData.backlinkValidity || 'three_years',
+      backlinkValidity: normalizeBacklinkValidity(websiteData.backlinkValidity) || 'three_years',
       allowedLinks: parseInt(websiteData.allowedLinks) || 1,
       sponsored: websiteData.sponsored === 'true' || websiteData.sponsored === true,
       ugc: websiteData.ugc === 'true' || websiteData.ugc === true,
