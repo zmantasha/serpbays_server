@@ -875,6 +875,112 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       }
     },
 
+    // Lightweight endpoint: Get only counts for layout navbar badges
+    // Returns available orders count + in-progress orders count
+    // This replaces the need to call getAvailableOrders + getMyOrders just for badge numbers
+    async getCounts(ctx) {
+      try {
+        const user = ctx.state.user;
+
+        if (!user) {
+          return ctx.unauthorized('Authentication required');
+        }
+
+        // --- Available orders count ---
+        // Get publisher's active marketplace websites
+        const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
+          where: {
+            $or: [
+              { publisher: user.id },
+              { publisher_email: user.email }
+            ],
+            status: { $in: ['active', 'delisted'] }
+          },
+          select: ['id']
+        });
+
+        const websiteIds = publisherWebsites.map(w => w.id);
+
+        let availableCount = 0;
+        if (websiteIds.length > 0) {
+          // Count pending orders for publisher's websites
+          availableCount = await strapi.db.query('api::order.order').count({
+            where: {
+              $and: [
+                { website: { $in: websiteIds } },
+                { orderStatus: 'pending' },
+                { advertiser: { $ne: user.id } },
+                {
+                  $or: [
+                    { publisher: null },
+                    { publisher: user.id }
+                  ]
+                }
+              ]
+            }
+          });
+        }
+
+        // Also count orders assigned via snapshot email
+        const snapshotCount = await strapi.db.query('api::order.order').count({
+          where: {
+            $and: [
+              { websitePublisherEmail: user.email },
+              { orderStatus: 'pending' },
+              { advertiser: { $ne: user.id } },
+              {
+                $or: [
+                  { publisher: null },
+                  { publisher: user.id }
+                ]
+              },
+              // Exclude orders already counted via websiteIds
+              ...(websiteIds.length > 0 ? [{ website: { $notIn: websiteIds } }] : [])
+            ]
+          }
+        });
+
+        const totalAvailableCount = availableCount + snapshotCount;
+
+        // --- In-progress orders count ---
+        // Count orders where publisher has accepted but not completed
+        const inProgressCount = await strapi.db.query('api::order.order').count({
+          where: {
+            $and: [
+              {
+                $or: [
+                  { publisher: user.id },
+                  { websitePublisherEmail: user.email }
+                ]
+              },
+              { advertiser: { $ne: user.id } },
+              {
+                $or: [
+                  { orderStatus: 'accepted' },
+                  {
+                    $and: [
+                      { orderStatus: 'delivered' },
+                      { revisionStatus: 'requested' }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        });
+
+        return {
+          data: {
+            availableCount: totalAvailableCount,
+            inProgressCount: inProgressCount
+          }
+        };
+      } catch (error) {
+        console.error('Error fetching order counts:', error);
+        return ctx.internalServerError('An error occurred while fetching order counts');
+      }
+    },
+
     // Get orders available for publishers to accept
     async getAvailableOrders(ctx) {
       try {
@@ -892,7 +998,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               { publisher: user.id },
               { publisher_email: user.email }
             ],
-            status: 'active' // Only active websites for new available orders
+            status: { $in: ['active', 'delisted'] } // Include delisted websites so pending orders remain visible after admin rejection
           }
         });
 
@@ -901,23 +1007,6 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           console.log(`  - Website ${website.id}: ${website.url} (status: ${website.status}, delisted reason: ${website.delistedReason || 'N/A'})`);
         });
 
-        // Debug: Check what orders exist for wordscloud.in
-        if (publisherWebsites.some(w => w.url === 'wordscloud.in')) {
-          const wordscloudinSite = publisherWebsites.find(w => w.url === 'wordscloud.in');
-          console.log(`[Debug] Checking orders for wordscloud.in (website ID: ${wordscloudinSite.id})`);
-
-          const allOrdersForSite = await strapi.entityService.findMany('api::order.order', {
-            filters: {
-              website: { id: wordscloudinSite.id }
-            },
-            populate: ['website', 'advertiser', 'publisher']
-          });
-
-          console.log(`[Debug] Found ${allOrdersForSite.length} total orders for wordscloud.in:`);
-          allOrdersForSite.forEach(order => {
-            console.log(`  - Order ${order.id}: Status=${order.orderStatus}, Publisher=${order.publisher?.id || 'null'}, Date=${order.orderDate}, Advertiser=${order.advertiser?.id}`);
-          });
-        }
 
         let orders = [];
 

@@ -1113,6 +1113,11 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     gsc_verified: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     gsc_verified_at: Schema.Attribute.DateTime;
     guidelines: Schema.Attribute.Text;
+    isFeatured: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    isFeaturedGuestPost: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    isFeaturedLinkInsertion: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
     language: Schema.Attribute.JSON & Schema.Attribute.Required;
     link_insertion_price: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<

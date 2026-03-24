@@ -59,17 +59,18 @@ module.exports = {
         try {
             strapi.log.info(`[CLERK SYNC] Sync request for user: ${email} (${clerkId})`);
 
-            // Step 1: Find existing user by clerkId (primary key for Clerk users)
-            let user = await strapi.query('plugin::users-permissions.user').findOne({
-                where: { clerkId },
-            });
-
-            // Step 2: If not found by clerkId, try email (handles pre-existing users)
-            if (!user) {
-                user = await strapi.query('plugin::users-permissions.user').findOne({
+            // Find existing user by clerkId or email (parallel for speed)
+            const [userByClerkId, userByEmail] = await Promise.all([
+                strapi.query('plugin::users-permissions.user').findOne({
+                    where: { clerkId },
+                }),
+                strapi.query('plugin::users-permissions.user').findOne({
                     where: { email },
-                });
-            }
+                }),
+            ]);
+
+            // Prefer clerkId match (authoritative), fallback to email match
+            let user = userByClerkId || userByEmail;
 
             if (user) {
                 // ── UPDATE existing user ──

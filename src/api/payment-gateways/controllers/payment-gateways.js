@@ -33,7 +33,7 @@ module.exports = {
           enabled: process.env.RAZORPAY_ENABLED === 'true',
           displayName: 'Razorpay',
           description: 'Razorpay payment gateway',
-          feePercentage: parseFloat(process.env.RAZORPAY_FEE_PERCENTAGE || '2.0'),
+          feePercentage: parseFloat(process.env.RAZORPAY_FEE_PERCENTAGE || '0'),
           gstPercentage: parseFloat(process.env.RAZORPAY_GST_PERCENTAGE || '18.0'),
           conversionRate: parseFloat(process.env.USD_TO_INR_RATE || '83.25')
         },
@@ -41,7 +41,7 @@ module.exports = {
           enabled: process.env.PHONEPE_ENABLED === 'true',
           displayName: 'PhonePe',
           description: 'PhonePe UPI payments',
-          feePercentage: parseFloat(process.env.PHONEPE_FEE_PERCENTAGE || '2.0'),
+          feePercentage: parseFloat(process.env.PHONEPE_FEE_PERCENTAGE || '0'),
           gstPercentage: parseFloat(process.env.PHONEPE_GST_PERCENTAGE || '18.0')
         },
         bank_transfer: {
@@ -123,13 +123,13 @@ module.exports = {
           break;
 
         case 'razorpay':
-          // Razorpay: 2% + GST (18% on fee)
-          const razorpayFeePercentage = parseFloat(process.env.RAZORPAY_FEE_PERCENTAGE || '2.0');
+          // Razorpay: Processing fee (0 by default, configurable) + GST (18% on base amount)
+          const razorpayFeePercentage = parseFloat(process.env.RAZORPAY_FEE_PERCENTAGE || '0');
           const razorpayGstPercentage = parseFloat(process.env.RAZORPAY_GST_PERCENTAGE || '18.0');
           const razorpayProcessingFee = baseAmount * (razorpayFeePercentage / 100);
-          const razorpayGstFee = razorpayProcessingFee * (razorpayGstPercentage / 100);
+          const razorpayGstFee = baseAmount * (razorpayGstPercentage / 100);
           feeAmount = razorpayProcessingFee + razorpayGstFee;
-          feePercentage = razorpayFeePercentage + (razorpayFeePercentage * razorpayGstPercentage / 100);
+          feePercentage = razorpayFeePercentage;
           breakdown = {
             processingFee: razorpayProcessingFee,
             gstFee: razorpayGstFee
@@ -146,13 +146,13 @@ module.exports = {
           break;
 
         case 'phonepe':
-          // PhonePe: 2% + GST (18% on fee)
-          const phonepeFeePercentage = parseFloat(process.env.PHONEPE_FEE_PERCENTAGE || '2.0');
+          // PhonePe: Processing fee (0 by default, configurable) + GST (18% on base amount)
+          const phonepeFeePercentage = parseFloat(process.env.PHONEPE_FEE_PERCENTAGE || '0');
           const phonepeGstPercentage = parseFloat(process.env.PHONEPE_GST_PERCENTAGE || '18.0');
           const phonepeProcessingFee = baseAmount * (phonepeFeePercentage / 100);
-          const phonepeGstFee = phonepeProcessingFee * (phonepeGstPercentage / 100);
+          const phonepeGstFee = baseAmount * (phonepeGstPercentage / 100);
           feeAmount = phonepeProcessingFee + phonepeGstFee;
-          feePercentage = phonepeFeePercentage + (phonepeFeePercentage * phonepeGstPercentage / 100);
+          feePercentage = phonepeFeePercentage;
           breakdown = {
             processingFee: phonepeProcessingFee,
             gstFee: phonepeGstFee

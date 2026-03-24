@@ -164,6 +164,16 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     const sorted = [...entries];
 
     sorted.sort((a, b) => {
+      // Featured websites always appear first regardless of metric sort.
+      // Generic: featured if featured for ANY service type (GP or LI).
+      // Client-side re-sorts based on the active service type filter.
+      // Raw Knex results use snake_case; Strapi ORM uses camelCase.
+      const aFeatured = (a.isFeaturedGuestPost || a.is_featured_guest_post || false) || (a.isFeaturedLinkInsertion || a.is_featured_link_insertion || false);
+      const bFeatured = (b.isFeaturedGuestPost || b.is_featured_guest_post || false) || (b.isFeaturedLinkInsertion || b.is_featured_link_insertion || false);
+      if (aFeatured !== bFeatured) {
+        return bFeatured ? 1 : -1;
+      }
+
       const valA = a[sortField];
       const valB = b[sortField];
 
@@ -605,25 +615,23 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const mappedField = sortMapping[field] || field;
       const sortDirection = direction === 'asc' ? 'asc' : 'desc';
 
-      // Check if this is a metric field that needs NULL-safe sorting
-      if (metricFields.includes(mappedField)) {
-        // Flag for raw SQL sorting (handled after Strapi's default find)
-        useRawSorting = true;
-        rawSortField = mappedField;
-        rawSortDirection = sortDirection;
+      // Route ALL sort fields through raw SQL for NULL-safe featured sorting.
+      // PostgreSQL puts NULLs FIRST in DESC order by default, which buries
+      // featured websites behind thousands of NULL records on large datasets.
+      // The raw SQL path uses COALESCE(is_featured, false) DESC to fix this.
+      useRawSorting = true;
+      rawSortField = mappedField;
+      rawSortDirection = sortDirection;
 
-        // Don't set ctx.query.sort - we'll handle it with raw SQL
-        delete ctx.query.sort;
+      // Don't set ctx.query.sort - we'll handle it with raw SQL
+      delete ctx.query.sort;
 
-        console.log(`🔍 Will apply NULL-safe raw SQL sorting: ${mappedField}:${sortDirection}`);
-      } else {
-        // Standard fields can use Strapi's default sorting
-        ctx.query.sort = `${mappedField}:${sortDirection}`;
-        console.log(`🔍 Applied standard sorting: ${mappedField}:${sortDirection}`);
-      }
+      console.log(`🔍 Will apply NULL-safe raw SQL sorting: ${mappedField}:${sortDirection}`);
     } else {
-      // Default sort if none provided
-      ctx.query.sort = 'updatedAt:desc';
+      // Default sort: featured first, then ahrefs_traffic descending (NULL-safe via raw SQL)
+      useRawSorting = true;
+      rawSortField = 'ahrefs_traffic';
+      rawSortDirection = 'desc';
     }
 
     // For metric field sorting, use Knex with NULLS LAST for proper NULL/0 handling
@@ -694,6 +702,31 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                   });
                 });
               });
+            } else if (key === '$or' && Array.isArray(value)) {
+              // Handle root-level $or operator (used by bulk domain search)
+              query.where(builder => {
+                value.forEach(orCondition => {
+                  Object.entries(orCondition).forEach(([orField, orValue]) => {
+                    if (typeof orValue === 'object' && orValue !== null) {
+                      Object.entries(orValue).forEach(([operator, opVal]) => {
+                        if (operator === '$containsi') builder.orWhereRaw('LOWER(??) LIKE ?', [orField, `%${String(opVal).toLowerCase()}%`]);
+                        else if (operator === '$contains') builder.orWhere(orField, 'like', `%${opVal}%`);
+                        else if (operator === '$eq') builder.orWhere(orField, '=', opVal);
+                        else if (operator === '$gt') builder.orWhere(orField, '>', opVal);
+                        else if (operator === '$gte') builder.orWhere(orField, '>=', opVal);
+                        else if (operator === '$lt') builder.orWhere(orField, '<', opVal);
+                        else if (operator === '$lte') builder.orWhere(orField, '<=', opVal);
+                        else if (operator === '$ne') builder.orWhere(orField, '!=', opVal);
+                        else if (operator === '$startsWith') builder.orWhere(orField, 'like', `${opVal}%`);
+                        else if (operator === '$endsWith') builder.orWhere(orField, 'like', `%${opVal}`);
+                        else if (operator === '$in' && Array.isArray(opVal)) builder.orWhereIn(orField, opVal);
+                      });
+                    } else {
+                      builder.orWhere(orField, orValue);
+                    }
+                  });
+                });
+              });
             } else if (typeof value === 'object' && value !== null) {
               // Handle operators for top-level fields
               Object.entries(value).forEach(([operator, opValue]) => {
@@ -705,6 +738,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                 else if (operator === '$ne') query.where(key, '!=', opValue);
                 else if (operator === '$null') query.whereNull(key);
                 else if (operator === '$notNull') query.whereNotNull(key);
+                else if (operator === '$contains') query.where(key, 'like', `%${opValue}%`);
+                else if (operator === '$containsi') query.whereRaw('LOWER(??) LIKE ?', [key, `%${String(opValue).toLowerCase()}%`]);
+                else if (operator === '$endsWith') query.where(key, 'like', `%${opValue}`);
+                else if (operator === '$startsWith') query.where(key, 'like', `${opValue}%`);
+                else if (operator === '$in' && Array.isArray(opValue)) query.whereIn(key, opValue);
               });
             } else {
               query.where(key, value);
@@ -718,11 +756,17 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         query = applyFilters(query, ctx.query.filters);
 
         // Apply NULL-safe sorting with NULLS LAST
-        // This ensures 0 and NULL values appear at the bottom when sorting DESC
-        query = query.orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
+        // Featured websites always appear first, then sort by the requested metric field
+        // NOTE: Use snake_case because Knex raw SQL bypasses Strapi's ORM column name mapping
+        // Featured = site is featured for ANY service type (GP or LI)
+        // Client-side re-sorts based on the active service type filter after receiving data
+        query = query
+          .orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC')
+          .orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
 
         // Clone query for count (before pagination)
-        const countQuery = query.clone().count('* as count');
+        // clearOrder() removes ORDER BY clauses which are invalid on aggregate COUNT queries in PostgreSQL
+        const countQuery = query.clone().clearOrder().count('* as count');
 
         // Apply pagination
         query = query.limit(pageSize).offset((page - 1) * pageSize);
@@ -803,9 +847,20 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       // Use db.query to get ALL fields including private ones
       // IMPORTANT: Populate publisher relation for ownership check in sanitizePublisherData
+      const sortParts = (ctx.query.sort || 'updatedAt:desc').split(',');
+      const orderByArray = sortParts.map(part => {
+        const [field, dir] = part.split(':');
+        return { [field]: dir || 'asc' };
+      });
+      // Always ensure featured fields are the first sort criteria
+      // Sites featured for any service type appear first
+      const hasIsFeatured = orderByArray.some(obj => 'isFeaturedGuestPost' in obj || 'isFeaturedLinkInsertion' in obj);
+      if (!hasIsFeatured) {
+        orderByArray.unshift({ isFeaturedGuestPost: 'desc' }, { isFeaturedLinkInsertion: 'desc' });
+      }
       const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
         where: ctx.query.filters,
-        orderBy: ctx.query.sort ? { [ctx.query.sort.split(':')[0]]: ctx.query.sort.split(':')[1] || 'asc' } : { updatedAt: 'desc' },
+        orderBy: orderByArray,
         limit: pageSize,
         offset: (page - 1) * pageSize,
         populate: ['publisher'],  // Required for isOwnWebsite check
@@ -820,9 +875,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const sanitizedEntries = this.sanitizePublisherData(entries, user);
 
       // Apply post-fetch sorting if sorting by a metric field
-      const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
-      const sortField = sortParts[0];
-      const sortDirection = sortParts[1] || 'desc';
+      const postSortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
+      const sortField = postSortParts[0];
+      const sortDirection = postSortParts[1] || 'desc';
       const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection);
 
       return {
