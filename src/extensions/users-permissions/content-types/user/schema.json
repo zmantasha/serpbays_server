@@ -237,6 +237,10 @@
     "withdrawalOtpExpiry": {
       "type": "datetime",
       "private": true
+    },
+    "isVIP": {
+      "type": "boolean",
+      "default": false
     }
   }
 }

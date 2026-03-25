@@ -108,6 +108,7 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         role: user.role,
+        isVIP: user.isVIP || false,
         profile: {
           firstName: user.firstName,
           lastName: user.lastName,
@@ -183,6 +184,7 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         updatedAt: user.updatedAt,
         Advertiser: user.Advertiser,
         Publisher: user.Publisher,
+        isVIP: user.isVIP || false,
         businessName: user.businessName,
         billingAddress: user.billingAddress,
         city: user.city,
@@ -372,6 +374,31 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
     } catch (error) {
       console.error('[ADMIN USER DELETE ERROR]', error);
       return ctx.internalServerError('Failed to delete user');
+    }
+  },
+
+  /**
+   * Toggle VIP status for a user
+   */
+  async toggleVIP(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { isVIP } = ctx.request.body;
+
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} ${isVIP ? 'granting' : 'revoking'} VIP status for user ${id}`);
+
+      const updatedUser = await strapi.entityService.update('plugin::users-permissions.user', id, {
+        data: { isVIP: !!isVIP },
+        populate: ['role']
+      });
+
+      ctx.send({
+        data: updatedUser
+      });
+
+    } catch (error) {
+      console.error('[ADMIN USER TOGGLE VIP ERROR]', error);
+      return ctx.internalServerError('Failed to update VIP status');
     }
   },
 

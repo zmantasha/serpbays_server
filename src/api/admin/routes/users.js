@@ -54,6 +54,15 @@ module.exports = {
     },
     {
       method: 'PUT',
+      path: '/admin/users/:id/vip',
+      handler: 'users.toggleVIP',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
+      method: 'PUT',
       path: '/admin/users/:id/confirm',
       handler: 'users.confirmUser',
       config: {

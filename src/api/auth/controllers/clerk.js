@@ -166,6 +166,11 @@ module.exports = {
                 }
             }
 
+            // Re-fetch full user to ensure all fields (including isVIP) are present
+            user = await strapi.query('plugin::users-permissions.user').findOne({
+                where: { id: user.id },
+            });
+
             // Generate JWT token
             const jwt = strapi.plugins['users-permissions'].services.jwt.issue({
                 id: user.id,
@@ -203,6 +208,7 @@ module.exports = {
                     marketplacePreferences: user.marketplacePreferences,
                     Advertiser: user.Advertiser,
                     Publisher: user.Publisher,
+                    isVIP: user.isVIP || false,
                 },
                 jwt,
             });

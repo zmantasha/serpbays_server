@@ -3584,6 +3584,7 @@ export interface PluginUsersPermissionsUser
       }>;
     identity: Schema.Attribute.Enumeration<['SEO', 'Agency', 'Other']>;
     invoices: Schema.Attribute.Relation<'oneToMany', 'api::invoice.invoice'>;
+    isVIP: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     lastName: Schema.Attribute.String &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 50;
