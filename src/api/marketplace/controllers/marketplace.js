@@ -245,6 +245,58 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     return sanitize(entries);
   },
 
+  /**
+   * Inject VIP discounted prices into marketplace results for VIP users.
+   * Adds vipPrice, vipLinkInsertionPrice, and vipDiscountPercentage to each item.
+   * Non-VIP users get results unchanged.
+   */
+  async injectVipPricing(entries, user) {
+    if (!user) return entries;
+
+    try {
+      const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { id: user.id },
+      });
+
+      if (!fullUser?.isVIP) return entries;
+
+      const vipSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
+      const discountPct = parseFloat(vipSettings.discountPercentage) || 0;
+
+      if (discountPct <= 0) return entries;
+
+      const applyDiscount = (price) => {
+        const p = parseFloat(price);
+        if (!p || p <= 0) return null;
+        return Math.round(p * (1 - discountPct / 100) * 100) / 100;
+      };
+
+      const injectPrices = (entry) => {
+        if (!entry) return entry;
+        const item = { ...entry };
+        item.vipDiscountPercentage = discountPct;
+        item.vipPrice = applyDiscount(item.price);
+        item.vipLinkInsertionPrice = applyDiscount(item.link_insertion_price);
+        // Sensitive category VIP prices
+        item.vipAdvCbdPricing = applyDiscount(item.adv_cbd_pricing);
+        item.vipAdvCasinoPricing = applyDiscount(item.adv_casino_pricing);
+        item.vipAdvCryptoPricing = applyDiscount(item.adv_crypto_pricing);
+        item.vipAdvDatingPricing = applyDiscount(item.adv_dating_pricing);
+        item.vipAdvLiCbdPricing = applyDiscount(item.adv_li_cbd_pricing);
+        item.vipAdvLiCasinoPricing = applyDiscount(item.adv_li_casino_pricing);
+        item.vipAdvLiCryptoPricing = applyDiscount(item.adv_li_crypto_pricing);
+        item.vipAdvLiDatingPricing = applyDiscount(item.adv_li_dating_pricing);
+        return item;
+      };
+
+      if (Array.isArray(entries)) return entries.map(injectPrices);
+      return injectPrices(entries);
+    } catch (err) {
+      console.error('Error injecting VIP pricing:', err);
+      return entries; // Non-blocking fallback
+    }
+  },
+
   // Helper function to calculate placement speed based on TAT
   calculatePlacementSpeed(tat) {
     if (!tat || tat < 0) return 'Normal';
@@ -782,8 +834,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // Sanitize publisher data
         const sanitizedResults = this.sanitizePublisherData(results, user);
 
+        // Inject VIP pricing for VIP users
+        const vipResults = await this.injectVipPricing(sanitizedResults, user);
+
         // Apply post-fetch sorting as final guarantee
-        const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection);
+        const sortedResults = this.applyPostFetchSorting(vipResults, rawSortField, rawSortDirection);
 
         // Return in Strapi v4 format
         return {
@@ -813,6 +868,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
           if (results && results.results) {
             results.results = this.sanitizePublisherData(results.results, user);
+            results.results = await this.injectVipPricing(results.results, user);
             // Apply post-fetch sorting as final guarantee
             results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection);
           }
@@ -829,6 +885,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           const result = await super.find(ctx);
           if (result && result.data) {
             result.data = this.sanitizePublisherData(result.data, user);
+            result.data = await this.injectVipPricing(result.data, user);
             // Apply post-fetch sorting as final guarantee
             result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection);
           }
@@ -874,11 +931,14 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Sanitize publisher data (this removes private fields for non-owners)
       const sanitizedEntries = this.sanitizePublisherData(entries, user);
 
+      // Inject VIP pricing for VIP users
+      const vipEntries = await this.injectVipPricing(sanitizedEntries, user);
+
       // Apply post-fetch sorting if sorting by a metric field
       const postSortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
       const sortField = postSortParts[0];
       const sortDirection = postSortParts[1] || 'desc';
-      const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection);
+      const sortedEntries = this.applyPostFetchSorting(vipEntries, sortField, sortDirection);
 
       return {
         data: sortedEntries,
@@ -897,6 +957,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const result = await super.find(ctx);
       if (result && result.data) {
         result.data = this.sanitizePublisherData(result.data, user);
+        result.data = await this.injectVipPricing(result.data, user);
         // Apply post-fetch sorting for fallback too
         const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
         result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc');

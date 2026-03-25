@@ -389,6 +389,68 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
       });
 
+      // VIP Deposit Bonus
+      try {
+        const userId = wallet.users_permissions_user?.id || transaction.users_permissions_user;
+        if (userId) {
+          const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({ where: { id: userId } });
+          if (fullUser && fullUser.isVIP) {
+            const vipSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
+            const bonusPct = parseFloat(vipSettings.depositBonusPercentage || 0);
+            const minAmount = parseFloat(vipSettings.depositBonusMinAmount || 1000);
+
+            if (bonusPct > 0 && transactionAmount >= minAmount) {
+              let bonusAmount = transactionAmount * (bonusPct / 100);
+
+              // Apply max cap if set
+              const maxCap = parseFloat(vipSettings.depositBonusMaxCap || 0);
+              if (maxCap > 0 && bonusAmount > maxCap) {
+                bonusAmount = maxCap;
+              }
+
+              // Add bonus as promo funds
+              const currentPromoBalanceAfter = parseFloat(wallet.promoBalance || 0);
+              const newPromoBalance = currentPromoBalanceAfter + bonusAmount;
+              const newTotalBalanceWithBonus = newMainBalance + newPromoBalance;
+
+              await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+                data: {
+                  promoBalance: newPromoBalance,
+                  balance: newTotalBalanceWithBonus
+                }
+              });
+
+              // Create a bonus transaction record
+              await strapi.entityService.create('api::transaction.transaction', {
+                data: {
+                  type: 'deposit',
+                  amount: bonusAmount,
+                  netAmount: bonusAmount,
+                  transactionStatus: 'success',
+                  gateway: 'vip_bonus',
+                  fund_source: 'promo_fund',
+                  user_wallet: wallet.id,
+                  users_permissions_user: userId,
+                  completedAt: new Date(),
+                  metadata: {
+                    vipBonus: true,
+                    bonusPercentage: bonusPct,
+                    originalDepositAmount: transactionAmount,
+                    originalTransactionId: transaction.id,
+                    processedAt: new Date().toISOString()
+                  },
+                  publishedAt: new Date()
+                }
+              });
+
+              console.log(`[STRIPE] 🎁 VIP bonus applied: $${bonusAmount.toFixed(2)} (${bonusPct}% of $${transactionAmount})`);
+            }
+          }
+        }
+      } catch (vipError) {
+        console.error('[STRIPE] ⚠️ VIP bonus calculation failed (non-blocking):', vipError);
+      }
+
       console.log(`[STRIPE] ✅ Transaction ${transaction.id} completed successfully`);
 
       // Create invoice (in background, don't block webhook)

@@ -79,9 +79,46 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
         }
       }
 
+      // Check if user is VIP and apply discount
+      let vipDiscount = null;
+      try {
+        const currentUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { id: userId },
+        });
+
+        if (currentUser?.isVIP) {
+          const vipSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
+          const discountPct = parseFloat(vipSettings.discountPercentage) || 0;
+
+          if (discountPct > 0) {
+            let totalSavings = 0;
+
+            for (const item of itemsWithLiveData) {
+              if (item.website) {
+                const originalPrice = parseFloat(item.website.sensitivePrice) || 0;
+                const discountedPrice = Math.round(originalPrice * (1 - discountPct / 100) * 100) / 100;
+                item.website.vipPrice = discountedPrice;
+                item.website.vipDiscountPercentage = discountPct;
+                totalSavings += (originalPrice - discountedPrice) * (item.quantity || 1);
+              }
+            }
+
+            vipDiscount = {
+              enabled: true,
+              percentage: discountPct,
+              totalSavings: Math.round(totalSavings * 100) / 100,
+            };
+          }
+        }
+      } catch (vipErr) {
+        console.error('Error applying VIP discount to cart:', vipErr);
+        // Non-blocking — cart still works without VIP pricing
+      }
+
       return {
         ...cart,
-        items: itemsWithLiveData
+        items: itemsWithLiveData,
+        ...(vipDiscount && { vipDiscount }),
       };
     } catch (error) {
       ctx.throw(500, error);

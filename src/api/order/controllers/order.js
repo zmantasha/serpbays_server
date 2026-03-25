@@ -24,6 +24,34 @@ async function checkPublisherWallet(userId) {
   }
 }
 
+/**
+ * Compute the correct item price server-side based on marketplace data, service type, and category.
+ * Replicates the pricing selection logic from the cart controller.
+ */
+function computeItemPrice(marketplace, serviceType, specialCategory, isSensitive) {
+  if (!marketplace) return 0;
+
+  if (isSensitive) {
+    if (serviceType === 'link_insertion') {
+      if (specialCategory === 'CBD') return parseFloat(marketplace.adv_li_cbd_pricing) || parseFloat(marketplace.link_insertion_price) || 0;
+      if (specialCategory === 'Casino') return parseFloat(marketplace.adv_li_casino_pricing) || parseFloat(marketplace.link_insertion_price) || 0;
+      if (specialCategory === 'Crypto') return parseFloat(marketplace.adv_li_crypto_pricing) || parseFloat(marketplace.link_insertion_price) || 0;
+      if (specialCategory === 'Dating') return parseFloat(marketplace.adv_li_dating_pricing) || parseFloat(marketplace.link_insertion_price) || 0;
+      return parseFloat(marketplace.link_insertion_price) || 0;
+    }
+    // Guest post sensitive
+    if (specialCategory === 'CBD') return parseFloat(marketplace.adv_cbd_pricing) || parseFloat(marketplace.price) || 0;
+    if (specialCategory === 'Casino') return parseFloat(marketplace.adv_casino_pricing) || parseFloat(marketplace.price) || 0;
+    if (specialCategory === 'Crypto') return parseFloat(marketplace.adv_crypto_pricing) || parseFloat(marketplace.price) || 0;
+    if (specialCategory === 'Dating') return parseFloat(marketplace.adv_dating_pricing) || parseFloat(marketplace.price) || 0;
+    return parseFloat(marketplace.price) || 0;
+  }
+
+  // Non-sensitive
+  if (serviceType === 'link_insertion') return parseFloat(marketplace.link_insertion_price) || 0;
+  return parseFloat(marketplace.price) || 0;
+}
+
 module.exports = createCoreController('api::order.order', ({ strapi }) => {
   // Helper function to format links for storage
   const formatLinks = (links) => {
@@ -290,6 +318,60 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           orderData.websiteCountries = marketplace.countries;
 
           console.log('Marketplace snapshot created and added to order data');
+        }
+
+        // --- SERVER-SIDE PRICE VERIFICATION + VIP DISCOUNT ---
+        if (marketplace) {
+          try {
+            // Compute the correct price server-side based on serviceType + specialCategory
+            const isSensitive = !!(ctx.request.body.data || ctx.request.body).isSensitive;
+            const computedOriginalPrice = computeItemPrice(marketplace, serviceType,
+              (ctx.request.body.data || ctx.request.body).specialCategory, isSensitive);
+
+            let finalPrice = computedOriginalPrice;
+            let vipDiscountApplied = false;
+            let vipDiscountPercentage = 0;
+
+            // Check if user is VIP and apply discount
+            const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+              where: { id: user.id },
+            });
+
+            if (fullUser?.isVIP) {
+              const vipSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
+              const discountPct = parseFloat(vipSettings.discountPercentage) || 0;
+              if (discountPct > 0) {
+                finalPrice = Math.round(computedOriginalPrice * (1 - discountPct / 100) * 100) / 100;
+                vipDiscountApplied = true;
+                vipDiscountPercentage = discountPct;
+              }
+            }
+
+            // Add outsourced writing cost if applicable
+            if (isOutsourced && marketplace.publisher_writing_price) {
+              finalPrice += parseFloat(marketplace.publisher_writing_price) || 0;
+            }
+
+            const clientAmount = parseFloat(orderData.totalAmount);
+            if (Math.abs(clientAmount - finalPrice) > 0.01) {
+              console.log(`[PRICE VERIFICATION] Client sent $${clientAmount}, server computed $${finalPrice}. Overriding.`);
+            }
+
+            // Override with server-computed price
+            orderData.totalAmount = finalPrice;
+
+            // Store VIP discount metadata in snapshot
+            if (websiteSnapshot) {
+              websiteSnapshot.vipDiscountApplied = vipDiscountApplied;
+              websiteSnapshot.vipDiscountPercentage = vipDiscountPercentage;
+              websiteSnapshot.originalPrice = computedOriginalPrice;
+              websiteSnapshot.finalPrice = finalPrice;
+              orderData.websiteSnapshot = websiteSnapshot;
+            }
+          } catch (priceErr) {
+            console.error('[PRICE VERIFICATION] Error computing server price, using client amount:', priceErr);
+            // Fallback to client amount if something goes wrong
+          }
         }
 
         // Remove links from orderData if present to prevent conflicts

@@ -2748,6 +2748,71 @@ export interface ApiUserWalletUserWallet extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiVipSettingsVipSettings extends Struct.SingleTypeSchema {
+  collectionName: 'vip_settings';
+  info: {
+    displayName: 'VIP Settings';
+    pluralName: 'vip-settings-list';
+    singularName: 'vip-settings';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    benefits: Schema.Attribute.JSON & Schema.Attribute.DefaultTo<{}>;
+    canDownloadMarketplace: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    depositBonusMaxCap: Schema.Attribute.Decimal;
+    depositBonusMinAmount: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<1000>;
+    depositBonusPercentage: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    discountPercentage: Schema.Attribute.Decimal &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    downloadMaxItems: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 1;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<500>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::vip-settings.vip-settings'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiVoucherCodeVoucherCode extends Struct.CollectionTypeSchema {
   collectionName: 'voucher_codes';
   info: {
@@ -3728,6 +3793,7 @@ declare module '@strapi/strapi' {
       'api::shortlist.shortlist': ApiShortlistShortlist;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;
+      'api::vip-settings.vip-settings': ApiVipSettingsVipSettings;
       'api::voucher-code.voucher-code': ApiVoucherCodeVoucherCode;
       'api::website-request.website-request': ApiWebsiteRequestWebsiteRequest;
       'api::website-update-request.website-update-request': ApiWebsiteUpdateRequestWebsiteUpdateRequest;

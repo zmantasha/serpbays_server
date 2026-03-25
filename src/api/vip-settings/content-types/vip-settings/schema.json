@@ -1,0 +1,48 @@
+{
+  "kind": "singleType",
+  "collectionName": "vip_settings",
+  "info": {
+    "singularName": "vip-settings",
+    "pluralName": "vip-settings-list",
+    "displayName": "VIP Settings"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "discountPercentage": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "depositBonusPercentage": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "depositBonusMinAmount": {
+      "type": "decimal",
+      "default": 1000,
+      "min": 0
+    },
+    "depositBonusMaxCap": {
+      "type": "decimal",
+      "default": null
+    },
+    "canDownloadMarketplace": {
+      "type": "boolean",
+      "default": false
+    },
+    "downloadMaxItems": {
+      "type": "integer",
+      "default": 500,
+      "min": 1
+    },
+    "benefits": {
+      "type": "json",
+      "default": {}
+    }
+  }
+}
