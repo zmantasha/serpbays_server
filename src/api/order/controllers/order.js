@@ -332,14 +332,38 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             let vipDiscountApplied = false;
             let vipDiscountPercentage = 0;
 
-            // Check if user is VIP and apply discount
+            // Check if user is VIP and apply per-field discount
             const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({
               where: { id: user.id },
             });
 
             if (fullUser?.isVIP) {
               const vipSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
-              const discountPct = parseFloat(vipSettings.discountPercentage) || 0;
+              const specialCategory = (ctx.request.body.data || ctx.request.body).specialCategory;
+
+              // Per-field discount resolution: category > service type > global
+              const globalPct = parseFloat(vipSettings.discountPercentage) || 0;
+              const gpPct = parseFloat(vipSettings.guestPostDiscount) || 0;
+              const liPct = parseFloat(vipSettings.linkInsertionDiscount) || 0;
+              const isLI = serviceType === 'link_insertion';
+
+              // GP sensitive
+              const gpCbdPct = parseFloat(vipSettings.gpCbdDiscount) || 0;
+              const gpCasinoPct = parseFloat(vipSettings.gpCasinoDiscount) || 0;
+              const gpCryptoPct = parseFloat(vipSettings.gpCryptoDiscount) || 0;
+              const gpDatingPct = parseFloat(vipSettings.gpDatingDiscount) || 0;
+              // LI sensitive
+              const liCbdPct = parseFloat(vipSettings.liCbdDiscount) || 0;
+              const liCasinoPct = parseFloat(vipSettings.liCasinoDiscount) || 0;
+              const liCryptoPct = parseFloat(vipSettings.liCryptoDiscount) || 0;
+              const liDatingPct = parseFloat(vipSettings.liDatingDiscount) || 0;
+
+              let discountPct = (isLI ? liPct : gpPct) || globalPct;
+              if (specialCategory === 'CBD') { const p = isLI ? liCbdPct : gpCbdPct; discountPct = p > 0 ? p : globalPct; }
+              else if (specialCategory === 'Casino') { const p = isLI ? liCasinoPct : gpCasinoPct; discountPct = p > 0 ? p : globalPct; }
+              else if (specialCategory === 'Crypto') { const p = isLI ? liCryptoPct : gpCryptoPct; discountPct = p > 0 ? p : globalPct; }
+              else if (specialCategory === 'Dating') { const p = isLI ? liDatingPct : gpDatingPct; discountPct = p > 0 ? p : globalPct; }
+
               if (discountPct > 0) {
                 finalPrice = Math.round(computedOriginalPrice * (1 - discountPct / 100) * 100) / 100;
                 vipDiscountApplied = true;

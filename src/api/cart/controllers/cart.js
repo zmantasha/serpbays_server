@@ -79,7 +79,7 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
         }
       }
 
-      // Check if user is VIP and apply discount
+      // Check if user is VIP and apply per-field discount
       let vipDiscount = null;
       try {
         const currentUser = await strapi.db.query('plugin::users-permissions.user').findOne({
@@ -88,24 +88,53 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
 
         if (currentUser?.isVIP) {
           const vipSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
-          const discountPct = parseFloat(vipSettings.discountPercentage) || 0;
 
-          if (discountPct > 0) {
-            let totalSavings = 0;
+          // Per-field discount resolution: category > service type > global
+          const getVipDiscountPct = (serviceType, specialCategory) => {
+            const globalPct = parseFloat(vipSettings.discountPercentage) || 0;
+            const gpPct = parseFloat(vipSettings.guestPostDiscount) || 0;
+            const liPct = parseFloat(vipSettings.linkInsertionDiscount) || 0;
+            const isLI = serviceType === 'link_insertion';
 
-            for (const item of itemsWithLiveData) {
-              if (item.website) {
+            // GP sensitive
+            const gpCbdPct = parseFloat(vipSettings.gpCbdDiscount) || 0;
+            const gpCasinoPct = parseFloat(vipSettings.gpCasinoDiscount) || 0;
+            const gpCryptoPct = parseFloat(vipSettings.gpCryptoDiscount) || 0;
+            const gpDatingPct = parseFloat(vipSettings.gpDatingDiscount) || 0;
+            // LI sensitive
+            const liCbdPct = parseFloat(vipSettings.liCbdDiscount) || 0;
+            const liCasinoPct = parseFloat(vipSettings.liCasinoDiscount) || 0;
+            const liCryptoPct = parseFloat(vipSettings.liCryptoDiscount) || 0;
+            const liDatingPct = parseFloat(vipSettings.liDatingDiscount) || 0;
+
+            if (specialCategory === 'CBD') { const p = isLI ? liCbdPct : gpCbdPct; return p > 0 ? p : globalPct; }
+            if (specialCategory === 'Casino') { const p = isLI ? liCasinoPct : gpCasinoPct; return p > 0 ? p : globalPct; }
+            if (specialCategory === 'Crypto') { const p = isLI ? liCryptoPct : gpCryptoPct; return p > 0 ? p : globalPct; }
+            if (specialCategory === 'Dating') { const p = isLI ? liDatingPct : gpDatingPct; return p > 0 ? p : globalPct; }
+            return (isLI ? liPct : gpPct) || globalPct;
+          };
+
+          let totalSavings = 0;
+          let hasDiscount = false;
+
+          for (const item of itemsWithLiveData) {
+            if (item.website) {
+              const discountPct = getVipDiscountPct(item.serviceType, item.specialCategory);
+              if (discountPct > 0) {
                 const originalPrice = parseFloat(item.website.sensitivePrice) || 0;
                 const discountedPrice = Math.round(originalPrice * (1 - discountPct / 100) * 100) / 100;
                 item.website.vipPrice = discountedPrice;
                 item.website.vipDiscountPercentage = discountPct;
                 totalSavings += (originalPrice - discountedPrice) * (item.quantity || 1);
+                hasDiscount = true;
               }
             }
+          }
 
+          if (hasDiscount) {
             vipDiscount = {
               enabled: true,
-              percentage: discountPct,
+              percentage: parseFloat(vipSettings.discountPercentage) || 0,
               totalSavings: Math.round(totalSavings * 100) / 100,
             };
           }

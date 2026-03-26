@@ -16,6 +16,66 @@
       "min": 0,
       "max": 100
     },
+    "guestPostDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "linkInsertionDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "gpCbdDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "gpCasinoDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "gpCryptoDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "gpDatingDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "liCbdDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "liCasinoDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "liCryptoDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "liDatingDiscount": {
+      "type": "decimal",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
     "depositBonusPercentage": {
       "type": "decimal",
       "default": 0,
