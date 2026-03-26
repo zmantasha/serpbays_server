@@ -121,9 +121,25 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
             if (item.website) {
               const discountPct = getVipDiscountPct(item.serviceType, item.specialCategory);
               if (discountPct > 0) {
-                const originalPrice = parseFloat(item.website.sensitivePrice) || 0;
+                // Get the correct original price based on service type and sensitivity
+                let originalPrice;
+                const isLI = item.serviceType === 'link_insertion';
+                if (item.isSensitive && item.website.sensitivePrice) {
+                  originalPrice = parseFloat(item.website.sensitivePrice) || 0;
+                } else if (isLI) {
+                  originalPrice = parseFloat(item.website.link_insertion_price) || 0;
+                } else {
+                  originalPrice = parseFloat(item.website.regularPrice) || 0;
+                }
                 const discountedPrice = Math.round(originalPrice * (1 - discountPct / 100) * 100) / 100;
-                item.website.vipPrice = discountedPrice;
+                // Set VIP price in the correct field
+                if (item.isSensitive) {
+                  item.website.vipSensitivePrice = discountedPrice;
+                } else if (isLI) {
+                  item.website.vipLinkInsertionPrice = discountedPrice;
+                } else {
+                  item.website.vipPrice = discountedPrice;
+                }
                 item.website.vipDiscountPercentage = discountPct;
                 totalSavings += (originalPrice - discountedPrice) * (item.quantity || 1);
                 hasDiscount = true;
