@@ -317,25 +317,39 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // Use the highest applicable discount as the "headline" percentage
         const gpResult = applyDiscount(item.price, 'price');
         const liResult = applyDiscount(item.link_insertion_price, 'link_insertion_price');
-        item.vipDiscountPercentage = gpResult.pct || liResult.pct || (parseFloat(vipSettings.discountPercentage) || 0);
         item.vipPrice = gpResult.discounted;
         item.vipLinkInsertionPrice = liResult.discounted;
         // Sensitive category VIP prices
-        item.vipAdvCbdPricing = applyDiscount(item.adv_cbd_pricing, 'adv_cbd_pricing').discounted;
-        item.vipAdvCasinoPricing = applyDiscount(item.adv_casino_pricing, 'adv_casino_pricing').discounted;
-        item.vipAdvCryptoPricing = applyDiscount(item.adv_crypto_pricing, 'adv_crypto_pricing').discounted;
-        item.vipAdvDatingPricing = applyDiscount(item.adv_dating_pricing, 'adv_dating_pricing').discounted;
-        item.vipAdvLiCbdPricing = applyDiscount(item.adv_li_cbd_pricing, 'adv_li_cbd_pricing').discounted;
-        item.vipAdvLiCasinoPricing = applyDiscount(item.adv_li_casino_pricing, 'adv_li_casino_pricing').discounted;
-        item.vipAdvLiCryptoPricing = applyDiscount(item.adv_li_crypto_pricing, 'adv_li_crypto_pricing').discounted;
-        item.vipAdvLiDatingPricing = applyDiscount(item.adv_li_dating_pricing, 'adv_li_dating_pricing').discounted;
+        const cbdResult = applyDiscount(item.adv_cbd_pricing, 'adv_cbd_pricing');
+        const casinoResult = applyDiscount(item.adv_casino_pricing, 'adv_casino_pricing');
+        const cryptoResult = applyDiscount(item.adv_crypto_pricing, 'adv_crypto_pricing');
+        const datingResult = applyDiscount(item.adv_dating_pricing, 'adv_dating_pricing');
+        const liCbdResult = applyDiscount(item.adv_li_cbd_pricing, 'adv_li_cbd_pricing');
+        const liCasinoResult = applyDiscount(item.adv_li_casino_pricing, 'adv_li_casino_pricing');
+        const liCryptoResult = applyDiscount(item.adv_li_crypto_pricing, 'adv_li_crypto_pricing');
+        const liDatingResult = applyDiscount(item.adv_li_dating_pricing, 'adv_li_dating_pricing');
+        item.vipAdvCbdPricing = cbdResult.discounted;
+        item.vipAdvCasinoPricing = casinoResult.discounted;
+        item.vipAdvCryptoPricing = cryptoResult.discounted;
+        item.vipAdvDatingPricing = datingResult.discounted;
+        item.vipAdvLiCbdPricing = liCbdResult.discounted;
+        item.vipAdvLiCasinoPricing = liCasinoResult.discounted;
+        item.vipAdvLiCryptoPricing = liCryptoResult.discounted;
+        item.vipAdvLiDatingPricing = liDatingResult.discounted;
+        // Use the highest discount across ALL price types (including sensitive) as the "has VIP" indicator
+        item.vipDiscountPercentage = Math.max(
+          gpResult.pct, liResult.pct,
+          cbdResult.pct, casinoResult.pct, cryptoResult.pct, datingResult.pct,
+          liCbdResult.pct, liCasinoResult.pct, liCryptoResult.pct, liDatingResult.pct,
+          0
+        );
         // Per-field discount percentages for client-side badge display
         item.vipGpDiscountPct = gpResult.pct;
         item.vipLiDiscountPct = liResult.pct;
-        item.vipCbdDiscountPct = applyDiscount(item.adv_cbd_pricing, 'adv_cbd_pricing').pct;
-        item.vipCasinoDiscountPct = applyDiscount(item.adv_casino_pricing, 'adv_casino_pricing').pct;
-        item.vipCryptoDiscountPct = applyDiscount(item.adv_crypto_pricing, 'adv_crypto_pricing').pct;
-        item.vipDatingDiscountPct = applyDiscount(item.adv_dating_pricing, 'adv_dating_pricing').pct;
+        item.vipCbdDiscountPct = cbdResult.pct;
+        item.vipCasinoDiscountPct = casinoResult.pct;
+        item.vipCryptoDiscountPct = cryptoResult.pct;
+        item.vipDatingDiscountPct = datingResult.pct;
         return item;
       };
 
