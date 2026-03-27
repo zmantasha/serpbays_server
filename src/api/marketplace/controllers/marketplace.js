@@ -258,27 +258,28 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         where: { id: user.id },
       });
 
-      if (!fullUser?.isVIP) return entries;
+      if (!(fullUser?.isVIP || fullUser?.is_vip)) return entries;
 
       const vipSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
 
       // Per-field discount resolution: category > service type > global
+      // Handle both camelCase (entityService) and snake_case (db.query) field names
       const getDiscountForField = (fieldName) => {
-        const globalPct = parseFloat(vipSettings.discountPercentage) || 0;
-        const gpPct = parseFloat(vipSettings.guestPostDiscount) || 0;
-        const liPct = parseFloat(vipSettings.linkInsertionDiscount) || 0;
+        const globalPct = parseFloat(vipSettings.discountPercentage ?? vipSettings.discount_percentage) || 0;
+        const gpPct = parseFloat(vipSettings.guestPostDiscount ?? vipSettings.guest_post_discount) || 0;
+        const liPct = parseFloat(vipSettings.linkInsertionDiscount ?? vipSettings.link_insertion_discount) || 0;
         const isLI = fieldName.includes('li_') || fieldName === 'link_insertion_price';
 
-        // GP sensitive
-        const gpCbdPct = parseFloat(vipSettings.gpCbdDiscount) || 0;
-        const gpCasinoPct = parseFloat(vipSettings.gpCasinoDiscount) || 0;
-        const gpCryptoPct = parseFloat(vipSettings.gpCryptoDiscount) || 0;
-        const gpDatingPct = parseFloat(vipSettings.gpDatingDiscount) || 0;
-        // LI sensitive
-        const liCbdPct = parseFloat(vipSettings.liCbdDiscount) || 0;
-        const liCasinoPct = parseFloat(vipSettings.liCasinoDiscount) || 0;
-        const liCryptoPct = parseFloat(vipSettings.liCryptoDiscount) || 0;
-        const liDatingPct = parseFloat(vipSettings.liDatingDiscount) || 0;
+        // GP sensitive (handle both camelCase and snake_case)
+        const gpCbdPct = parseFloat(vipSettings.gpCbdDiscount ?? vipSettings.gp_cbd_discount) || 0;
+        const gpCasinoPct = parseFloat(vipSettings.gpCasinoDiscount ?? vipSettings.gp_casino_discount) || 0;
+        const gpCryptoPct = parseFloat(vipSettings.gpCryptoDiscount ?? vipSettings.gp_crypto_discount) || 0;
+        const gpDatingPct = parseFloat(vipSettings.gpDatingDiscount ?? vipSettings.gp_dating_discount) || 0;
+        // LI sensitive (handle both camelCase and snake_case)
+        const liCbdPct = parseFloat(vipSettings.liCbdDiscount ?? vipSettings.li_cbd_discount) || 0;
+        const liCasinoPct = parseFloat(vipSettings.liCasinoDiscount ?? vipSettings.li_casino_discount) || 0;
+        const liCryptoPct = parseFloat(vipSettings.liCryptoDiscount ?? vipSettings.li_crypto_discount) || 0;
+        const liDatingPct = parseFloat(vipSettings.liDatingDiscount ?? vipSettings.li_dating_discount) || 0;
 
         if (fieldName.includes('cbd')) {
           const catPct = isLI ? liCbdPct : gpCbdPct;
@@ -549,7 +550,37 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   async find(ctx) {
     // Get authenticated user from context
     const user = ctx.state.user;
-    console.log(user)
+    console.log('[MARKETPLACE FIND] Called. user:', user ? { id: user.id, email: user.email } : 'NO USER (unauthenticated)');
+
+    // Compute VIP export settings once for all return paths
+    let vipExport = undefined;
+    try {
+      if (user) {
+        // Query full user record from DB to check VIP status
+        // (ctx.state.user from JWT doesn't include custom fields like isVIP)
+        const fullUserForExport = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { id: user.id },
+        });
+        console.log('[VIP EXPORT] Full user record keys:', fullUserForExport ? Object.keys(fullUserForExport).filter(k => k.toLowerCase().includes('vip')) : 'NULL');
+        // Check both camelCase (Strapi v5 db.query) and snake_case (raw DB) naming
+        const userIsVip = fullUserForExport?.isVIP === true || fullUserForExport?.isVIP === 1
+          || fullUserForExport?.is_vip === true || fullUserForExport?.is_vip === 1;
+        console.log('[VIP EXPORT] user.id:', user.id, 'isVIP:', userIsVip, 'raw isVIP:', fullUserForExport?.isVIP, 'raw is_vip:', fullUserForExport?.is_vip);
+        if (userIsVip) {
+          const exportSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
+          const canDownload = exportSettings.canDownloadMarketplace ?? exportSettings.can_download_marketplace;
+          const maxItems = exportSettings.downloadMaxItems ?? exportSettings.download_max_items;
+          console.log('[VIP EXPORT] Settings:', { canDownload, maxItems, type_canDownload: typeof canDownload, type_maxItems: typeof maxItems });
+          vipExport = {
+            canDownloadMarketplace: canDownload === true || canDownload === 1,
+            downloadMaxItems: parseInt(maxItems) || 0,
+          };
+        }
+      }
+    } catch (vipError) {
+      console.error('[VIP EXPORT] Error computing vipExport:', vipError.message);
+    }
+    console.log('[VIP EXPORT] Final vipExport:', JSON.stringify(vipExport));
 
     // Initialize query filters if they don't exist
     if (!ctx.query) ctx.query = {};
@@ -913,7 +944,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
               pageSize,
               pageCount: Math.ceil(total / pageSize),
               total
-            }
+            },
+            ...(vipExport ? { vipExport } : {})
           }
         };
       } catch (error) {
@@ -940,7 +972,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           return {
             data: results.results,
             meta: {
-              pagination: results.pagination
+              pagination: results.pagination,
+              ...(vipExport ? { vipExport } : {})
             }
           };
         } catch (fallbackError) {
@@ -953,6 +986,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             // Apply post-fetch sorting as final guarantee
             result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection);
           }
+          if (result?.meta && vipExport) result.meta.vipExport = vipExport;
           return result;
         }
       }
@@ -1012,7 +1046,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             pageSize,
             pageCount: Math.ceil(total / pageSize),
             total
-          }
+          },
+          ...(vipExport ? { vipExport } : {})
         }
       };
     } catch (error) {
@@ -1026,6 +1061,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
         result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc');
       }
+      if (result?.meta && vipExport) result.meta.vipExport = vipExport;
       return result;
     }
   },

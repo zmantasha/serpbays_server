@@ -22,7 +22,16 @@ module.exports = {
       }
 
       const { websiteIds } = ctx.request.body;
-      const maxItems = vipSettings.downloadMaxItems || 500;
+      const maxItems = parseInt(vipSettings.downloadMaxItems) || 0;
+
+      if (maxItems <= 0) {
+        return ctx.forbidden('Marketplace export limit is not configured. Contact admin.');
+      }
+
+      // Validate selected count against admin-defined limit
+      if (websiteIds && Array.isArray(websiteIds) && websiteIds.length > maxItems) {
+        return ctx.badRequest(`Maximum ${maxItems} websites per export`);
+      }
 
       // Build query
       const knex = strapi.db.connection;
