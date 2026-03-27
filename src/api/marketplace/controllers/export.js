@@ -33,33 +33,36 @@ module.exports = {
         return ctx.badRequest(`Maximum ${maxItems} websites per export`);
       }
 
-      // Build query
+      // Build query using correct table name (marketplaces) and snake_case column names
       const knex = strapi.db.connection;
-      let query = knex('websites')
+      let query = knex('marketplaces')
         .select(
-          'websites.id',
-          'websites.url',
-          'websites.price',
-          'websites.linkInsertionPrice',
-          'websites.da',
-          'websites.dr',
-          'websites.traffic',
-          'websites.spamScore',
-          'websites.language',
-          'websites.country',
-          'websites.category',
-          'websites.backlinkValidity',
-          'websites.linkType',
-          'websites.maxLinksAllowed',
-          'websites.turnaroundTime'
+          'id',
+          'url',
+          'price',
+          'link_insertion_price',
+          'moz_da',
+          'ahrefs_dr',
+          'ahrefs_traffic',
+          'spam_score',
+          'language',
+          'countries',
+          'category',
+          'backlink_validity',
+          'backlink_type',
+          'dofollow_link',
+          'tat',
+          'ahrefs_rank',
+          'ahrefs_referring_domain',
+          'ahrefs_keywords',
+          'semrush_authority_score'
         )
-        .where('websites.status', 'approved')
-        .where('websites.publishedAt', '!=', null)
+        .whereNotNull('published_at')
         .limit(maxItems);
 
       // If specific IDs provided, filter by them
       if (websiteIds && Array.isArray(websiteIds) && websiteIds.length > 0) {
-        query = query.whereIn('websites.id', websiteIds.slice(0, maxItems));
+        query = query.whereIn('id', websiteIds.slice(0, maxItems));
       }
 
       const websites = await query;
@@ -73,12 +76,13 @@ module.exports = {
         'VIP GP Price', 'VIP LI Price',
         'DA', 'DR', 'Traffic', 'Spam Score',
         'Language', 'Country', 'Category',
-        'Backlink Validity', 'Link Type', 'Max Links', 'Turnaround Time'
+        'Backlink Validity', 'Backlink Type', 'Dofollow Links', 'TAT (days)',
+        'Ahrefs Rank', 'Referring Domains', 'Ahrefs Keywords', 'Semrush AS'
       ];
 
       const rows = websites.map(w => {
         const gpPrice = parseFloat(w.price || 0);
-        const liPrice = parseFloat(w.linkInsertionPrice || 0);
+        const liPrice = parseFloat(w.link_insertion_price || 0);
         const vipGP = discountPct > 0 ? (gpPrice * (1 - discountPct / 100)).toFixed(2) : gpPrice.toFixed(2);
         const vipLI = discountPct > 0 ? (liPrice * (1 - discountPct / 100)).toFixed(2) : liPrice.toFixed(2);
 
@@ -88,17 +92,21 @@ module.exports = {
           liPrice.toFixed(2),
           vipGP,
           vipLI,
-          w.da || '',
-          w.dr || '',
-          w.traffic || '',
-          w.spamScore || '',
+          w.moz_da || '',
+          w.ahrefs_dr || '',
+          w.ahrefs_traffic || '',
+          w.spam_score || '',
           w.language || '',
-          w.country || '',
+          w.countries || '',
           w.category || '',
-          w.backlinkValidity || '',
-          w.linkType || '',
-          w.maxLinksAllowed || '',
-          w.turnaroundTime || ''
+          w.backlink_validity || '',
+          w.backlink_type || '',
+          w.dofollow_link || '',
+          w.tat || '',
+          w.ahrefs_rank || '',
+          w.ahrefs_referring_domain || '',
+          w.ahrefs_keywords || '',
+          w.semrush_authority_score || ''
         ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',');
       });
 
