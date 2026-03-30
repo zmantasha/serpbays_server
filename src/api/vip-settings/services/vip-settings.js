@@ -48,6 +48,60 @@ module.exports = createCoreService('api::vip-settings.vip-settings', ({ strapi }
       liCasinoDiscount: settings.liCasinoDiscount ?? settings.li_casino_discount,
       liCryptoDiscount: settings.liCryptoDiscount ?? settings.li_crypto_discount,
       liDatingDiscount: settings.liDatingDiscount ?? settings.li_dating_discount,
+      depositBonusTiers: (() => {
+        let tiers = settings.depositBonusTiers ?? settings.deposit_bonus_tiers ?? [];
+        // SQLite may store JSON as string — parse if needed
+        if (typeof tiers === 'string') {
+          try { tiers = JSON.parse(tiers); } catch { tiers = []; }
+        }
+        return Array.isArray(tiers) ? tiers : [];
+      })(),
     };
+  },
+
+  /**
+   * Calculate VIP deposit bonus based on tier-matching logic.
+   * Shared across all payment gateway webhooks (Stripe, PayPal, Razorpay).
+   *
+   * @param {number} transactionAmount - The deposit amount in USD
+   * @param {object} vipSettings - The normalized VIP settings object
+   * @returns {{ bonusAmount: number, tier: object } | null}
+   */
+  calculateVipBonus(transactionAmount, vipSettings) {
+    const tiers = vipSettings.depositBonusTiers || [];
+
+    // Multi-tier matching: find the highest-minAmount tier the deposit qualifies for
+    if (tiers.length > 0) {
+      const sorted = [...tiers].sort((a, b) => b.minAmount - a.minAmount);
+      const matchedTier = sorted.find(t => transactionAmount >= t.minAmount && t.value > 0);
+
+      if (matchedTier) {
+        let bonusAmount;
+        if (matchedTier.type === 'fixed') {
+          bonusAmount = matchedTier.value;
+        } else {
+          // percentage
+          bonusAmount = transactionAmount * (matchedTier.value / 100);
+          if (matchedTier.maxCap > 0 && bonusAmount > matchedTier.maxCap) {
+            bonusAmount = matchedTier.maxCap;
+          }
+        }
+        return { bonusAmount, tier: matchedTier };
+      }
+    }
+
+    // Fallback to legacy single-tier fields for backward compatibility
+    const pct = parseFloat(vipSettings.depositBonusPercentage || 0);
+    const min = parseFloat(vipSettings.depositBonusMinAmount || 0);
+    if (pct > 0 && transactionAmount >= min) {
+      let bonusAmount = transactionAmount * (pct / 100);
+      const cap = parseFloat(vipSettings.depositBonusMaxCap || 0);
+      if (cap > 0 && bonusAmount > cap) {
+        bonusAmount = cap;
+      }
+      return { bonusAmount, tier: { type: 'percentage', value: pct, minAmount: min, maxCap: cap } };
+    }
+
+    return null;
   },
 }));

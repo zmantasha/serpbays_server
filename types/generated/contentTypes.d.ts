@@ -2783,6 +2783,7 @@ export interface ApiVipSettingsVipSettings extends Struct.SingleTypeSchema {
         number
       > &
       Schema.Attribute.DefaultTo<0>;
+    depositBonusTiers: Schema.Attribute.JSON & Schema.Attribute.DefaultTo<[]>;
     discountPercentage: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {

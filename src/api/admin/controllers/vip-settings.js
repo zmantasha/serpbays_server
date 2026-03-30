@@ -54,6 +54,37 @@ module.exports = {
         data.depositBonusMinAmount = amt;
       }
 
+      // Validate depositBonusTiers array
+      if (data.depositBonusTiers !== undefined) {
+        if (!Array.isArray(data.depositBonusTiers)) {
+          return ctx.badRequest('depositBonusTiers must be an array');
+        }
+        for (let i = 0; i < data.depositBonusTiers.length; i++) {
+          const tier = data.depositBonusTiers[i];
+          if (!tier.minAmount || parseFloat(tier.minAmount) <= 0) {
+            return ctx.badRequest(`Tier ${i + 1}: minAmount must be greater than 0`);
+          }
+          if (!['percentage', 'fixed'].includes(tier.type)) {
+            return ctx.badRequest(`Tier ${i + 1}: type must be 'percentage' or 'fixed'`);
+          }
+          if (!tier.value || parseFloat(tier.value) <= 0) {
+            return ctx.badRequest(`Tier ${i + 1}: value must be greater than 0`);
+          }
+          if (tier.type === 'percentage' && parseFloat(tier.value) > 100) {
+            return ctx.badRequest(`Tier ${i + 1}: percentage value cannot exceed 100`);
+          }
+          // Normalize numeric fields
+          data.depositBonusTiers[i] = {
+            minAmount: parseFloat(tier.minAmount),
+            type: tier.type,
+            value: parseFloat(tier.value),
+            maxCap: tier.maxCap ? parseFloat(tier.maxCap) : null,
+          };
+        }
+        // Sort by minAmount ascending for consistent display
+        data.depositBonusTiers.sort((a, b) => a.minAmount - b.minAmount);
+      }
+
       // Get existing settings (creates defaults if none)
       const existing = await strapi.service('api::vip-settings.vip-settings').getSettings();
 

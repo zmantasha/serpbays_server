@@ -233,6 +233,88 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           } catch (offerError) {
             console.error('[RAZORPAY WEBHOOK] ⚠️ Error applying offers (wallet still credited):', offerError);
           }
+
+          // VIP Deposit Bonus (multi-tier) — in payment.captured handler
+          try {
+            // Idempotency: check if VIP bonus already applied for this deposit
+            const existingVipBonus = await strapi.db.connection('transactions')
+              .where('gateway_transaction_id', 'like', `VIP-BONUS-${transaction.id}-%`)
+              .first();
+            if (existingVipBonus) {
+              console.log(`[RAZORPAY WEBHOOK] VIP bonus already applied for transaction ${transaction.id} - skipping (payment.captured)`);
+            } else {
+            const vipWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+              where: { id: transaction.user_wallet.id },
+              populate: ['users_permissions_user']
+            });
+            const vipUserId = vipWallet?.users_permissions_user?.id;
+            if (vipUserId) {
+              const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({ where: { id: vipUserId } });
+              if (fullUser && fullUser.isVIP) {
+                const vipService = strapi.service('api::vip-settings.vip-settings');
+                const vipSettings = await vipService.getSettings();
+                const bonusResult = vipService.calculateVipBonus(amountToCredit, vipSettings);
+
+                if (bonusResult) {
+                  const { bonusAmount, tier } = bonusResult;
+
+                  // Re-read wallet to get latest balances
+                  const latestWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+                    where: { id: transaction.user_wallet.id }
+                  });
+                  const currentPromoBalance = parseFloat(latestWallet.promoBalance || 0);
+                  const currentMainBalance = parseFloat(latestWallet.mainBalance || 0);
+                  const newPromoBalance = currentPromoBalance + bonusAmount;
+                  const newTotalBalance = currentMainBalance + newPromoBalance;
+
+                  await strapi.db.query('api::user-wallet.user-wallet').update({
+                    where: { id: transaction.user_wallet.id },
+                    data: {
+                      promoBalance: newPromoBalance,
+                      balance: newTotalBalance,
+                      updatedAt: new Date()
+                    }
+                  });
+
+                  // Create a bonus transaction record
+                  await strapi.entityService.create('api::transaction.transaction', {
+                    data: {
+                      type: 'promo',
+                      amount: bonusAmount,
+                      netAmount: bonusAmount,
+                      transactionStatus: 'success',
+                      gateway: 'system',
+                      gatewayTransactionId: `VIP-BONUS-${transaction.id}-${Date.now()}`,
+                      description: `VIP Deposit Bonus (${tier.type === 'fixed' ? '$' + tier.value + ' fixed' : tier.value + '% of $' + amountToCredit})`,
+                      fund_source: 'promo_fund',
+                      user_wallet: transaction.user_wallet.id,
+                      users_permissions_user: vipUserId,
+                      completedAt: new Date(),
+                      metadata: {
+                        vipBonus: true,
+                        bonusTier: tier,
+                        originalDepositAmount: amountToCredit,
+                        originalGateway: 'razorpay',
+                        originalTransactionId: transaction.id,
+                        processedAt: new Date().toISOString()
+                      },
+                      publishedAt: new Date()
+                    }
+                  });
+
+                  const tierDesc = tier.type === 'fixed' ? `$${tier.value} fixed` : `${tier.value}% of $${amountToCredit}`;
+                  console.log(`[RAZORPAY WEBHOOK] 🎁 VIP bonus applied (payment.captured): $${bonusAmount.toFixed(2)} (${tierDesc}, min deposit: $${tier.minAmount})`);
+                } else {
+                  console.log(`[RAZORPAY WEBHOOK] No VIP bonus tier matched for $${amountToCredit}`);
+                }
+              } else {
+                console.log(`[RAZORPAY WEBHOOK] User ${vipUserId} is not VIP, skipping bonus`);
+              }
+            }
+            } // end else (no existing bonus)
+          } catch (vipError) {
+            console.error('[RAZORPAY WEBHOOK] ⚠️ VIP bonus calculation failed (non-blocking):', vipError);
+          }
         }
       });
 
@@ -430,6 +512,82 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             }
           } catch (offerError) {
             console.error('[RAZORPAY WEBHOOK] ⚠️ Error applying offers in order.paid (wallet still credited):', offerError);
+          }
+
+          // VIP Deposit Bonus (multi-tier) — in order.paid handler
+          try {
+            // Idempotency: check if VIP bonus already applied for this deposit
+            const existingVipBonus2 = await strapi.db.connection('transactions')
+              .where('gateway_transaction_id', 'like', `VIP-BONUS-${transaction.id}-%`)
+              .first();
+            if (existingVipBonus2) {
+              console.log(`[RAZORPAY WEBHOOK] VIP bonus already applied for transaction ${transaction.id} - skipping (order.paid)`);
+            } else {
+            const vipWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+              where: { id: transaction.user_wallet.id },
+              populate: ['users_permissions_user']
+            });
+            const vipUserId = vipWallet?.users_permissions_user?.id;
+            if (vipUserId) {
+              const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({ where: { id: vipUserId } });
+              if (fullUser && fullUser.isVIP) {
+                const vipService = strapi.service('api::vip-settings.vip-settings');
+                const vipSettings = await vipService.getSettings();
+                const bonusResult = vipService.calculateVipBonus(amountToCredit, vipSettings);
+
+                if (bonusResult) {
+                  const { bonusAmount, tier } = bonusResult;
+
+                  const latestWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+                    where: { id: transaction.user_wallet.id }
+                  });
+                  const currentPromoBalance = parseFloat(latestWallet.promoBalance || 0);
+                  const currentMainBalance = parseFloat(latestWallet.mainBalance || 0);
+                  const newPromoBalance = currentPromoBalance + bonusAmount;
+                  const newTotalBalance = currentMainBalance + newPromoBalance;
+
+                  await strapi.db.query('api::user-wallet.user-wallet').update({
+                    where: { id: transaction.user_wallet.id },
+                    data: {
+                      promoBalance: newPromoBalance,
+                      balance: newTotalBalance,
+                      updatedAt: new Date()
+                    }
+                  });
+
+                  await strapi.entityService.create('api::transaction.transaction', {
+                    data: {
+                      type: 'promo',
+                      amount: bonusAmount,
+                      netAmount: bonusAmount,
+                      transactionStatus: 'success',
+                      gateway: 'system',
+                      gatewayTransactionId: `VIP-BONUS-${transaction.id}-${Date.now()}`,
+                      description: `VIP Deposit Bonus (${tier.type === 'fixed' ? '$' + tier.value + ' fixed' : tier.value + '% of $' + amountToCredit})`,
+                      fund_source: 'promo_fund',
+                      user_wallet: transaction.user_wallet.id,
+                      users_permissions_user: vipUserId,
+                      completedAt: new Date(),
+                      metadata: {
+                        vipBonus: true,
+                        bonusTier: tier,
+                        originalDepositAmount: amountToCredit,
+                        originalGateway: 'razorpay',
+                        originalTransactionId: transaction.id,
+                        processedAt: new Date().toISOString()
+                      },
+                      publishedAt: new Date()
+                    }
+                  });
+
+                  const tierDesc = tier.type === 'fixed' ? `$${tier.value} fixed` : `${tier.value}% of $${amountToCredit}`;
+                  console.log(`[RAZORPAY WEBHOOK] 🎁 VIP bonus applied (order.paid): $${bonusAmount.toFixed(2)} (${tierDesc}, min deposit: $${tier.minAmount})`);
+                }
+              }
+            }
+            } // end else (no existing bonus)
+          } catch (vipError) {
+            console.error('[RAZORPAY WEBHOOK] ⚠️ VIP bonus calculation failed (non-blocking):', vipError);
           }
         }
       });
@@ -823,6 +981,89 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           }
         } catch (offerError) {
           console.error('[RAZORPAY VERIFY] ⚠️ Error applying offers (wallet still credited):', offerError);
+        }
+
+        // VIP Deposit Bonus (multi-tier) — in verifyPayment path
+        try {
+          // Idempotency: check if VIP bonus already applied for this deposit
+          const existingVipBonus3 = await strapi.db.connection('transactions')
+            .where('gateway_transaction_id', 'like', `VIP-BONUS-${transaction.id}-%`)
+            .first();
+          if (existingVipBonus3) {
+            console.log(`[RAZORPAY VERIFY] VIP bonus already applied for transaction ${transaction.id} - skipping`);
+          } else {
+          const vipWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { id: transaction.user_wallet.id },
+            populate: ['users_permissions_user']
+          });
+          const vipUserId = vipWallet?.users_permissions_user?.id;
+          if (vipUserId) {
+            const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({ where: { id: vipUserId } });
+            if (fullUser && fullUser.isVIP) {
+              const vipService = strapi.service('api::vip-settings.vip-settings');
+              const vipSettings = await vipService.getSettings();
+              const depositAmount = parseFloat(amount);
+              const bonusResult = vipService.calculateVipBonus(depositAmount, vipSettings);
+
+              if (bonusResult) {
+                const { bonusAmount, tier } = bonusResult;
+
+                // Re-read wallet to get latest balances after main deposit + any offer bonuses
+                const latestWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+                  where: { id: transaction.user_wallet.id }
+                });
+                const currentPromoBalance = parseFloat(latestWallet.promoBalance || 0);
+                const currentMainBalance = parseFloat(latestWallet.mainBalance || 0);
+                const newPromoBalance = currentPromoBalance + bonusAmount;
+                const newTotalBalance = currentMainBalance + newPromoBalance;
+
+                await strapi.db.query('api::user-wallet.user-wallet').update({
+                  where: { id: transaction.user_wallet.id },
+                  data: {
+                    promoBalance: newPromoBalance,
+                    balance: newTotalBalance,
+                    updatedAt: new Date()
+                  }
+                });
+
+                // Create a bonus transaction record
+                await strapi.entityService.create('api::transaction.transaction', {
+                  data: {
+                    type: 'promo',
+                    amount: bonusAmount,
+                    netAmount: bonusAmount,
+                    transactionStatus: 'success',
+                    gateway: 'system',
+                    gatewayTransactionId: `VIP-BONUS-${transaction.id}-${Date.now()}`,
+                    description: `VIP Deposit Bonus (${tier.type === 'fixed' ? '$' + tier.value + ' fixed' : tier.value + '% of $' + depositAmount})`,
+                    fund_source: 'promo_fund',
+                    user_wallet: transaction.user_wallet.id,
+                    users_permissions_user: vipUserId,
+                    completedAt: new Date(),
+                    metadata: {
+                      vipBonus: true,
+                      bonusTier: tier,
+                      originalDepositAmount: depositAmount,
+                      originalGateway: 'razorpay',
+                      originalTransactionId: transaction.id,
+                      processedAt: new Date().toISOString()
+                    },
+                    publishedAt: new Date()
+                  }
+                });
+
+                const tierDesc = tier.type === 'fixed' ? `$${tier.value} fixed` : `${tier.value}% of $${depositAmount}`;
+                console.log(`[RAZORPAY VERIFY] 🎁 VIP bonus applied: $${bonusAmount.toFixed(2)} (${tierDesc}, min deposit: $${tier.minAmount})`);
+              } else {
+                console.log(`[RAZORPAY VERIFY] No VIP bonus tier matched for $${amount}`);
+              }
+            } else {
+              console.log(`[RAZORPAY VERIFY] User ${vipUserId} is not VIP, skipping bonus`);
+            }
+          }
+          } // end else (no existing bonus)
+        } catch (vipError) {
+          console.error('[RAZORPAY VERIFY] ⚠️ VIP bonus calculation failed (non-blocking):', vipError);
         }
       } else if (status === 'success' && previousStatus === 'success') {
         console.log(`[RAZORPAY VERIFY] ⚠️ Transaction ${transaction.id} already successful - wallet already credited`);

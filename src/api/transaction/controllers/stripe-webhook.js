@@ -389,24 +389,25 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
       });
 
-      // VIP Deposit Bonus
+      // VIP Deposit Bonus (multi-tier)
       try {
+        // Idempotency: check if VIP bonus already applied for this deposit
+        const existingVipBonus = await strapi.db.connection('transactions')
+          .where('gateway_transaction_id', 'like', `VIP-BONUS-${transaction.id}-%`)
+          .first();
+        if (existingVipBonus) {
+          console.log(`[STRIPE] VIP bonus already applied for transaction ${transaction.id} - skipping`);
+        } else {
         const userId = wallet.users_permissions_user?.id || transaction.users_permissions_user;
         if (userId) {
           const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({ where: { id: userId } });
           if (fullUser && fullUser.isVIP) {
-            const vipSettings = await strapi.service('api::vip-settings.vip-settings').getSettings();
-            const bonusPct = parseFloat(vipSettings.depositBonusPercentage || 0);
-            const minAmount = parseFloat(vipSettings.depositBonusMinAmount || 1000);
+            const vipService = strapi.service('api::vip-settings.vip-settings');
+            const vipSettings = await vipService.getSettings();
+            const bonusResult = vipService.calculateVipBonus(transactionAmount, vipSettings);
 
-            if (bonusPct > 0 && transactionAmount >= minAmount) {
-              let bonusAmount = transactionAmount * (bonusPct / 100);
-
-              // Apply max cap if set
-              const maxCap = parseFloat(vipSettings.depositBonusMaxCap || 0);
-              if (maxCap > 0 && bonusAmount > maxCap) {
-                bonusAmount = maxCap;
-              }
+            if (bonusResult) {
+              const { bonusAmount, tier } = bonusResult;
 
               // Add bonus as promo funds
               const currentPromoBalanceAfter = parseFloat(wallet.promoBalance || 0);
@@ -423,18 +424,20 @@ async function handlePaymentSucceeded(paymentIntent) {
               // Create a bonus transaction record
               await strapi.entityService.create('api::transaction.transaction', {
                 data: {
-                  type: 'deposit',
+                  type: 'promo',
                   amount: bonusAmount,
                   netAmount: bonusAmount,
                   transactionStatus: 'success',
-                  gateway: 'vip_bonus',
+                  gateway: 'system',
+                  gatewayTransactionId: `VIP-BONUS-${transaction.id}-${Date.now()}`,
+                  description: `VIP Deposit Bonus (${tier.type === 'fixed' ? '$' + tier.value + ' fixed' : tier.value + '% of $' + transactionAmount})`,
                   fund_source: 'promo_fund',
                   user_wallet: wallet.id,
                   users_permissions_user: userId,
                   completedAt: new Date(),
                   metadata: {
                     vipBonus: true,
-                    bonusPercentage: bonusPct,
+                    bonusTier: tier,
                     originalDepositAmount: transactionAmount,
                     originalTransactionId: transaction.id,
                     processedAt: new Date().toISOString()
@@ -443,10 +446,12 @@ async function handlePaymentSucceeded(paymentIntent) {
                 }
               });
 
-              console.log(`[STRIPE] 🎁 VIP bonus applied: $${bonusAmount.toFixed(2)} (${bonusPct}% of $${transactionAmount})`);
+              const tierDesc = tier.type === 'fixed' ? `$${tier.value} fixed` : `${tier.value}% of $${transactionAmount}`;
+              console.log(`[STRIPE] 🎁 VIP bonus applied: $${bonusAmount.toFixed(2)} (${tierDesc}, min deposit: $${tier.minAmount})`);
             }
           }
         }
+        } // end else (no existing bonus)
       } catch (vipError) {
         console.error('[STRIPE] ⚠️ VIP bonus calculation failed (non-blocking):', vipError);
       }

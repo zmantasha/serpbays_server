@@ -236,6 +236,78 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       console.log(`[PAYPAL WEBHOOK] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amountToCredit} (PayPal charged $${paypalCaptureAmount})`);
 
+      // VIP Deposit Bonus (multi-tier)
+      try {
+        // Idempotency: check if VIP bonus already applied for this payment
+        const existingVipBonus = await strapi.db.connection('transactions')
+          .where('gateway_transaction_id', 'like', `VIP-BONUS-PAYPAL-${capture.id}%`)
+          .first();
+        if (existingVipBonus) {
+          console.log(`[PAYPAL WEBHOOK] VIP bonus already applied for capture ${capture.id} - skipping`);
+        } else {
+        const userId = wallet.users_permissions_user;
+        if (userId) {
+          const fullUser = await strapi.db.query('plugin::users-permissions.user').findOne({ where: { id: userId } });
+          if (fullUser && fullUser.isVIP) {
+            const vipService = strapi.service('api::vip-settings.vip-settings');
+            const vipSettings = await vipService.getSettings();
+            const bonusResult = vipService.calculateVipBonus(amountToCredit, vipSettings);
+
+            if (bonusResult) {
+              const { bonusAmount, tier } = bonusResult;
+
+              // Re-read wallet to get latest balances after main deposit
+              const updatedWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+                where: { id: walletId }
+              });
+              const currentPromoBalance = parseFloat(updatedWallet.promoBalance || 0);
+              const currentMainBalance = parseFloat(updatedWallet.mainBalance || 0);
+              const newPromoBalance = currentPromoBalance + bonusAmount;
+              const newTotalBalance = currentMainBalance + newPromoBalance;
+
+              await strapi.db.query('api::user-wallet.user-wallet').update({
+                where: { id: walletId },
+                data: {
+                  promoBalance: newPromoBalance,
+                  balance: newTotalBalance
+                }
+              });
+
+              // Create a bonus transaction record
+              await strapi.entityService.create('api::transaction.transaction', {
+                data: {
+                  type: 'promo',
+                  amount: bonusAmount,
+                  netAmount: bonusAmount,
+                  transactionStatus: 'success',
+                  gateway: 'system',
+                  gatewayTransactionId: `VIP-BONUS-PAYPAL-${capture.id}-${Date.now()}`,
+                  description: `VIP Deposit Bonus (${tier.type === 'fixed' ? '$' + tier.value + ' fixed' : tier.value + '% of $' + amountToCredit})`,
+                  fund_source: 'promo_fund',
+                  user_wallet: walletId,
+                  users_permissions_user: userId,
+                  completedAt: new Date(),
+                  metadata: {
+                    vipBonus: true,
+                    bonusTier: tier,
+                    originalDepositAmount: amountToCredit,
+                    originalGateway: 'paypal',
+                    processedAt: new Date().toISOString()
+                  },
+                  publishedAt: new Date()
+                }
+              });
+
+              const tierDesc = tier.type === 'fixed' ? `$${tier.value} fixed` : `${tier.value}% of $${amountToCredit}`;
+              console.log(`[PAYPAL WEBHOOK] 🎁 VIP bonus applied: $${bonusAmount.toFixed(2)} (${tierDesc}, min deposit: $${tier.minAmount})`);
+            }
+          }
+        }
+        } // end else (no existing bonus)
+      } catch (vipError) {
+        console.error('[PAYPAL WEBHOOK] ⚠️ VIP bonus calculation failed (non-blocking):', vipError);
+      }
+
     } catch (error) {
       console.error('[PAYPAL WEBHOOK] Error handling payment completed:', error);
     }
