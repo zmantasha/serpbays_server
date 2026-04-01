@@ -1269,6 +1269,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         publicationLocation: updateData.publicationLocation
       };
 
+      // Metric fields that should NOT be overwritten with 0 if they were null/N/A
+      const metricFields = [
+        'moz_da', 'ahrefs_dr', 'ahrefs_traffic', 'ahrefs_rank',
+        'semrush_authority_score', 'moz_spam_score',
+        'ahrefs_referring_domain', 'ahrefs_keywords', 'semrush_traffic'
+      ];
+
       // Remove undefined, null, and invalid values
       Object.keys(mappedData).forEach(key => {
         const value = mappedData[key];
@@ -1276,9 +1283,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         if (value === undefined || value === null) {
           delete mappedData[key];
         }
-        // Remove 0 for ahrefs_rank (schema has min: 1)
-        if (key === 'ahrefs_rank' && value === 0) {
-          delete mappedData[key];
+        // For metric fields: don't overwrite existing null/N/A with 0
+        if (metricFields.includes(key) && (value === 0 || value === '0' || value === '')) {
+          const existingValue = websiteBeforeUpdate[key];
+          if (existingValue === null || existingValue === undefined) {
+            delete mappedData[key]; // Preserve existing null (N/A)
+          }
         }
       });
 
