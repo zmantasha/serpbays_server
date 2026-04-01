@@ -5,6 +5,7 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
+const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues } = require('../../../constants/website-options');
 
 // In-memory storage for bulk import progress (since cache might not be available)
 const bulkImportProgress = new Map();
@@ -2646,9 +2647,30 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       generalLinkInsertionPrice: parseInt(websiteData.generalLinkInsertionPrice) || 0,
       expectedTATHours: parseInt(websiteData.expectedTATHours) || 168,
       minWordCount: parseInt(websiteData.minWordCount) || 500,
-      category: websiteData.category ? websiteData.category.split(',').map(c => c.trim()) : ['General'],
-      countries: websiteData.countries ? websiteData.countries.split(',').map(c => c.trim()) : ['United States'],
-      language: websiteData.language ? websiteData.language.split(',').map(l => l.trim()) : ['English'],
+      category: (() => {
+        if (!websiteData.category) return ['General'];
+        const parsed = Array.isArray(websiteData.category)
+          ? websiteData.category.map(c => c.trim())
+          : websiteData.category.split(',').map(c => c.trim());
+        const { valid } = validateValues(parsed, CATEGORIES_MAP);
+        return valid.length > 0 ? valid : ['General'];
+      })(),
+      countries: (() => {
+        if (!websiteData.countries) return ['United States'];
+        const parsed = Array.isArray(websiteData.countries)
+          ? websiteData.countries.map(c => c.trim())
+          : websiteData.countries.split(',').map(c => c.trim());
+        const { valid } = validateValues(parsed, COUNTRIES_MAP);
+        return valid.length > 0 ? valid : ['United States'];
+      })(),
+      language: (() => {
+        if (!websiteData.language) return ['English'];
+        const parsed = Array.isArray(websiteData.language)
+          ? websiteData.language.map(l => l.trim())
+          : websiteData.language.split(',').map(l => l.trim());
+        const { valid } = validateValues(parsed, LANGUAGES_MAP);
+        return valid.length > 0 ? valid : ['English'];
+      })(),
       backlinkType: normalizeBacklinkType(websiteData.backlinkType),
       backlinkValidity: normalizeBacklinkValidity(websiteData.backlinkValidity) || 'three_years',
       allowedLinks: parseInt(websiteData.allowedLinks) || 1,
