@@ -1120,7 +1120,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const preparedData = {
         url: websiteData.url,
         protocol: 'https',
-        publisherEmail: websiteData.publisherEmail || 'admin@serpbays.com', // Required field
+        publisherEmail: (websiteData.publisherEmail || 'admin@serpbays.com').toLowerCase().trim(), // Required field, always lowercase
         publisherName: websiteData.publisherName,
         description: websiteData.description,
         submissionStatus: websiteData.submissionStatus || 'approval_pending',
@@ -2158,7 +2158,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const preparedData = {
         url: newWebsiteData.url,
         protocol: newWebsiteData.protocol || 'https',
-        publisherEmail: newWebsiteData.publisherEmail || existingWebsite.publisherEmail,
+        publisherEmail: (newWebsiteData.publisherEmail || existingWebsite.publisherEmail || '').toLowerCase().trim(),
         publisherName: newWebsiteData.publisherName,
         description: newWebsiteData.description,
         submissionStatus: newWebsiteData.submissionStatus || existingWebsite.submissionStatus,
@@ -2455,7 +2455,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 // --- USER LOOKUP AND LINKING (for replacement) ---
                 if (preparedData.publisherEmail) {
                   const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
-                    where: { email: preparedData.publisherEmail }
+                    where: { email: { $eqi: preparedData.publisherEmail } }
                   });
                   if (existingUser) {
                     preparedData.currentPublisherId = existingUser.id;
@@ -2490,7 +2490,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             let linkedPublisherId = null;
             if (preparedData.publisherEmail) {
               const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
-                where: { email: preparedData.publisherEmail }
+                where: { email: { $eqi: preparedData.publisherEmail } }
               });
               if (existingUser) {
                 linkedPublisherId = existingUser.id;
@@ -2623,7 +2623,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     return {
       url: normalizedUrl,
       protocol: 'https',
-      publisherEmail: websiteData.publisherEmail || 'admin@serpbays.com',
+      publisherEmail: (websiteData.publisherEmail || 'admin@serpbays.com').toLowerCase().trim(),
       publisherName: websiteData.publisherName || 'Unknown Publisher',
       description: websiteData.description || 'Bulk imported website',
       submissionStatus: 'approval_pending',
