@@ -119,23 +119,30 @@ module.exports = (plugin) => {
               registration_date: new Date().toISOString().split('T')[0]
             };
 
-            // Step 1: Create contact WITHOUT list assignment
-            // This ensures firstName/lastName are fully saved before any automation triggers
+            // Create contact and add to signup list
+            const listId = process.env.AUTOSEND_LIST_ID;
             await autoSendService.createContact({
               email: result.email,
               firstName: result.firstName || '',
               lastName: result.lastName || '',
               userId: result.id,
               customFields,
+              listIds: listId ? [listId] : [],
             });
 
-            // Step 2: Add to signup list separately after a brief delay
-            // The automation triggers on list addition — by now firstName is committed
-            const listId = process.env.AUTOSEND_LIST_ID;
-            if (listId) {
-              await new Promise(resolve => setTimeout(resolve, 2000));
-              await autoSendService.addToList({ email: result.email, listId });
-              strapi.log.info(`[AutoSend] Added ${result.email} to signup list ${listId}`);
+            // Send welcome email directly with explicit dynamicData
+            // This bypasses automation variable resolution issues
+            const welcomeTemplateId = process.env.AUTOSEND_TEMPLATE_WELCOME_EMAIL;
+            if (welcomeTemplateId) {
+              await autoSendService.send({
+                to: result.email,
+                templateId: welcomeTemplateId,
+                dynamicData: {
+                  firstName: result.firstName || 'there',
+                },
+                tags: ['welcome', 'signup'],
+              });
+              strapi.log.info(`[AutoSend] Welcome email sent to ${result.email}`);
             }
           }
         } catch (autoSendError) {
