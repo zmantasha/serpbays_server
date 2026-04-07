@@ -32,10 +32,7 @@ module.exports = createCoreController('api::reseller-code.reseller-code', ({ str
       
       if (type && type !== 'all') {
         if (type === 'reseller') {
-          resellerFilters.$or = [
-            { assignedTo: { $notNull: true } },
-            { assignedToName: { $notNull: true } }
-          ];
+          // Type narrowing happens in the merge step below — no extra filter needed.
         }
       }
       
