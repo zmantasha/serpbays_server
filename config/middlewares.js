@@ -31,7 +31,15 @@ module.exports = [
   {
     name: 'strapi::body',
     config: {
-      includeUnparsed: true, // This preserves the raw body for webhook verification
+      includeUnparsed: true, // Preserve raw body for webhook signature verification (Razorpay/PayPal/Stripe)
+      // Aligned with nginx client_max_body_size on prod-cms.serpbays.com.
+      // Order/cart endpoints accept up to 10 MB rich-text content; uploads route is separate.
+      jsonLimit: '10mb',
+      formLimit: '10mb',
+      textLimit: '10mb',
+      formidable: {
+        maxFileSize: 50 * 1024 * 1024, // 50 MB — matches nginx /api/upload limit
+      },
     },
   },
   'strapi::session',
