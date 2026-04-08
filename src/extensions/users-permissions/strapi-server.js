@@ -132,6 +132,11 @@ module.exports = (plugin) => {
       delete updateData.confirmed;
       delete updateData.blocked;
       delete updateData.role;
+      // Role flags must only be changed via the dedicated /users/switch-role endpoint.
+      // Stripping them here prevents PUT /api/users/me from flipping a user's role
+      // (which silently broke marketplace visibility for users whose role drifted).
+      delete updateData.Advertiser;
+      delete updateData.Publisher;
 
       // Update the user
       const updatedUser = await strapi.entityService.update(
