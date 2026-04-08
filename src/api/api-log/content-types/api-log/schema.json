@@ -1,0 +1,71 @@
+{
+  "kind": "collectionType",
+  "collectionName": "api_logs",
+  "info": {
+    "singularName": "api-log",
+    "pluralName": "api-logs",
+    "displayName": "API Log",
+    "description": "Winston-captured request/response logs for every API call. Auto-purged by cron."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": false
+    }
+  },
+  "attributes": {
+    "level": {
+      "type": "string",
+      "maxLength": 16
+    },
+    "method": {
+      "type": "string",
+      "maxLength": 10
+    },
+    "path": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "statusCode": {
+      "type": "integer"
+    },
+    "durationMs": {
+      "type": "integer"
+    },
+    "userId": {
+      "type": "integer"
+    },
+    "userEmail": {
+      "type": "string",
+      "maxLength": 320
+    },
+    "ip": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "userAgent": {
+      "type": "text"
+    },
+    "requestBody": {
+      "type": "json"
+    },
+    "responseBody": {
+      "type": "json"
+    },
+    "errorMessage": {
+      "type": "text"
+    },
+    "errorStack": {
+      "type": "text"
+    },
+    "requestId": {
+      "type": "string",
+      "maxLength": 64
+    }
+  }
+}

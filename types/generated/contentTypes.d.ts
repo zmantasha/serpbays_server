@@ -447,6 +447,74 @@ export interface ApiAdminAuditLogAdminAuditLog
   };
 }
 
+export interface ApiApiLogApiLog extends Struct.CollectionTypeSchema {
+  collectionName: 'api_logs';
+  info: {
+    description: 'Winston-captured request/response logs for every API call. Auto-purged by cron.';
+    displayName: 'API Log';
+    pluralName: 'api-logs';
+    singularName: 'api-log';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: false;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    durationMs: Schema.Attribute.Integer;
+    errorMessage: Schema.Attribute.Text;
+    errorStack: Schema.Attribute.Text;
+    ip: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    level: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 16;
+      }>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::api-log.api-log'
+    > &
+      Schema.Attribute.Private;
+    method: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 10;
+      }>;
+    path: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 512;
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    requestBody: Schema.Attribute.JSON;
+    requestId: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    responseBody: Schema.Attribute.JSON;
+    statusCode: Schema.Attribute.Integer;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    userAgent: Schema.Attribute.Text;
+    userEmail: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 320;
+      }>;
+    userId: Schema.Attribute.Integer;
+  };
+}
+
 export interface ApiArticleArticle extends Struct.CollectionTypeSchema {
   collectionName: 'articles';
   info: {
@@ -3697,6 +3765,7 @@ declare module '@strapi/strapi' {
       'admin::user': AdminUser;
       'api::about.about': ApiAboutAbout;
       'api::admin-audit-log.admin-audit-log': ApiAdminAuditLogAdminAuditLog;
+      'api::api-log.api-log': ApiApiLogApiLog;
       'api::article.article': ApiArticleArticle;
       'api::auth.auth': ApiAuthAuth;
       'api::author.author': ApiAuthorAuthor;

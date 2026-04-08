@@ -1,5 +1,10 @@
 module.exports = [
   'strapi::errors',
+  // Global API logger — captures every non-trivial request and persists to
+  // the api-log collection via the Winston StrapiDbTransport. Registered
+  // immediately after strapi::errors so that on the way back out of the Koa
+  // onion ctx.status / ctx.body already reflect any error response.
+  'global::api-logger',
   {
     name: 'strapi::security',
     config: {
