@@ -972,6 +972,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           exists: true,
           message: `This domain "${cleanDomain}" is already listed in the marketplace`,
           data: {
+            id: existingEntry.id,
             url: existingEntry.url
           }
         });
