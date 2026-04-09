@@ -19,8 +19,20 @@ module.exports = ({ env }) => ({
   'upload': {
     config: {
       provider: 'local',
+      // sizeLimit is per-file, in BYTES. The previous value (100000 =
+      // ~100 KB) silently rejected every real image upload, which is
+      // why the cart had to inline images as base64 data URIs and then
+      // overflowed localStorage. 10 MB matches the frontend .docx cap.
+      sizeLimit: 10 * 1024 * 1024, // 10 MB per file
       providerOptions: {
-        sizeLimit: 100000,
+        sizeLimit: 10 * 1024 * 1024, // 10 MB per file
+      },
+      // Tighter multer / formidable limits so a single bad request
+      // cannot pin the Node process parsing a giant form.
+      actionOptions: {
+        upload: {},
+        uploadStream: {},
+        delete: {},
       },
     },
   },

@@ -108,6 +108,53 @@ module.exports = {
       }
     });
 
+    // Ensure the `Authenticated` role can use the Upload plugin. This
+    // is what lets the cart's document importer push images to the
+    // media library via POST /api/upload. Without this permission the
+    // plugin returns 403 and the importer falls back to base64 data
+    // URIs, re-introducing the localStorage quota bug Option 1 was
+    // designed to fix. The routine is idempotent — it only writes if
+    // the permission row is missing or currently disabled.
+    try {
+      const authenticatedRole = await strapi.db
+        .query('plugin::users-permissions.role')
+        .findOne({ where: { type: 'authenticated' } });
+
+      if (authenticatedRole) {
+        const uploadActions = [
+          'plugin::upload.content-api.upload',
+          'plugin::upload.content-api.find',
+        ];
+
+        for (const action of uploadActions) {
+          const existing = await strapi.db
+            .query('plugin::users-permissions.permission')
+            .findOne({
+              where: {
+                action,
+                role: authenticatedRole.id,
+              },
+            });
+
+          if (!existing) {
+            await strapi.db.query('plugin::users-permissions.permission').create({
+              data: {
+                action,
+                role: authenticatedRole.id,
+              },
+            });
+            strapi.log.info(`[BOOTSTRAP] Granted ${action} to Authenticated role`);
+          }
+        }
+      } else {
+        strapi.log.warn('[BOOTSTRAP] Authenticated role not found — skipping upload permission grant');
+      }
+    } catch (permErr) {
+      strapi.log.warn(
+        `[BOOTSTRAP] Failed to grant upload permission to Authenticated role: ${permErr.message}`
+      );
+    }
+
     // Add request debugging middleware
     strapi.server.use(async (ctx, next) => {
       // Log the request details for debugging

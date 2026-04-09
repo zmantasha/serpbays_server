@@ -32,6 +32,16 @@ module.exports = [
     name: 'strapi::body',
     config: {
       includeUnparsed: true, // This preserves the raw body for webhook verification
+      // Formidable multipart limits — must be >= the upload plugin's
+      // per-file sizeLimit (currently 10 MB in config/plugins.js) or
+      // Koa will reject the request before Strapi's upload service
+      // ever sees it.
+      formLimit: '12mb',
+      jsonLimit: '12mb',
+      textLimit: '12mb',
+      formidable: {
+        maxFileSize: 12 * 1024 * 1024, // 12 MB per file (headroom over upload plugin)
+      },
     },
   },
   'strapi::session',
