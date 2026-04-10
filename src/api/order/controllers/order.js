@@ -2211,10 +2211,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           data: updateData
         });
 
-        // Create a communication record
+        // Create a communication record (only if the publisher wrote a message)
+        const isRevision = order.orderStatus === 'delivered' || order.revisionStatus === 'requested';
+        const commMessage = message
+          ? `${isRevision ? 'Revision completed' : 'Delivery submitted'}: ${message}`
+          : (isRevision ? 'Revision completed' : 'Delivery submitted');
         await strapi.entityService.create('api::communication.communication', {
           data: {
-            message: `Revision completed: ${message}`,
+            message: commMessage,
             sender: user.id,
             order: orderId,
             communicationStatus: 'acceptance',
