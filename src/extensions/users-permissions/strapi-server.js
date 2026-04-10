@@ -159,6 +159,27 @@ module.exports = (plugin) => {
     }
   };
 
+  // ── Guard the default PUT /api/users/:id controller ──────────────────
+  // Strapi's built-in `user.update` action is enabled for the authenticated
+  // role (so profile-edit screens work). Without this wrapper, an attacker
+  // could call `PUT /api/users/<id>` with `{Advertiser:true, Publisher:false}`
+  // to flip their role bypassing the dedicated /users/switch-role endpoint.
+  //
+  // We save the original handler, wrap it so the role-sensitive fields are
+  // deleted from the request body before the original runs, then reassign.
+  const originalUpdate = plugin.controllers.user.update;
+  plugin.controllers.user.update = async (ctx) => {
+    const body = ctx.request.body?.data || ctx.request.body;
+    if (body && typeof body === 'object') {
+      delete body.Advertiser;
+      delete body.Publisher;
+      delete body.role;
+      delete body.confirmed;
+      delete body.blocked;
+    }
+    return originalUpdate(ctx);
+  };
+
   // Add role switching controller
   plugin.controllers.user.switchRole = async (ctx) => {
     try {
