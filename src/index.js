@@ -97,16 +97,14 @@ module.exports = {
       require('./api/admin/routes/website-requests'),
       require('./api/admin/routes/marketplace'),
       require('./api/admin/routes/withdrawals'),
-      require('./api/admin/routes/codes')
+      require('./api/admin/routes/codes'),
+      require('./api/admin/routes/audit-logs')
     ];
 
-    adminRoutes.forEach(routeConfig => {
-      if (routeConfig.routes) {
-        routeConfig.routes.forEach(route => {
-          strapi.server.routes(route);
-        });
-      }
-    });
+    // Admin routes under src/api/admin/routes/* are auto-registered by Strapi's
+    // content-api loader (api::admin). Manual strapi.server.routes(route) calls
+    // here would be a no-op for single route objects and are intentionally
+    // omitted.
 
     // Add request debugging middleware
     strapi.server.use(async (ctx, next) => {

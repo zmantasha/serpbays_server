@@ -430,6 +430,37 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       console.error('[ADMIN USER STATS ERROR]', error);
       return ctx.internalServerError('Failed to fetch user statistics');
     }
+  },
+
+  /**
+   * List projects owned by a given user (for admin-assisted order creation).
+   * Read-only. Omits archived projects by default; pass includeArchived=true to include.
+   */
+  async getUserProjects(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { includeArchived } = ctx.query || {};
+      const userId = parseInt(id, 10);
+      if (Number.isNaN(userId)) {
+        return ctx.badRequest('Invalid user id');
+      }
+
+      const where = { owner: userId };
+      if (!includeArchived || includeArchived === 'false') {
+        where.archived = { $ne: true };
+      }
+
+      const projects = await strapi.db.query('api::project.project').findMany({
+        where,
+        orderBy: { createdAt: 'DESC' },
+        select: ['id', 'ProjectName', 'projectUrl', 'archived', 'status', 'createdAt']
+      });
+
+      ctx.send({ data: projects });
+    } catch (error) {
+      console.error('[ADMIN USER PROJECTS ERROR]', error);
+      return ctx.internalServerError('Failed to fetch user projects');
+    }
   }
 
 }));

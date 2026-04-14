@@ -1697,6 +1697,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
   };
   attributes: {
     acceptedDate: Schema.Attribute.DateTime;
+    adminReason: Schema.Attribute.Text;
     advertiser: Schema.Attribute.Relation<
       'manyToOne',
       'plugin::users-permissions.user'
@@ -1715,6 +1716,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    createdByAdminId: Schema.Attribute.Integer;
     deliveredDate: Schema.Attribute.DateTime;
     deliveryMessage: Schema.Attribute.Text;
     deliveryProof: Schema.Attribute.String;
@@ -1790,6 +1792,8 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    userConsentReference: Schema.Attribute.String;
+    userConsentType: Schema.Attribute.String;
     warningNotificationSentAt: Schema.Attribute.DateTime;
     website: Schema.Attribute.Relation<
       'manyToOne',

@@ -87,6 +87,15 @@ module.exports = {
         policies: ['global::is-admin'],
         middlewares: ['global::admin-logger']
       }
+    },
+    {
+      method: 'POST',
+      path: '/admin/orders/create-on-behalf',
+      handler: 'orders.createOnBehalf',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
     }
   ]
 };

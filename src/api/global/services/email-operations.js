@@ -37,6 +37,76 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
+   * Notify an advertiser that an admin placed an order on their behalf.
+   * Non-blocking: failures here must not prevent the order from being placed.
+   */
+  async sendAdminPlacedOrderEmail({ advertiser, order, adminReason, consentType, consentReference }) {
+    try {
+      if (!advertiser?.email) {
+        console.warn('[ADMIN NOTIFY] Advertiser has no email — skipping admin-placed notification');
+        return null;
+      }
+      const firstName = advertiser.firstName || advertiser.username || 'there';
+      const orderId = order?.id;
+      const total = order?.totalAmount;
+      const appUrl = process.env.APP_URL || process.env.CLIENT_URL || 'https://serpbays.com';
+      const orderUrl = `${appUrl.replace(/\/$/, '')}/orders/${orderId}`;
+
+      const safeReason = String(adminReason || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const safeReference = String(consentReference || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      const subject = `Order placed on your behalf — Order #${orderId}`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; color: #1f2937;">
+          <h2 style="color: #1f2937;">Order #${orderId} was placed on your account</h2>
+          <p>Hi ${firstName},</p>
+          <p>A member of the Serpbays support team placed the following order on your account on your behalf:</p>
+          <table style="border-collapse: collapse; width: 100%; margin: 16px 0;">
+            <tr><td style="padding:6px; color:#6b7280;">Order ID</td><td style="padding:6px;"><strong>#${orderId}</strong></td></tr>
+            <tr><td style="padding:6px; color:#6b7280;">Total</td><td style="padding:6px;"><strong>$${total}</strong> (debited from your wallet)</td></tr>
+            <tr><td style="padding:6px; color:#6b7280;">Reason recorded</td><td style="padding:6px;">${safeReason}</td></tr>
+            <tr><td style="padding:6px; color:#6b7280;">Consent reference</td><td style="padding:6px;">${consentType}: ${safeReference}</td></tr>
+          </table>
+          <p>
+            If you authorised this, no further action is needed — you can track progress here:
+            <br/><a href="${orderUrl}" style="color:#2563eb;">${orderUrl}</a>
+          </p>
+          <p style="color:#b91c1c;">
+            <strong>If you did NOT authorise this order</strong>, please reply to this email within 24 hours so we can investigate and refund it.
+          </p>
+          <p style="color:#6b7280; font-size: 12px;">
+            This notification is sent automatically whenever our team places an order on your account. Your wallet records and order history will also show this action.
+          </p>
+        </div>
+      `;
+      const text = [
+        `Order #${orderId} was placed on your account by Serpbays support.`,
+        `Total: $${total} (debited from your wallet)`,
+        `Reason recorded: ${adminReason}`,
+        `Consent reference: ${consentType}: ${consentReference}`,
+        ``,
+        `View the order: ${orderUrl}`,
+        ``,
+        `If you did NOT authorise this order, reply to this email within 24 hours so we can investigate.`
+      ].join('\n');
+
+      await strapi.plugins.email.services.email.send({
+        to: advertiser.email,
+        subject,
+        html,
+        text
+      });
+
+      console.log(`[ADMIN NOTIFY] Admin-placed order email sent to ${advertiser.email} for order ${orderId}`);
+      return true;
+    } catch (error) {
+      // Re-throw so caller (in try/catch) records the failure — but swallow at call site.
+      console.error('Error sending admin-placed order email:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Send order creation confirmation email
    */
   async sendOrderCreationEmail(order, publisherEmail, advertiserEmail) {

@@ -282,7 +282,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           orderStatus: 'cancelled',
           cancellationReason: reason,
           cancelledAt: new Date(),
-          cancelledBy: ctx.state.user.id
+          cancelledBy: 'admin'
         },
         populate: ['advertiser', 'publisher']
       });
@@ -526,6 +526,159 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       console.error('[ADMIN SEND MESSAGE ERROR]', error);
       return ctx.internalServerError('Failed to send message');
     }
+  },
+
+  /**
+   * Create an order on behalf of an advertiser.
+   * Impersonates the advertiser at the service layer by swapping ctx.state.user
+   * and delegating to the real user-facing order controller. Every existing
+   * guardrail (wallet balance, self-order block, project ownership, website
+   * availability) runs unchanged.
+   *
+   * Request body:
+   *   advertiserId: number            (required)
+   *   adminReason: string             (required, non-empty)
+   *   userConsentType: enum           (required: ticket|email|phone|chat)
+   *   userConsentReference: string    (required, non-empty)
+   *   ...order fields matching the user-facing POST /api/orders body
+   */
+  async createOnBehalf(ctx) {
+    const adminId = ctx.state.user?.id;
+    const payload = ctx.request.body?.data || ctx.request.body || {};
+    const {
+      advertiserId,
+      adminReason,
+      userConsentType,
+      userConsentReference,
+      ...orderBody
+    } = payload;
+
+    // --- Input validation (fail before touching anything) ---
+    if (!advertiserId) return ctx.badRequest('advertiserId is required');
+    if (!adminReason || String(adminReason).trim().length === 0) {
+      return ctx.badRequest('adminReason is required');
+    }
+    if (!userConsentType) return ctx.badRequest('userConsentType is required');
+    const allowedConsent = ['ticket', 'email', 'phone', 'chat'];
+    if (!allowedConsent.includes(userConsentType)) {
+      return ctx.badRequest(`userConsentType must be one of: ${allowedConsent.join(', ')}`);
+    }
+    if (!userConsentReference || String(userConsentReference).trim().length === 0) {
+      return ctx.badRequest('userConsentReference is required');
+    }
+
+    // --- Load advertiser ---
+    let advertiser;
+    try {
+      advertiser = await strapi.entityService.findOne('plugin::users-permissions.user', advertiserId, {
+        populate: ['role']
+      });
+    } catch (err) {
+      return ctx.badRequest('Invalid advertiserId');
+    }
+    if (!advertiser) return ctx.notFound('Advertiser not found');
+    if (advertiser.blocked) return ctx.badRequest('Advertiser account is blocked');
+
+    console.log(
+      `[ADMIN ACTION] Admin ${adminId} creating order on behalf of user ${advertiser.id} (${advertiser.email})`
+    );
+
+    // --- Impersonate at the service layer by swapping ctx.state.user/body ---
+    const originalUser = ctx.state.user;
+    const originalBody = ctx.request.body;
+    const originalStatus = ctx.status;
+
+    ctx.state.user = advertiser;
+    // The user controller reads `ctx.request.body.data || ctx.request.body`
+    // so either shape works. Pass the order body directly.
+    ctx.request.body = orderBody;
+
+    let result;
+    try {
+      result = await strapi.controller('api::order.order').create(ctx);
+    } catch (err) {
+      console.error('[ADMIN ORDER CREATE ON BEHALF] Underlying controller threw:', err);
+      // Restore before exiting so subsequent middleware sees original ctx state
+      ctx.state.user = originalUser;
+      ctx.request.body = originalBody;
+      return ctx.internalServerError(err?.message || 'Failed to create order on behalf');
+    } finally {
+      ctx.state.user = originalUser;
+      ctx.request.body = originalBody;
+    }
+
+    // If the underlying controller responded with an error (e.g. insufficient funds,
+    // self-order block, validation), ctx.status will be 4xx/5xx and the body is set.
+    // Surface it as-is — do NOT stamp audit fields or notify the user.
+    if (ctx.status && ctx.status >= 400 && ctx.status !== originalStatus) {
+      return;
+    }
+
+    const createdOrder = result?.data;
+    if (!createdOrder?.id) {
+      console.error('[ADMIN ORDER CREATE ON BEHALF] Unexpected result shape:', result);
+      return ctx.internalServerError('Order creation returned no data');
+    }
+
+    // --- Stamp audit fields on the order (best-effort, non-fatal) ---
+    try {
+      await strapi.entityService.update('api::order.order', createdOrder.id, {
+        data: {
+          createdByAdminId: adminId,
+          adminReason: String(adminReason).trim(),
+          userConsentType,
+          userConsentReference: String(userConsentReference).trim()
+        }
+      });
+    } catch (stampErr) {
+      // Do not fail the request — the order is live and wallet already debited.
+      console.error('[ADMIN ORDER CREATE ON BEHALF] Failed to stamp audit fields:', stampErr);
+    }
+
+    // --- Write persisted audit log (best-effort) ---
+    try {
+      await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+        data: {
+          adminUser: adminId,
+          targetUser: advertiser.id,
+          action: 'order.create_on_behalf',
+          details: {
+            orderId: createdOrder.id,
+            totalAmount: createdOrder.totalAmount,
+            website: createdOrder.website,
+            serviceType: createdOrder.serviceType || 'guest_post',
+            reason: String(adminReason).trim(),
+            consentType: userConsentType,
+            consentReference: String(userConsentReference).trim()
+          },
+          ipAddress: ctx.request.ip || ctx.request.headers?.['x-forwarded-for'] || null,
+          userAgent: ctx.request.headers?.['user-agent'] || null
+        }
+      });
+    } catch (auditErr) {
+      console.error('[ADMIN AUDIT] Failed to write audit log row:', auditErr);
+    }
+
+    // --- Notify advertiser that admin placed an order on their behalf ---
+    try {
+      const emailService = strapi.service('api::global.email-operations');
+      if (emailService && typeof emailService.sendAdminPlacedOrderEmail === 'function') {
+        await emailService.sendAdminPlacedOrderEmail({
+          advertiser,
+          order: createdOrder,
+          adminReason: String(adminReason).trim(),
+          consentType: userConsentType,
+          consentReference: String(userConsentReference).trim()
+        });
+      } else {
+        console.warn('[ADMIN NOTIFY] email-operations.sendAdminPlacedOrderEmail not available — skipping');
+      }
+    } catch (emailErr) {
+      // Non-fatal — the order is placed, user already got the standard order email
+      console.error('[ADMIN NOTIFY] Failed to send admin-placed order email:', emailErr);
+    }
+
+    return result;
   }
 
 }));
