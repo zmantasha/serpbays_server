@@ -2303,5 +2303,72 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       // Non-blocking - don't throw
       return null;
     }
+  },
+
+  /**
+   * Send delivery overdue warning email to publisher via AutoSend
+   * Called by the order-cancellation cron job when an accepted order
+   * has not been delivered within 30 days.
+   */
+  async sendDeliveryOverdueWarningEmail(order, publisherEmail) {
+    try {
+      console.log(`[EMAIL] Sending delivery overdue warning for order #${order.id} to ${publisherEmail}`);
+
+      const emailData = {
+        to: publisherEmail,
+        templateId: process.env.AUTOSEND_TEMPLATE_DELIVERY_OVERDUE || 'A-53833cb8ddab6120cd94',
+        dynamicData: {
+          // Order details
+          order_id: order.id,
+          order_status: 'delivery_overdue',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+
+          // User details
+          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+
+          // Website details
+          website_name: order.website?.name || order.website?.url || 'Website',
+          website_url: order.website?.url || '',
+
+          // Warning-specific details
+          days_since_accepted: 30,
+          days_remaining: 15,
+          total_deadline_days: 45,
+
+          // Action URLs
+          order_link: `${process.env.CLIENT_URL}/publisher/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+
+          // Timestamp
+          accepted_date: order.acceptedDate
+            ? new Date(order.acceptedDate).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+              })
+            : 'N/A',
+          warning_date: new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+
+          // Branding
+          logo_url: `${process.env.CLIENT_URL}/logo.png`,
+          year: new Date().getFullYear().toString()
+        },
+        tags: ['order', 'delivery-overdue', 'warning', 'publisher']
+      };
+
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[EMAIL] Delivery overdue warning sent for order #${order.id} to ${publisherEmail}`);
+      return result;
+    } catch (error) {
+      console.error('[EMAIL] Error sending delivery overdue warning:', error);
+      throw error;
+    }
   }
 }));
