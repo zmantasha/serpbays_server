@@ -967,6 +967,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         semrushKeywords: updatedWebsite.semrushKeywords || null
       };
 
+      // Send approval email notification to publisher
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const pubEmail = updatedWebsite.publisherEmail || updatedWebsite.currentPublisherId?.email || updatedWebsite.originalPublisherId?.email;
+        if (pubEmail) {
+          await emailService.sendWebsiteStatusEmail({
+            publisherEmail: pubEmail,
+            publisherName: updatedWebsite.publisherName || pubEmail,
+            websiteName: updatedWebsite.url,
+            websiteUrl: updatedWebsite.url,
+            actionType: 'Approved & Live',
+            notes: updatedWebsite.adminNotes || ''
+          });
+        }
+      } catch (emailError) {
+        console.error('[EMAIL] Failed to send admin website approval email:', emailError.message);
+      }
+
       ctx.send({
         data: transformedWebsite
       });
@@ -1035,6 +1053,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       } else if (!wasPreviouslyApproved) {
         console.log(`[ADMIN ACTION] Website ${websiteUrl} was not previously approved (status: ${websiteBeforeUpdate.submissionStatus}), no marketplace action needed`);
+      }
+
+      // Send rejection email notification to publisher
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const pubEmail = updatedWebsite.publisherEmail || updatedWebsite.currentPublisherId?.email || updatedWebsite.originalPublisherId?.email;
+        if (pubEmail) {
+          await emailService.sendWebsiteStatusEmail({
+            publisherEmail: pubEmail,
+            publisherName: updatedWebsite.publisherName || pubEmail,
+            websiteName: updatedWebsite.url,
+            websiteUrl: updatedWebsite.url,
+            actionType: 'Rejected',
+            notes: reason || ''
+          });
+        }
+      } catch (emailError) {
+        console.error('[EMAIL] Failed to send admin website rejection email:', emailError.message);
       }
 
       // Transform data to match frontend expectations
@@ -3080,6 +3116,22 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           console.error(`[ADMIN ACTION] Error deleting marketplace entry for URL ${website.url}:`, marketplaceError);
           // Don't fail the website deletion if marketplace deletion fails
         }
+      }
+
+      // Send removed email notification to publisher before deleting
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        if (website.publisherEmail) {
+          await emailService.sendWebsiteStatusEmail({
+            publisherEmail: website.publisherEmail,
+            publisherName: website.publisherName || website.publisherEmail,
+            websiteName: website.url,
+            websiteUrl: website.url,
+            actionType: 'Removed'
+          });
+        }
+      } catch (emailError) {
+        console.error('[EMAIL] Failed to send website removed email:', emailError.message);
       }
 
       // Delete the website
