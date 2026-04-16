@@ -2385,5 +2385,59 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       console.error('[EMAIL] Error sending order confirmation email to advertiser:', error);
       throw error;
     }
+  },
+
+  /**
+   * Send password reset email with reset link
+   * @param {Object} user - The user requesting password reset
+   * @param {string} resetUrl - The full password reset URL with token
+   */
+  async sendPasswordResetEmail(user, resetUrl) {
+    try {
+      const emailData = {
+        to: user.email,
+        templateId: process.env.AUTOSEND_TEMPLATE_PASSWORD_RESET || 'A-87b1c4ac38bf257e7894',
+        dynamicData: {
+          user_name: user.username || user.email,
+          is_password_updated: false,
+          reset_password_url: resetUrl,
+          year: new Date().getFullYear().toString()
+        },
+        tags: ['auth', 'password-reset']
+      };
+
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[EMAIL] Password reset email sent to ${user.email}`);
+      return result;
+    } catch (error) {
+      console.error('[EMAIL] Error sending password reset email:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Send password changed confirmation email
+   * @param {Object} user - The user whose password was changed
+   */
+  async sendPasswordChangedEmail(user) {
+    try {
+      const emailData = {
+        to: user.email,
+        templateId: process.env.AUTOSEND_TEMPLATE_PASSWORD_RESET || 'A-87b1c4ac38bf257e7894',
+        dynamicData: {
+          user_name: user.username || user.email,
+          is_password_updated: true,
+          year: new Date().getFullYear().toString()
+        },
+        tags: ['auth', 'password-changed']
+      };
+
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[EMAIL] Password changed confirmation email sent to ${user.email}`);
+      return result;
+    } catch (error) {
+      console.error('[EMAIL] Error sending password changed email:', error);
+      throw error;
+    }
   }
 }));
