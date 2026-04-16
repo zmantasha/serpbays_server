@@ -563,7 +563,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         const marketplaceListing = await this.createMarketplaceListing(submission);
         console.log(`Website ${submission.url} approved and marketplace listing created (ID: ${marketplaceListing?.id})`);
 
-        // TODO: Send approval email notification
+        // Send approval email notification
+        try {
+          const emailService = strapi.service('api::global.email-operations');
+          await emailService.sendWebsiteStatusEmail({
+            publisherEmail: submission.publisherEmail,
+            publisherName: submission.publisherName || submission.publisherEmail,
+            websiteName: submission.url,
+            websiteUrl: submission.url,
+            actionType: 'Approved & Live',
+            notes: ctx.request.body.reviewNotes || ''
+          });
+        } catch (emailError) {
+          console.error('[EMAIL] Failed to send website approval email:', emailError.message);
+        }
 
         return { data: approved, message: 'Website approved and added to marketplace' };
       } catch (marketplaceError) {
@@ -625,7 +638,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       });
 
-      // TODO: Send rejection email notification
+      // Send rejection email notification
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        await emailService.sendWebsiteStatusEmail({
+          publisherEmail: submission.publisherEmail,
+          publisherName: submission.publisherName || submission.publisherEmail,
+          websiteName: submission.url,
+          websiteUrl: submission.url,
+          actionType: 'Rejected',
+          notes: rejectionReason
+        });
+      } catch (emailError) {
+        console.error('[EMAIL] Failed to send website rejection email:', emailError.message);
+      }
 
       return { data: rejected, message: 'Website rejected' };
     } catch (error) {
@@ -1255,6 +1281,23 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       });
 
       console.log('✅ Original website marked as ownership transferred');
+
+      // Send ownership claimed email to original publisher
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        if (existingWebsite.publisherEmail) {
+          await emailService.sendWebsiteStatusEmail({
+            publisherEmail: existingWebsite.publisherEmail,
+            publisherName: existingWebsite.publisherName || existingWebsite.publisherEmail,
+            websiteName: existingWebsite.url,
+            websiteUrl: existingWebsite.url,
+            actionType: 'Ownership Claimed',
+            notes: `Ownership has been claimed by another user. Your listing will be updated accordingly.`
+          });
+        }
+      } catch (emailError) {
+        console.error('[EMAIL] Failed to send ownership claimed email:', emailError.message);
+      }
 
       // Note: Marketplace delisting will be handled automatically by the lifecycle hook
       // when the new owner's website gets approved

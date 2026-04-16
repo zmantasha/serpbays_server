@@ -2499,5 +2499,40 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       console.error('[EMAIL] Error sending password changed email:', error);
       throw error;
     }
+  },
+
+  /**
+   * Send publisher website status update email
+   * @param {Object} params
+   * @param {string} params.publisherEmail - Publisher's email address
+   * @param {string} params.publisherName - Publisher's name for greeting
+   * @param {string} params.websiteName - Website name/domain
+   * @param {string} params.websiteUrl - Website URL
+   * @param {string} params.actionType - Status label (e.g. "Approved & Live", "Rejected", "Removed")
+   * @param {string} [params.notes] - Optional notes (rejection reason, admin notes, etc.)
+   */
+  async sendWebsiteStatusEmail({ publisherEmail, publisherName, websiteName, websiteUrl, actionType, notes }) {
+    try {
+      const emailData = {
+        to: publisherEmail,
+        templateId: process.env.AUTOSEND_TEMPLATE_WEBSITE_STATUS || 'A-1795cd1dfeb6e7d49155',
+        dynamicData: {
+          publisher_name: publisherName || publisherEmail,
+          website_name: websiteName || websiteUrl || '',
+          website_url: websiteUrl || '',
+          action_type: actionType,
+          notes: notes || '',
+          year: new Date().getFullYear().toString()
+        },
+        tags: ['website', 'status-update', actionType.toLowerCase().replace(/\s+/g, '-')]
+      };
+
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[EMAIL] Website status email sent: "${actionType}" for ${websiteName} to ${publisherEmail}`);
+      return result;
+    } catch (error) {
+      console.error('[EMAIL] Error sending website status email:', error);
+      throw error;
+    }
   }
 }));
