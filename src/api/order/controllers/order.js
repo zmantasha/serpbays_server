@@ -588,6 +588,15 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           } else {
             console.log(`Website not found or missing publisher_email for website ID: ${orderData.website}`);
           }
+
+          // Send order confirmation email to advertiser
+          try {
+            const emailService = strapi.service('api::global.email-operations');
+            await emailService.sendOrderConfirmationAdvertiserEmail(populatedOrder, user.email);
+            console.log(`[ORDER ${order.id}] Order confirmation email sent to advertiser: ${user.email}`);
+          } catch (emailError) {
+            console.error(`[ORDER ${order.id}] Failed to send advertiser confirmation email:`, emailError.message);
+          }
         } catch (notificationError) {
           console.error('Failed to create new order notification:', notificationError);
           // Don't fail the order creation if notification fails
