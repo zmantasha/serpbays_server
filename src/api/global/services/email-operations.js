@@ -284,6 +284,26 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
+   * Send auto-approval notification to advertiser
+   */
+  async sendAutoApprovalEmail(order, advertiserEmail, amount) {
+    try {
+      const emailData = {
+        to: advertiserEmail,
+        subject: `Order #${order.id} Auto-Approved - Payment Released`,
+        html: this.generateAutoApprovalTemplate(order, amount),
+        text: `Order #${order.id} has been auto-approved after 96 hours. Payment of $${amount} has been released to the publisher.`
+      };
+
+      await strapi.plugins.email.services.email.send(emailData);
+      console.log(`Auto-approval email sent for order ${order.id} to ${advertiserEmail}`);
+    } catch (error) {
+      console.error('Error sending auto-approval email:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Send transaction approval email
    */
   async sendTransactionApprovalEmail(transaction, userEmail) {
@@ -1017,6 +1037,70 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             <p style="text-align: center; margin-top: 20px; color: #666;">
               Thank you for your excellent work and for using SerpBays!<br>
               <small>Keep up the great work! 🚀</small>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  },
+
+  /**
+   * Generate auto-approval notification email for advertiser
+   */
+  generateAutoApprovalTemplate(order, amount) {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #f0ad4e; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
+          .info-box { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #f0ad4e; }
+          .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #5a4fcf;
+            color: white !important;
+            text-decoration: none;
+            border-radius: 6px;
+            margin: 10px 5px;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Order Auto-Approved</h1>
+          </div>
+          <div class="content">
+            <h2>Order #${order.id} - Auto-Approved</h2>
+
+            <p>Your order was automatically approved because no action was taken within 96 hours of delivery.</p>
+
+            <div class="info-box">
+              <h3>Order Details:</h3>
+              <p><strong>Order ID:</strong> #${order.id}</p>
+              <p><strong>Amount:</strong> $${amount}</p>
+              <p><strong>Delivered:</strong> ${order.deliveredDate ? new Date(order.deliveredDate).toLocaleDateString() : 'N/A'}</p>
+              <p><strong>Auto-Approved:</strong> ${new Date().toLocaleDateString()}</p>
+              <p><strong>Status:</strong> Payment released to publisher</p>
+            </div>
+
+            <p style="color: #666;">If you believe there is an issue with the delivered work, please contact our support team.</p>
+
+            <div style="text-align: center; margin: 20px 0;">
+              <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/dashboard" class="button" style="background: #5a4fcf; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
+                View Dashboard
+              </a>
+            </div>
+
+            <p style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
+              To avoid auto-approval in the future, please review and approve or dispute delivered orders within 96 hours.
             </p>
           </div>
         </div>

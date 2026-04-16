@@ -1564,6 +1564,10 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Now mark as delivered
         console.log(`Marking order ${id} as delivered.`);
+        // Compute auto-approval deadline: 96 hours (4 days) from now
+        const autoApproveAt = new Date();
+        autoApproveAt.setHours(autoApproveAt.getHours() + 96);
+
         const updatedOrder = await strapi.db.query('api::order.order').update({
           where: { id },
           data: {
@@ -1571,6 +1575,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             deliveredDate: new Date(),
             deliveryProof: body.proof || '',
             deliveryMessage: body.message || '',
+            autoApproveAt,
             // Only update revision status if it was in progress
             ...(order.revisionStatus === 'in_progress' && {
               revisionStatus: 'completed'
@@ -1778,7 +1783,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           data: {
             orderStatus: 'disputed',
             disputeDate: new Date(),
-            disputeReason: body.reason || 'No reason provided'
+            disputeReason: body.reason || 'No reason provided',
+            autoApproveAt: null
           }
         });
 
@@ -2032,6 +2038,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             revisionRequestedAt: new Date(),
             revisionDeadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
             revisionStatus: 'requested',
+            autoApproveAt: null, // Clear auto-approval deadline on revision request
           }
         });
 

@@ -290,6 +290,10 @@
       "type": "datetime",
       "description": "When the 30-day warning notification was sent"
     },
+    "autoApproveAt": {
+      "type": "datetime",
+      "description": "Absolute timestamp when this order will be auto-approved (96 hours after delivery). Cleared on dispute."
+    },
     "cancellationNotes": {
       "type": "text",
       "description": "Additional notes regarding cancellation"
