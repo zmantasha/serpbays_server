@@ -1702,6 +1702,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       'plugin::users-permissions.user'
     >;
     anchorText: Schema.Attribute.String;
+    autoApproveAt: Schema.Attribute.DateTime;
     cancellationNotes: Schema.Attribute.Text;
     cancellationReason: Schema.Attribute.String;
     cancelledAt: Schema.Attribute.DateTime;
