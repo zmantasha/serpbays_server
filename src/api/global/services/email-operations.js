@@ -2342,5 +2342,48 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       console.error('[EMAIL] Error sending project created email:', error);
       throw error;
     }
+  },
+
+  /**
+   * Send order confirmation email to advertiser after order is placed
+   * Uses the universal order template with is_order_confirmation flag
+   * @param {Object} order - The populated order entity
+   * @param {string} advertiserEmail - The advertiser's email address
+   */
+  async sendOrderConfirmationAdvertiserEmail(order, advertiserEmail) {
+    try {
+      const emailData = {
+        to: advertiserEmail,
+        templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
+        dynamicData: {
+          is_order_confirmation: true,
+          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          order_id: order.id,
+          order_status: 'Pending',
+          order_date: new Date(order.orderDate || order.createdAt).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+          website_url: order.website?.url || '',
+          website_name: order.website?.name || order.website?.url || '',
+          total_amount: order.totalAmount || 0,
+          currency: 'USD',
+          order_description: order.description || '',
+          order_link: `${process.env.CLIENT_URL}/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/orders`,
+          logo_url: `${process.env.CLIENT_URL}/logo.png`,
+          year: new Date().getFullYear().toString()
+        },
+        tags: ['order', 'order-confirmation', 'advertiser']
+      };
+
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[EMAIL] Order confirmation email sent for order #${order.id} to ${advertiserEmail}`);
+      return result;
+    } catch (error) {
+      console.error('[EMAIL] Error sending order confirmation email to advertiser:', error);
+      throw error;
+    }
   }
 }));
