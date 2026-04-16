@@ -48,6 +48,13 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
         populate: ['owner', 'team', 'files']
       });
 
+      // Send project created email via AutoSend
+      try {
+        await strapi.service('api::global.email-operations').sendProjectCreatedEmail(entity, user);
+      } catch (emailError) {
+        console.error('[AutoSend] Failed to send project creation email:', emailError.message);
+      }
+
       const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
       return this.transformResponse(sanitizedEntity);
     } catch (error) {
