@@ -2370,5 +2370,37 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       console.error('[EMAIL] Error sending delivery overdue warning:', error);
       throw error;
     }
+  },
+
+  /**
+   * Send project created confirmation email to the user
+   * @param {Object} project - The created project entity
+   * @param {Object} user - The user who created the project
+   */
+  async sendProjectCreatedEmail(project, user) {
+    try {
+      const emailData = {
+        to: user.email,
+        templateId: process.env.AUTOSEND_TEMPLATE_PROJECT_CREATED || 'A-a3dc625caab7c580efef',
+        dynamicData: {
+          user_name: user.username || user.email,
+          project_name: project.ProjectName,
+          project_type: project.status || 'active',
+          created_date: new Date(project.createdAt || Date.now()).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          })
+        },
+        tags: ['project', 'project-created']
+      };
+
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[EMAIL] Project created email sent for project "${project.ProjectName}" to ${user.email}`);
+      return result;
+    } catch (error) {
+      console.error('[EMAIL] Error sending project created email:', error);
+      throw error;
+    }
   }
 }));
