@@ -75,21 +75,35 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         submissionData.submissionStatus = data.gscVerified ? 'verified_pending_review' : 'pending_verification';
       }
 
+      let result;
       if (existingSubmission && existingSubmission.length > 0) {
         // Update existing submission
-        const updated = await strapi.entityService.update('api::publisher-website.publisher-website', existingSubmission[0].id, {
+        result = await strapi.entityService.update('api::publisher-website.publisher-website', existingSubmission[0].id, {
           data: submissionData
         });
-
-        return { data: updated };
       } else {
         // Create new submission
-        const submission = await strapi.entityService.create('api::publisher-website.publisher-website', {
+        result = await strapi.entityService.create('api::publisher-website.publisher-website', {
           data: submissionData
         });
-
-        return { data: submission };
       }
+
+      // Send website added email notification
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        await emailService.sendWebsiteStatusEmail({
+          publisherEmail: user.email,
+          publisherName: user.username || user.email,
+          websiteName: data.url,
+          websiteUrl: data.url,
+          actionType: 'Added',
+          is_added: true
+        });
+      } catch (emailError) {
+        console.error('[EMAIL] Failed to send website added email:', emailError.message);
+      }
+
+      return { data: result };
     } catch (error) {
       console.error('Error creating publisher website submission:', error);
       return ctx.internalServerError('Failed to submit website');

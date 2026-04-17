@@ -2510,8 +2510,9 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
    * @param {string} params.websiteUrl - Website URL
    * @param {string} params.actionType - Status label (e.g. "Approved & Live", "Rejected", "Removed")
    * @param {string} [params.notes] - Optional notes (rejection reason, admin notes, etc.)
+   * @param {boolean} [params.is_added] - Set to true for "website added" variant
    */
-  async sendWebsiteStatusEmail({ publisherEmail, publisherName, websiteName, websiteUrl, actionType, notes }) {
+  async sendWebsiteStatusEmail({ publisherEmail, publisherName, websiteName, websiteUrl, actionType, notes, is_added }) {
     try {
       const emailData = {
         to: publisherEmail,
@@ -2522,6 +2523,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           website_url: websiteUrl || '',
           action_type: actionType,
           notes: notes || '',
+          is_added: is_added || false,
           year: new Date().getFullYear().toString()
         },
         tags: ['website', 'status-update', actionType.toLowerCase().replace(/\s+/g, '-')]
