@@ -536,13 +536,13 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       console.log(`[${codeType.toUpperCase()}] Balances updated successfully for wallet ${wallet.id}`);
 
       // Create transaction record
-      await strapi.db.query('api::transaction.transaction').create({
+      const bonusTx = await strapi.db.query('api::transaction.transaction').create({
         data: {
           type: codeType === 'voucher' ? 'promo' : codeType, // Use 'promo' type for both voucher and promo codes
           amount: codeAmount,
           netAmount: codeAmount,
           transactionStatus: 'success',
-          gateway: 'promo', // Use 'promo' gateway for both voucher and promo codes
+          gateway: codeType === 'voucher' ? 'voucher' : 'promo',
           gatewayTransactionId: `${codeType.toUpperCase()}_${promoCode}_${Date.now()}`,
           fund_source: 'promo_fund', // Set fund source for proper tracking
           description: `${codeType === 'voucher' ? 'Voucher' : 'Promo'} code redemption: ${promoCode}`,
@@ -600,6 +600,23 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       // Commit the transaction
       await transaction.commit();
+
+      try {
+        const userEmail = ctx.state?.user?.email;
+        if (bonusTx?.id && userEmail) {
+          await strapi.service('api::global.email-operations').sendTransactionEmail({
+            transaction: bonusTx,
+            userEmail,
+            statusLabel: 'success',
+            statusMessage: `A ${codeType === 'voucher' ? 'voucher' : 'promo'} bonus has been added to your wallet.`,
+            notes: `${codeType === 'voucher' ? 'Voucher' : 'Promo'} code redemption: ${promoCode}`,
+            flags: { is_bonus: true },
+            tags: ['transaction', 'bonus', codeType, 'success'],
+          });
+        }
+      } catch (emailErr) {
+        console.error('[PROMO/VOUCHER] Failed to send bonus email:', emailErr.message);
+      }
 
       return {
         data: {

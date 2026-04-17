@@ -2343,6 +2343,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       Schema.Attribute.Private;
     denial_reason: Schema.Attribute.Text;
     description: Schema.Attribute.Text;
+    email_sent_at: Schema.Attribute.DateTime;
     external_transaction_id: Schema.Attribute.String &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 255;

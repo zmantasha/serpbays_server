@@ -487,251 +487,175 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   // ============================================
 
   /**
+   * Central dispatcher for all transaction emails.
+   * Uses template A-fec3e40871b864b733af with is_* flags to pick the right block.
+   * Guards against duplicate sends per (transaction, statusLabel) via metadata.emails_sent,
+   * and respects TRANSACTION_EMAILS_ENABLED (defaults on in production, off in dev/test).
+   */
+  async sendTransactionEmail({ transaction, userEmail, statusLabel, statusMessage, notes, flags = {}, extra = {}, tags }) {
+    if (!transaction || !transaction.id) {
+      console.warn('[EMAIL] sendTransactionEmail called without a transaction; skipping.');
+      return { skipped: true, reason: 'no_transaction' };
+    }
+
+    const explicit = process.env.TRANSACTION_EMAILS_ENABLED;
+    const enabled = explicit === 'true' || (explicit === undefined && process.env.NODE_ENV === 'production');
+    if (!enabled) {
+      console.log(`[EMAIL] Transaction email suppressed for tx ${transaction.id} (TRANSACTION_EMAILS_ENABLED not on).`);
+      return { skipped: true, reason: 'env_disabled' };
+    }
+
+    if (!userEmail) {
+      console.warn(`[EMAIL] No recipient email for tx ${transaction.id}; skipping.`);
+      return { skipped: true, reason: 'no_recipient' };
+    }
+
+    const meta = transaction.metadata && typeof transaction.metadata === 'object' ? transaction.metadata : {};
+    const emailsSent = Array.isArray(meta.emails_sent) ? meta.emails_sent : [];
+    if (emailsSent.includes(statusLabel)) {
+      console.log(`[EMAIL] Duplicate ${statusLabel} email for tx ${transaction.id} blocked.`);
+      return { skipped: true, reason: 'already_sent' };
+    }
+
+    const clientUrl = process.env.CLIENT_URL || '';
+    const dynamicData = {
+      transaction_id: transaction.id,
+      transaction_status: statusLabel,
+      transaction_type: transaction.type || 'payment',
+      amount: transaction.amount || 0,
+      payment_gateway: transaction.gateway || 'system',
+      gateway_transaction_id: transaction.gatewayTransactionId || '',
+      notes: notes || transaction.description || '',
+      status_message: statusMessage || '',
+
+      is_earning: flags.is_earning || undefined,
+      is_withdrawal: flags.is_withdrawal || undefined,
+      is_wallet_credit: flags.is_wallet_credit || undefined,
+      is_payment_failed: flags.is_payment_failed || undefined,
+      is_bonus: flags.is_bonus || undefined,
+
+      view_transaction_url: `${clientUrl}/wallet/transactions`,
+      view_wallet_url: `${clientUrl}/wallet`,
+      support_url: `${clientUrl}/support`,
+
+      ...extra,
+    };
+
+    await strapi.service('api::global.autosend-service').send({
+      to: userEmail,
+      templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+      dynamicData,
+      tags: tags || ['transaction', statusLabel],
+    });
+
+    try {
+      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+        data: {
+          email_sent_at: new Date(),
+          metadata: { ...meta, emails_sent: [...emailsSent, statusLabel] },
+        },
+      });
+    } catch (stampErr) {
+      console.error(`[EMAIL] Failed to stamp email_sent_at for tx ${transaction.id}:`, stampErr.message);
+    }
+
+    console.log(`[EMAIL] Transaction ${statusLabel} email sent for tx ${transaction.id} to ${userEmail}`);
+    return { sent: true };
+  },
+
+  /**
    * Send transaction approval email (for withdrawal requests)
    */
   async sendTransactionApprovalEmail(transaction, userEmail) {
-    try {
-      console.log(`[EMAIL DEBUG] sendTransactionApprovalEmail called for transaction ${transaction.id}`);
-
-      const emailData = {
-        to: userEmail,
-        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
-        dynamicData: {
-          // Core transaction details
-          transaction_id: transaction.id,
-          transaction_status: 'approved',
-          transaction_type: transaction.type || 'withdrawal',
-          amount: transaction.amount || 0,
-          payment_gateway: transaction.gateway || 'system',
-          gateway_transaction_id: transaction.gatewayTransactionId || '',
-          notes: transaction.description || transaction.notes || '',
-
-          // Status message
-          status_message: `Your withdrawal request has been approved and will be processed soon.`,
-
-          // Conditional: Withdrawal details (shown in template)
-          is_withdrawal: true,
-          withdrawal_timeline: this.getWithdrawalTimeline(transaction.gateway),
-
-          // Action URLs
-          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
-          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
-          support_url: `${process.env.CLIENT_URL}/support`,
-
-          // Not shown for withdrawal approval
-          // is_earning: undefined
-          // order_id: undefined
-          // publisher_website: undefined
-        },
-        tags: ['transaction', 'withdrawal', 'approved']
-      };
-
-      await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Transaction approval email sent for transaction ${transaction.id} to ${userEmail}`);
-    } catch (error) {
-      console.error('Error sending transaction approval email:', error);
-      throw error;
-    }
+    return this.sendTransactionEmail({
+      transaction,
+      userEmail,
+      statusLabel: 'approved',
+      statusMessage: 'Your withdrawal request has been approved and will be processed soon.',
+      notes: transaction.description || transaction.notes || '',
+      flags: { is_withdrawal: true },
+      extra: { withdrawal_timeline: this.getWithdrawalTimeline(transaction.gateway) },
+      tags: ['transaction', 'withdrawal', 'approved'],
+    });
   },
 
   /**
    * Send transaction denial email (for rejected withdrawal requests)
    */
   async sendTransactionDenialEmail(transaction, userEmail, denialReason) {
-    try {
-      console.log(`[EMAIL DEBUG] sendTransactionDenialEmail called for transaction ${transaction.id}`);
-
-      const emailData = {
-        to: userEmail,
-        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
-        dynamicData: {
-          // Core transaction details
-          transaction_id: transaction.id,
-          transaction_status: 'denied',
-          transaction_type: transaction.type || 'withdrawal',
-          amount: transaction.amount || 0,
-          payment_gateway: transaction.gateway || 'system',
-          gateway_transaction_id: transaction.gatewayTransactionId || '',
-          notes: denialReason || transaction.notes || 'Your request did not meet our withdrawal criteria.',
-
-          // Status message
-          status_message: `We're sorry, but your withdrawal request has been denied. Please review the reason below and contact support if you need assistance.`,
-
-          // Conditional: Withdrawal details (shown in template)
-          is_withdrawal: true,
-          withdrawal_timeline: 'Request denied',
-
-          // Action URLs
-          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
-          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
-          support_url: `${process.env.CLIENT_URL}/support`,
-
-          // Not shown for withdrawal denial
-          // is_earning: undefined
-          // order_id: undefined
-          // publisher_website: undefined
-        },
-        tags: ['transaction', 'withdrawal', 'denied']
-      };
-
-      await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Transaction denial email sent for transaction ${transaction.id} to ${userEmail}`);
-    } catch (error) {
-      console.error('Error sending transaction denial email:', error);
-      throw error;
-    }
+    return this.sendTransactionEmail({
+      transaction,
+      userEmail,
+      statusLabel: 'denied',
+      statusMessage: "We're sorry, but your withdrawal request has been denied. Please review the reason below and contact support if you need assistance.",
+      notes: denialReason || transaction.notes || 'Your request did not meet our withdrawal criteria.',
+      flags: { is_withdrawal: true },
+      extra: { withdrawal_timeline: 'Request denied' },
+      tags: ['transaction', 'withdrawal', 'denied'],
+    });
   },
 
   /**
    * Send payment confirmation email (for deposits and earnings)
    */
   async sendPaymentConfirmationEmail(transaction, userEmail) {
-    try {
-      console.log(`[EMAIL DEBUG] sendPaymentConfirmationEmail called for transaction ${transaction.id}`);
-
-      // Check if this is an earning from an order
-      const isEarning = transaction.order ? true : false;
-
-      const emailData = {
-        to: userEmail,
-        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
-        dynamicData: {
-          // Core transaction details
-          transaction_id: transaction.id,
-          transaction_status: 'success',
-          transaction_type: transaction.type || 'payment',
-          amount: transaction.amount || 0,
-          payment_gateway: transaction.gateway || 'system',
-          gateway_transaction_id: transaction.gatewayTransactionId || '',
-          notes: transaction.description || transaction.notes || '',
-
-          // Status message
-          status_message: isEarning
-            ? `Congratulations! You've received payment for completing an order.`
-            : `Your payment has been successfully processed and credited to your wallet.`,
-
-          // Conditional: Earnings details (shown if transaction is from order)
-          is_earning: isEarning ? true : undefined,
-          order_id: transaction.order?.id || undefined,
-          publisher_website: transaction.order?.website?.name || transaction.order?.website?.url || undefined,
-
-          // Action URLs
-          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
-          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
-          view_order_url: transaction.order ? `${process.env.CLIENT_URL}/orders/order-detail/${transaction.order.id}` : undefined,
-          support_url: `${process.env.CLIENT_URL}/support`,
-
-          // Not shown for payment confirmation
-          // is_withdrawal: undefined
-          // withdrawal_timeline: undefined
-        },
-        tags: isEarning
-          ? ['transaction', 'earning', 'payment', 'success']
-          : ['transaction', 'deposit', 'payment', 'success']
-      };
-
-      await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Payment confirmation email sent for transaction ${transaction.id} to ${userEmail}`);
-    } catch (error) {
-      console.error('Error sending payment confirmation email:', error);
-      throw error;
-    }
+    const isEarning = !!transaction.order;
+    const clientUrl = process.env.CLIENT_URL || '';
+    return this.sendTransactionEmail({
+      transaction,
+      userEmail,
+      statusLabel: 'success',
+      statusMessage: isEarning
+        ? "Congratulations! You've received payment for completing an order."
+        : 'Your payment has been successfully processed and credited to your wallet.',
+      flags: isEarning ? { is_earning: true } : { is_wallet_credit: true },
+      extra: isEarning
+        ? {
+            order_id: transaction.order?.id,
+            publisher_website: transaction.order?.website?.name || transaction.order?.website?.url,
+            view_order_url: transaction.order ? `${clientUrl}/orders/order-detail/${transaction.order.id}` : undefined,
+          }
+        : {},
+      tags: isEarning
+        ? ['transaction', 'earning', 'payment', 'success']
+        : ['transaction', 'deposit', 'payment', 'success'],
+    });
   },
 
   /**
    * Send withdrawal request email (when user creates a withdrawal request)
    */
   async sendWithdrawalRequestEmail(transaction, userEmail, withdrawalRequest) {
-    try {
-      console.log(`[EMAIL DEBUG] sendWithdrawalRequestEmail called for withdrawal request ${withdrawalRequest.id}`);
-
-      const emailData = {
-        to: userEmail,
-        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
-        dynamicData: {
-          // Core transaction details
-          transaction_id: transaction.id,
-          transaction_status: 'pending',
-          transaction_type: 'withdrawal',
-          amount: transaction.amount || 0,
-          payment_gateway: transaction.gateway || withdrawalRequest.method,
-          gateway_transaction_id: transaction.gatewayTransactionId || '',
-          notes: transaction.notes || `Your withdrawal request has been received and is pending admin approval.`,
-
-          // Status message
-          status_message: `We've received your withdrawal request. Our team will review it and process it within 1-3 business days.`,
-
-          // Conditional: Withdrawal details (shown in template)
-          is_withdrawal: true,
-          withdrawal_timeline: this.getWithdrawalTimeline(withdrawalRequest.method),
-
-          // Action URLs
-          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
-          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
-          support_url: `${process.env.CLIENT_URL}/support`,
-
-          // Not shown for withdrawal request
-          // is_earning: undefined
-          // order_id: undefined
-          // publisher_website: undefined
-        },
-        tags: ['transaction', 'withdrawal', 'request', 'pending']
-      };
-
-      await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Withdrawal request email sent for withdrawal ${withdrawalRequest.id} to ${userEmail}`);
-    } catch (error) {
-      console.error('Error sending withdrawal request email:', error);
-      throw error;
-    }
+    return this.sendTransactionEmail({
+      transaction: { ...transaction, gateway: transaction.gateway || withdrawalRequest.method },
+      userEmail,
+      statusLabel: 'pending',
+      statusMessage: "We've received your withdrawal request. Our team will review it and process it within 1-3 business days.",
+      notes: transaction.notes || 'Your withdrawal request has been received and is pending admin approval.',
+      flags: { is_withdrawal: true },
+      extra: { withdrawal_timeline: this.getWithdrawalTimeline(withdrawalRequest.method) },
+      tags: ['transaction', 'withdrawal', 'request', 'pending'],
+    });
   },
 
   /**
    * Send withdrawal paid email (when admin marks withdrawal as paid)
    */
   async sendWithdrawalPaidEmail(transaction, userEmail, withdrawalRequest) {
-    try {
-      console.log(`[EMAIL DEBUG] sendWithdrawalPaidEmail called for withdrawal request ${withdrawalRequest.id}`);
-
-      const emailData = {
-        to: userEmail,
-        templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
-        dynamicData: {
-          // Core transaction details
-          transaction_id: transaction.id,
-          transaction_status: 'paid',
-          transaction_type: 'withdrawal',
-          amount: transaction.amount || withdrawalRequest.amount,
-          payment_gateway: transaction.gateway || withdrawalRequest.method,
-          gateway_transaction_id: transaction.gatewayTransactionId || '',
-          notes: transaction.payment_notes || transaction.notes || `Your withdrawal has been completed and the funds have been transferred to your ${withdrawalRequest.method} account.`,
-
-          // Status message
-          status_message: `Great news! Your withdrawal request has been completed. The funds should appear in your account within 1-3 business days.`,
-
-          // Conditional: Withdrawal details (shown in template)
-          is_withdrawal: true,
-          withdrawal_timeline: 'Payment completed',
-
-          // Action URLs
-          view_transaction_url: `${process.env.CLIENT_URL}/wallet/transactions`,
-          view_wallet_url: `${process.env.CLIENT_URL}/wallet`,
-          support_url: `${process.env.CLIENT_URL}/support`,
-
-          // Not shown for withdrawal paid
-          // is_earning: undefined
-          // order_id: undefined
-          // publisher_website: undefined
-        },
-        tags: ['transaction', 'withdrawal', 'paid', 'completed']
-      };
-
-      await strapi.service('api::global.autosend-service').send(emailData);
-      console.log(`Withdrawal paid email sent for withdrawal ${withdrawalRequest.id} to ${userEmail}`);
-    } catch (error) {
-      console.error('Error sending withdrawal paid email:', error);
-      throw error;
-    }
+    return this.sendTransactionEmail({
+      transaction: {
+        ...transaction,
+        amount: transaction.amount || withdrawalRequest.amount,
+        gateway: transaction.gateway || withdrawalRequest.method,
+      },
+      userEmail,
+      statusLabel: 'paid',
+      statusMessage: 'Great news! Your withdrawal request has been completed. The funds should appear in your account within 1-3 business days.',
+      notes: transaction.payment_notes || transaction.notes || `Your withdrawal has been completed and the funds have been transferred to your ${withdrawalRequest.method} account.`,
+      flags: { is_withdrawal: true },
+      extra: { withdrawal_timeline: 'Payment completed' },
+      tags: ['transaction', 'withdrawal', 'paid', 'completed'],
+    });
   },
 
   /**

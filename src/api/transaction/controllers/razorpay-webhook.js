@@ -180,6 +180,26 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         });
 
         console.log(`[RAZORPAY WEBHOOK] ❌ Marked transaction ${transaction.id} as failed`);
+
+        try {
+          const txWithUser = await strapi.db.query('api::transaction.transaction').findOne({
+            where: { id: transaction.id },
+            populate: ['users_permissions_user']
+          });
+          if (txWithUser?.users_permissions_user?.email) {
+            await strapi.service('api::global.email-operations').sendTransactionEmail({
+              transaction: txWithUser,
+              userEmail: txWithUser.users_permissions_user.email,
+              statusLabel: 'failed',
+              statusMessage: 'Your payment could not be processed. Please try again.',
+              notes: errorDescription,
+              flags: { is_payment_failed: true },
+              tags: ['transaction', 'payment', 'failed', 'razorpay'],
+            });
+          }
+        } catch (emailErr) {
+          console.error('[RAZORPAY WEBHOOK] Failed to send payment-failed email:', emailErr.message);
+        }
       }
 
     } catch (error) {
