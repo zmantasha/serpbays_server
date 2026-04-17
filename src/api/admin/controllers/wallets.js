@@ -332,36 +332,70 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       // Get user wallet
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { users_permissions_user: userId }
+        where: { users_permissions_user: userId },
+        populate: ['users_permissions_user']
       });
 
       if (!wallet) {
         return ctx.notFound('Wallet not found for this user');
       }
 
+      const prevMain = parseFloat(wallet.mainBalance || 0);
+      const prevPromo = parseFloat(wallet.promoBalance || 0);
+      const nextMain = mainBalance !== undefined ? parseFloat(mainBalance) : prevMain;
+      const nextPromo = promoBalance !== undefined ? parseFloat(promoBalance) : prevPromo;
+      const mainDelta = nextMain - prevMain;
+      const promoDelta = nextPromo - prevPromo;
+      const creditDelta = (mainDelta > 0 ? mainDelta : 0) + (promoDelta > 0 ? promoDelta : 0);
+
       // Update wallet balance
       const updatedWallet = await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
         data: {
-          mainBalance: mainBalance !== undefined ? mainBalance : wallet.mainBalance,
-          promoBalance: promoBalance !== undefined ? promoBalance : wallet.promoBalance,
-          balance: (mainBalance !== undefined ? mainBalance : wallet.mainBalance) +
-            (promoBalance !== undefined ? promoBalance : wallet.promoBalance)
+          mainBalance: nextMain,
+          promoBalance: nextPromo,
+          balance: nextMain + nextPromo
         }
       });
 
-      // Create admin transaction record
-      if (reason) {
-        await strapi.entityService.create('api::transaction.transaction', {
+      // Record adjustment as a proper transaction when admin provides a reason
+      let adjustmentTx = null;
+      if (reason && creditDelta !== 0) {
+        const isCredit = creditDelta > 0;
+        adjustmentTx = await strapi.entityService.create('api::transaction.transaction', {
           data: {
             user_wallet: wallet.id,
-            type: 'admin_adjustment',
-            amount: 0, // Balance adjustment, not a monetary transaction
-            description: `Admin balance adjustment: ${reason}`,
-            status: 'completed',
-            createdAt: new Date(),
-            updatedAt: new Date()
+            users_permissions_user: userId,
+            type: 'deposit',
+            amount: Math.abs(creditDelta),
+            netAmount: Math.abs(creditDelta),
+            transactionStatus: 'success',
+            gateway: 'system',
+            gatewayTransactionId: `ADMIN_ADJUST_${wallet.id}_${Date.now()}`,
+            fund_source: mainDelta >= promoDelta ? 'main_fund' : 'promo_fund',
+            description: `Admin ${isCredit ? 'credit' : 'debit'}: ${reason}`,
+            fee: 0,
+            publishedAt: new Date()
           }
         });
+
+        if (isCredit) {
+          try {
+            const userEmail = wallet.users_permissions_user?.email;
+            if (userEmail && adjustmentTx?.id) {
+              await strapi.service('api::global.email-operations').sendTransactionEmail({
+                transaction: adjustmentTx,
+                userEmail,
+                statusLabel: 'success',
+                statusMessage: 'Your wallet has been credited successfully.',
+                notes: reason,
+                flags: { is_wallet_credit: true },
+                tags: ['transaction', 'wallet', 'credit', 'manual'],
+              });
+            }
+          } catch (emailErr) {
+            console.error('[ADMIN WALLET] Failed to send manual-credit email:', emailErr.message);
+          }
+        }
       }
 
       ctx.send({

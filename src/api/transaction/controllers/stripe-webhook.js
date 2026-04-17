@@ -479,6 +479,26 @@ async function handlePaymentFailed(paymentIntent) {
     console.log(`[STRIPE] ✅ Successfully marked transaction ${transaction.id} as failed`);
     console.log(`[STRIPE] Failure reason: ${paymentIntent.last_payment_error?.message || 'Unknown error'}`);
 
+    try {
+      const txWithUser = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { id: transaction.id },
+        populate: ['users_permissions_user']
+      });
+      if (txWithUser?.users_permissions_user?.email) {
+        await strapi.service('api::global.email-operations').sendTransactionEmail({
+          transaction: txWithUser,
+          userEmail: txWithUser.users_permissions_user.email,
+          statusLabel: 'failed',
+          statusMessage: 'Your payment could not be processed. Please try again.',
+          notes: paymentIntent.last_payment_error?.message || 'Payment failed',
+          flags: { is_payment_failed: true },
+          tags: ['transaction', 'payment', 'failed', 'stripe'],
+        });
+      }
+    } catch (emailErr) {
+      console.error('[STRIPE] Failed to send payment-failed email:', emailErr.message);
+    }
+
   } catch (error) {
     console.error('[STRIPE] ❌ Error handling payment failure:', error);
     console.error('[STRIPE] Error details:', {
