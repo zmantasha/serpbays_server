@@ -152,13 +152,25 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     const metricFields = [
       'ahrefs_dr', 'moz_da', 'semrush_authority_score',
       'ahrefs_traffic', 'semrush_traffic', 'similarweb_traffic',
-      'price', 'link_insertion_price', 'spam_score'
+      'price', 'link_insertion_price', 'spam_score',
+      'adv_casino_pricing', 'adv_crypto_pricing', 'adv_cbd_pricing', 'adv_dating_pricing',
+      'adv_li_casino_pricing', 'adv_li_crypto_pricing', 'adv_li_cbd_pricing', 'adv_li_dating_pricing'
     ];
 
+    // Virtual "_any" fields: COALESCE of GP + LI prices (used on All-tab)
+    const virtualPriceFields = {
+      'price_any': ['price', 'link_insertion_price'],
+      'adv_casino_pricing_any': ['adv_casino_pricing', 'adv_li_casino_pricing'],
+      'adv_crypto_pricing_any': ['adv_crypto_pricing', 'adv_li_crypto_pricing'],
+      'adv_cbd_pricing_any': ['adv_cbd_pricing', 'adv_li_cbd_pricing'],
+      'adv_dating_pricing_any': ['adv_dating_pricing', 'adv_li_dating_pricing'],
+    };
+
+    const isVirtual = Object.prototype.hasOwnProperty.call(virtualPriceFields, sortField);
+
     // If not a metric field or no entries, return as-is
-    if (!metricFields.includes(sortField) || !Array.isArray(entries) || entries.length === 0) {
-      return entries;
-    }
+    if (!isVirtual && !metricFields.includes(sortField)) return entries;
+    if (!Array.isArray(entries) || entries.length === 0) return entries;
 
     // Create a copy to avoid mutating original
     const sorted = [...entries];
@@ -174,8 +186,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         return bFeatured ? 1 : -1;
       }
 
-      const valA = a[sortField];
-      const valB = b[sortField];
+      let valA, valB;
+      if (isVirtual) {
+        const [f1, f2] = virtualPriceFields[sortField];
+        valA = a[f1] ?? a[f2];
+        valB = b[f1] ?? b[f2];
+      } else {
+        valA = a[sortField];
+        valB = b[sortField];
+      }
 
       // Handle NULL/undefined - always push to bottom
       const aIsEmpty = valA === null || valA === undefined;
@@ -606,6 +625,21 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         'ahrefs_dr': 'ahrefs_dr',
         'semrush_authority_score': 'semrush_authority_score',
         'price': 'price',
+        'link_insertion_price': 'link_insertion_price',
+        'adv_casino_pricing': 'adv_casino_pricing',
+        'adv_crypto_pricing': 'adv_crypto_pricing',
+        'adv_cbd_pricing': 'adv_cbd_pricing',
+        'adv_dating_pricing': 'adv_dating_pricing',
+        'adv_li_casino_pricing': 'adv_li_casino_pricing',
+        'adv_li_crypto_pricing': 'adv_li_crypto_pricing',
+        'adv_li_cbd_pricing': 'adv_li_cbd_pricing',
+        'adv_li_dating_pricing': 'adv_li_dating_pricing',
+        // Virtual "_any" fields resolve to COALESCE(GP, LI) of the matching category
+        'price_any': 'price_any',
+        'adv_casino_pricing_any': 'adv_casino_pricing_any',
+        'adv_crypto_pricing_any': 'adv_crypto_pricing_any',
+        'adv_cbd_pricing_any': 'adv_cbd_pricing_any',
+        'adv_dating_pricing_any': 'adv_dating_pricing_any',
         'createdAt': 'createdAt',
         'updatedAt': 'updatedAt'
       };
@@ -760,9 +794,22 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // NOTE: Use snake_case because Knex raw SQL bypasses Strapi's ORM column name mapping
         // Featured = site is featured for ANY service type (GP or LI)
         // Client-side re-sorts based on the active service type filter after receiving data
-        query = query
-          .orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC')
-          .orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
+        const virtualSortMap = {
+          'price_any': ['price', 'link_insertion_price'],
+          'adv_casino_pricing_any': ['adv_casino_pricing', 'adv_li_casino_pricing'],
+          'adv_crypto_pricing_any': ['adv_crypto_pricing', 'adv_li_crypto_pricing'],
+          'adv_cbd_pricing_any': ['adv_cbd_pricing', 'adv_li_cbd_pricing'],
+          'adv_dating_pricing_any': ['adv_dating_pricing', 'adv_li_dating_pricing'],
+        };
+
+        query = query.orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC');
+
+        if (virtualSortMap[rawSortField]) {
+          const [f1, f2] = virtualSortMap[rawSortField];
+          query = query.orderByRaw(`COALESCE(??, ??) ${rawSortDirection} NULLS LAST`, [f1, f2]);
+        } else {
+          query = query.orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
+        }
 
         // Clone query for count (before pagination)
         // clearOrder() removes ORDER BY clauses which are invalid on aggregate COUNT queries in PostgreSQL
@@ -800,6 +847,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       } catch (error) {
         console.error('❌ Knex sorting failed, falling back to default:', error.message);
         // Fallback to Strapi's default entityService (without NULLS LAST fix)
+        // Virtual _any fields aren't real columns; degrade to the GP-side price.
+        const virtualSortFallback = {
+          'price_any': 'price',
+          'adv_casino_pricing_any': 'adv_casino_pricing',
+          'adv_crypto_pricing_any': 'adv_crypto_pricing',
+          'adv_cbd_pricing_any': 'adv_cbd_pricing',
+          'adv_dating_pricing_any': 'adv_dating_pricing',
+        };
+        const fallbackField = virtualSortFallback[rawSortField] || rawSortField;
         try {
           const results = await strapi.entityService.findPage('api::marketplace.marketplace', {
             filters: ctx.query.filters,
@@ -807,7 +863,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             page,
             pageSize,
             orderBy: {
-              [rawSortField]: rawSortDirection
+              [fallbackField]: rawSortDirection
             }
           });
 
