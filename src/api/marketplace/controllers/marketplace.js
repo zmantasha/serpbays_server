@@ -147,7 +147,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // that NULL values always appear at the bottom for metric fields.
   // This is the SINGLE source of truth for metric sorting.
   // ============================================================
-  applyPostFetchSorting(entries, sortField, sortDirection) {
+  applyPostFetchSorting(entries, sortField, sortDirection, isDefaultSort = true) {
     // Only apply to metric fields that have the NULL issue
     const metricFields = [
       'ahrefs_dr', 'moz_da', 'semrush_authority_score',
@@ -176,14 +176,17 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     const sorted = [...entries];
 
     sorted.sort((a, b) => {
-      // Featured websites always appear first regardless of metric sort.
+      // Featured websites float to the top ONLY in the default view.
+      // When the user picks any explicit sort, featured must not influence ordering.
       // Generic: featured if featured for ANY service type (GP or LI).
       // Client-side re-sorts based on the active service type filter.
       // Raw Knex results use snake_case; Strapi ORM uses camelCase.
-      const aFeatured = (a.isFeaturedGuestPost || a.is_featured_guest_post || false) || (a.isFeaturedLinkInsertion || a.is_featured_link_insertion || false);
-      const bFeatured = (b.isFeaturedGuestPost || b.is_featured_guest_post || false) || (b.isFeaturedLinkInsertion || b.is_featured_link_insertion || false);
-      if (aFeatured !== bFeatured) {
-        return bFeatured ? 1 : -1;
+      if (isDefaultSort) {
+        const aFeatured = (a.isFeaturedGuestPost || a.is_featured_guest_post || false) || (a.isFeaturedLinkInsertion || a.is_featured_link_insertion || false);
+        const bFeatured = (b.isFeaturedGuestPost || b.is_featured_guest_post || false) || (b.isFeaturedLinkInsertion || b.is_featured_link_insertion || false);
+        if (aFeatured !== bFeatured) {
+          return bFeatured ? 1 : -1;
+        }
       }
 
       let valA, valB;
@@ -614,8 +617,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     let useRawSorting = false;
     let rawSortField = null;
     let rawSortDirection = null;
+    // When true: featured items float to the top. When false (any explicit sort
+    // chosen by the user): featured has no effect on ordering.
+    const isDefaultSort = !ctx.query.sort || ctx.query.sort === 'default';
 
-    if (ctx.query.sort) {
+    if (ctx.query.sort && ctx.query.sort !== 'default') {
       // Map frontend sort fields to backend database fields
       const sortMapping = {
         'url': 'url',
@@ -666,6 +672,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       useRawSorting = true;
       rawSortField = 'ahrefs_traffic';
       rawSortDirection = 'desc';
+      // Strip the 'default' sentinel so downstream code paths that read
+      // ctx.query.sort don't try to use it as a real column name.
+      if (ctx.query.sort === 'default') delete ctx.query.sort;
     }
 
     // For metric field sorting, use Knex with NULLS LAST for proper NULL/0 handling
@@ -802,7 +811,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           'adv_dating_pricing_any': ['adv_dating_pricing', 'adv_li_dating_pricing'],
         };
 
-        query = query.orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC');
+        if (isDefaultSort) {
+          query = query.orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC');
+        }
 
         if (virtualSortMap[rawSortField]) {
           const [f1, f2] = virtualSortMap[rawSortField];
@@ -830,7 +841,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const sanitizedResults = this.sanitizePublisherData(results, user);
 
         // Apply post-fetch sorting as final guarantee
-        const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection);
+        const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection, isDefaultSort);
 
         // Return in Strapi v4 format
         return {
@@ -870,7 +881,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           if (results && results.results) {
             results.results = this.sanitizePublisherData(results.results, user);
             // Apply post-fetch sorting as final guarantee
-            results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection);
+            results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection, isDefaultSort);
           }
 
           return {
@@ -886,7 +897,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           if (result && result.data) {
             result.data = this.sanitizePublisherData(result.data, user);
             // Apply post-fetch sorting as final guarantee
-            result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection);
+            result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection, isDefaultSort);
           }
           return result;
         }
@@ -911,7 +922,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Always ensure featured fields are the first sort criteria
       // Sites featured for any service type appear first
       const hasIsFeatured = orderByArray.some(obj => 'isFeaturedGuestPost' in obj || 'isFeaturedLinkInsertion' in obj);
-      if (!hasIsFeatured) {
+      if (isDefaultSort && !hasIsFeatured) {
         orderByArray.unshift({ isFeaturedGuestPost: 'desc' }, { isFeaturedLinkInsertion: 'desc' });
       }
       const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
@@ -934,7 +945,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const postSortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
       const sortField = postSortParts[0];
       const sortDirection = postSortParts[1] || 'desc';
-      const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection);
+      const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection, isDefaultSort);
 
       return {
         data: sortedEntries,
@@ -955,7 +966,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         result.data = this.sanitizePublisherData(result.data, user);
         // Apply post-fetch sorting for fallback too
         const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
-        result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc');
+        result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc', isDefaultSort);
       }
       return result;
     }
