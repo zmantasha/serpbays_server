@@ -8,6 +8,21 @@ const { createCoreController } = require('@strapi/strapi').factories;
 const { parse } = require('csv-parse/sync');
 const fs = require('fs');
 
+// Price-like columns. When sorting by any of these, both NULL and 0 are
+// treated as "no price" so they fall to the bottom of an ascending sort.
+const PRICE_LIKE_FIELDS = new Set([
+  'price',
+  'link_insertion_price',
+  'adv_casino_pricing',
+  'adv_crypto_pricing',
+  'adv_cbd_pricing',
+  'adv_dating_pricing',
+  'adv_li_casino_pricing',
+  'adv_li_crypto_pricing',
+  'adv_li_cbd_pricing',
+  'adv_li_dating_pricing',
+]);
+
 // Required fields that must be present in CSV
 const REQUIRED_FIELDS = [
   'url',
@@ -189,11 +204,27 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         }
       }
 
+      // Treat 0 as "no price" for any price-like column so it falls to the
+      // bottom alongside NULLs (matches the SQL-side NULLIF(col, 0)).
+      const zeroAsNull = (v) => (v === 0 || v === '0' ? null : v);
+      // Lowest VALID price between two columns; NULL/0 are skipped, returns
+      // NULL only when both are NULL/0.
+      const minValid = (x, y) => {
+        const xv = zeroAsNull(x);
+        const yv = zeroAsNull(y);
+        if (xv == null) return yv;
+        if (yv == null) return xv;
+        return Number(xv) <= Number(yv) ? xv : yv;
+      };
+
       let valA, valB;
       if (isVirtual) {
         const [f1, f2] = virtualPriceFields[sortField];
-        valA = a[f1] ?? a[f2];
-        valB = b[f1] ?? b[f2];
+        valA = minValid(a[f1], a[f2]);
+        valB = minValid(b[f1], b[f2]);
+      } else if (PRICE_LIKE_FIELDS.has(sortField)) {
+        valA = zeroAsNull(a[sortField]);
+        valB = zeroAsNull(b[sortField]);
       } else {
         valA = a[sortField];
         valB = b[sortField];
@@ -211,11 +242,27 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       if (bIsEmpty) return -1;
 
       // Both have values - sort normally
-      if (sortDirection === 'desc') {
-        return (Number(valB) || 0) - (Number(valA) || 0);
-      } else {
-        return (Number(valA) || 0) - (Number(valB) || 0);
+      const numA = Number(valA) || 0;
+      const numB = Number(valB) || 0;
+      const diff = numA - numB;
+      if (diff !== 0) {
+        return sortDirection === 'desc' ? -diff : diff;
       }
+
+      // Tie-breaker for virtual _any sorts: GP price ASC so the lower GP
+      // wins within rows tied on the lowest valid price (matches the SQL
+      // secondary ORDER BY on f1).
+      if (isVirtual) {
+        const [gpField] = virtualPriceFields[sortField];
+        const gpA = zeroAsNull(a[gpField]);
+        const gpB = zeroAsNull(b[gpField]);
+        if (gpA == null && gpB == null) return 0;
+        if (gpA == null) return 1;
+        if (gpB == null) return -1;
+        return (Number(gpA) || 0) - (Number(gpB) || 0);
+      }
+
+      return 0;
     });
 
     return sorted;
@@ -816,8 +863,28 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         }
 
         if (virtualSortMap[rawSortField]) {
+          // Sort key = lowest VALID price between GP and LI (NULL/0 treated as
+          // "no price"). CASE expression instead of LEAST/min for portability
+          // across PostgreSQL and SQLite (SQLite has no LEAST; its min(a,b)
+          // propagates NULL). Column names come from a fixed map → safe to
+          // interpolate. If both are NULL/0 the expression yields NULL and
+          // NULLS LAST pushes the row to the bottom.
+          // Tie-breaker: GP price ASC so within rows tied on the lowest valid
+          // price, the listing with the lower GP price appears first
+          // (regardless of the primary direction).
           const [f1, f2] = virtualSortMap[rawSortField];
-          query = query.orderByRaw(`COALESCE(??, ??) ${rawSortDirection} NULLS LAST`, [f1, f2]);
+          const minExpr = `CASE
+            WHEN NULLIF(${f1}, 0) IS NULL THEN NULLIF(${f2}, 0)
+            WHEN NULLIF(${f2}, 0) IS NULL THEN NULLIF(${f1}, 0)
+            WHEN NULLIF(${f1}, 0) <= NULLIF(${f2}, 0) THEN NULLIF(${f1}, 0)
+            ELSE NULLIF(${f2}, 0)
+          END`;
+          query = query
+            .orderByRaw(`(${minExpr}) ${rawSortDirection} NULLS LAST`)
+            .orderByRaw(`NULLIF(${f1}, 0) ASC NULLS LAST`);
+        } else if (PRICE_LIKE_FIELDS.has(rawSortField)) {
+          // Single price column: 0 → NULL → bottom of ASC sort.
+          query = query.orderByRaw(`NULLIF(??, 0) ${rawSortDirection} NULLS LAST`, [rawSortField]);
         } else {
           query = query.orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
         }
