@@ -148,6 +148,35 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // NOTE: No transaction created here. Transaction will only be created when marked as paid.
       // Approval is an internal admin action, not a financial transaction.
 
+      // Send email notification about approval
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawal.publisher?.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal approval email to ${publisherEmail}`);
+
+          // Get the transaction record
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendTransactionApprovalEmail(transaction, publisherEmail);
+            console.log(`Withdrawal approval email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, email not sent`);
+          }
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal approval email:', emailError);
+        // Don't fail the approval if email fails
+      }
+
       ctx.send({
         data: updatedWithdrawal
       });
@@ -196,6 +225,35 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Note: Wallet balance updates are handled automatically by the lifecycle system
       // when the withdrawal status changes to 'denied'
+
+      // Send email notification about denial
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawal.publisher?.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal denial email to ${publisherEmail}`);
+
+          // Get the transaction record
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendTransactionDenialEmail(transaction, publisherEmail, reason);
+            console.log(`Withdrawal denial email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, email not sent`);
+          }
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal denial email:', emailError);
+        // Don't fail the rejection if email fails
+      }
 
       ctx.send({
         data: updatedWithdrawal
@@ -375,92 +433,107 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       const currentPendingBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
       const withdrawalAmount = parseFloat(withdrawal.amount);
 
+      console.log(`[DEBUG] Balance check: Available=${currentPendingBalance}, Required=${withdrawalAmount}`);
+
       if (currentPendingBalance < withdrawalAmount) {
         return ctx.badRequest(`Insufficient pending withdrawal balance. Available: ${currentPendingBalance}, Required: ${withdrawalAmount}`);
       }
 
-      // Use database transaction to ensure atomicity
-      const trx = await strapi.db.connection.transaction();
+      // Step 1: Update withdrawal request
+      const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: {
+          withdrawal_status: 'paid',
+          paymentReference,
+          paymentNotes,
+          paidAt: paymentDate ? new Date(paymentDate) : new Date(),
+          paidBy: ctx.state.user.id,
+          processedAt: new Date()
+        },
+        populate: ['publisher']
+      });
 
-      try {
-        // Update withdrawal request
-        const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-          data: {
-            withdrawal_status: 'paid',
-            paymentReference,
-            paymentNotes,
-            paidAt: paymentDate ? new Date(paymentDate) : new Date(),
-            paidBy: ctx.state.user.id,
-            processedAt: new Date()
-          },
-          populate: ['publisher']
-        });
+      // Step 2: Update wallet - reduce pending withdrawal balance
+      await strapi.entityService.update('api::user-wallet.user-wallet', publisherWallet.id, {
+        data: {
+          pendingWithdrawalBalance: parseFloat(publisherWallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount)
+        }
+      });
 
-        // Update wallet - reduce pending withdrawal balance
-        await strapi.entityService.update('api::user-wallet.user-wallet', publisherWallet.id, {
+      // Step 3: Update the existing withdrawal transaction
+      const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: {
+          users_permissions_user: withdrawal.publisher.id,
+          type: 'withdrawal',
+          description: { $contains: `Withdrawal request #${id}` }
+        },
+        orderBy: { id: 'desc' }
+      });
+
+      let finalTransaction;
+
+      if (existingTransaction) {
+        finalTransaction = await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
           data: {
-            pendingWithdrawalBalance: parseFloat(publisherWallet.pendingWithdrawalBalance) - parseFloat(withdrawal.amount)
+            transactionStatus: 'paid',
+            external_transaction_id: paymentReference,
+            payment_notes: paymentNotes,
+            description: `${existingTransaction.description} - Payment completed via ${withdrawal.method || 'Manual'}`
           }
         });
-
-        // Update the existing withdrawal transaction instead of creating a new one
-        const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: {
+        console.log(`[Admin] Updated withdrawal transaction ${existingTransaction.id} to paid status`);
+      } else {
+        console.log(`[Admin] Creating new transaction for withdrawal #${id}`);
+        finalTransaction = await strapi.entityService.create('api::transaction.transaction', {
+          data: {
             users_permissions_user: withdrawal.publisher.id,
             type: 'withdrawal',
-            description: { $contains: `Withdrawal request #${id}` }
-          },
-          orderBy: { id: 'desc' }
+            transactionStatus: 'paid',
+            amount: parseFloat(withdrawal.amount),
+            netAmount: parseFloat(withdrawal.amount),
+            gateway: withdrawal.method || 'system',
+            gatewayTransactionId: paymentReference || `WP-${id}-${Date.now()}`,
+            description: `Withdrawal request #${id} - Payment completed via ${withdrawal.method || 'Manual'}`,
+            fee: 0,
+            user_wallet: publisherWallet.id,
+            external_transaction_id: paymentReference,
+            payment_notes: paymentNotes
+          }
         });
-
-        if (existingTransaction) {
-          // Update the existing withdrawal transaction to paid status
-          await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
-            data: {
-              transactionStatus: 'paid',
-              external_transaction_id: paymentReference,
-              payment_notes: paymentNotes,
-              description: `${existingTransaction.description} - Payment completed via ${withdrawal.method || 'Manual'}`
-            }
-          });
-          console.log(`✅ Updated existing withdrawal transaction ${existingTransaction.id} to paid status`);
-        } else {
-          console.log(`⚠️ No existing withdrawal transaction found for withdrawal #${id}, creating new one`);
-          // Fallback: create a new transaction if none exists (shouldn't happen in normal flow)
-          await strapi.entityService.create('api::transaction.transaction', {
-            data: {
-              users_permissions_user: withdrawal.publisher.id,
-              type: 'withdrawal',
-              transactionStatus: 'paid',
-              amount: parseFloat(withdrawal.amount),
-              netAmount: parseFloat(withdrawal.amount),
-              gateway: withdrawal.method || 'system',
-              gatewayTransactionId: paymentReference || `WP-${id}-${Date.now()}`,
-              description: `Withdrawal request #${id} - Payment completed via ${withdrawal.method || 'Manual'}`,
-              fee: 0,
-              user_wallet: publisherWallet.id,
-              external_transaction_id: paymentReference,
-              payment_notes: paymentNotes
-            }
-          });
-        }
-
-        // Commit the transaction
-        await trx.commit();
-
-        ctx.send({
-          data: updatedWithdrawal
-        });
-      } catch (transactionError) {
-        // Rollback the transaction
-        await trx.rollback();
-        console.error('[ADMIN WITHDRAWAL MARK AS PAID TRANSACTION ERROR]', transactionError);
-        throw transactionError;
       }
 
+      // Send email notification (non-blocking for response, but useful to log errors)
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        // Use updatedWithdrawal because it has the latest status 'paid', but withdrawal has publisher populated above
+        // We'll use 'withdrawal' for publisher info and 'updatedWithdrawal' if strict status needed, but withdrawal object is fine
+        // as long as we pass valid transaction and email.
+
+        // Note: verify withdrawal has publisher populated properly. 
+        // In lines 402-405, we fetched 'withdrawal' with populate: ['publisher'].
+
+        if (withdrawal.publisher && withdrawal.publisher.email) {
+          await emailService.sendWithdrawalPaidEmail(
+            finalTransaction,
+            withdrawal.publisher.email,
+            withdrawal
+          );
+          console.log(`[Admin] Sent withdrawal paid email to ${withdrawal.publisher.email}`);
+        } else {
+          console.warn(`[Admin] Could not send email: Publisher email missing for withdrawal #${id}`);
+        }
+      } catch (emailError) {
+        console.error('[Admin] Failed to send withdrawal paid email:', emailError);
+        // Do not throw, so the admin UI still shows success for the payment itself
+      }
+
+      ctx.send({
+        data: updatedWithdrawal
+      });
+
     } catch (error) {
-      console.error('[ADMIN WITHDRAWAL MARK AS PAID ERROR]', error);
-      return ctx.internalServerError('Failed to mark withdrawal as paid');
+      console.error('[ADMIN WITHDRAWAL MARK AS PAID ERROR]', error.message || error);
+      console.error('[ADMIN WITHDRAWAL MARK AS PAID STACK]', error.stack);
+      return ctx.internalServerError('Failed to mark withdrawal as paid: ' + (error.message || 'Unknown error'));
     }
   },
 

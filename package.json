@@ -29,6 +29,7 @@
     "@strapi/provider-email-nodemailer": "^5.16.1",
     "@strapi/strapi": "5.12.4",
     "@types/bcryptjs": "^2.4.6",
+    "autosendjs": "^1.0.3",
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^11.9.1",
     "csv-parse": "^5.6.0",

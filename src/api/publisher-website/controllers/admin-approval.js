@@ -51,6 +51,22 @@ module.exports = {
         return ctx.internalServerError('createMarketplaceListing method not available');
       }
       
+      // Send approval email notification
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        if (updatedSubmission.publisherEmail) {
+          await emailService.sendWebsiteStatusEmail({
+            publisherEmail: updatedSubmission.publisherEmail,
+            publisherName: updatedSubmission.publisherName || updatedSubmission.publisherEmail,
+            websiteName: updatedSubmission.url,
+            websiteUrl: updatedSubmission.url,
+            actionType: 'Approved & Live'
+          });
+        }
+      } catch (emailError) {
+        console.error('[EMAIL] Failed to send manual approval email:', emailError.message);
+      }
+
       return ctx.send({
         message: 'Website approved successfully and added to marketplace',
         data: updatedSubmission

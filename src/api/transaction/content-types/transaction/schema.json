@@ -125,6 +125,10 @@
         "promo_fund"
       ],
       "description": "Source of funds for this transaction"
+    },
+    "email_sent_at": {
+      "type": "datetime",
+      "description": "Timestamp when the transaction notification email was sent; guards against duplicate sends from webhook retries and admin re-runs"
     }
   }
 }

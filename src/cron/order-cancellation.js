@@ -73,21 +73,13 @@ module.exports = {
 
             console.log(`Found ${ordersToWarn.length} orders to warn (30 days w/o delivery)`);
 
+            const emailService = strapi.service('api::global.email-operations');
+
             for (const order of ordersToWarn) {
                 try {
-                    // Send warning notification to PUBLISHER
+                    // Send warning notification to PUBLISHER via AutoSend
                     if (order.publisher && order.publisher.email) {
-                        await strapi.plugins['email'].services.email.send({
-                            to: order.publisher.email,
-                            from: process.env.EMAIL_FROM || 'no-reply@serpbays.com',
-                            subject: `Urgent: Order #${order.id} Delivery Overdue`,
-                            html: `
-                <h2>Delivery Overdue Warning</h2>
-                <p>Order #${order.id} was accepted over 30 days ago and has not been delivered.</p>
-                <p>Please deliver this order immediately.</p>
-                <p><strong>Warning:</strong> If not delivered within 15 days (45 days total), the order will be automatically cancelled and refunded.</p>
-              `
-                        });
+                        await emailService.sendDeliveryOverdueWarningEmail(order, order.publisher.email);
 
                         // Update order to mark warning sent
                         await strapi.entityService.update('api::order.order', order.id, {

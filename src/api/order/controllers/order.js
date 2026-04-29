@@ -557,15 +557,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         try {
           // Use CURRENT publisher email from relation (always up-to-date), fallback to static field for legacy entries
           let publisherEmail = null;
+
+          console.log(`[ORDER ${order.id}] Determining publisher email for website ID: ${orderData.website}`);
+          console.log(`[ORDER ${order.id}] Marketplace publisher relation:`, marketplace?.publisher?.email || 'NONE');
+          console.log(`[ORDER ${order.id}] Marketplace publisher_email field:`, marketplace?.publisher_email || 'NONE');
+
           if (marketplace && marketplace.publisher && marketplace.publisher.email) {
             publisherEmail = marketplace.publisher.email;
+            console.log(`[ORDER ${order.id}] Using publisher.email: ${publisherEmail}`);
           } else if (marketplace && marketplace.publisher_email) {
             publisherEmail = marketplace.publisher_email;
+            console.log(`[ORDER ${order.id}] Using publisher_email field: ${publisherEmail}`);
           }
 
           if (publisherEmail) {
             // Send email notification for new order
             try {
+              console.log(`[ORDER ${order.id}] Sending order creation email to: ${publisherEmail}`);
               const emailService = strapi.service('api::global.email-operations');
               await emailService.sendOrderCreationEmail(
                 populatedOrder,
@@ -580,10 +588,90 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           } else {
             console.log(`Website not found or missing publisher_email for website ID: ${orderData.website}`);
           }
+
+          // Send order confirmation email to advertiser
+          try {
+            const emailService = strapi.service('api::global.email-operations');
+            await emailService.sendOrderConfirmationAdvertiserEmail(populatedOrder, user.email);
+            console.log(`[ORDER ${order.id}] Order confirmation email sent to advertiser: ${user.email}`);
+          } catch (emailError) {
+            console.error(`[ORDER ${order.id}] Failed to send advertiser confirmation email:`, emailError.message);
+          }
         } catch (notificationError) {
           console.error('Failed to create new order notification:', notificationError);
           // Don't fail the order creation if notification fails
         }
+
+        // ========== AUTOSEND: REMOVE FROM CONVERSION LISTS ==========
+        try {
+          const autoSendService = strapi.service('api::global.autosend-service');
+          if (autoSendService && user.email) {
+            // Remove from "wallet funded, no order" list — they just placed an order
+            const walletNoOrderListId = process.env.AUTOSEND_WALLET_NO_ORDER_LIST_ID;
+            if (walletNoOrderListId) {
+              autoSendService.removeFromList({ email: user.email, listId: walletNoOrderListId })
+                .catch(err => console.error('[Order] AutoSend removeFromList (wallet) error:', err.message));
+            }
+
+            // Remove from "abandoned cart" list — they completed checkout
+            const abandonedCartListId = process.env.AUTOSEND_ABANDONED_CART_LIST_ID;
+            if (abandonedCartListId) {
+              autoSendService.removeFromList({ email: user.email, listId: abandonedCartListId })
+                .catch(err => console.error('[Order] AutoSend removeFromList (cart) error:', err.message));
+            }
+
+            // Remove from "inactive signup" list — they finally converted
+            const inactiveSignupListId = process.env.AUTOSEND_INACTIVE_SIGNUP_LIST_ID;
+            if (inactiveSignupListId) {
+              autoSendService.removeFromList({ email: user.email, listId: inactiveSignupListId })
+                .catch(err => console.error('[Order] AutoSend removeFromList (inactive) error:', err.message));
+            }
+
+            // Remove from "win-back" list — they came back!
+            const winbackListId = process.env.AUTOSEND_WINBACK_LIST_ID;
+            if (winbackListId) {
+              autoSendService.removeFromList({ email: user.email, listId: winbackListId })
+                .catch(err => console.error('[Order] AutoSend removeFromList (winback) error:', err.message));
+            }
+
+            // Remove ordered item from favorites & clean up favorite reminder list
+            const favoriteListId = process.env.AUTOSEND_FAVORITE_REMINDER_LIST_ID;
+            if (orderData.website) {
+              try {
+                // Find and delete the shortlisted item for this marketplace + user
+                const shortlistedItem = await strapi.db.query('api::shortlist.shortlist').findOne({
+                  where: {
+                    marketplace: orderData.website,
+                    owner: user.id,
+                  },
+                });
+
+                if (shortlistedItem) {
+                  await strapi.entityService.delete('api::shortlist.shortlist', shortlistedItem.id);
+                  console.log(`[Order] Removed marketplace ${orderData.website} from user ${user.id} shortlist`);
+
+                  // Check if user has any remaining favorites
+                  if (favoriteListId) {
+                    const remainingCount = await strapi.db.query('api::shortlist.shortlist').count({
+                      where: { owner: user.id },
+                    });
+
+                    if (remainingCount === 0) {
+                      autoSendService.removeFromList({ email: user.email, listId: favoriteListId })
+                        .catch(err => console.error('[Order] AutoSend removeFromList (favorite) error:', err.message));
+                      console.log(`[Order] Removed ${user.email} from favorite reminder list (no favorites left)`);
+                    }
+                  }
+                }
+              } catch (shortlistErr) {
+                console.error('[Order] Shortlist cleanup error (non-blocking):', shortlistErr.message);
+              }
+            }
+          }
+        } catch (autoSendErr) {
+          console.error('[Order] AutoSend sync error (non-blocking):', autoSendErr.message);
+        }
+        // ========== END AUTOSEND ==========
 
         return {
           data: populatedOrder,
@@ -1602,6 +1690,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
             if (advertiserUser && advertiserUser.email) {
               const emailService = strapi.service('api::global.email-operations');
+              console.log("emailService", emailService)
               await emailService.sendOrderDeliveryEmail(
                 fullOrder,
                 advertiserUser.email,
@@ -2236,6 +2325,36 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         } catch (notificationError) {
           console.error('Failed to create revision completed notification:', notificationError);
           // Don't fail the revision completion if notification fails
+        }
+
+        // Send delivery email to advertiser
+        try {
+          const fullOrder = await strapi.entityService.findOne('api::order.order', orderId, {
+            populate: ['advertiser', 'publisher', 'website']
+          });
+
+          const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: order.advertiser?.id || order.advertiser }
+          });
+
+          if (advertiserUser && advertiserUser.email) {
+            const emailService = strapi.service('api::global.email-operations');
+            console.log(`[Revision Complete] Sending delivery email to ${advertiserUser.email}`);
+
+            // Update fullOrder with the latest delivery info
+            fullOrder.deliveryProofUrl = deliveryProof;
+            fullOrder.deliveryMessage = message;
+
+            await emailService.sendOrderDeliveryEmail(
+              fullOrder,
+              advertiserUser.email,
+              user.email
+            );
+            console.log(`Revision completion delivery email sent for order ${orderId}`);
+          }
+        } catch (emailError) {
+          console.error('Failed to send revision completion delivery email:', emailError);
+          // Don't fail the revision completion if email fails
         }
 
         return {
