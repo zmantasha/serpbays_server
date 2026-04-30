@@ -1799,6 +1799,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               console.error('Failed to send order completion email:', emailError);
               // Don't fail completion if email fails
             }
+
+            // Send publisher earnings email AFTER the completion email so
+            // the inbox order is: Completed -> Earnings (matches user expectation).
+            if (completedOrder?._earningEmailContext) {
+              await strapi.service('api::order.order')
+                .sendPublisherEarningEmail(completedOrder._earningEmailContext);
+            }
           } catch (notificationError) {
             console.error('Failed to create payment received notification:', notificationError);
             // Don't fail the order completion if notification fails
@@ -2572,6 +2579,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           } catch (notificationError) {
             console.error('Failed to create delivery accepted notification:', notificationError);
             // Don't fail the order finalization if notification fails
+          }
+
+          // Send publisher earnings email after finalization
+          if (completedOrder?._earningEmailContext) {
+            await strapi.service('api::order.order')
+              .sendPublisherEarningEmail(completedOrder._earningEmailContext);
           }
 
           return {

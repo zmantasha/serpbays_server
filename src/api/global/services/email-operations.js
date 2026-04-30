@@ -431,6 +431,14 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     try {
       console.log(`[EMAIL DEBUG] sendOrderCompletionEmail called for order ${order.id}`);
 
+      // Ensure relations are populated so the template gets real names
+      if (!order.publisher?.username && !order.publisher?.email) {
+        const populated = await strapi.entityService.findOne('api::order.order', order.id, {
+          populate: ['publisher', 'advertiser', 'website']
+        });
+        if (populated) order = populated;
+      }
+
       // Email to publisher using universal template
       const emailData = {
         to: publisherEmail,
@@ -535,11 +543,18 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       notes: notes || transaction.description || '',
       status_message: statusMessage || '',
 
-      is_earning: flags.is_earning || undefined,
-      is_withdrawal: flags.is_withdrawal || undefined,
-      is_wallet_credit: flags.is_wallet_credit || undefined,
-      is_payment_failed: flags.is_payment_failed || undefined,
-      is_bonus: flags.is_bonus || undefined,
+      // Aliases the AutoSend template references in the Withdrawal Details block
+      withdrawal_status: statusLabel,
+      timeline: extra?.withdrawal_timeline || '',
+
+      // Send explicit booleans so {{#if ...}} blocks evaluate reliably.
+      // Sending `undefined` causes JSON to drop the key entirely, and the
+      // template engine then renders the block as if the flag were truthy.
+      is_earning: !!flags.is_earning,
+      is_withdrawal: !!flags.is_withdrawal,
+      is_wallet_credit: !!flags.is_wallet_credit,
+      is_payment_failed: !!flags.is_payment_failed,
+      is_bonus: !!flags.is_bonus,
 
       view_transaction_url: `${clientUrl}/wallet/transactions`,
       view_wallet_url: `${clientUrl}/wallet`,

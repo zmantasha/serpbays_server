@@ -847,7 +847,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       // Determine transaction type based on context
       const transactionType = transactionData.type || 'deposit';
       // Create transaction record
-      await strapi.entityService.create('api::transaction.transaction', {
+      const transaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: transactionType,
           amount: parseFloat(amount),
@@ -866,7 +866,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Added ${amount} to main balance for user ${userId}`);
-      return { success: true, newMainBalance, newTotalBalance };
+      return { success: true, newMainBalance, newTotalBalance, transaction };
     } catch (error) {
       console.error('Error adding main funds:', error);
       throw error;

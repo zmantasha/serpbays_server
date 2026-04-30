@@ -197,9 +197,12 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
   // When an order is completed, mark funds as available to publisher but don't transfer yet
   async completeOrder(id, user) {
+    let earningTransactionId = null;
+    let publisherIdForEmail = null;
+
     // ✅ CRITICAL: Use database transaction to ensure atomicity
     // All wallet operations must succeed or all fail - prevents money loss on crashes
-    return await strapi.db.transaction(async ({ trx }) => {
+    const updatedOrder = await strapi.db.transaction(async ({ trx }) => {
       // Get the order with all relations
       const order = await this.getCompleteOrder(id);
       console.log("Processing order completion:", {
@@ -267,7 +270,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       });
 
       // ✅ ATOMIC OPERATION 2: Add earnings to publisher MAIN balance (withdrawable funds)
-      await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
+      const fundsResult = await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
         publisherId,
         paymentAmount,
         {
@@ -277,6 +280,10 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           order: order.id // ✅ Link transaction to the order
         }
       );
+
+      // Capture for post-commit email send
+      earningTransactionId = fundsResult?.transaction?.id || null;
+      publisherIdForEmail = publisherId;
 
       console.log(`[ORDER COMPLETE] ✅ Money transfer completed successfully`);
 
@@ -347,6 +354,47 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       return updatedOrder;
     });
+
+    // Stash earning context on the returned order so the caller can
+    // dispatch the earnings email AFTER any other order emails (e.g. completion).
+    if (updatedOrder && earningTransactionId && publisherIdForEmail) {
+      updatedOrder._earningEmailContext = {
+        transactionId: earningTransactionId,
+        publisherId: publisherIdForEmail,
+      };
+    }
+
+    return updatedOrder;
+  },
+
+  // Send the publisher earning email for a previously-completed order.
+  // Designed to be called AFTER the order-completion email so the publisher
+  // sees "Order Completed" first and the transaction notice second.
+  async sendPublisherEarningEmail(context) {
+    if (!context?.transactionId || !context?.publisherId) return;
+    try {
+      const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+        where: { id: context.publisherId }
+      });
+      if (!publisherUser?.email) return;
+
+      const earningTx = await strapi.entityService.findOne(
+        'api::transaction.transaction',
+        context.transactionId,
+        { populate: { order: { populate: ['website'] } } }
+      );
+      if (!earningTx) return;
+
+      const result = await strapi.service('api::global.email-operations')
+        .sendPaymentConfirmationEmail(earningTx, publisherUser.email);
+      if (result?.sent) {
+        console.log(`[ORDER COMPLETE] Earning email sent to ${publisherUser.email} for tx ${context.transactionId}`);
+      } else {
+        console.log(`[ORDER COMPLETE] Earning email NOT sent for tx ${context.transactionId} (reason: ${result?.reason || 'unknown'}). Set TRANSACTION_EMAILS_ENABLED=true to enable in this environment.`);
+      }
+    } catch (emailError) {
+      console.error(`[ORDER COMPLETE] Failed to send publisher earning email:`, emailError);
+    }
   },
 
   // When an order is rejected, refund escrow to advertiser
