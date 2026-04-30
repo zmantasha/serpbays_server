@@ -170,6 +170,11 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     try {
       console.log(`[EMAIL DEBUG] sendOrderCancellationEmail called for order ${order.id}`);
 
+      const publisherName = order.publisher?.username || order.publisher?.email || 'Publisher';
+      const advertiserName = order.advertiser?.username || order.advertiser?.email || 'Advertiser';
+      const isPublisherRecipient = order.publisher?.email && recipientEmail === order.publisher.email;
+      const recipientName = isPublisherRecipient ? publisherName : advertiserName;
+
       const emailData = {
         to: recipientEmail,
         templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
@@ -190,10 +195,12 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           website_url: order.website?.url || '',
           website_name: order.website?.name || order.website?.url || 'Website',
 
-          // User details
-          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
-          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
-          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          // User details — the AutoSend template renders "Hi {{advertiser_name}}",
+          // so we override it with the recipient's own name per email.
+          publisher_name: recipientName,
+          advertiser_name: recipientName,
+          customer: recipientName,
+          recipient_name: recipientName,
 
           // Item details
           item_1_name: order.website?.name || 'Order Service',
