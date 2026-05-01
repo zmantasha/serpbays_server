@@ -17,6 +17,15 @@ module.exports = {
         policies: ['global::is-admin'],
         middlewares: ['global::admin-logger']
       }
+    },
+    {
+      method: 'POST',
+      path: '/admin/websites/bulk-transfer-ownership',
+      handler: 'website-transfers.bulkTransferOwnership',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
     }
   ]
 };

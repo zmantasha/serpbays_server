@@ -3,11 +3,158 @@
 /**
  * Admin Website Transfer Controller
  *
- * Direct admin transfer: admin selects a target user, ownership flips
- * immediately, only the previous owner is notified by email.
+ * Direct admin transfer.
+ *
+ * - The ORIGINAL website record is preserved with its previous owner
+ *   intact and submissionStatus flipped to "ownership_transferred", so
+ *   the old publisher's history (orders, metrics) stays attached to it.
+ * - A NEW website record is cloned for the target user. Because the
+ *   admin is acting as the source of truth, the new record skips the
+ *   GSC verification step and is set to "approved" immediately.
+ * - The old record points at the new one via `newOwnerWebsiteId`.
+ * - Only the previous owner is notified by email.
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
+
+// Fields that must NOT be carried over when cloning a website record.
+const NON_CLONEABLE_FIELDS = new Set([
+  'id',
+  'documentId',
+  'createdAt',
+  'updatedAt',
+  'publishedAt',
+  'createdBy',
+  'updatedBy',
+  // Strapi v5 entity-service relation arrays we don't want to deep-copy
+  'updateRequests',
+  // ownership/claim metadata — set explicitly
+  'currentPublisherId',
+  'originalPublisherId',
+  'claimedBy',
+  'claimedAt',
+  'claimedFrom',
+  'claimSubmittedAt',
+  'claimingInProgress',
+  'originalWebsiteId',
+  'newOwnerWebsiteId',
+  'ownershipTransferredAt',
+  'ownershipTransferReason',
+  // GSC verification — we skip GSC entirely
+  'gscVerified',
+  'gscVerifiedAt',
+  'gscPermissionLevel',
+  'gscRefreshToken',
+  // Approval/review metadata — set explicitly on the clone
+  'submissionStatus',
+  'approvedAt',
+  'reviewedAt',
+  'reviewedBy',
+  'reviewStartedAt',
+  'reviewNotes',
+  'rejectionReason',
+  'changeRequests',
+  // Identifying fields we override
+  'publisherEmail',
+  'publisherName'
+]);
+
+const cloneWebsiteFields = (source) => {
+  const clone = {};
+  for (const [key, value] of Object.entries(source || {})) {
+    if (NON_CLONEABLE_FIELDS.has(key)) continue;
+    clone[key] = value;
+  }
+  return clone;
+};
+
+/**
+ * Performs a single ownership transfer. Returns { result, error }.
+ */
+async function performTransfer({ strapi, websiteId, targetUser, reason }) {
+  const website = await strapi.entityService.findOne(
+    'api::publisher-website.publisher-website',
+    websiteId,
+    { populate: ['currentPublisherId', 'originalPublisherId'] }
+  );
+  if (!website) return { error: 'Website not found' };
+
+  if (website.submissionStatus === 'ownership_transferred') {
+    return {
+      error:
+        'This website has already been transferred. Transfer the new record instead.'
+    };
+  }
+
+  const previousOwner =
+    website.currentPublisherId || website.originalPublisherId;
+
+  if (previousOwner && previousOwner.id === targetUser.id) {
+    return { error: 'Target user is already the current owner' };
+  }
+
+  const cloneable = cloneWebsiteFields(website);
+  const now = new Date();
+
+  let newWebsiteId = null;
+
+  await strapi.db.transaction(async () => {
+    // 1. Create the new owner's record (clone of current website data).
+    const newWebsite = await strapi.entityService.create(
+      'api::publisher-website.publisher-website',
+      {
+        data: {
+          ...cloneable,
+          publisherEmail: targetUser.email,
+          publisherName: targetUser.username || targetUser.email,
+          currentPublisherId: targetUser.id,
+          originalPublisherId: previousOwner ? previousOwner.id : null,
+          originalWebsiteId: website.id,
+          claimedFrom: previousOwner?.email || website.publisherEmail || null,
+          claimedAt: now,
+          ownershipTransferredAt: now,
+          ownershipTransferReason: 'admin_transfer',
+          // Skip GSC entirely — admin is the source of truth.
+          verificationMethod: null,
+          gscVerified: false,
+          gscVerifiedAt: null,
+          // Auto-approved (no extra review step).
+          submissionStatus: 'approved',
+          approvedAt: now,
+          stepCompleted: 4
+        }
+      }
+    );
+
+    newWebsiteId = newWebsite.id;
+
+    // 2. Mark the original record as transferred. Keep the previous
+    //    owner and historical data untouched.
+    await strapi.entityService.update(
+      'api::publisher-website.publisher-website',
+      website.id,
+      {
+        data: {
+          submissionStatus: 'ownership_transferred',
+          ownershipTransferredAt: now,
+          ownershipTransferReason: 'admin_transfer',
+          newOwnerWebsiteId: newWebsite.id
+        }
+      }
+    );
+  });
+
+  return {
+    result: {
+      originalWebsiteId: website.id,
+      newWebsiteId,
+      previousOwnerId: previousOwner?.id || null,
+      newOwnerId: targetUser.id,
+      previousOwner
+    },
+    website
+  };
+}
 
 module.exports = createCoreController(
   'api::publisher-website.publisher-website',
@@ -30,18 +177,6 @@ module.exports = createCoreController(
           return ctx.badRequest('targetUserId is required');
         }
 
-        // 1. Load website + current owner
-        const website = await strapi.entityService.findOne(
-          'api::publisher-website.publisher-website',
-          websiteId,
-          { populate: ['currentPublisherId', 'originalPublisherId'] }
-        );
-        if (!website) return ctx.notFound('Website not found');
-
-        const previousOwner =
-          website.currentPublisherId || website.originalPublisherId;
-
-        // 2. Resolve target user
         const targetUser = await strapi.db
           .query('plugin::users-permissions.user')
           .findOne({ where: { id: targetId } });
@@ -49,42 +184,26 @@ module.exports = createCoreController(
           return ctx.badRequest(`No user found with id ${targetId}.`);
         }
 
-        // 3. Reject self-transfer
-        if (previousOwner && targetUser.id === previousOwner.id) {
-          return ctx.badRequest('Target user is already the current owner.');
-        }
-
-        // 4. Flip ownership atomically
-        const updated = await strapi.db.transaction(async () => {
-          return strapi.entityService.update(
-            'api::publisher-website.publisher-website',
-            websiteId,
-            {
-              data: {
-                currentPublisherId: targetUser.id,
-                publisherEmail: targetUser.email,
-                publisherName: targetUser.username || targetUser.email,
-                ownershipTransferredAt: new Date(),
-                ownershipTransferReason: 'admin_transfer',
-                submissionStatus: 'ownership_transferred'
-              },
-              populate: ['currentPublisherId']
-            }
-          );
+        const { error, result, website } = await performTransfer({
+          strapi,
+          websiteId,
+          targetUser,
+          reason
         });
+        if (error) return ctx.badRequest(error);
 
         console.log(
-          `[ADMIN TRANSFER] Website ${websiteId} ownership flipped to user ${targetUser.id} by admin ${admin?.id}`
+          `[ADMIN TRANSFER] Website ${websiteId} → new record ${result.newWebsiteId} for user ${targetUser.id} (admin ${admin?.id})`
         );
 
-        // 5. Notify the previous owner only (non-fatal)
+        // Notify previous owner only (non-fatal).
         try {
-          if (previousOwner?.email) {
+          if (result.previousOwner?.email) {
             await strapi
               .service('api::global.email-operations')
               .sendWebsiteTransferOutEmail({
                 website,
-                previousOwner,
+                previousOwner: result.previousOwner,
                 newOwner: targetUser,
                 reason: reason || null
               });
@@ -95,20 +214,133 @@ module.exports = createCoreController(
 
         return {
           data: {
-            websiteId,
-            previousOwnerId: previousOwner?.id || null,
-            newOwnerId: targetUser.id,
-            transferredAt: updated?.ownershipTransferredAt
+            originalWebsiteId: result.originalWebsiteId,
+            newWebsiteId: result.newWebsiteId,
+            previousOwnerId: result.previousOwnerId,
+            newOwnerId: result.newOwnerId
           },
           meta: {
-            message: previousOwner
-              ? `Ownership transferred to ${targetUser.email}. Previous owner notified.`
-              : `Ownership set to ${targetUser.email}.`
+            message: result.previousOwner
+              ? `New website record created for ${targetUser.email}. Previous owner (${result.previousOwner.email}) notified.`
+              : `New website record created for ${targetUser.email}.`
           }
         };
       } catch (error) {
         console.error('[ADMIN TRANSFER] transferOwnership error:', error);
         return ctx.internalServerError('Failed to transfer ownership');
+      }
+    },
+
+    /**
+     * POST /admin/websites/bulk-transfer-ownership
+     * Body: { websiteIds: number[], targetUserId, reason? }
+     *
+     * Best-effort: each website is processed independently. Failures
+     * for one website do not abort the others. One email is sent to
+     * each previous owner per successful transfer.
+     */
+    async bulkTransferOwnership(ctx) {
+      try {
+        const { websiteIds, targetUserId, reason } = ctx.request.body || {};
+        const admin = ctx.state.user;
+
+        if (!Array.isArray(websiteIds) || websiteIds.length === 0) {
+          return ctx.badRequest('websiteIds must be a non-empty array');
+        }
+
+        const targetId = parseInt(targetUserId, 10);
+        if (!targetId || Number.isNaN(targetId)) {
+          return ctx.badRequest('targetUserId is required');
+        }
+
+        const targetUser = await strapi.db
+          .query('plugin::users-permissions.user')
+          .findOne({ where: { id: targetId } });
+        if (!targetUser) {
+          return ctx.badRequest(`No user found with id ${targetId}.`);
+        }
+
+        console.log(
+          `[ADMIN BULK TRANSFER] Admin ${admin?.id} transferring ${websiteIds.length} websites to user ${targetId}`
+        );
+
+        const results = [];
+        const errors = [];
+        const emailService = strapi.service('api::global.email-operations');
+
+        for (const rawId of websiteIds) {
+          const websiteId = parseInt(rawId, 10);
+          if (!websiteId || Number.isNaN(websiteId)) {
+            errors.push({ id: rawId, error: 'Invalid website id' });
+            continue;
+          }
+
+          try {
+            const { error, result, website } = await performTransfer({
+              strapi,
+              websiteId,
+              targetUser,
+              reason
+            });
+
+            if (error) {
+              errors.push({ id: websiteId, error });
+              continue;
+            }
+
+            results.push({
+              id: websiteId,
+              originalWebsiteId: result.originalWebsiteId,
+              newWebsiteId: result.newWebsiteId,
+              previousOwnerId: result.previousOwnerId,
+              newOwnerId: result.newOwnerId
+            });
+
+            // One email per transfer (non-fatal).
+            try {
+              if (result.previousOwner?.email) {
+                await emailService.sendWebsiteTransferOutEmail({
+                  website,
+                  previousOwner: result.previousOwner,
+                  newOwner: targetUser,
+                  reason: reason || null
+                });
+              }
+            } catch (emailErr) {
+              console.error(
+                `[ADMIN BULK TRANSFER] Email failed for website ${websiteId}:`,
+                emailErr
+              );
+            }
+          } catch (rowError) {
+            console.error(
+              `[ADMIN BULK TRANSFER] Failed to transfer website ${websiteId}:`,
+              rowError
+            );
+            errors.push({
+              id: websiteId,
+              error: rowError?.message || 'Failed to transfer ownership'
+            });
+          }
+        }
+
+        console.log(
+          `[ADMIN BULK TRANSFER] Done: ${results.length} successful, ${errors.length} failed`
+        );
+
+        return ctx.send({
+          message: `Bulk transfer completed: ${results.length} successful, ${errors.length} failed`,
+          newOwner: {
+            id: targetUser.id,
+            username: targetUser.username,
+            email: targetUser.email
+          },
+          results,
+          errors
+        });
+      } catch (error) {
+        console.error('[ADMIN BULK TRANSFER] error:', error);
+        return ctx.internalServerError('Failed to bulk transfer ownership');
       }
     }
   })
