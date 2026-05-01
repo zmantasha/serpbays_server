@@ -142,6 +142,43 @@ async function performTransfer({ strapi, websiteId, targetUser, reason }) {
         }
       }
     );
+
+    // 3. Re-point the marketplace listing(s) for this URL at the new
+    //    owner. Order creation reads marketplace.publisher /
+    //    publisher_email / publisher_name, so without this the new
+    //    orders would still flow to the previous owner.
+    if (website.url) {
+      try {
+        const matchingMarketplaces = await strapi.db
+          .query('api::marketplace.marketplace')
+          .findMany({
+            where: { url: website.url }
+          });
+
+        for (const m of matchingMarketplaces) {
+          await strapi.db.query('api::marketplace.marketplace').update({
+            where: { id: m.id },
+            data: {
+              publisher: targetUser.id,
+              publisher_email: targetUser.email,
+              publisher_name: targetUser.username || targetUser.email
+            }
+          });
+        }
+        console.log(
+          `[ADMIN TRANSFER] Re-pointed ${matchingMarketplaces.length} marketplace listing(s) for ${website.url} to user ${targetUser.id}`
+        );
+      } catch (mErr) {
+        console.error(
+          `[ADMIN TRANSFER] Failed to re-point marketplace listing for ${website.url}:`,
+          mErr
+        );
+        // Re-throw so the db.transaction rolls back — leaving an
+        // inconsistent owner on the marketplace would silently route
+        // orders to the wrong publisher.
+        throw mErr;
+      }
+    }
   });
 
   return {
