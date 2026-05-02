@@ -2460,5 +2460,91 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       console.error('[EMAIL] Error sending website status email:', error);
       throw error;
     }
+  },
+
+  // ============================================
+  // WEBSITE TRANSFER EMAIL FUNCTIONS
+  // ============================================
+
+  /**
+   * Notify the previous owner that an admin has transferred their website
+   * to another user. Sent via AutoSend (autosendjs SDK directly) so it
+   * goes out through the same provider as other transactional emails.
+   * Uses AUTOSEND_TEMPLATE_WEBSITE_TRANSFER_OUT if set, otherwise inline HTML.
+   */
+  async sendWebsiteTransferOutEmail({ website, previousOwner, newOwner, reason }) {
+    try {
+      if (!previousOwner?.email) return;
+
+      const apiKey = process.env.AUTOSEND_API_KEY;
+      if (!apiKey) {
+        console.warn(
+          '[EMAIL] AUTOSEND_API_KEY not set — skipping website transfer-out email.'
+        );
+        return;
+      }
+
+      const recipientName = previousOwner.username || previousOwner.email;
+      const newOwnerName = newOwner?.username || newOwner?.email || 'a new owner';
+      const websiteName = website?.url || 'your website';
+
+      const { Autosend } = require('autosendjs');
+      const autosend = new Autosend(apiKey);
+
+      const fromEmail =
+        process.env.EMAIL_FROM ||
+        process.env.AUTOSEND_FROM_EMAIL ||
+        'noreply@serpbays.com';
+
+      const basePayload = {
+        from: { email: fromEmail },
+        to: { email: previousOwner.email },
+        tags: ['serpbays', 'website-transfer', 'transferred-out']
+      };
+
+      const templateId = process.env.AUTOSEND_TEMPLATE_WEBSITE_TRANSFER_OUT;
+      let payload;
+      if (templateId) {
+        payload = {
+          ...basePayload,
+          templateId,
+          dynamicData: {
+            recipient_name: recipientName,
+            new_owner_name: newOwnerName,
+            new_owner_email: newOwner?.email || '',
+            website_name: websiteName,
+            reason: reason || ''
+          }
+        };
+      } else {
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <h2 style="color:#111827;margin:0 0 12px;">Hi ${recipientName},</h2>
+            <p>An admin has transferred ownership of <strong>${websiteName}</strong> to <strong>${newOwnerName}</strong>.</p>
+            ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
+            <p>Any orders that were already in progress remain assigned to you, and you are still responsible for completing and being paid for them. New orders on this website will route to the new owner.</p>
+            <p style="color:#6b7280;font-size:13px;">If you didn't expect this, please contact support@serpbays.com immediately.</p>
+          </div>
+        `;
+        payload = {
+          ...basePayload,
+          subject: `Website ownership transferred — ${websiteName}`,
+          html,
+          text: `${websiteName} ownership has been transferred to ${newOwnerName}. Existing orders remain with you.`
+        };
+      }
+
+      const result = await autosend.emails.send(payload);
+      if (!result?.success) {
+        throw new Error(result?.error || 'AutoSend returned an error');
+      }
+
+      console.log(
+        `[EMAIL] Website transfer-out notice sent via AutoSend to ${previousOwner.email} (id: ${result.data?.emailId})`
+      );
+    } catch (error) {
+      console.error('[EMAIL] sendWebsiteTransferOutEmail failed:', error);
+      // Non-fatal — caller already handles
+    }
   }
 }));

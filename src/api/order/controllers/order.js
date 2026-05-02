@@ -330,17 +330,62 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Create the order
         // First prepare order data with proper fields
 
-        // Find publisher ID: prioritize direct relation, fallback to email lookup
+        // Source-of-truth for publisher routing: the publisher-website
+        // record currently in `submissionStatus: 'approved'` for this
+        // URL. This stays correct even if the marketplace listing's
+        // publisher field has gone stale (e.g. ownership transferred
+        // before the marketplace pointer caught up).
         let publisherId = null;
-        if (marketplace && marketplace.publisher && marketplace.publisher.id) {
-          publisherId = marketplace.publisher.id;
-        } else if (marketplace && marketplace.publisher_email) {
-          const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
-            where: { email: marketplace.publisher_email }
-          });
-          if (publisherUser) {
-            publisherId = publisherUser.id;
+        let activePublisherUser = null;
+        if (marketplace?.url) {
+          try {
+            const activeWebsite = await strapi.db
+              .query('api::publisher-website.publisher-website')
+              .findOne({
+                where: {
+                  url: marketplace.url,
+                  submissionStatus: 'approved'
+                },
+                populate: ['currentPublisherId']
+              });
+            const owner = activeWebsite?.currentPublisherId;
+            if (owner?.id) {
+              publisherId = owner.id;
+              activePublisherUser = owner;
+            }
+          } catch (resolveErr) {
+            console.warn(
+              '[Order Create] Failed to resolve active publisher-website:',
+              resolveErr?.message
+            );
           }
+        }
+
+        // Fallback chain: marketplace.publisher → marketplace.publisher_email
+        if (!publisherId) {
+          if (marketplace && marketplace.publisher && marketplace.publisher.id) {
+            publisherId = marketplace.publisher.id;
+          } else if (marketplace && marketplace.publisher_email) {
+            const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+              where: { email: marketplace.publisher_email }
+            });
+            if (publisherUser) {
+              publisherId = publisherUser.id;
+            }
+          }
+        }
+
+        // If we resolved an active publisher whose email differs from
+        // the snapshot we already wrote into orderData earlier, fix
+        // the snapshot so directly-assigned-by-snapshot queries route
+        // future displays to the right inbox.
+        if (
+          activePublisherUser?.email &&
+          orderData.websitePublisherEmail !== activePublisherUser.email
+        ) {
+          orderData.websitePublisherEmail = activePublisherUser.email;
+          orderData.websitePublisherName =
+            activePublisherUser.username || activePublisherUser.email;
         }
 
         const orderToCreate = {
@@ -1098,19 +1143,16 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         let orders = [];
 
-        if (!publisherWebsites || publisherWebsites.length === 0) {
-          // If user has no publisher websites, they cannot see any available orders
-          return {
-            data: [],
-            meta: {
-              message: 'No websites found for this publisher'
-            }
-          };
-        }
-
-        // Get website IDs
+        // Don't early-return on zero marketplaces. The snapshot-based
+        // source below (source #3) still needs to run so that users
+        // who became active publishers via ownership transfer — but
+        // whose marketplace.publisher pointer hasn't caught up yet —
+        // can still see orders that were correctly snapshotted to
+        // their email at creation time.
         const websiteIds = publisherWebsites.map(website => website.id);
-        console.log(`[Available Orders] Looking for orders in websites: [${websiteIds.join(', ')}]`);
+        if (websiteIds.length > 0) {
+          console.log(`[Available Orders] Looking for orders in websites: [${websiteIds.join(', ')}]`);
+        }
 
         // Get orders for currently owned websites
         let currentWebsiteOrders = [];
@@ -1178,7 +1220,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // ALSO get pending orders where user is directly assigned via snapshot email
         // This catches orders for websites where ownership transferred but order was placed when user owned it
-        const directlyAssignedOrders = await strapi.entityService.findMany('api::order.order', {
+        const directlyAssignedRaw = await strapi.entityService.findMany('api::order.order', {
           filters: {
             $and: [
               { websitePublisherEmail: user.email },
@@ -1195,7 +1237,43 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
           sort: { orderDate: 'desc' }
         });
-        console.log(`[Available Orders] Found ${directlyAssignedOrders.length} orders via snapshot email ${user.email}`);
+
+        // Active-publisher safety filter: if a website's ownership has
+        // been transferred to someone else since this order was placed,
+        // do NOT surface it to the previous owner via the snapshot
+        // route. The active publisher-website record (status='approved')
+        // for the URL is the source of truth. Pre-transfer pending
+        // orders are already handled by the historicalOrders branch
+        // above with an explicit orderDate < ownershipTransferredAt
+        // bound, so dropping them here doesn't lose any legitimate
+        // visibility.
+        const directlyAssignedOrders = [];
+        const activeOwnerCacheByUrl = new Map();
+        for (const order of directlyAssignedRaw) {
+          const url = order.website?.url;
+          if (!url) {
+            // No URL to resolve against — keep original behavior.
+            directlyAssignedOrders.push(order);
+            continue;
+          }
+          let activeOwnerId = activeOwnerCacheByUrl.get(url);
+          if (activeOwnerId === undefined) {
+            const activeWebsite = await strapi.db
+              .query('api::publisher-website.publisher-website')
+              .findOne({
+                where: { url, submissionStatus: 'approved' },
+                populate: ['currentPublisherId']
+              });
+            activeOwnerId = activeWebsite?.currentPublisherId?.id || null;
+            activeOwnerCacheByUrl.set(url, activeOwnerId);
+          }
+          // If there's no active record at all (rare), fall back to
+          // showing the order — legacy/unmanaged URLs should still work.
+          if (!activeOwnerId || activeOwnerId === user.id) {
+            directlyAssignedOrders.push(order);
+          }
+        }
+        console.log(`[Available Orders] Found ${directlyAssignedOrders.length} orders via snapshot email ${user.email} (filtered by active publisher match)`);
 
         // Combine all sources: current + historical + directly assigned via snapshot
         const combinedOrders = [...currentWebsiteOrders, ...historicalOrders, ...directlyAssignedOrders];

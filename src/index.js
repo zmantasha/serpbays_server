@@ -97,7 +97,8 @@ module.exports = {
       require('./api/admin/routes/website-requests'),
       require('./api/admin/routes/marketplace'),
       require('./api/admin/routes/withdrawals'),
-      require('./api/admin/routes/codes')
+      require('./api/admin/routes/codes'),
+      require('./api/admin/routes/website-transfers')
     ];
 
     adminRoutes.forEach(routeConfig => {
