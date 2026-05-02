@@ -2,7 +2,7 @@ module.exports = ({ env }) => ({
   'users-permissions': {
     config: {
       register: {
-        allowedFields: ['Advertiser', 'Publisher', 'firstName','lastName'],
+        allowedFields: ['Advertiser', 'Publisher', 'firstName', 'lastName'],
       },
       jwt: {
         expiresIn: '7d',
@@ -24,25 +24,11 @@ module.exports = ({ env }) => ({
       },
     },
   },
+  // Email plugin configuration (kept for backwards compatibility)
+  // NOTE: AutoSend is now used directly via autosend-service.js instead of this plugin
   'email': {
     config: {
       provider: 'nodemailer',
-      providerOptions: {
-        host: env('SMTP_HOST', 'smtp.gmail.com'),
-        port: parseInt(env('SMTP_PORT', '587')),
-        auth: {
-          user: env('SMTP_USERNAME'),
-          pass: env('SMTP_PASSWORD'),
-        },
-        // Gmail specific settings
-        secure: env('SMTP_PORT', '587') === '465', // true for 465, false for other ports
-        requireTLS: true,
-        tls: {
-          rejectUnauthorized: false
-        },
-        debug: true, // Enable debug logging
-        logger: true, // Log to console
-      },
       settings: {
         defaultFrom: env('EMAIL_FROM', 'noreply@serpbays.com'),
         defaultReplyTo: env('EMAIL_REPLY_TO', 'support@serpbays.com'),

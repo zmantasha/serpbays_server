@@ -114,6 +114,23 @@ module.exports = {
           });
           console.log(`✅ Old website ${oldWebsite.id} status updated to 'ownership_transferred'.`);
 
+          // Send ownership transferred email to original publisher
+          try {
+            const emailService = strapi.service('api::global.email-operations');
+            if (oldWebsite.publisherEmail) {
+              await emailService.sendWebsiteStatusEmail({
+                publisherEmail: oldWebsite.publisherEmail,
+                publisherName: oldWebsite.publisherName || oldWebsite.publisherEmail,
+                websiteName: oldWebsite.url,
+                websiteUrl: oldWebsite.url,
+                actionType: 'Transferred',
+                notes: 'Ownership of this website has been transferred to a new owner.'
+              });
+            }
+          } catch (emailError) {
+            console.error('[EMAIL] Failed to send ownership transferred email:', emailError.message);
+          }
+
           // Delist from marketplace if it had an entry
           if (oldWebsite.marketplaceId) {
             try {
