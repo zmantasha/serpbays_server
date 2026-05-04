@@ -233,16 +233,23 @@ module.exports = createCoreController(
           `[ADMIN TRANSFER] Website ${websiteId} → new record ${result.newWebsiteId} for user ${targetUser.id} (admin ${admin?.id})`
         );
 
-        // Notify previous owner only (non-fatal).
+        // Notify previous owner only (non-fatal). Use the same generic
+        // Website Status template the GSC-claim transfer flow uses, so
+        // both transfer paths produce a single, identical email.
         try {
           if (result.previousOwner?.email) {
             await strapi
               .service('api::global.email-operations')
-              .sendWebsiteTransferOutEmail({
-                website,
-                previousOwner: result.previousOwner,
-                newOwner: targetUser,
-                reason: reason || null
+              .sendWebsiteStatusEmail({
+                publisherEmail: result.previousOwner.email,
+                publisherName:
+                  result.previousOwner.username || result.previousOwner.email,
+                websiteName: website?.url,
+                websiteUrl: website?.url,
+                actionType: 'Transferred',
+                notes:
+                  reason ||
+                  'Ownership of this website has been transferred to a new owner. Any existing orders remain assigned to you, and you are responsible for completing them and receiving payment. All new orders will be routed to the new owner.'
               });
           }
         } catch (emailErr) {
@@ -333,14 +340,21 @@ module.exports = createCoreController(
               newOwnerId: result.newOwnerId
             });
 
-            // One email per transfer (non-fatal).
+            // One email per transfer (non-fatal). Match the single-
+            // transfer path: use the shared Website Status template.
             try {
               if (result.previousOwner?.email) {
-                await emailService.sendWebsiteTransferOutEmail({
-                  website,
-                  previousOwner: result.previousOwner,
-                  newOwner: targetUser,
-                  reason: reason || null
+                await emailService.sendWebsiteStatusEmail({
+                  publisherEmail: result.previousOwner.email,
+                  publisherName:
+                    result.previousOwner.username ||
+                    result.previousOwner.email,
+                  websiteName: website?.url,
+                  websiteUrl: website?.url,
+                  actionType: 'Transferred',
+                  notes:
+                    reason ||
+                    'Ownership of this website has been transferred to a new owner. Any existing orders remain assigned to you, and you are responsible for completing them and receiving payment. All new orders will be routed to the new owner.'
                 });
               }
             } catch (emailErr) {
