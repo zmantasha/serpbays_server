@@ -101,7 +101,8 @@ async function performTransfer({ strapi, websiteId, targetUser, reason }) {
     return {
       error:
         statusMessages[website.submissionStatus] ||
-        `This website cannot be transferred while its status is "${website.submissionStatus}". Only approved websites can be transferred.`
+        `This website cannot be transferred while its status is "${website.submissionStatus}". Only approved websites can be transferred.`,
+      website
     };
   }
 
@@ -109,7 +110,7 @@ async function performTransfer({ strapi, websiteId, targetUser, reason }) {
     website.currentPublisherId || website.originalPublisherId;
 
   if (previousOwner && previousOwner.id === targetUser.id) {
-    return { error: 'Target user is already the current owner' };
+    return { error: 'Target user is already the current owner', website };
   }
 
   const cloneable = cloneWebsiteFields(website);
@@ -347,12 +348,13 @@ module.exports = createCoreController(
             });
 
             if (error) {
-              errors.push({ id: websiteId, error });
+              errors.push({ id: websiteId, url: website?.url || null, error });
               continue;
             }
 
             results.push({
               id: websiteId,
+              url: website?.url || null,
               originalWebsiteId: result.originalWebsiteId,
               newWebsiteId: result.newWebsiteId,
               previousOwnerId: result.previousOwnerId,
