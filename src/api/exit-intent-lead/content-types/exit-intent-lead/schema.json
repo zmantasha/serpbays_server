@@ -1,0 +1,89 @@
+{
+  "kind": "collectionType",
+  "collectionName": "exit_intent_leads",
+  "info": {
+    "singularName": "exit-intent-lead",
+    "pluralName": "exit-intent-leads",
+    "displayName": "Exit Intent Lead",
+    "description": "Leads captured from the exit-intent popup on app.serpbays.com (buyer + seller tabs)"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "role": {
+      "type": "enumeration",
+      "enum": ["buyer", "seller"],
+      "required": true
+    },
+    "name": {
+      "type": "string",
+      "required": true,
+      "maxLength": 200
+    },
+    "email": {
+      "type": "email",
+      "required": true
+    },
+    "countryCode": {
+      "type": "string",
+      "maxLength": 8
+    },
+    "whatsapp": {
+      "type": "string",
+      "maxLength": 32
+    },
+    "requirements": {
+      "type": "text",
+      "description": "Free-text from the buyer tab: niche, DA, budget, volume in their own words"
+    },
+    "websiteUrl": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Seller-tab field"
+    },
+    "details": {
+      "type": "text",
+      "description": "Free-text from the seller tab: site DA, traffic, niche, pricing"
+    },
+    "path": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Page they were on when the popup fired"
+    },
+    "referrer": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "timeOnSiteSec": {
+      "type": "integer"
+    },
+    "userAgent": {
+      "type": "text"
+    },
+    "clerkUserId": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "Clerk user ID if the lead was submitted while signed in (server-detected, not client-trusted)"
+    },
+    "userName": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Account name from the signed-in user's profile (may differ from the form-input name)"
+    },
+    "userEmail": {
+      "type": "email",
+      "description": "Account email from the signed-in user (may differ from the form-input email)"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["new", "contacted", "qualified", "won", "lost", "spam"],
+      "default": "new"
+    },
+    "internalNotes": {
+      "type": "text",
+      "description": "Sales team notes — not shown to the lead"
+    }
+  }
+}
