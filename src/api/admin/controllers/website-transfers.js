@@ -79,10 +79,29 @@ async function performTransfer({ strapi, websiteId, targetUser, reason }) {
   );
   if (!website) return { error: 'Website not found' };
 
-  if (website.submissionStatus === 'ownership_transferred') {
+  // Only fully-approved (or admin-paused) records can be transferred.
+  // Anything still in the submission/review pipeline is not yet a real
+  // listing, and rejected/claimed records have their own lifecycle.
+  const TRANSFERABLE_STATUSES = new Set(['approved', 'listing_paused']);
+  if (!TRANSFERABLE_STATUSES.has(website.submissionStatus)) {
+    const statusMessages = {
+      ownership_transferred:
+        'This website has already been transferred. Transfer the new record instead.',
+      ownership_claimed:
+        'This website is currently being claimed by another user. Wait for the claim review to complete before transferring.',
+      rejected:
+        'This website was rejected and cannot be transferred.',
+      pending_verification:
+        'This website is still pending verification. Wait until it has been approved before transferring.',
+      pending_final_submission:
+        'This website has not been submitted for review yet. Wait until it has been approved before transferring.',
+      approval_pending:
+        'This website is still pending admin review. Wait until it has been approved before transferring.'
+    };
     return {
       error:
-        'This website has already been transferred. Transfer the new record instead.'
+        statusMessages[website.submissionStatus] ||
+        `This website cannot be transferred while its status is "${website.submissionStatus}". Only approved websites can be transferred.`
     };
   }
 
