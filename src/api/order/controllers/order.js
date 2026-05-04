@@ -1199,14 +1199,27 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             });
 
             if (currentMarketplaceListing && transferredWebsite.ownershipTransferredAt) {
-              // Get pending orders placed BEFORE the transfer date
+              // Get pending orders placed BEFORE the transfer date.
+              // Match orders that were either unassigned OR already
+              // assigned to this user — the previous owner. The order
+              // create flow stamps the active publisher onto the order
+              // when it's placed, so pre-transfer orders for this URL
+              // typically carry publisher = user.id, not null. The old
+              // restriction (publisher: null) silently dropped them.
               const preTransferOrders = await strapi.entityService.findMany('api::order.order', {
                 filters: {
-                  website: { id: currentMarketplaceListing.id },
-                  orderStatus: 'pending',
-                  publisher: null,
-                  orderDate: { $lt: transferredWebsite.ownershipTransferredAt },
-                  advertiser: { id: { $ne: user.id } }
+                  $and: [
+                    { website: { id: currentMarketplaceListing.id } },
+                    { orderStatus: 'pending' },
+                    { orderDate: { $lt: transferredWebsite.ownershipTransferredAt } },
+                    { advertiser: { id: { $ne: user.id } } },
+                    {
+                      $or: [
+                        { publisher: { $null: true } },
+                        { publisher: { id: user.id } }
+                      ]
+                    }
+                  ]
                 },
                 populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
                 sort: { orderDate: 'desc' }
