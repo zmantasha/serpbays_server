@@ -214,22 +214,24 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
    */
   async getStats(ctx) {
     try {
-      const total = await strapi.db.query('api::order.order').count();
-      const pending = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'pending' }
-      });
-      const inProgress = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'in_progress' }
-      });
-      const completed = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'completed' }
-      });
-      const cancelled = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'cancelled' }
-      });
+      const orderQuery = strapi.db.query('api::order.order');
+
+      // Lifecycle: pending → accepted → delivered → approved → completed,
+      // with cancelled/rejected/disputed as terminal off-paths. "In progress"
+      // = anything mid-flight (accepted/delivered/approved). 'in_progress'
+      // is NOT a value in the schema enum, so the previous query was always 0.
+      const IN_PROGRESS_STATUSES = ['accepted', 'delivered', 'approved'];
+
+      const [total, pending, inProgress, completed, cancelled] = await Promise.all([
+        orderQuery.count(),
+        orderQuery.count({ where: { orderStatus: 'pending' } }),
+        orderQuery.count({ where: { orderStatus: { $in: IN_PROGRESS_STATUSES } } }),
+        orderQuery.count({ where: { orderStatus: 'completed' } }),
+        orderQuery.count({ where: { orderStatus: 'cancelled' } }),
+      ]);
 
       // Calculate total revenue
-      const revenueData = await strapi.db.query('api::order.order').findMany({
+      const revenueData = await orderQuery.findMany({
         where: { orderStatus: 'completed' },
         select: ['totalAmount']
       });
@@ -242,7 +244,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       thisMonth.setDate(1);
       thisMonth.setHours(0, 0, 0, 0);
 
-      const newThisMonth = await strapi.db.query('api::order.order').count({
+      const newThisMonth = await orderQuery.count({
         where: {
           createdAt: {
             $gte: thisMonth.toISOString()
@@ -253,6 +255,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       ctx.send({
         total,
         pending,
+        // Frontend reads in_progress (snake_case); inProgress kept for any
+        // other consumers that might rely on the old shape.
+        in_progress: inProgress,
         inProgress,
         completed,
         cancelled,
