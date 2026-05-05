@@ -429,59 +429,77 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
    */
   async getStats(ctx) {
     try {
-      const total = await strapi.db.query('api::transaction.transaction').count();
-      const pending = await strapi.db.query('api::transaction.transaction').count({
-        where: { transactionStatus: 'pending' }
-      });
-      const completed = await strapi.db.query('api::transaction.transaction').count({
-        where: { transactionStatus: 'completed' }
-      });
-      const failed = await strapi.db.query('api::transaction.transaction').count({
-        where: { transactionStatus: 'failed' }
-      });
+      const txQuery = strapi.db.query('api::transaction.transaction');
+      const SETTLED = { transactionStatus: 'success' };
 
-      // Calculate total volume
-      const volumeData = await strapi.db.query('api::transaction.transaction').findMany({
-        where: { transactionStatus: 'completed' },
-        select: ['amount']
-      });
-      const totalVolume = volumeData.reduce((sum, transaction) => {
-        return sum + parseFloat(transaction.amount || 0);
-      }, 0);
+      const [total, pending, success, failed] = await Promise.all([
+        txQuery.count(),
+        txQuery.count({ where: { transactionStatus: 'pending' } }),
+        txQuery.count({ where: SETTLED }),
+        txQuery.count({ where: { transactionStatus: 'failed' } }),
+      ]);
 
-      // Get payment method breakdown
-      const paymentMethods = await strapi.db.query('api::transaction.transaction').findMany({
-        where: { transactionStatus: 'completed' },
-        select: ['gateway']
-      });
+      // Sum settled `amount` for a given type — used to populate the card values
+      const sumByType = async (type) => {
+        const rows = await txQuery.findMany({
+          where: { ...SETTLED, type },
+          select: ['amount'],
+        });
+        return rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+      };
 
+      const [deposits, withdrawals, refunds, fees] = await Promise.all([
+        sumByType('deposit'),
+        sumByType('withdrawal'),
+        sumByType('refund'),
+        sumByType('fee'),
+      ]);
+
+      // Net revenue = inflows minus outflows on settled rows.
+      // Refunds are subtracted because they reverse prior deposits.
+      const netRevenue = deposits - withdrawals - refunds;
+
+      // Total volume (sum of all settled amounts, regardless of direction)
+      const allSettled = await txQuery.findMany({
+        where: SETTLED,
+        select: ['amount', 'gateway'],
+      });
+      const totalVolume = allSettled.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+
+      // Gateway breakdown (count per gateway, settled only)
       const methodBreakdown = {};
-      paymentMethods.forEach(transaction => {
-        const method = transaction.gateway || 'unknown';
+      allSettled.forEach((tx) => {
+        const method = tx.gateway || 'unknown';
         methodBreakdown[method] = (methodBreakdown[method] || 0) + 1;
       });
 
-      // Get new transactions this month
+      // New this month
       const thisMonth = new Date();
       thisMonth.setDate(1);
       thisMonth.setHours(0, 0, 0, 0);
-
-      const newThisMonth = await strapi.db.query('api::transaction.transaction').count({
-        where: {
-          createdAt: {
-            $gte: thisMonth.toISOString()
-          }
-        }
+      const newThisMonth = await txQuery.count({
+        where: { createdAt: { $gte: thisMonth.toISOString() } },
       });
 
+      const round2 = (n) => Math.round(n * 100) / 100;
+
       ctx.send({
+        // counts
         total,
         pending,
-        completed,
+        success,
+        completed: success, // backward-compat alias
         failed,
-        totalVolume: totalVolume.toFixed(2),
+        newThisMonth,
+        // amounts (numbers, not strings — frontend uses .toLocaleString())
+        deposits: round2(deposits),
+        withdrawals: round2(withdrawals),
+        refunds: round2(refunds),
+        fees: round2(fees),
+        netRevenue: round2(netRevenue),
+        totalVolume: round2(totalVolume),
+        // breakdown
         methodBreakdown,
-        newThisMonth
       });
 
     } catch (error) {
