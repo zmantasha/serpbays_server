@@ -122,7 +122,11 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           currency: user.user_wallet.currency || 'USD'
         } : null,
         statistics: {
-          totalOrders: (user.advertiserOrders?.length || 0) + (user.publisherOrders?.length || 0),
+          // Populate uses { count: true }, so Strapi returns { count: N } here
+          // — handle the array shape too in case the populate ever changes.
+          totalOrders:
+            (user.advertiserOrders?.count ?? user.advertiserOrders?.length ?? 0) +
+            (user.publisherOrders?.count ?? user.publisherOrders?.length ?? 0),
           totalSpent: 0, // Will be calculated separately if needed
           totalEarnings: 0, // Will be calculated separately if needed
           lastLogin: user.updatedAt, // Using updatedAt as proxy for last login
