@@ -758,6 +758,81 @@ export interface ApiCommunicationCommunication
   };
 }
 
+export interface ApiExitIntentLeadExitIntentLead
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'exit_intent_leads';
+  info: {
+    description: 'Leads captured from the exit-intent popup on app.serpbays.com (buyer + seller tabs)';
+    displayName: 'Exit Intent Lead';
+    pluralName: 'exit-intent-leads';
+    singularName: 'exit-intent-lead';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    clerkUserId: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    countryCode: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 8;
+      }>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    details: Schema.Attribute.Text;
+    email: Schema.Attribute.Email & Schema.Attribute.Required;
+    internalNotes: Schema.Attribute.Text;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::exit-intent-lead.exit-intent-lead'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    path: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    referrer: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 1000;
+      }>;
+    requirements: Schema.Attribute.Text;
+    role: Schema.Attribute.Enumeration<['buyer', 'seller']> &
+      Schema.Attribute.Required;
+    status: Schema.Attribute.Enumeration<
+      ['new', 'contacted', 'qualified', 'won', 'lost', 'spam']
+    > &
+      Schema.Attribute.DefaultTo<'new'>;
+    timeOnSiteSec: Schema.Attribute.Integer;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    userAgent: Schema.Attribute.Text;
+    userEmail: Schema.Attribute.Email;
+    userName: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    websiteUrl: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    whatsapp: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 32;
+      }>;
+  };
+}
+
 export interface ApiGlobalConfigGlobalConfig extends Struct.SingleTypeSchema {
   collectionName: 'global_configs';
   info: {
@@ -2593,7 +2668,15 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       Schema.Attribute.DefaultTo<0>;
     fund_source: Schema.Attribute.Enumeration<['main_fund', 'promo_fund']>;
     gateway: Schema.Attribute.Enumeration<
-      ['stripe', 'paypal', 'razorpay', 'promo', 'voucher', 'system']
+      [
+        'stripe',
+        'paypal',
+        'razorpay',
+        'promo',
+        'voucher',
+        'system',
+        'bank_transfer',
+      ]
     > &
       Schema.Attribute.Required;
     gatewayTransactionId: Schema.Attribute.String & Schema.Attribute.Required;
@@ -3711,6 +3794,7 @@ declare module '@strapi/strapi' {
       'api::category.category': ApiCategoryCategory;
       'api::chatroom.chatroom': ApiChatroomChatroom;
       'api::communication.communication': ApiCommunicationCommunication;
+      'api::exit-intent-lead.exit-intent-lead': ApiExitIntentLeadExitIntentLead;
       'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;
       'api::invoice.invoice': ApiInvoiceInvoice;

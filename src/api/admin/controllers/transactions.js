@@ -130,6 +130,196 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   },
 
   /**
+   * Update an existing transaction (admin action).
+   *
+   * Editable fields: description, gateway, gatewayTransactionId, external_transaction_id,
+   * promo_code_id, payment_notes, transactionStatus.
+   *
+   * Immutable: type, amount, fee, netAmount, fund_source, user_wallet,
+   * users_permissions_user. To "edit" those, void this transaction and create a new
+   * corrective one — keeps the audit trail honest.
+   *
+   * Wallet reversal: when the status flips between settled (success) and not-settled
+   * (anything else), the wallet is adjusted to match. Other status transitions leave
+   * the wallet alone.
+   */
+  async update(ctx) {
+    try {
+      const { id } = ctx.params;
+      const {
+        description,
+        gateway,
+        gatewayTransactionId,
+        externalReference,
+        promoCodeId,
+        paymentNotes,
+        transactionStatus,
+        adminNotes,
+      } = ctx.request.body;
+
+      const adminUser = ctx.state.user;
+      console.log(`[ADMIN ACTION] Admin ${adminUser.id} editing transaction ${id}`);
+
+      // Load existing transaction with wallet
+      const existing = await strapi.entityService.findOne('api::transaction.transaction', id, {
+        populate: { user_wallet: true, users_permissions_user: true },
+      });
+      if (!existing) {
+        return ctx.notFound('Transaction not found');
+      }
+
+      // Validate gateway if provided
+      const ALLOWED_GATEWAYS = ['stripe', 'paypal', 'razorpay', 'promo', 'voucher', 'system', 'bank_transfer'];
+      if (gateway !== undefined && !ALLOWED_GATEWAYS.includes(gateway)) {
+        return ctx.badRequest(`Invalid gateway. Allowed: ${ALLOWED_GATEWAYS.join(', ')}`);
+      }
+
+      // Validate status if provided
+      const ALLOWED_STATUSES = ['pending', 'success', 'failed', 'cancelled', 'approved', 'refunded', 'denied', 'paid'];
+      if (transactionStatus !== undefined && !ALLOWED_STATUSES.includes(transactionStatus)) {
+        return ctx.badRequest(`Invalid status. Allowed: ${ALLOWED_STATUSES.join(', ')}`);
+      }
+
+      // Wallet reversal logic — only on success ↔ non-success transitions
+      const wasSettled = existing.transactionStatus === 'success';
+      const willBeSettled = transactionStatus !== undefined
+        ? transactionStatus === 'success'
+        : wasSettled;
+
+      const CREDIT_TYPES = ['deposit', 'refund', 'promo', 'escrow_release'];
+      const isCredit = CREDIT_TYPES.includes(existing.type);
+      const fundSource = existing.fund_source || 'main_fund';
+      const balanceField = fundSource === 'promo_fund' ? 'promoBalance' : 'mainBalance';
+      const txAmount = parseFloat(existing.amount || 0);
+      const txNetAmount = parseFloat(existing.netAmount || existing.amount || 0);
+
+      let walletDelta = 0; // signed: positive credits the user, negative debits
+      if (wasSettled && !willBeSettled) {
+        // Reverse: undo the original effect
+        walletDelta = isCredit ? -txNetAmount : txAmount;
+      } else if (!wasSettled && willBeSettled) {
+        // Apply: settle for the first time
+        walletDelta = isCredit ? txNetAmount : -txAmount;
+      }
+
+      // If we're applying a debit, ensure the wallet has the funds
+      const wallet = existing.user_wallet
+        ? await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { id: existing.user_wallet.id },
+          })
+        : null;
+
+      if (walletDelta !== 0) {
+        if (!wallet) {
+          return ctx.badRequest('Cannot adjust wallet: linked wallet not found');
+        }
+        if (walletDelta < 0) {
+          const currentField = parseFloat(wallet[balanceField] || 0);
+          if (currentField + walletDelta < 0) {
+            return ctx.badRequest(
+              `Cannot settle as success: insufficient ${fundSource} balance to debit ${Math.abs(walletDelta).toFixed(2)}`
+            );
+          }
+        }
+      }
+
+      // Build the update payload — only set fields that were provided
+      const updateData = {};
+      if (description !== undefined) updateData.description = String(description).trim();
+      if (gateway !== undefined) updateData.gateway = gateway;
+      if (gatewayTransactionId !== undefined) {
+        const trimmed = String(gatewayTransactionId).trim();
+        if (!trimmed) {
+          return ctx.badRequest('gatewayTransactionId cannot be blank (it is required by the schema)');
+        }
+        updateData.gatewayTransactionId = trimmed;
+      }
+      if (externalReference !== undefined) {
+        const trimmed = String(externalReference).trim();
+        updateData.external_transaction_id = trimmed || null;
+      }
+      if (promoCodeId !== undefined) {
+        const trimmed = String(promoCodeId).trim();
+        updateData.promo_code_id = trimmed || null;
+      }
+      if (paymentNotes !== undefined) {
+        updateData.payment_notes = String(paymentNotes).trim();
+      } else if (adminNotes && String(adminNotes).trim()) {
+        // Append admin notes to existing payment_notes for an audit trail
+        const stamp = new Date().toISOString();
+        const line = `[${stamp}] Admin ${adminUser.username || adminUser.id}: ${String(adminNotes).trim()}`;
+        updateData.payment_notes = existing.payment_notes
+          ? `${existing.payment_notes}\n${line}`
+          : line;
+      }
+      if (transactionStatus !== undefined) updateData.transactionStatus = transactionStatus;
+
+      // Atomic: transaction update + wallet adjustment
+      const result = await strapi.db.transaction(async () => {
+        const updatedTx = await strapi.entityService.update('api::transaction.transaction', id, {
+          data: updateData,
+          populate: ['users_permissions_user', 'order', 'user_wallet'],
+        });
+
+        let updatedWallet = wallet;
+        if (walletDelta !== 0 && wallet) {
+          const prevField = parseFloat(wallet[balanceField] || 0);
+          const prevTotal = parseFloat(wallet.balance || 0);
+          updatedWallet = await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+            data: {
+              [balanceField]: prevField + walletDelta,
+              balance: prevTotal + walletDelta,
+            },
+          });
+        }
+
+        return { updatedTx, updatedWallet };
+      });
+
+      // Audit log (best-effort)
+      try {
+        await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+          data: {
+            adminUser: adminUser.id,
+            action: 'transaction_edit',
+            targetUser: existing.users_permissions_user?.id,
+            details: {
+              transactionId: id,
+              changedFields: Object.keys(updateData),
+              previousStatus: existing.transactionStatus,
+              newStatus: transactionStatus !== undefined ? transactionStatus : existing.transactionStatus,
+              walletDelta,
+              walletId: wallet?.id || null,
+              adminNotes: adminNotes || null,
+            },
+            ipAddress: ctx.request.ip,
+            userAgent: ctx.request.headers['user-agent'],
+          },
+        });
+      } catch (auditErr) {
+        console.error('[ADMIN TRANSACTION EDIT] Failed to write audit log:', auditErr.message);
+      }
+
+      ctx.send({
+        data: result.updatedTx,
+        walletDelta,
+        wallet: result.updatedWallet
+          ? {
+              id: result.updatedWallet.id,
+              mainBalance: parseFloat(result.updatedWallet.mainBalance || 0),
+              promoBalance: parseFloat(result.updatedWallet.promoBalance || 0),
+              balance: parseFloat(result.updatedWallet.balance || 0),
+            }
+          : null,
+      });
+
+    } catch (error) {
+      console.error('[ADMIN TRANSACTION EDIT ERROR]', error);
+      return ctx.internalServerError('Failed to update transaction');
+    }
+  },
+
+  /**
    * Update transaction status (admin action)
    */
   async updateStatus(ctx) {

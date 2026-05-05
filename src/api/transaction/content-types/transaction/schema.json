@@ -54,7 +54,8 @@
         "razorpay",
         "promo",
         "voucher",
-        "system"
+        "system",
+        "bank_transfer"
       ],
       "required": true
     },
