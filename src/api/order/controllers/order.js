@@ -354,7 +354,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Add Link Insertion fields if this is a Link Insertion order
           serviceType: serviceType || null,
           existingPostUrl: existingPostUrl || null,
-          anchorText: linkInsertionAnchorText || null,
+          anchorText: typeof linkInsertionAnchorText === 'string' ? linkInsertionAnchorText : null,
           landingPageUrl: landingPageUrl || null,
           linkInsertionLanguage: linkInsertionLanguage || null,
           linkInsertionDescription: linkInsertionDescription || null
