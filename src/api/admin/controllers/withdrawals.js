@@ -42,30 +42,23 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         filters.publisher = userId;
       }
 
-      // Get withdrawal requests with simplified populate
-      const withdrawals = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
+      const pageNum = parseInt(page) || 1;
+      const pageSizeNum = parseInt(pageSize) || 20;
+
+      // entityService.findPage paginates natively and returns { results, pagination }
+      const { results, pagination } = await strapi.entityService.findPage('api::withdrawal-request.withdrawal-request', {
         filters,
         sort,
-        pagination: {
-          page: parseInt(page),
-          pageSize: parseInt(pageSize)
-        },
+        page: pageNum,
+        pageSize: pageSizeNum,
         populate: ['publisher']
       });
 
-      // Get total count for pagination
-      const total = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({ where: filters });
+      console.log(`[ADMIN WITHDRAWALS FIND] page=${pageNum} pageSize=${pageSizeNum} returned=${results.length} total=${pagination.total}`);
 
       ctx.send({
-        data: withdrawals,
-        meta: {
-          pagination: {
-            page: parseInt(page),
-            pageSize: parseInt(pageSize),
-            pageCount: Math.ceil(total / pageSize),
-            total
-          }
-        }
+        data: results,
+        meta: { pagination }
       });
 
     } catch (error) {
