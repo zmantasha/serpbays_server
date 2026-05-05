@@ -140,6 +140,35 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // NOTE: No transaction created here. Transaction will only be created when marked as paid.
       // Approval is an internal admin action, not a financial transaction.
 
+      // Send email notification about approval
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawal.publisher?.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal approval email to ${publisherEmail}`);
+
+          // Get the transaction record
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendTransactionApprovalEmail(transaction, publisherEmail);
+            console.log(`Withdrawal approval email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, email not sent`);
+          }
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal approval email:', emailError);
+        // Don't fail the approval if email fails
+      }
+
       ctx.send({
         data: updatedWithdrawal
       });
@@ -188,6 +217,35 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Note: Wallet balance updates are handled automatically by the lifecycle system
       // when the withdrawal status changes to 'denied'
+
+      // Send email notification about denial
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawal.publisher?.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal denial email to ${publisherEmail}`);
+
+          // Get the transaction record
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendTransactionDenialEmail(transaction, publisherEmail, reason);
+            console.log(`Withdrawal denial email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, email not sent`);
+          }
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal denial email:', emailError);
+        // Don't fail the rejection if email fails
+      }
 
       ctx.send({
         data: updatedWithdrawal
@@ -375,8 +433,9 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
 
     } catch (error) {
-      console.error('[ADMIN WITHDRAWAL MARK AS PAID ERROR]', error);
-      return ctx.internalServerError('Failed to mark withdrawal as paid');
+      console.error('[ADMIN WITHDRAWAL MARK AS PAID ERROR]', error.message || error);
+      console.error('[ADMIN WITHDRAWAL MARK AS PAID STACK]', error.stack);
+      return ctx.internalServerError('Failed to mark withdrawal as paid: ' + (error.message || 'Unknown error'));
     }
   },
 

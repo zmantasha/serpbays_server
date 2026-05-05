@@ -75,9 +75,9 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.log('Request by unauthenticated user');
         return ctx.unauthorized('Authentication required');
       }
-      
+
       console.log('User authenticated with ID:', ctx.state.user.id);
-      
+
       // Get the request body
       const { amount, method, details, otpCode } = ctx.request.body.data || ctx.request.body;
 
@@ -120,7 +120,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
 
       console.log(`[WithdrawalOTP] OTP verified for user ${ctx.state.user.id}`);
-      
+
       // Ensure details is a valid JSON object
       let formattedDetails = details;
       if (typeof details === 'string') {
@@ -131,7 +131,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           return ctx.badRequest('Details must be a valid JSON object');
         }
       }
-      
+
       // Validate amount is a positive number
       const requestAmount = parseFloat(amount);
       if (isNaN(requestAmount) || requestAmount <= 0) {
@@ -164,47 +164,47 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // 🔒 ADD REQUEST UNIQUENESS: Create unique gateway transaction ID early
       const uniqueRequestId = `${ctx.state.user.id}_${requestAmount}_${method}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       console.log(`[DUPLICATE PREVENTION] Generated unique request ID: ${uniqueRequestId}`);
-      
+
       // Get publisher wallet
       const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { 
+        where: {
           users_permissions_user: ctx.state.user.id
         }
       });
-      
+
       if (!publisherWallet) {
         console.log('Publisher wallet not found for user:', ctx.state.user.id);
         return ctx.badRequest('Publisher wallet not found');
       }
-      console.log('Found publisher wallet:', { 
-        id: publisherWallet.id, 
-        balance: publisherWallet.balance, 
+      console.log('Found publisher wallet:', {
+        id: publisherWallet.id,
+        balance: publisherWallet.balance,
         escrow: publisherWallet.escrowBalance,
         pendingWithdrawalBalance: publisherWallet.pendingWithdrawalBalance,
         fullWalletObject: publisherWallet
       });
-      
+
       // Balance Check Logic (aligned with getAvailableBalance)
       // STEP 1: Get all completed/approved order IDs for this user.
       const allCompletedRawOrders = await strapi.db.query('api::order.order').findMany({
-          where: {
-            publisher: ctx.state.user.id,
+        where: {
+          publisher: ctx.state.user.id,
           orderStatus: { $in: ['approved', 'completed'] }
         }
       });
       const completedOrderIds = new Set(allCompletedRawOrders.map(order => order.id));
       console.log(`[Create] Found ${completedOrderIds.size} raw completed/approved order IDs for publisher ${ctx.state.user.id}`);
-        
+
       // STEP 2: Get ALL 'escrow_release' transactions for these completed orders.
       const allEscrowReleaseTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
-          filters: {
-            user_wallet: { id: publisherWallet.id },
+        filters: {
+          user_wallet: { id: publisherWallet.id },
           type: 'escrow_release',
           order: { id: { $in: Array.from(completedOrderIds) } }
-          },
-          populate: ['order'],
-          sort: { createdAt: 'desc' }
-        });
+        },
+        populate: ['order'],
+        sort: { createdAt: 'desc' }
+      });
       console.log(`[Create] Found ${allEscrowReleaseTransactions.length} total escrow_release transactions.`);
 
       // STEP 3: Deduplicate to get unique transactions per order.
@@ -219,36 +219,36 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
       const uniqueCompletedOrderTransactions = Array.from(orderTransactionMap.values());
       console.log(`[Create] Found ${uniqueCompletedOrderTransactions.length} unique transactions for completed orders amount.`);
-        
+
       // STEP 4: Calculate GROSS completedOrdersAmount.
       const grossCompletedOrdersAmount = uniqueCompletedOrderTransactions.reduce((total, tx) => {
-          return total + parseFloat(tx.amount || 0);
-        }, 0);
+        return total + parseFloat(tx.amount || 0);
+      }, 0);
       console.log(`[Create] Calculated GROSS completedOrdersAmount: ${grossCompletedOrdersAmount}`);
-        
+
       // STEP 5: Check available balance (Available Balance = Wallet Balance)
       const walletBalance = parseFloat(publisherWallet.balance || 0);
       const pendingWithdrawalBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
-      
+
       console.log('[Create] Pre-withdrawal Balance Check:', {
         walletBalance,
         pendingWithdrawalBalance,
         requestAmount,
         note: 'Available balance equals wallet balance'
-        });
-        
+      });
+
       // STEP 6: Check if user has sufficient MAIN balance for withdrawal (promo funds cannot be withdrawn)
       const mainBalance = parseFloat(publisherWallet.mainBalance || 0);
       const promoBalance = parseFloat(publisherWallet.promoBalance || 0);
       const totalBalance = parseFloat(publisherWallet.balance || 0);
-      
+
       console.log('Balance breakdown:', {
         mainBalance,
         promoBalance,
         totalBalance,
         requestAmount
       });
-      
+
       // Calculate 20% platform fee
       const PLATFORM_FEE_RATE = 0.20;
       const platformFee = Math.round((requestAmount / (1 - PLATFORM_FEE_RATE)) * PLATFORM_FEE_RATE * 100) / 100;
@@ -264,14 +264,14 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (mainBalance < totalDeduction) {
         return ctx.badRequest(`Insufficient withdrawable funds. Available for withdrawal: ${mainBalance}, Total required (including 20% platform fee): ${totalDeduction}. Note: Promo credits (${promoBalance}) cannot be withdrawn.`);
       }
-        
+
       // The rest of the create method continues from here...
       // Note: `completedOrdersTransactions` used later for marking specific transactions
       // might need to be derived differently if it was based on the old `availableTransactions`
       // For now, we assume the main goal is to fix the insufficient funds error.
       // The most straightforward approach is to pass all uniqueCompletedOrderTransactions and let the loop pick.
       const completedOrdersTransactionsToProcess = uniqueCompletedOrderTransactions;
-      
+
       // Create the withdrawal request
       const withdrawalRequest = await strapi.entityService.create('api::withdrawal-request.withdrawal-request', {
         data: {
@@ -282,53 +282,53 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           withdrawal_status: 'pending'
         }
       });
-      
+
       console.log('Created withdrawal request:', withdrawalRequest.id);
-      
+
       // Process transactions from completed orders to cover the withdrawal amount
       if (completedOrdersTransactionsToProcess.length > 0) {
         // Sort transactions by date (oldest first)
         completedOrdersTransactionsToProcess.sort((a, b) => {
           return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
         });
-        
+
         // Keep track of orders we've processed to avoid double-counting
         const processedOrderIds = new Set();
-        
+
         // Track how much we still need to process
         let amountRemaining = requestAmount;
-        
+
         // Process transactions until we've covered the required amount
         for (const tx of completedOrdersTransactionsToProcess) {
           if (amountRemaining <= 0) break;
-          
+
           // Skip if no order or if this order has already been processed
           if (!tx.order || !tx.order.id || processedOrderIds.has(tx.order.id)) continue;
-          
+
           // Mark this order as processed
           processedOrderIds.add(tx.order.id);
-          
+
           const txAmount = parseFloat(tx.amount);
           const amountToUse = Math.min(txAmount, amountRemaining);
-          
+
           console.log(`Processing transaction ${tx.id} from order ${tx.order.id} - amount: ${txAmount}, using: ${amountToUse}`);
-          
+
           // Update transaction to mark it as included in this withdrawal request
           let baseDescription = tx.description || '';
           if (baseDescription.includes(' - Included in withdrawal request')) {
             baseDescription = baseDescription.split(' - Included in withdrawal request')[0];
           }
-          
+
           await strapi.entityService.update('api::transaction.transaction', tx.id, {
             data: {
               description: `${baseDescription} - Included in withdrawal request #${withdrawalRequest.id}`
             }
           });
-          
+
           amountRemaining -= amountToUse;
         }
       }
-      
+
       // Create a transaction record for the withdrawal request with unique ID
       const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
         data: {
@@ -344,9 +344,9 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           users_permissions_user: ctx.state.user.id
         }
       });
-      
+
       console.log(`[DUPLICATE PREVENTION] Created unique transaction ${transactionRecord.id} with gateway ID: ${uniqueRequestId}`);
-      
+
       // Update the wallet balance when withdrawal is requested
       // Deduct totalDeduction (withdrawal amount + 20% platform fee) from main balance
       console.log('Updating wallet balance after withdrawal request:', {
@@ -354,7 +354,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         previousMainBalance: publisherWallet.mainBalance,
         withdrawalAmount: requestAmount,
         platformFee,
-        totalDeduction
+  totalDeduction
       });
 
       // Subtract the TOTAL (withdrawal + fee) from MAIN balance, track only requestAmount as pending withdrawal
@@ -378,20 +378,20 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           message: 'Withdrawal request created successfully',
         }
       };
-      
+
     } catch (error) {
       console.error('Error creating withdrawal request:', error);
       return ctx.badRequest('Failed to create withdrawal request', { error: error.message });
     }
   },
-  
+
   // Get my withdrawal requests
   async getMyWithdrawals(ctx) {
     try {
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
       const { pagination, filters: queryFilters } = ctx.query;
 
@@ -417,7 +417,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           }
         }
       }
-      
+
       console.log('[WithdrawalController|getMyWithdrawals] Combined filters for query:', JSON.stringify(combinedFilters, null, 2));
 
       // Default pagination if not provided
@@ -432,7 +432,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         start: start, // for offset
         limit: limit, // for page size
       });
-      
+
       // For accurate hasMoreItems, we might need to query total count with filters but without pagination
       // Or, rely on the frontend logic: if count returned is less than limit, no more items.
       // The current frontend logic (historyData.length === WITHDRAWALS_PER_PAGE) works if the API returns a full page or less.
@@ -443,7 +443,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
 
       console.log(`[WithdrawalController|getMyWithdrawals] Retrieved ${withdrawalRequests.length} requests for user ${userId} with filters. Total matching: ${totalCount}`);
-      
+
       // Strapi's findMany typically returns just the array of entities if no 'meta' is requested via populate.
       // The frontend expects { data: [...] }
       // Let's ensure the response structure matches what the frontend service expects (data.data)
@@ -466,7 +466,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       return ctx.internalServerError('An error occurred while fetching withdrawal requests', { error: error.message });
     }
   },
-  
+
   // Admin endpoint to APPROVE (but not yet pay) a withdrawal request
   async approveWithdrawal(ctx) {
     try {
@@ -474,45 +474,45 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       // Check if user is an admin or has special access
       const { role, email } = ctx.state.user;
       const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
-      
+
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
       }
-      
+
       const { id } = ctx.params;
-      
+
       // Get the withdrawal request
       const withdrawalRequest = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
         populate: ['publisher']
       });
-      
+
       if (!withdrawalRequest) {
         return ctx.notFound('Withdrawal request not found');
       }
-      
+
       // Check if the withdrawal request is already processed
       if (withdrawalRequest.withdrawal_status !== 'pending') {
         return ctx.badRequest(`Withdrawal request is already ${withdrawalRequest.withdrawal_status}`);
       }
-      
+
       // Get publisher wallet
       const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { 
+        where: {
           users_permissions_user: withdrawalRequest.publisher.id
         }
       });
-      
+
       if (!publisherWallet) {
         return ctx.badRequest('Publisher wallet not found');
       }
-      
+
       // ONLY update status to 'approved'. DO NOT process payment or reduce escrow here.
-        const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
-          data: {
+      const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: {
           withdrawal_status: 'approved' // Changed from 'paid'
         }
       });
@@ -526,32 +526,61 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       try {
         console.log(`[WithdrawalController] About to create withdrawal_approved notification`);
         console.log(`[WithdrawalController] Publisher ID: ${withdrawalRequest.publisher.id}, Amount: ${withdrawalRequest.amount}`);
-        
+
         await strapi.service('api::notification.notification').createPaymentNotification(
           withdrawalRequest.publisher.id,
           'withdrawal_approved',
           withdrawalRequest.amount
         );
-        
+
         console.log(`[WithdrawalController] Withdrawal approved notification created successfully`);
       } catch (notificationError) {
         console.error('Failed to create withdrawal approved notification:', notificationError);
         // Don't fail the approval if notification fails
       }
-        
-        return {
-          data: updatedRequest,
-          meta: {
-          message: 'Withdrawal request approved. Awaiting payment processing.'
+
+      // Send email notification about approval
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawalRequest.publisher.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal approval email to ${publisherEmail}`);
+
+          // Get the transaction record
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawalRequest.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${withdrawalRequest.id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendTransactionApprovalEmail(transaction, publisherEmail);
+            console.log(`Withdrawal approval email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, email not sent`);
           }
-        };
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal approval email:', emailError);
+        // Don't fail the approval if email fails
+      }
+
+      return {
+        data: updatedRequest,
+        meta: {
+          message: 'Withdrawal request approved. Awaiting payment processing.'
+        }
+      };
 
     } catch (error) {
       console.error('Error approving withdrawal request (status update only):', error);
       return ctx.internalServerError('An error occurred while approving withdrawal request');
     }
   },
-  
+
   // Admin endpoint to deny a withdrawal request
   async denyWithdrawal(ctx) {
     try {
@@ -559,43 +588,43 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       // Check if user is an admin or has special access
       const { role, email } = ctx.state.user;
       const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
-      
+
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
       }
-      
+
       const { id } = ctx.params;
       const { reason } = ctx.request.body;
-      
+
       // Get the withdrawal request
       const withdrawalRequest = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
         populate: ['publisher']
       });
-      
+
       if (!withdrawalRequest) {
         return ctx.notFound('Withdrawal request not found');
       }
-      
+
       // Check if the withdrawal request is already processed
       if (withdrawalRequest.withdrawal_status !== 'pending') {
         return ctx.badRequest(`Withdrawal request is already ${withdrawalRequest.withdrawal_status}`);
       }
-      
+
       // Get publisher wallet
       const publisherWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { 
+        where: {
           users_permissions_user: withdrawalRequest.publisher.id
         }
       });
-      
+
       if (!publisherWallet) {
         return ctx.badRequest('Publisher wallet not found');
       }
-      
+
       // Update the withdrawal request
       const updatedRequest = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
         data: {
@@ -603,10 +632,10 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           denialReason: reason
         }
       });
-      
+
       // 🔧 Update the corresponding withdrawal request transaction to 'failed' since withdrawal was denied
       console.log(`[DenyWithdrawal] Updating withdrawal request transaction for withdrawal #${id}`);
-      
+
       const escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: {
           users_permissions_user: withdrawalRequest.publisher.id,
@@ -615,7 +644,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           description: { $contains: 'Withdrawal request' }
         }
       });
-      
+
       if (escrowHoldTransaction) {
         await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
           data: {
@@ -627,12 +656,12 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       } else {
         console.log(`[DenyWithdrawal] No matching withdrawal request transaction found for withdrawal #${id}`);
       }
-      
+
       // Return the funds to the publisher's MAIN balance (since withdrawals only come from main balance)
       const refundAmount = parseFloat(withdrawalRequest.amount);
       const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) + refundAmount;
       const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
-      
+
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: publisherWallet.id },
         data: {
@@ -641,7 +670,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           pendingWithdrawalBalance: Math.max(0, (parseFloat(publisherWallet.pendingWithdrawalBalance) || 0) - refundAmount)
         }
       });
-      
+
       // Create a transaction record for the refund
       await strapi.entityService.create('api::transaction.transaction', {
         data: {
@@ -660,19 +689,19 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       try {
         console.log(`[WithdrawalController] About to create withdrawal_denied notification`);
         console.log(`[WithdrawalController] Publisher ID: ${withdrawalRequest.publisher.id}, Amount: ${withdrawalRequest.amount}`);
-        
+
         await strapi.service('api::notification.notification').createPaymentNotification(
           withdrawalRequest.publisher.id,
           'withdrawal_denied',
           withdrawalRequest.amount
         );
-        
+
         console.log(`[WithdrawalController] Withdrawal denied notification created successfully`);
       } catch (notificationError) {
         console.error('Failed to create withdrawal denied notification:', notificationError);
         // Don't fail the denial if notification fails
       }
-      
+
       return {
         data: updatedRequest,
         meta: {
@@ -684,7 +713,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       return ctx.internalServerError('An error occurred while denying withdrawal request');
     }
   },
-  
+
   // Admin endpoint to MARK A WITHDRAWAL AS PAID (after external payment confirmation)
   async markAsPaidWithdrawal(ctx) {
     try {
@@ -692,10 +721,10 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const { role, email } = ctx.state.user;
       const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
-      
+
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
       }
@@ -767,16 +796,16 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         // For now, we'll proceed to mark as paid as per admin override, but this needs thought.
         // If payment MUST succeed here, then throw or return badRequest.
         // For this implementation, we assume admin is confirming an already occurred external payment.
-         paymentResult = {
-              success: true, 
-              transactionId: `override_paid_${Date.now()}`,
-              message: 'Admin marked as paid, overriding simulated payment failure.'
-            }; 
+        paymentResult = {
+          success: true,
+          transactionId: `override_paid_${Date.now()}`,
+          message: 'Admin marked as paid, overriding simulated payment failure.'
+        };
       }
 
       if (!paymentResult.success) {
-         console.warn(`[MarkAsPaid] Payment result indicated failure for withdrawal #${id}, but admin is marking as paid. Message: ${paymentResult.message}`);
-         // Decide if you want to halt or proceed. For now, proceeding as admin override.
+        console.warn(`[MarkAsPaid] Payment result indicated failure for withdrawal #${id}, but admin is marking as paid. Message: ${paymentResult.message}`);
+        // Decide if you want to halt or proceed. For now, proceeding as admin override.
       }
 
       // Update the withdrawal request status to 'paid'
@@ -790,7 +819,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // 🔧 Update the corresponding withdrawal request transaction to 'success' since withdrawal is now paid
       console.log(`[MarkAsPaid] Updating withdrawal request transaction for withdrawal #${id}`);
-      
+
       const escrowHoldTransaction = await strapi.db.query('api::transaction.transaction').findOne({
         where: {
           users_permissions_user: withdrawalRequest.publisher.id,
@@ -799,7 +828,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           description: { $contains: 'Withdrawal request' }
         }
       });
-      
+
       if (escrowHoldTransaction) {
         await strapi.entityService.update('api::transaction.transaction', escrowHoldTransaction.id, {
           data: {
@@ -827,7 +856,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       } else {
         console.warn(`[MarkAsPaid] Wallet ${publisherWallet.id} pendingWithdrawalBalance ${publisherWallet.pendingWithdrawalBalance} is less than withdrawal amount ${amountToDecreaseFromPending}. Pending balance not decreased further.`);
       }
-      
+
       // Create a final 'payout' transaction log
       await strapi.entityService.create('api::transaction.transaction', {
         data: {
@@ -845,24 +874,24 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
 
       console.log(`Withdrawal request #${id} successfully marked as paid.`);
-      
+
       // Create notification for publisher about payment completion
       try {
         console.log(`[WithdrawalController] About to create withdrawal_paid notification`);
         console.log(`[WithdrawalController] Publisher ID: ${withdrawalRequest.publisher.id}, Amount: ${withdrawalRequest.amount}`);
-        
+
         await strapi.service('api::notification.notification').createPaymentNotification(
           withdrawalRequest.publisher.id,
           'withdrawal_paid',
           withdrawalRequest.amount
         );
-        
+
         console.log(`[WithdrawalController] Withdrawal paid notification created successfully`);
       } catch (notificationError) {
         console.error('Failed to create withdrawal paid notification:', notificationError);
         // Don't fail the payment marking if notification fails
       }
-      
+
       return {
         data: updatedRequest,
         meta: {
@@ -875,7 +904,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       return ctx.internalServerError('An error occurred while marking withdrawal as paid.', { error: error.message });
     }
   },
-  
+
   // Get publisher available balance (including completed orders)
   async getAvailableBalance(ctx) {
     try {
@@ -883,22 +912,22 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
-      
+
       // Get publisher wallet using Strapi entity service
       const publisherWallets = await strapi.entityService.findMany('api::user-wallet.user-wallet', {
-        filters: { 
+        filters: {
           users_permissions_user: { id: userId }
         }
       });
-      
+
       const publisherWallet = publisherWallets?.[0]; // Get the first wallet if one exists
-      
+
       if (!publisherWallet) {
         return ctx.badRequest('Publisher wallet not found');
       }
-      
+
       // STEP 1: Get all completed orders (used to ensure transactions are for valid orders)
       const allCompletedRawOrders = await strapi.db.query('api::order.order').findMany({
         where: {
@@ -908,7 +937,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
       const completedOrderIds = new Set(allCompletedRawOrders.map(order => order.id));
       console.log(`Found ${completedOrderIds.size} raw completed/approved order IDs for publisher ${userId}`);
-      
+
       // STEP 2: Get ALL 'escrow_release' transactions for the user's wallet.
       // These represent all funds that *have been* released from escrow for completed orders.
       // We will not filter these by "description includes withdrawal" here.
@@ -922,7 +951,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         sort: { createdAt: 'desc' }
       });
       console.log(`Found ${allEscrowReleaseTransactions.length} total escrow_release transactions for completed/approved orders.`);
-      
+
       // STEP 3: Deduplicate these transactions to count each order's contribution only once (latest transaction).
       const orderTransactionMap = new Map();
       allEscrowReleaseTransactions.forEach(tx => {
@@ -936,7 +965,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
       const uniqueCompletedOrderTransactions = Array.from(orderTransactionMap.values());
       console.log(`Found ${uniqueCompletedOrderTransactions.length} unique transactions contributing to completed orders amount.`);
-      
+
       // STEP 4: Calculate completedOrdersAmount from these unique transactions.
       // This is the GROSS amount from all completed orders.
       const completedOrdersAmount = uniqueCompletedOrderTransactions.reduce((total, tx) => {
@@ -947,7 +976,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // STEP 5: Get Wallet Balance (direct funds, not from orders)
       const walletBalance = parseFloat(publisherWallet.balance || 0);
       console.log(`Publisher direct walletBalance: ${walletBalance}`);
-        
+
       // STEP 6: Get stored pending withdrawal balance from wallet
       // This is the amount currently held due to active pending withdrawals
       const pendingWithdrawalBalance = parseFloat(publisherWallet.pendingWithdrawalBalance || 0);
@@ -972,7 +1001,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // STEP 7 (Modified): Calculate final totalAvailable.
       // Available Balance = Wallet Balance - Pending Withdrawals (simple and direct)
       const totalAvailable = Math.max(0, walletBalance - pendingWithdrawalBalance);
-      
+
       console.log('Final balance calculation (getAvailableBalance):', {
         walletBalance,
         completedOrdersAmount, // Gross amount from completed orders (for reference)
@@ -982,7 +1011,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         calculation_String: `${walletBalance} [wallet] - ${pendingWithdrawalBalance} [pending] = ${totalAvailable}`,
         final_totalAvailable_Sent_To_Client: totalAvailable
       });
-      
+
       // Fetch ALL withdrawal requests for calculating total earnings (if definition is sum of all withdrawals + current available)
       // This is separate from 'pendingWithdrawals' used for escrow calculation.
       // const withdrawalRequests = await strapi.entityService.findMany('api::withdrawal-request.withdrawal-request', {
@@ -1016,7 +1045,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       return ctx.badRequest('Failed to get available balance', { error: error.message });
     }
   },
-  
+
   // Export all my withdrawals
   async exportAllMyWithdrawals(ctx) {
     try {
@@ -1024,7 +1053,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
 
       // Get all withdrawal requests for the user without pagination
@@ -1051,23 +1080,23 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       if (!ctx.state.user) {
         return ctx.unauthorized('Authentication required');
       }
-      
+
       const userId = ctx.state.user.id;
-      
+
       // Get publisher wallet
       const publisherWallets = await strapi.entityService.findMany('api::user-wallet.user-wallet', {
-        filters: { 
+        filters: {
           users_permissions_user: { id: userId },
           type: 'publisher'
         }
       });
-      
+
       const publisherWallet = publisherWallets?.[0];
-      
+
       if (!publisherWallet) {
         return { message: 'No publisher wallet found', userId };
       }
-      
+
       // Get all completed orders
       const completedOrders = await strapi.db.query('api::order.order').findMany({
         where: {
@@ -1075,7 +1104,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
           orderStatus: { $in: ['approved', 'completed'] }
         }
       });
-      
+
       // Get all transactions for this wallet
       const allTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
         filters: {
@@ -1084,7 +1113,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         populate: ['order'],
         sort: { createdAt: 'desc' }
       });
-      
+
       // Get escrow_release transactions specifically
       const escrowReleaseTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
         filters: {
@@ -1094,7 +1123,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         populate: ['order'],
         sort: { createdAt: 'desc' }
       });
-      
+
       return {
         data: {
           userId,
@@ -1139,14 +1168,14 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Get publisher wallet
       const publisherWallets = await strapi.entityService.findMany('api::user-wallet.user-wallet', {
-        filters: { 
+        filters: {
           users_permissions_user: { id: userId },
           type: 'publisher'
         }
       });
-      
+
       const publisherWallet = publisherWallets?.[0];
-      
+
       if (!publisherWallet) {
         return { message: 'No publisher wallet found', userId };
       }
@@ -1222,7 +1251,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 async function processRazorpayPayout(withdrawalRequest) {
   // TODO: Implement Razorpay payout API integration
   console.log('MOCK: Processing Razorpay payout', withdrawalRequest);
-  
+
   // Mock implementation
   return {
     success: true,
@@ -1235,10 +1264,10 @@ async function processRazorpayPayout(withdrawalRequest) {
 async function processPaypalPayout(withdrawalRequest) {
   try {
     console.log('Processing PayPal payout for withdrawal:', withdrawalRequest.id);
-    
+
     // Get the payment service
     const paymentService = strapi.service('api::transaction.payment');
-    
+
     // Check if PayPal payouts are available
     try {
       // Create PayPal payout
@@ -1251,10 +1280,10 @@ async function processPaypalPayout(withdrawalRequest) {
           userId: withdrawalRequest.publisher?.id
         }
       );
-    
+
       if (payoutResult.success) {
         console.log('PayPal payout created successfully:', payoutResult.batchId);
-        
+
         // Update withdrawal request with PayPal batch ID
         await strapi.entityService.update('api::withdrawal-request.withdrawal-request', withdrawalRequest.id, {
           data: {
@@ -1263,7 +1292,7 @@ async function processPaypalPayout(withdrawalRequest) {
             processedAt: new Date()
           }
         });
-        
+
         return {
           success: true,
           transactionId: payoutResult.batchId,

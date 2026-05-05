@@ -98,6 +98,7 @@ module.exports = {
       require('./api/admin/routes/marketplace'),
       require('./api/admin/routes/withdrawals'),
       require('./api/admin/routes/codes'),
+      require('./api/admin/routes/website-transfers'),
       require('./api/admin/routes/audit-logs')
     ];
 
@@ -105,6 +106,35 @@ module.exports = {
     // content-api loader (api::admin). Manual strapi.server.routes(route) calls
     // here would be a no-op for single route objects and are intentionally
     // omitted.
+
+    // ── Grant public.create on exit-intent-lead ──────────────────────────
+    // The exit-intent popup on app.serpbays.com posts anonymously to
+    // /api/exit-intent-leads. This grants the public role permission to
+    // call .create (and only .create — listing/reading leads still
+    // requires admin auth). Idempotent: skips if already granted.
+    try {
+      const publicRole = await strapi.db
+        .query('plugin::users-permissions.role')
+        .findOne({ where: { type: 'public' } });
+
+      if (publicRole) {
+        const action = 'api::exit-intent-lead.exit-intent-lead.create';
+        const existing = await strapi.db
+          .query('plugin::users-permissions.permission')
+          .findOne({ where: { action, role: publicRole.id } });
+
+        if (!existing) {
+          await strapi.db
+            .query('plugin::users-permissions.permission')
+            .create({ data: { action, role: publicRole.id } });
+          strapi.log.info('[BOOTSTRAP] Granted public.create on exit-intent-lead');
+        }
+      }
+    } catch (err) {
+      strapi.log.warn(
+        `[BOOTSTRAP] Could not grant public permission for exit-intent-lead: ${err.message}`
+      );
+    }
 
     // Add request debugging middleware
     strapi.server.use(async (ctx, next) => {

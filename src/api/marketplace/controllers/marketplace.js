@@ -8,6 +8,21 @@ const { createCoreController } = require('@strapi/strapi').factories;
 const { parse } = require('csv-parse/sync');
 const fs = require('fs');
 
+// Price-like columns. When sorting by any of these, both NULL and 0 are
+// treated as "no price" so they fall to the bottom of an ascending sort.
+const PRICE_LIKE_FIELDS = new Set([
+  'price',
+  'link_insertion_price',
+  'adv_casino_pricing',
+  'adv_crypto_pricing',
+  'adv_cbd_pricing',
+  'adv_dating_pricing',
+  'adv_li_casino_pricing',
+  'adv_li_crypto_pricing',
+  'adv_li_cbd_pricing',
+  'adv_li_dating_pricing',
+]);
+
 // Required fields that must be present in CSV
 const REQUIRED_FIELDS = [
   'url',
@@ -147,35 +162,73 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // that NULL values always appear at the bottom for metric fields.
   // This is the SINGLE source of truth for metric sorting.
   // ============================================================
-  applyPostFetchSorting(entries, sortField, sortDirection) {
+  applyPostFetchSorting(entries, sortField, sortDirection, isDefaultSort = true) {
     // Only apply to metric fields that have the NULL issue
     const metricFields = [
       'ahrefs_dr', 'moz_da', 'semrush_authority_score',
       'ahrefs_traffic', 'semrush_traffic', 'similarweb_traffic',
-      'price', 'link_insertion_price', 'spam_score'
+      'price', 'link_insertion_price', 'spam_score',
+      'adv_casino_pricing', 'adv_crypto_pricing', 'adv_cbd_pricing', 'adv_dating_pricing',
+      'adv_li_casino_pricing', 'adv_li_crypto_pricing', 'adv_li_cbd_pricing', 'adv_li_dating_pricing'
     ];
 
+    // Virtual "_any" fields: COALESCE of GP + LI prices (used on All-tab)
+    const virtualPriceFields = {
+      'price_any': ['price', 'link_insertion_price'],
+      'adv_casino_pricing_any': ['adv_casino_pricing', 'adv_li_casino_pricing'],
+      'adv_crypto_pricing_any': ['adv_crypto_pricing', 'adv_li_crypto_pricing'],
+      'adv_cbd_pricing_any': ['adv_cbd_pricing', 'adv_li_cbd_pricing'],
+      'adv_dating_pricing_any': ['adv_dating_pricing', 'adv_li_dating_pricing'],
+    };
+
+    const isVirtual = Object.prototype.hasOwnProperty.call(virtualPriceFields, sortField);
+
     // If not a metric field or no entries, return as-is
-    if (!metricFields.includes(sortField) || !Array.isArray(entries) || entries.length === 0) {
-      return entries;
-    }
+    if (!isVirtual && !metricFields.includes(sortField)) return entries;
+    if (!Array.isArray(entries) || entries.length === 0) return entries;
 
     // Create a copy to avoid mutating original
     const sorted = [...entries];
 
     sorted.sort((a, b) => {
-      // Featured websites always appear first regardless of metric sort.
+      // Featured websites float to the top ONLY in the default view.
+      // When the user picks any explicit sort, featured must not influence ordering.
       // Generic: featured if featured for ANY service type (GP or LI).
       // Client-side re-sorts based on the active service type filter.
       // Raw Knex results use snake_case; Strapi ORM uses camelCase.
-      const aFeatured = (a.isFeaturedGuestPost || a.is_featured_guest_post || false) || (a.isFeaturedLinkInsertion || a.is_featured_link_insertion || false);
-      const bFeatured = (b.isFeaturedGuestPost || b.is_featured_guest_post || false) || (b.isFeaturedLinkInsertion || b.is_featured_link_insertion || false);
-      if (aFeatured !== bFeatured) {
-        return bFeatured ? 1 : -1;
+      if (isDefaultSort) {
+        const aFeatured = (a.isFeaturedGuestPost || a.is_featured_guest_post || false) || (a.isFeaturedLinkInsertion || a.is_featured_link_insertion || false);
+        const bFeatured = (b.isFeaturedGuestPost || b.is_featured_guest_post || false) || (b.isFeaturedLinkInsertion || b.is_featured_link_insertion || false);
+        if (aFeatured !== bFeatured) {
+          return bFeatured ? 1 : -1;
+        }
       }
 
-      const valA = a[sortField];
-      const valB = b[sortField];
+      // Treat 0 as "no price" for any price-like column so it falls to the
+      // bottom alongside NULLs (matches the SQL-side NULLIF(col, 0)).
+      const zeroAsNull = (v) => (v === 0 || v === '0' ? null : v);
+      // Lowest VALID price between two columns; NULL/0 are skipped, returns
+      // NULL only when both are NULL/0.
+      const minValid = (x, y) => {
+        const xv = zeroAsNull(x);
+        const yv = zeroAsNull(y);
+        if (xv == null) return yv;
+        if (yv == null) return xv;
+        return Number(xv) <= Number(yv) ? xv : yv;
+      };
+
+      let valA, valB;
+      if (isVirtual) {
+        const [f1, f2] = virtualPriceFields[sortField];
+        valA = minValid(a[f1], a[f2]);
+        valB = minValid(b[f1], b[f2]);
+      } else if (PRICE_LIKE_FIELDS.has(sortField)) {
+        valA = zeroAsNull(a[sortField]);
+        valB = zeroAsNull(b[sortField]);
+      } else {
+        valA = a[sortField];
+        valB = b[sortField];
+      }
 
       // Handle NULL/undefined - always push to bottom
       const aIsEmpty = valA === null || valA === undefined;
@@ -189,11 +242,27 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       if (bIsEmpty) return -1;
 
       // Both have values - sort normally
-      if (sortDirection === 'desc') {
-        return (Number(valB) || 0) - (Number(valA) || 0);
-      } else {
-        return (Number(valA) || 0) - (Number(valB) || 0);
+      const numA = Number(valA) || 0;
+      const numB = Number(valB) || 0;
+      const diff = numA - numB;
+      if (diff !== 0) {
+        return sortDirection === 'desc' ? -diff : diff;
       }
+
+      // Tie-breaker for virtual _any sorts: GP price ASC so the lower GP
+      // wins within rows tied on the lowest valid price (matches the SQL
+      // secondary ORDER BY on f1).
+      if (isVirtual) {
+        const [gpField] = virtualPriceFields[sortField];
+        const gpA = zeroAsNull(a[gpField]);
+        const gpB = zeroAsNull(b[gpField]);
+        if (gpA == null && gpB == null) return 0;
+        if (gpA == null) return 1;
+        if (gpB == null) return -1;
+        return (Number(gpA) || 0) - (Number(gpB) || 0);
+      }
+
+      return 0;
     });
 
     return sorted;
@@ -595,8 +664,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     let useRawSorting = false;
     let rawSortField = null;
     let rawSortDirection = null;
+    // When true: featured items float to the top. When false (any explicit sort
+    // chosen by the user): featured has no effect on ordering.
+    const isDefaultSort = !ctx.query.sort || ctx.query.sort === 'default';
 
-    if (ctx.query.sort) {
+    if (ctx.query.sort && ctx.query.sort !== 'default') {
       // Map frontend sort fields to backend database fields
       const sortMapping = {
         'url': 'url',
@@ -606,6 +678,21 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         'ahrefs_dr': 'ahrefs_dr',
         'semrush_authority_score': 'semrush_authority_score',
         'price': 'price',
+        'link_insertion_price': 'link_insertion_price',
+        'adv_casino_pricing': 'adv_casino_pricing',
+        'adv_crypto_pricing': 'adv_crypto_pricing',
+        'adv_cbd_pricing': 'adv_cbd_pricing',
+        'adv_dating_pricing': 'adv_dating_pricing',
+        'adv_li_casino_pricing': 'adv_li_casino_pricing',
+        'adv_li_crypto_pricing': 'adv_li_crypto_pricing',
+        'adv_li_cbd_pricing': 'adv_li_cbd_pricing',
+        'adv_li_dating_pricing': 'adv_li_dating_pricing',
+        // Virtual "_any" fields resolve to COALESCE(GP, LI) of the matching category
+        'price_any': 'price_any',
+        'adv_casino_pricing_any': 'adv_casino_pricing_any',
+        'adv_crypto_pricing_any': 'adv_crypto_pricing_any',
+        'adv_cbd_pricing_any': 'adv_cbd_pricing_any',
+        'adv_dating_pricing_any': 'adv_dating_pricing_any',
         'createdAt': 'createdAt',
         'updatedAt': 'updatedAt'
       };
@@ -632,6 +719,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       useRawSorting = true;
       rawSortField = 'ahrefs_traffic';
       rawSortDirection = 'desc';
+      // Strip the 'default' sentinel so downstream code paths that read
+      // ctx.query.sort don't try to use it as a real column name.
+      if (ctx.query.sort === 'default') delete ctx.query.sort;
     }
 
     // For metric field sorting, use Knex with NULLS LAST for proper NULL/0 handling
@@ -760,9 +850,44 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // NOTE: Use snake_case because Knex raw SQL bypasses Strapi's ORM column name mapping
         // Featured = site is featured for ANY service type (GP or LI)
         // Client-side re-sorts based on the active service type filter after receiving data
-        query = query
-          .orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC')
-          .orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
+        const virtualSortMap = {
+          'price_any': ['price', 'link_insertion_price'],
+          'adv_casino_pricing_any': ['adv_casino_pricing', 'adv_li_casino_pricing'],
+          'adv_crypto_pricing_any': ['adv_crypto_pricing', 'adv_li_crypto_pricing'],
+          'adv_cbd_pricing_any': ['adv_cbd_pricing', 'adv_li_cbd_pricing'],
+          'adv_dating_pricing_any': ['adv_dating_pricing', 'adv_li_dating_pricing'],
+        };
+
+        if (isDefaultSort) {
+          query = query.orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC');
+        }
+
+        if (virtualSortMap[rawSortField]) {
+          // Sort key = lowest VALID price between GP and LI (NULL/0 treated as
+          // "no price"). CASE expression instead of LEAST/min for portability
+          // across PostgreSQL and SQLite (SQLite has no LEAST; its min(a,b)
+          // propagates NULL). Column names come from a fixed map → safe to
+          // interpolate. If both are NULL/0 the expression yields NULL and
+          // NULLS LAST pushes the row to the bottom.
+          // Tie-breaker: GP price ASC so within rows tied on the lowest valid
+          // price, the listing with the lower GP price appears first
+          // (regardless of the primary direction).
+          const [f1, f2] = virtualSortMap[rawSortField];
+          const minExpr = `CASE
+            WHEN NULLIF(${f1}, 0) IS NULL THEN NULLIF(${f2}, 0)
+            WHEN NULLIF(${f2}, 0) IS NULL THEN NULLIF(${f1}, 0)
+            WHEN NULLIF(${f1}, 0) <= NULLIF(${f2}, 0) THEN NULLIF(${f1}, 0)
+            ELSE NULLIF(${f2}, 0)
+          END`;
+          query = query
+            .orderByRaw(`(${minExpr}) ${rawSortDirection} NULLS LAST`)
+            .orderByRaw(`NULLIF(${f1}, 0) ASC NULLS LAST`);
+        } else if (PRICE_LIKE_FIELDS.has(rawSortField)) {
+          // Single price column: 0 → NULL → bottom of ASC sort.
+          query = query.orderByRaw(`NULLIF(??, 0) ${rawSortDirection} NULLS LAST`, [rawSortField]);
+        } else {
+          query = query.orderByRaw(`?? ${rawSortDirection} NULLS LAST`, [rawSortField]);
+        }
 
         // Clone query for count (before pagination)
         // clearOrder() removes ORDER BY clauses which are invalid on aggregate COUNT queries in PostgreSQL
@@ -783,7 +908,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const sanitizedResults = this.sanitizePublisherData(results, user);
 
         // Apply post-fetch sorting as final guarantee
-        const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection);
+        const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection, isDefaultSort);
 
         // Return in Strapi v4 format
         return {
@@ -800,6 +925,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       } catch (error) {
         console.error('❌ Knex sorting failed, falling back to default:', error.message);
         // Fallback to Strapi's default entityService (without NULLS LAST fix)
+        // Virtual _any fields aren't real columns; degrade to the GP-side price.
+        const virtualSortFallback = {
+          'price_any': 'price',
+          'adv_casino_pricing_any': 'adv_casino_pricing',
+          'adv_crypto_pricing_any': 'adv_crypto_pricing',
+          'adv_cbd_pricing_any': 'adv_cbd_pricing',
+          'adv_dating_pricing_any': 'adv_dating_pricing',
+        };
+        const fallbackField = virtualSortFallback[rawSortField] || rawSortField;
         try {
           const results = await strapi.entityService.findPage('api::marketplace.marketplace', {
             filters: ctx.query.filters,
@@ -807,14 +941,14 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             page,
             pageSize,
             orderBy: {
-              [rawSortField]: rawSortDirection
+              [fallbackField]: rawSortDirection
             }
           });
 
           if (results && results.results) {
             results.results = this.sanitizePublisherData(results.results, user);
             // Apply post-fetch sorting as final guarantee
-            results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection);
+            results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection, isDefaultSort);
           }
 
           return {
@@ -830,7 +964,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           if (result && result.data) {
             result.data = this.sanitizePublisherData(result.data, user);
             // Apply post-fetch sorting as final guarantee
-            result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection);
+            result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection, isDefaultSort);
           }
           return result;
         }
@@ -855,7 +989,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // Always ensure featured fields are the first sort criteria
       // Sites featured for any service type appear first
       const hasIsFeatured = orderByArray.some(obj => 'isFeaturedGuestPost' in obj || 'isFeaturedLinkInsertion' in obj);
-      if (!hasIsFeatured) {
+      if (isDefaultSort && !hasIsFeatured) {
         orderByArray.unshift({ isFeaturedGuestPost: 'desc' }, { isFeaturedLinkInsertion: 'desc' });
       }
       const entries = await strapi.db.query('api::marketplace.marketplace').findMany({
@@ -878,7 +1012,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const postSortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
       const sortField = postSortParts[0];
       const sortDirection = postSortParts[1] || 'desc';
-      const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection);
+      const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection, isDefaultSort);
 
       return {
         data: sortedEntries,
@@ -899,7 +1033,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         result.data = this.sanitizePublisherData(result.data, user);
         // Apply post-fetch sorting for fallback too
         const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
-        result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc');
+        result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc', isDefaultSort);
       }
       return result;
     }
@@ -972,6 +1106,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           exists: true,
           message: `This domain "${cleanDomain}" is already listed in the marketplace`,
           data: {
+            id: existingEntry.id,
             url: existingEntry.url
           }
         });

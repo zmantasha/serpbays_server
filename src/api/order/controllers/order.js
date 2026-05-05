@@ -330,17 +330,62 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // Create the order
         // First prepare order data with proper fields
 
-        // Find publisher ID: prioritize direct relation, fallback to email lookup
+        // Source-of-truth for publisher routing: the publisher-website
+        // record currently in `submissionStatus: 'approved'` for this
+        // URL. This stays correct even if the marketplace listing's
+        // publisher field has gone stale (e.g. ownership transferred
+        // before the marketplace pointer caught up).
         let publisherId = null;
-        if (marketplace && marketplace.publisher && marketplace.publisher.id) {
-          publisherId = marketplace.publisher.id;
-        } else if (marketplace && marketplace.publisher_email) {
-          const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
-            where: { email: marketplace.publisher_email }
-          });
-          if (publisherUser) {
-            publisherId = publisherUser.id;
+        let activePublisherUser = null;
+        if (marketplace?.url) {
+          try {
+            const activeWebsite = await strapi.db
+              .query('api::publisher-website.publisher-website')
+              .findOne({
+                where: {
+                  url: marketplace.url,
+                  submissionStatus: 'approved'
+                },
+                populate: ['currentPublisherId']
+              });
+            const owner = activeWebsite?.currentPublisherId;
+            if (owner?.id) {
+              publisherId = owner.id;
+              activePublisherUser = owner;
+            }
+          } catch (resolveErr) {
+            console.warn(
+              '[Order Create] Failed to resolve active publisher-website:',
+              resolveErr?.message
+            );
           }
+        }
+
+        // Fallback chain: marketplace.publisher → marketplace.publisher_email
+        if (!publisherId) {
+          if (marketplace && marketplace.publisher && marketplace.publisher.id) {
+            publisherId = marketplace.publisher.id;
+          } else if (marketplace && marketplace.publisher_email) {
+            const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+              where: { email: marketplace.publisher_email }
+            });
+            if (publisherUser) {
+              publisherId = publisherUser.id;
+            }
+          }
+        }
+
+        // If we resolved an active publisher whose email differs from
+        // the snapshot we already wrote into orderData earlier, fix
+        // the snapshot so directly-assigned-by-snapshot queries route
+        // future displays to the right inbox.
+        if (
+          activePublisherUser?.email &&
+          orderData.websitePublisherEmail !== activePublisherUser.email
+        ) {
+          orderData.websitePublisherEmail = activePublisherUser.email;
+          orderData.websitePublisherName =
+            activePublisherUser.username || activePublisherUser.email;
         }
 
         const orderToCreate = {
@@ -557,15 +602,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         try {
           // Use CURRENT publisher email from relation (always up-to-date), fallback to static field for legacy entries
           let publisherEmail = null;
+
+          console.log(`[ORDER ${order.id}] Determining publisher email for website ID: ${orderData.website}`);
+          console.log(`[ORDER ${order.id}] Marketplace publisher relation:`, marketplace?.publisher?.email || 'NONE');
+          console.log(`[ORDER ${order.id}] Marketplace publisher_email field:`, marketplace?.publisher_email || 'NONE');
+
           if (marketplace && marketplace.publisher && marketplace.publisher.email) {
             publisherEmail = marketplace.publisher.email;
+            console.log(`[ORDER ${order.id}] Using publisher.email: ${publisherEmail}`);
           } else if (marketplace && marketplace.publisher_email) {
             publisherEmail = marketplace.publisher_email;
+            console.log(`[ORDER ${order.id}] Using publisher_email field: ${publisherEmail}`);
           }
 
           if (publisherEmail) {
             // Send email notification for new order
             try {
+              console.log(`[ORDER ${order.id}] Sending order creation email to: ${publisherEmail}`);
               const emailService = strapi.service('api::global.email-operations');
               await emailService.sendOrderCreationEmail(
                 populatedOrder,
@@ -580,10 +633,90 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           } else {
             console.log(`Website not found or missing publisher_email for website ID: ${orderData.website}`);
           }
+
+          // Send order confirmation email to advertiser
+          try {
+            const emailService = strapi.service('api::global.email-operations');
+            await emailService.sendOrderConfirmationAdvertiserEmail(populatedOrder, user.email);
+            console.log(`[ORDER ${order.id}] Order confirmation email sent to advertiser: ${user.email}`);
+          } catch (emailError) {
+            console.error(`[ORDER ${order.id}] Failed to send advertiser confirmation email:`, emailError.message);
+          }
         } catch (notificationError) {
           console.error('Failed to create new order notification:', notificationError);
           // Don't fail the order creation if notification fails
         }
+
+        // ========== AUTOSEND: REMOVE FROM CONVERSION LISTS ==========
+        try {
+          const autoSendService = strapi.service('api::global.autosend-service');
+          if (autoSendService && user.email) {
+            // Remove from "wallet funded, no order" list — they just placed an order
+            const walletNoOrderListId = process.env.AUTOSEND_WALLET_NO_ORDER_LIST_ID;
+            if (walletNoOrderListId) {
+              autoSendService.removeFromList({ email: user.email, listId: walletNoOrderListId })
+                .catch(err => console.error('[Order] AutoSend removeFromList (wallet) error:', err.message));
+            }
+
+            // Remove from "abandoned cart" list — they completed checkout
+            const abandonedCartListId = process.env.AUTOSEND_ABANDONED_CART_LIST_ID;
+            if (abandonedCartListId) {
+              autoSendService.removeFromList({ email: user.email, listId: abandonedCartListId })
+                .catch(err => console.error('[Order] AutoSend removeFromList (cart) error:', err.message));
+            }
+
+            // Remove from "inactive signup" list — they finally converted
+            const inactiveSignupListId = process.env.AUTOSEND_INACTIVE_SIGNUP_LIST_ID;
+            if (inactiveSignupListId) {
+              autoSendService.removeFromList({ email: user.email, listId: inactiveSignupListId })
+                .catch(err => console.error('[Order] AutoSend removeFromList (inactive) error:', err.message));
+            }
+
+            // Remove from "win-back" list — they came back!
+            const winbackListId = process.env.AUTOSEND_WINBACK_LIST_ID;
+            if (winbackListId) {
+              autoSendService.removeFromList({ email: user.email, listId: winbackListId })
+                .catch(err => console.error('[Order] AutoSend removeFromList (winback) error:', err.message));
+            }
+
+            // Remove ordered item from favorites & clean up favorite reminder list
+            const favoriteListId = process.env.AUTOSEND_FAVORITE_REMINDER_LIST_ID;
+            if (orderData.website) {
+              try {
+                // Find and delete the shortlisted item for this marketplace + user
+                const shortlistedItem = await strapi.db.query('api::shortlist.shortlist').findOne({
+                  where: {
+                    marketplace: orderData.website,
+                    owner: user.id,
+                  },
+                });
+
+                if (shortlistedItem) {
+                  await strapi.entityService.delete('api::shortlist.shortlist', shortlistedItem.id);
+                  console.log(`[Order] Removed marketplace ${orderData.website} from user ${user.id} shortlist`);
+
+                  // Check if user has any remaining favorites
+                  if (favoriteListId) {
+                    const remainingCount = await strapi.db.query('api::shortlist.shortlist').count({
+                      where: { owner: user.id },
+                    });
+
+                    if (remainingCount === 0) {
+                      autoSendService.removeFromList({ email: user.email, listId: favoriteListId })
+                        .catch(err => console.error('[Order] AutoSend removeFromList (favorite) error:', err.message));
+                      console.log(`[Order] Removed ${user.email} from favorite reminder list (no favorites left)`);
+                    }
+                  }
+                }
+              } catch (shortlistErr) {
+                console.error('[Order] Shortlist cleanup error (non-blocking):', shortlistErr.message);
+              }
+            }
+          }
+        } catch (autoSendErr) {
+          console.error('[Order] AutoSend sync error (non-blocking):', autoSendErr.message);
+        }
+        // ========== END AUTOSEND ==========
 
         return {
           data: populatedOrder,
@@ -1010,19 +1143,16 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         let orders = [];
 
-        if (!publisherWebsites || publisherWebsites.length === 0) {
-          // If user has no publisher websites, they cannot see any available orders
-          return {
-            data: [],
-            meta: {
-              message: 'No websites found for this publisher'
-            }
-          };
-        }
-
-        // Get website IDs
+        // Don't early-return on zero marketplaces. The snapshot-based
+        // source below (source #3) still needs to run so that users
+        // who became active publishers via ownership transfer — but
+        // whose marketplace.publisher pointer hasn't caught up yet —
+        // can still see orders that were correctly snapshotted to
+        // their email at creation time.
         const websiteIds = publisherWebsites.map(website => website.id);
-        console.log(`[Available Orders] Looking for orders in websites: [${websiteIds.join(', ')}]`);
+        if (websiteIds.length > 0) {
+          console.log(`[Available Orders] Looking for orders in websites: [${websiteIds.join(', ')}]`);
+        }
 
         // Get orders for currently owned websites
         let currentWebsiteOrders = [];
@@ -1069,14 +1199,27 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             });
 
             if (currentMarketplaceListing && transferredWebsite.ownershipTransferredAt) {
-              // Get pending orders placed BEFORE the transfer date
+              // Get pending orders placed BEFORE the transfer date.
+              // Match orders that were either unassigned OR already
+              // assigned to this user — the previous owner. The order
+              // create flow stamps the active publisher onto the order
+              // when it's placed, so pre-transfer orders for this URL
+              // typically carry publisher = user.id, not null. The old
+              // restriction (publisher: null) silently dropped them.
               const preTransferOrders = await strapi.entityService.findMany('api::order.order', {
                 filters: {
-                  website: { id: currentMarketplaceListing.id },
-                  orderStatus: 'pending',
-                  publisher: null,
-                  orderDate: { $lt: transferredWebsite.ownershipTransferredAt },
-                  advertiser: { id: { $ne: user.id } }
+                  $and: [
+                    { website: { id: currentMarketplaceListing.id } },
+                    { orderStatus: 'pending' },
+                    { orderDate: { $lt: transferredWebsite.ownershipTransferredAt } },
+                    { advertiser: { id: { $ne: user.id } } },
+                    {
+                      $or: [
+                        { publisher: { $null: true } },
+                        { publisher: { id: user.id } }
+                      ]
+                    }
+                  ]
                 },
                 populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
                 sort: { orderDate: 'desc' }
@@ -1090,7 +1233,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // ALSO get pending orders where user is directly assigned via snapshot email
         // This catches orders for websites where ownership transferred but order was placed when user owned it
-        const directlyAssignedOrders = await strapi.entityService.findMany('api::order.order', {
+        const directlyAssignedRaw = await strapi.entityService.findMany('api::order.order', {
           filters: {
             $and: [
               { websitePublisherEmail: user.email },
@@ -1107,7 +1250,43 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
           sort: { orderDate: 'desc' }
         });
-        console.log(`[Available Orders] Found ${directlyAssignedOrders.length} orders via snapshot email ${user.email}`);
+
+        // Active-publisher safety filter: if a website's ownership has
+        // been transferred to someone else since this order was placed,
+        // do NOT surface it to the previous owner via the snapshot
+        // route. The active publisher-website record (status='approved')
+        // for the URL is the source of truth. Pre-transfer pending
+        // orders are already handled by the historicalOrders branch
+        // above with an explicit orderDate < ownershipTransferredAt
+        // bound, so dropping them here doesn't lose any legitimate
+        // visibility.
+        const directlyAssignedOrders = [];
+        const activeOwnerCacheByUrl = new Map();
+        for (const order of directlyAssignedRaw) {
+          const url = order.website?.url;
+          if (!url) {
+            // No URL to resolve against — keep original behavior.
+            directlyAssignedOrders.push(order);
+            continue;
+          }
+          let activeOwnerId = activeOwnerCacheByUrl.get(url);
+          if (activeOwnerId === undefined) {
+            const activeWebsite = await strapi.db
+              .query('api::publisher-website.publisher-website')
+              .findOne({
+                where: { url, submissionStatus: 'approved' },
+                populate: ['currentPublisherId']
+              });
+            activeOwnerId = activeWebsite?.currentPublisherId?.id || null;
+            activeOwnerCacheByUrl.set(url, activeOwnerId);
+          }
+          // If there's no active record at all (rare), fall back to
+          // showing the order — legacy/unmanaged URLs should still work.
+          if (!activeOwnerId || activeOwnerId === user.id) {
+            directlyAssignedOrders.push(order);
+          }
+        }
+        console.log(`[Available Orders] Found ${directlyAssignedOrders.length} orders via snapshot email ${user.email} (filtered by active publisher match)`);
 
         // Combine all sources: current + historical + directly assigned via snapshot
         const combinedOrders = [...currentWebsiteOrders, ...historicalOrders, ...directlyAssignedOrders];
@@ -1602,6 +1781,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
             if (advertiserUser && advertiserUser.email) {
               const emailService = strapi.service('api::global.email-operations');
+              console.log("emailService", emailService)
               await emailService.sendOrderDeliveryEmail(
                 fullOrder,
                 advertiserUser.email,
@@ -2211,10 +2391,14 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           data: updateData
         });
 
-        // Create a communication record
+        // Create a communication record (only if the publisher wrote a message)
+        const isRevision = order.orderStatus === 'delivered' || order.revisionStatus === 'requested';
+        const commMessage = message
+          ? `${isRevision ? 'Revision completed' : 'Delivery submitted'}: ${message}`
+          : (isRevision ? 'Revision completed' : 'Delivery submitted');
         await strapi.entityService.create('api::communication.communication', {
           data: {
-            message: `Revision completed: ${message}`,
+            message: commMessage,
             sender: user.id,
             order: orderId,
             communicationStatus: 'acceptance',
@@ -2232,6 +2416,36 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         } catch (notificationError) {
           console.error('Failed to create revision completed notification:', notificationError);
           // Don't fail the revision completion if notification fails
+        }
+
+        // Send delivery email to advertiser
+        try {
+          const fullOrder = await strapi.entityService.findOne('api::order.order', orderId, {
+            populate: ['advertiser', 'publisher', 'website']
+          });
+
+          const advertiserUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+            where: { id: order.advertiser?.id || order.advertiser }
+          });
+
+          if (advertiserUser && advertiserUser.email) {
+            const emailService = strapi.service('api::global.email-operations');
+            console.log(`[Revision Complete] Sending delivery email to ${advertiserUser.email}`);
+
+            // Update fullOrder with the latest delivery info
+            fullOrder.deliveryProofUrl = deliveryProof;
+            fullOrder.deliveryMessage = message;
+
+            await emailService.sendOrderDeliveryEmail(
+              fullOrder,
+              advertiserUser.email,
+              user.email
+            );
+            console.log(`Revision completion delivery email sent for order ${orderId}`);
+          }
+        } catch (emailError) {
+          console.error('Failed to send revision completion delivery email:', emailError);
+          // Don't fail the revision completion if email fails
         }
 
         return {

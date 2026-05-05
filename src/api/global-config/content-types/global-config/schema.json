@@ -1,5 +1,5 @@
 {
-  "kind": "collectionType",
+  "kind": "singleType",
   "collectionName": "global_configs",
   "info": {
     "singularName": "global-config",
@@ -22,7 +22,9 @@
     },
     "supportedCurrencies": {
       "type": "json",
-      "default": ["USD"],
+      "default": [
+        "USD"
+      ],
       "required": true
     },
     "autoApproveDays": {
@@ -55,6 +57,10 @@
         }
       },
       "required": true
+    },
+    "newsletterEnabled": {
+      "type": "boolean",
+      "default": false
     }
   }
 }
