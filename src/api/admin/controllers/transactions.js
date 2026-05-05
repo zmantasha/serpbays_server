@@ -430,9 +430,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async getStats(ctx) {
     try {
       const txQuery = strapi.db.query('api::transaction.transaction');
-      const SETTLED = { transactionStatus: 'success' };
+      // Settled = money has actually moved. Deposits/refunds/promos land at
+      // 'success'; withdrawals/payouts settle to 'paid' via the
+      // withdrawal-request lifecycle. Both belong in the totals.
+      const SETTLED_STATUSES = ['success', 'paid'];
+      const SETTLED = { transactionStatus: { $in: SETTLED_STATUSES } };
 
-      const [total, pending, success, failed] = await Promise.all([
+      const [total, pending, settled, failed] = await Promise.all([
         txQuery.count(),
         txQuery.count({ where: { transactionStatus: 'pending' } }),
         txQuery.count({ where: SETTLED }),
@@ -487,8 +491,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         // counts
         total,
         pending,
-        success,
-        completed: success, // backward-compat alias
+        success: settled,
+        completed: settled, // backward-compat alias
         failed,
         newThisMonth,
         // amounts (numbers, not strings — frontend uses .toLocaleString())
