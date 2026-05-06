@@ -93,6 +93,29 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       try {
         switch (gateway.toLowerCase()) {
           case 'stripe':
+            // Server-side dedup: reuse a recent pending Stripe transaction (within 60s) to avoid duplicate PaymentIntents
+            // Skipped when userId is unset (dev-mode unauthenticated path) to avoid cross-user matching.
+            const recentPendingStripe = userId ? await strapi.db.query('api::transaction.transaction').findOne({
+              where: {
+                users_permissions_user: userId,
+                gateway: 'stripe',
+                transactionStatus: 'pending',
+                amount: parsedBaseAmount,
+                createdAt: { $gte: new Date(Date.now() - 60_000) }
+              },
+              populate: ['user_wallet']
+            }) : null;
+
+            if (recentPendingStripe && recentPendingStripe.metadata && recentPendingStripe.metadata.paymentIntent) {
+              console.log(`[PAYMENT] Reusing recent pending transaction ${recentPendingStripe.id} (within 60s window)`);
+              return {
+                data: {
+                  walletId: wallet.id,
+                  paymentData: recentPendingStripe.metadata.paymentIntent
+                }
+              };
+            }
+
             // Create metadata for the payment intent (include baseAmount for wallet credit)
             const stripeMetadata = {
               walletId: wallet.id.toString(),
@@ -451,6 +474,12 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         });
 
         if (existingTransaction) {
+          // ✅ IDEMPOTENCY: Stripe retries webhooks. If already success, do nothing.
+          if (existingTransaction.transactionStatus === 'success') {
+            console.log(`[WEBHOOK] ⚠️ Transaction ${existingTransaction.id} already processed (success), skipping to prevent double-credit and duplicate promo bonus`);
+            return { success: true, message: 'already processed' };
+          }
+
           console.log(`✅ Found transaction ${existingTransaction.id}, updating status to success`);
 
           // Update transaction status to success
@@ -760,6 +789,15 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       if (!wallet) {
         return ctx.notFound('Wallet not found or does not belong to user');
+      }
+
+      // Idempotency: if a transaction already exists for this gatewayTransactionId, return it
+      const existing = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId }
+      });
+      if (existing) {
+        console.log(`[PENDING] Transaction already exists for gatewayTransactionId ${gatewayTransactionId}, returning existing row ${existing.id} (idempotent)`);
+        return { data: { transaction: existing } };
       }
 
       // Create pending transaction
