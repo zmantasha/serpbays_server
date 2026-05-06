@@ -29,7 +29,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // Additional filters
         sensitiveCategory, language, country,
         allowedLinks, placementSpeed, sponsored, ugc, backlinkType,
-        websiteUrl, domainZone, contentType
+        websiteUrl, domainZone, contentType,
+        // Sorting
+        sortField, sortDirection
       } = ctx.query;
 
       // Build filters
@@ -201,11 +203,32 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         }
       });
 
-      // NULL-safe sort: featured first (COALESCE treats NULL as false), then newest
-      // A website is "featured" in the admin listing if it's featured for EITHER GP or LI
-      query = query
-        .orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC')
-        .orderBy('created_at', 'desc');
+      // Sort: explicit sortField overrides the default (featured-first / newest)
+      // ordering. The frontend whitelists the field names, but we re-validate
+      // here against a server-side allowlist so callers can't sort by arbitrary
+      // columns.
+      const SORTABLE_FIELDS = {
+        domain: 'url',
+        url: 'url',
+        da: 'moz_da',
+        dr: 'ahrefs_dr',
+        traffic: 'ahrefs_traffic',
+        price: 'price',
+        spamScore: 'moz_spam_score',
+        createdAt: 'created_at',
+      };
+      const dbField = sortField ? SORTABLE_FIELDS[sortField] : null;
+      const dir = String(sortDirection || '').toLowerCase() === 'asc' ? 'asc' : 'desc';
+
+      if (dbField) {
+        query = query.orderBy(dbField, dir);
+      } else {
+        // NULL-safe default: featured first (COALESCE treats NULL as false), then newest.
+        // A website is "featured" in the admin listing if it's featured for EITHER GP or LI.
+        query = query
+          .orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC')
+          .orderBy('created_at', 'desc');
+      }
 
       // Count query (without ORDER BY — PostgreSQL rejects ORDER BY on aggregates)
       const countQuery = query.clone().clearOrder().count('* as count');
