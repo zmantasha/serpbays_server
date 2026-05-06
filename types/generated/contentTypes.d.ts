@@ -2584,6 +2584,114 @@ export interface ApiSavedFilterSavedFilter extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiSharedListTemplateSharedListTemplate
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'shared_list_templates';
+  info: {
+    description: 'Reusable column-set + display preset for shared lists';
+    displayName: 'Shared list template';
+    pluralName: 'shared-list-templates';
+    singularName: 'shared-list-template';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    allowDownload: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    allowFilter: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    allowSearch: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    createdByAdminId: Schema.Attribute.Integer;
+    currency: Schema.Attribute.Enumeration<['USD', 'INR', 'EUR', 'GBP']> &
+      Schema.Attribute.DefaultTo<'USD'>;
+    description: Schema.Attribute.Text;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::shared-list-template.shared-list-template'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    visibleColumns: Schema.Attribute.JSON & Schema.Attribute.Required;
+  };
+}
+
+export interface ApiSharedListSharedList extends Struct.CollectionTypeSchema {
+  collectionName: 'shared_lists';
+  info: {
+    description: 'Curated, shareable website lists for customers';
+    displayName: 'Shared list';
+    pluralName: 'shared-lists';
+    singularName: 'shared-list';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    accessMode: Schema.Attribute.Enumeration<['public', 'private']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'public'>;
+    allowDownload: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    allowFilter: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    allowSearch: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    archived: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    createdByAdminId: Schema.Attribute.Integer;
+    currency: Schema.Attribute.Enumeration<['USD', 'INR', 'EUR', 'GBP']> &
+      Schema.Attribute.DefaultTo<'USD'>;
+    customRules: Schema.Attribute.Text;
+    description: Schema.Attribute.Text;
+    expiresAt: Schema.Attribute.DateTime;
+    lastViewedAt: Schema.Attribute.DateTime;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::shared-list.shared-list'
+    > &
+      Schema.Attribute.Private;
+    markupType: Schema.Attribute.Enumeration<['percent', 'fixed']> &
+      Schema.Attribute.DefaultTo<'percent'>;
+    markupValue: Schema.Attribute.Decimal & Schema.Attribute.DefaultTo<0>;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    passwordHash: Schema.Attribute.String & Schema.Attribute.Private;
+    priceOverrides: Schema.Attribute.JSON;
+    pricingMode: Schema.Attribute.Enumeration<
+      ['hidden', 'marketplace', 'markup', 'custom']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'marketplace'>;
+    publishedAt: Schema.Attribute.DateTime;
+    sharedWith: Schema.Attribute.Relation<
+      'manyToMany',
+      'plugin::users-permissions.user'
+    >;
+    slug: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    snapshotData: Schema.Attribute.JSON & Schema.Attribute.Private;
+    snapshotEnabled: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    snapshotTakenAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    viewCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
+    visibleColumns: Schema.Attribute.JSON;
+    websites: Schema.Attribute.Relation<
+      'manyToMany',
+      'api::marketplace.marketplace'
+    >;
+  };
+}
+
 export interface ApiShortlistShortlist extends Struct.CollectionTypeSchema {
   collectionName: 'shortlists';
   info: {
@@ -3815,6 +3923,8 @@ declare module '@strapi/strapi' {
       'api::publisher-website.publisher-website': ApiPublisherWebsitePublisherWebsite;
       'api::reseller-code.reseller-code': ApiResellerCodeResellerCode;
       'api::saved-filter.saved-filter': ApiSavedFilterSavedFilter;
+      'api::shared-list-template.shared-list-template': ApiSharedListTemplateSharedListTemplate;
+      'api::shared-list.shared-list': ApiSharedListSharedList;
       'api::shortlist.shortlist': ApiShortlistShortlist;
       'api::transaction.transaction': ApiTransactionTransaction;
       'api::user-wallet.user-wallet': ApiUserWalletUserWallet;

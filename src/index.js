@@ -99,7 +99,9 @@ module.exports = {
       require('./api/admin/routes/withdrawals'),
       require('./api/admin/routes/codes'),
       require('./api/admin/routes/website-transfers'),
-      require('./api/admin/routes/audit-logs')
+      require('./api/admin/routes/audit-logs'),
+      require('./api/admin/routes/shared-lists'),
+      require('./api/admin/routes/shared-list-templates')
     ];
 
     // Admin routes under src/api/admin/routes/* are auto-registered by Strapi's
