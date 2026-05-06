@@ -12,7 +12,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   // Create payment intent
   async createPayment(ctx) {
     try {
-      const { amount, baseAmount, currency = 'USD', gateway, couponCode } = ctx.request.body;
+      const { amount, baseAmount, currency = 'USD', gateway } = ctx.request.body;
       const userId = ctx.state?.user?.id;
       let wallet;
       console.log("[PAYMENT] Received payment request:", {
@@ -211,7 +211,6 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
                 userId: userId || wallet.users_permissions_user?.id,
                 baseAmount: parsedBaseAmount, // Store for reference
                 totalAmount: parsedAmount, // Store total paid for reference
-                couponCode: couponCode || null, // Store coupon code for offer application
                 createdAt: new Date().toISOString()
               },
               publishedAt: new Date()
@@ -299,8 +298,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               baseAmountUSD: razorpayBaseAmount,
               paidAmountINR: razorpayINRAmount,
               conversionRate: razorpayRate,
-              originalAmountUSD: paymentData.originalAmountUSD || parsedAmount,
-              couponCode: couponCode || null // Store coupon code for offer application
+              originalAmountUSD: paymentData.originalAmountUSD || parsedAmount
             },
             publishedAt: new Date()
           },
@@ -591,86 +589,6 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
                     fund_source: 'main_fund' // Direct payments go to main balance
                   }
                 });
-
-                // --- OFFER BONUS APPLICATION ---
-                try {
-                  const offerEngine = strapi.service('api::offer.offer-engine');
-                  const couponCode = existingTransaction.metadata?.couponCode || existingTransaction.metadata?.offerData?.couponCode || null;
-
-                  const offerResult = await offerEngine.applyOffers(
-                    wallet.users_permissions_user?.id,
-                    transactionAmount,
-                    couponCode,
-                    existingTransaction.id  // Exclude current tx from deposit count
-                  );
-
-                  if (offerResult.totalBonus > 0) {
-                    // Credit bonus to promoBalance
-                    const updatedPromoBalance = currentPromoBalance + offerResult.totalBonus;
-                    const updatedTotalBalance = newMainBalance + updatedPromoBalance;
-
-                    await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-                      data: {
-                        promoBalance: updatedPromoBalance,
-                        balance: updatedTotalBalance
-                      }
-                    });
-
-                    console.log(`🎁 Offer bonus applied: $${offerResult.totalBonus} to promoBalance. New total: $${updatedTotalBalance}`);
-
-                    // Record usage for each applied offer
-                    for (const appliedOffer of offerResult.appliedOffers) {
-                      await offerEngine.recordUsage(
-                        appliedOffer.id,
-                        wallet.users_permissions_user?.id,
-                        existingTransaction.id,
-                        appliedOffer.bonusAmount,
-                        transactionAmount
-                      );
-                    }
-
-                    // Create a bonus transaction record
-                    await strapi.entityService.create('api::transaction.transaction', {
-                      data: {
-                        type: 'promo',
-                        amount: offerResult.totalBonus,
-                        netAmount: offerResult.totalBonus,
-                        currency: existingTransaction.currency || 'USD',
-                        gateway: 'system',
-                        gatewayTransactionId: `OFFER-BONUS-${existingTransaction.id}-${Date.now()}`,
-                        transactionStatus: 'success',
-                        user_wallet: wallet.id,
-                        users_permissions_user: wallet.users_permissions_user?.id,
-                        fund_source: 'promo_fund',
-                        description: `Offer (${offerResult.appliedOffers.map(o => o.title).join(', ')})`,
-                        metadata: {
-                          appliedOffers: offerResult.appliedOffers,
-                          parentTransactionId: existingTransaction.id,
-                          rechargeAmount: transactionAmount
-                        },
-                        publishedAt: new Date()
-                      }
-                    });
-
-                    // Store offer info in the original transaction metadata
-                    await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
-                      data: {
-                        metadata: {
-                          ...existingTransaction.metadata,
-                          offerBonus: offerResult.totalBonus,
-                          appliedOffers: offerResult.appliedOffers.map(o => ({
-                            id: o.id,
-                            title: o.title,
-                            bonusAmount: o.bonusAmount
-                          }))
-                        }
-                      }
-                    });
-                  }
-                } catch (offerError) {
-                  // Offer application failure should NOT block the payment
-                  console.error('[OFFER] ⚠️ Failed to apply offers (payment still succeeded):', offerError.message);
-                }
 
                 // Create invoice for successful deposit
                 if (existingTransaction.type === 'deposit') {
