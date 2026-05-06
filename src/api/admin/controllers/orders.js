@@ -178,10 +178,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} assigning publisher ${publisherId} to order ${id}`);
 
+      // Note: assignment does NOT change orderStatus — there is no 'assigned'
+      // value in the schema enum. The order stays in whatever lifecycle stage
+      // it's currently in (typically 'pending'); the publisher relation is
+      // simply set/replaced.
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
           publisher: publisherId,
-          orderStatus: 'assigned',
           assignedAt: new Date()
         },
         populate: ['advertiser', 'publisher']
@@ -311,6 +314,70 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
     } catch (error) {
       console.error('[ADMIN ORDER CANCEL ERROR]', error);
       return ctx.internalServerError('Failed to cancel order');
+    }
+  },
+
+  /**
+   * Reject order (admin action) — only pending orders can be rejected.
+   * Refunds escrow to advertiser via the order service, then sets
+   * orderStatus='rejected' + rejectionReason + rejectedDate.
+   */
+  async rejectOrder(ctx) {
+    try {
+      const adminId = ctx.state.user.id;
+      const { id } = ctx.params;
+      const { reason } = ctx.request.body || {};
+
+      if (!reason || !String(reason).trim()) {
+        return ctx.badRequest('Rejection reason is required');
+      }
+
+      const existing = await strapi.entityService.findOne('api::order.order', id);
+      if (!existing) return ctx.notFound('Order not found');
+      if (existing.orderStatus !== 'pending') {
+        return ctx.badRequest('Only pending orders can be rejected');
+      }
+
+      console.log(`[ADMIN ACTION] Admin ${adminId} rejecting order ${id}. Reason: ${reason}`);
+
+      // Run escrow refund first; if it fails we don't move the status so the
+      // operation can be safely retried.
+      try {
+        await strapi.service('api::order.order').rejectOrder(id, ctx.state.user);
+      } catch (err) {
+        console.error('[ADMIN ORDER REJECT REFUND ERROR]', err);
+        return ctx.internalServerError(`Refund failed: ${err.message || 'unknown error'}`);
+      }
+
+      const updatedOrder = await strapi.entityService.update('api::order.order', id, {
+        data: {
+          orderStatus: 'rejected',
+          rejectionReason: String(reason).trim(),
+          rejectedDate: new Date(),
+        },
+        populate: ['advertiser', 'publisher'],
+      });
+
+      try {
+        await strapi.entityService.create('api::communication.communication', {
+          data: {
+            sender: adminId,
+            order: id,
+            message: `Order rejected by admin. Reason: ${String(reason).trim()}`,
+            messageType: 'rejection',
+            isAdminMessage: true,
+            publishedAt: new Date(),
+          },
+        });
+      } catch (logErr) {
+        // Log-only failure — don't fail the request, the order is already rejected.
+        console.warn('[ADMIN ORDER REJECT] communication log failed:', logErr?.message);
+      }
+
+      ctx.send({ data: updatedOrder });
+    } catch (error) {
+      console.error('[ADMIN ORDER REJECT ERROR]', error);
+      return ctx.internalServerError('Failed to reject order');
     }
   },
 

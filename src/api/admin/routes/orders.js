@@ -62,6 +62,15 @@ module.exports = {
       }
     },
     {
+      method: 'PUT',
+      path: '/admin/orders/:id/reject',
+      handler: 'orders.rejectOrder',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
       method: 'GET',
       path: '/admin/orders/:id/content',
       handler: 'orders.getOrderContent',
