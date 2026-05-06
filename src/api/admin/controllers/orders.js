@@ -275,42 +275,98 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
   },
 
   /**
-   * Cancel order (admin action)
+   * Cancel order (admin action). Mirrors the user-facing cancel flow:
+   * refund escrow → update status → audit log → notifications. The
+   * previous implementation only updated the status, leaving the
+   * advertiser's escrow held forever.
    */
   async cancelOrder(ctx) {
     try {
+      const adminId = ctx.state.user.id;
       const { id } = ctx.params;
-      const { reason } = ctx.request.body;
+      const { reason } = ctx.request.body || {};
 
-      // Log admin action
-      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} cancelling order ${id}. Reason: ${reason}`);
+      console.log(`[ADMIN ACTION] Admin ${adminId} cancelling order ${id}. Reason: ${reason}`);
 
+      // 1. Fetch order with relations (the service helpers populate-walk these)
+      const order = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
+      if (!order) return ctx.notFound('Order not found');
+
+      // 2. Guard against re-cancellation and post-payout states. The refund
+      // helper throws on insufficient escrow, but a cleaner upfront error
+      // is friendlier than "Insufficient escrow balance: have $0".
+      if (order.orderStatus === 'cancelled') {
+        return ctx.badRequest('Order is already cancelled');
+      }
+      if (order.orderStatus === 'completed') {
+        return ctx.badRequest('Cannot cancel a completed order — escrow has already been released to the publisher');
+      }
+      if (order.orderStatus === 'rejected') {
+        return ctx.badRequest('Order is already rejected; escrow was refunded at rejection time');
+      }
+
+      const orderService = strapi.service('api::order.order');
+
+      // 3. Refund escrow to advertiser. Throws on insufficient escrow,
+      // which we surface as a 400 with the underlying message.
+      let refundAmount;
+      try {
+        refundAmount = await orderService.refundEscrowToAdvertiser(order);
+      } catch (refundErr) {
+        console.error('[ADMIN ORDER CANCEL REFUND ERROR]', refundErr);
+        return ctx.badRequest(`Refund failed: ${refundErr.message || 'unknown error'}`);
+      }
+
+      // 4. Update order status only after the refund succeeded so the
+      // operation is safely retryable on intermittent failures.
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
           orderStatus: 'cancelled',
           cancellationReason: reason,
           cancelledAt: new Date(),
-          cancelledBy: 'admin'
+          cancelledBy: 'admin',
         },
-        populate: ['advertiser', 'publisher']
+        populate: ['advertiser', 'publisher'],
       });
 
-      // Create communication log for cancellation
-      await strapi.entityService.create('api::communication.communication', {
-        data: {
-          sender: ctx.state.user.id,
-          order: id,
-          message: `Order cancelled by admin. Reason: ${reason || 'No reason provided'}`,
-          messageType: 'cancellation',
-          isAdminMessage: true,
-          publishedAt: new Date()
-        }
-      });
+      // 5. Audit log + chatroom communication entry. Both are best-effort —
+      // the cancellation has already happened atomically by this point.
+      try {
+        await orderService.createAuditLog(order, 'cancelled', adminId, reason);
+      } catch (auditErr) {
+        console.warn('[ADMIN ORDER CANCEL] audit log failed:', auditErr?.message);
+      }
+      try {
+        await strapi.entityService.create('api::communication.communication', {
+          data: {
+            sender: adminId,
+            order: id,
+            message: `Order cancelled by admin. Reason: ${reason || 'No reason provided'}`,
+            messageType: 'cancellation',
+            isAdminMessage: true,
+            publishedAt: new Date(),
+          },
+        });
+      } catch (chatErr) {
+        console.warn('[ADMIN ORDER CANCEL] chatroom log failed:', chatErr?.message);
+      }
+
+      // 6. Notifications (email + in-app). Also best-effort.
+      try {
+        await orderService.sendCancellationNotifications(order, 'admin', reason);
+      } catch (notifErr) {
+        console.warn('[ADMIN ORDER CANCEL] notifications failed:', notifErr?.message);
+      }
 
       ctx.send({
-        data: updatedOrder
+        data: {
+          order: updatedOrder,
+          refundAmount,
+          refundedTo: 'advertiser',
+        },
       });
-
     } catch (error) {
       console.error('[ADMIN ORDER CANCEL ERROR]', error);
       return ctx.internalServerError('Failed to cancel order');
