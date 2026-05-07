@@ -334,8 +334,14 @@ async function handlePaymentSucceeded(paymentIntent) {
 
       console.log(`[STRIPE] Processing transaction ${transaction.id} for Payment Intent ${paymentIntent.id}`);
 
-      // Get wallet ID from metadata or transaction
-      const walletId = paymentIntent.metadata?.walletId || transaction.user_wallet?.id;
+      // Get wallet ID from metadata or transaction.
+      // Stripe metadata values are always strings; coerce so the integer-keyed
+      // wallet lookup doesn't silently miss under stricter DB drivers.
+      const metadataWalletId = paymentIntent.metadata?.walletId
+        ? Number(paymentIntent.metadata.walletId)
+        : null;
+      const walletId = (Number.isFinite(metadataWalletId) ? metadataWalletId : null)
+        || transaction.user_wallet?.id;
 
       if (!walletId) {
         console.error(`[STRIPE] ❌ No wallet ID found for Payment Intent ${paymentIntent.id}`);
@@ -546,7 +552,7 @@ async function handlePaymentCanceled(paymentIntent) {
 
     await strapi.entityService.update('api::transaction.transaction', transaction.id, {
       data: {
-        transactionStatus: 'canceled',
+        transactionStatus: 'cancelled',
         canceledAt: new Date(),
         metadata: {
           ...transaction.metadata,
