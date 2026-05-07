@@ -24,11 +24,22 @@ module.exports = ({ env }) => ({
       },
     },
   },
-  // Email plugin configuration (kept for backwards compatibility)
-  // NOTE: AutoSend is now used directly via autosend-service.js instead of this plugin
+  // Email plugin configuration. Most flows now go through autosend-service.js,
+  // but a few still call strapi.plugins.email.services.email.send directly
+  // (e.g. withdrawal OTP), so the SMTP transport must be wired up here too.
+  // Without providerOptions, nodemailer silently falls back to 127.0.0.1:587.
   'email': {
     config: {
       provider: 'nodemailer',
+      providerOptions: {
+        host: env('SMTP_HOST', 'smtp.gmail.com'),
+        port: env.int('SMTP_PORT', 587),
+        secure: env.bool('SMTP_SECURE', false),
+        auth: {
+          user: env('SMTP_USERNAME'),
+          pass: env('SMTP_PASSWORD'),
+        },
+      },
       settings: {
         defaultFrom: env('EMAIL_FROM', 'noreply@serpbays.com'),
         defaultReplyTo: env('EMAIL_REPLY_TO', 'support@serpbays.com'),

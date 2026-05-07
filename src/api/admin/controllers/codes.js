@@ -32,10 +32,7 @@ module.exports = createCoreController('api::reseller-code.reseller-code', ({ str
       
       if (type && type !== 'all') {
         if (type === 'reseller') {
-          resellerFilters.$or = [
-            { assignedTo: { $notNull: true } },
-            { assignedToName: { $notNull: true } }
-          ];
+          // Type narrowing happens in the merge step below — no extra filter needed.
         }
       }
       
@@ -554,26 +551,41 @@ module.exports = createCoreController('api::reseller-code.reseller-code', ({ str
   
   /**
    * Delete a code
-   * DELETE /api/admin/codes/:id
+   * DELETE /api/admin/codes/:id?type=reseller-code|promo-code|voucher-code
    */
   async deleteCode(ctx) {
     try {
       const { id } = ctx.params;
-      
-      // Check if code has been used
-      const code = await strapi.entityService.findOne('api::reseller-code.reseller-code', id);
-      
-      if (code.usedCount > 0) {
+      const { type } = ctx.query;
+
+      // Map the type query param to the correct collection UID.
+      // Default to reseller-code for backwards compatibility.
+      const uidByType = {
+        'reseller-code': 'api::reseller-code.reseller-code',
+        'promo-code': 'api::promo-code.promo-code',
+        'voucher-code': 'api::voucher-code.voucher-code',
+      };
+      const uid = uidByType[type] || 'api::reseller-code.reseller-code';
+
+      const code = await strapi.entityService.findOne(uid, id);
+
+      if (!code) {
+        return ctx.notFound('Code not found');
+      }
+
+      // Reseller codes track usedCount; refuse to delete if it has been used.
+      // Promo/voucher codes don't have this field — skip the check for them.
+      if (uid === 'api::reseller-code.reseller-code' && code.usedCount > 0) {
         return ctx.badRequest('Cannot delete code that has been used. Consider deactivating it instead.');
       }
-      
-      await strapi.entityService.delete('api::reseller-code.reseller-code', id);
-      
+
+      await strapi.entityService.delete(uid, id);
+
       ctx.send({
         success: true,
         message: 'Code deleted successfully'
       });
-      
+
     } catch (error) {
       console.error('[ADMIN CODES DELETE ERROR]', error);
       ctx.internalServerError('Failed to delete code');

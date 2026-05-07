@@ -277,7 +277,8 @@
       "enum": [
         "advertiser",
         "publisher",
-        "system"
+        "system",
+        "admin"
       ],
       "description": "Who cancelled the order"
     },
@@ -292,6 +293,28 @@
     "cancellationNotes": {
       "type": "text",
       "description": "Additional notes regarding cancellation"
+    },
+    "createdByAdminId": {
+      "type": "integer",
+      "description": "Admin user id who placed this order on behalf of the advertiser (null for self-placed orders)"
+    },
+    "adminReason": {
+      "type": "text",
+      "description": "Admin-supplied reason when creating an order on behalf of the advertiser"
+    },
+    "userConsentType": {
+      "type": "string",
+      "enum": [
+        "ticket",
+        "email",
+        "phone",
+        "chat"
+      ],
+      "description": "How user consent was collected for an admin-placed order"
+    },
+    "userConsentReference": {
+      "type": "string",
+      "description": "Ticket id, email subject, phone-log reference, or chat reference attesting to user consent"
     }
   }
 }

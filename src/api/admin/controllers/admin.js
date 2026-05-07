@@ -198,19 +198,32 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
 
       // Get financial statistics - wrapped in try-catch
       try {
-        const totalTransactions = await strapi.db.query('api::transaction.transaction').count();
-        const pendingWithdrawals = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
-          where: { status: 'pending' }
-        });
+        // Revenue = sum of successful inflow transactions (payments + deposits).
+        // transactionStatus enum has no 'completed' value — valid success states are
+        // 'success' and 'paid'. We exclude withdrawals/refunds/fees so this represents
+        // money coming in, not flowing out.
+        const successStatuses = ['success', 'paid'];
+        const revenueTypes = ['payment', 'deposit'];
 
-        // Calculate total revenue (sum of completed transactions)
         const revenueData = await strapi.db.query('api::transaction.transaction').findMany({
-          where: { transactionStatus: 'completed' },
+          where: {
+            transactionStatus: { $in: successStatuses },
+            type: { $in: revenueTypes }
+          },
           select: ['amount']
         });
         const totalRevenue = revenueData.reduce((sum, transaction) => {
           return sum + parseFloat(transaction.amount || 0);
         }, 0);
+
+        // Count only the transactions that contributed to revenue so the
+        // "X transactions" sub-label on the Revenue card stays consistent.
+        const totalTransactions = revenueData.length;
+
+        // Withdrawal-request schema field is `withdrawal_status`, not `status`.
+        const pendingWithdrawals = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+          where: { withdrawal_status: 'pending' }
+        });
 
         stats.financial = {
           totalTransactions,

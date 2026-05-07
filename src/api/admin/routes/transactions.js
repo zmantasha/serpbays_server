@@ -54,6 +54,15 @@ module.exports = {
     },
     {
       method: 'PUT',
+      path: '/admin/transactions/:id',
+      handler: 'transactions.update',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
+      method: 'PUT',
       path: '/admin/transactions/:id/approve',
       handler: 'transactions.approve',
       config: {

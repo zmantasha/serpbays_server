@@ -5,6 +5,7 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
+const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues } = require('../../../constants/website-options');
 
 // In-memory storage for bulk import progress (since cache might not be available)
 const bulkImportProgress = new Map();
@@ -1156,7 +1157,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const preparedData = {
         url: websiteData.url,
         protocol: 'https',
-        publisherEmail: websiteData.publisherEmail || 'admin@serpbays.com', // Required field
+        publisherEmail: (websiteData.publisherEmail || 'admin@serpbays.com').toLowerCase().trim(), // Required field, always lowercase
         publisherName: websiteData.publisherName,
         description: websiteData.description,
         submissionStatus: websiteData.submissionStatus || 'approval_pending',
@@ -1305,6 +1306,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         publicationLocation: updateData.publicationLocation
       };
 
+      // Metric fields that should NOT be overwritten with 0 if they were null/N/A
+      const metricFields = [
+        'moz_da', 'ahrefs_dr', 'ahrefs_traffic', 'ahrefs_rank',
+        'semrush_authority_score', 'moz_spam_score',
+        'ahrefs_referring_domain', 'ahrefs_keywords', 'semrush_traffic'
+      ];
+
       // Remove undefined, null, and invalid values
       Object.keys(mappedData).forEach(key => {
         const value = mappedData[key];
@@ -1312,9 +1320,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         if (value === undefined || value === null) {
           delete mappedData[key];
         }
-        // Remove 0 for ahrefs_rank (schema has min: 1)
-        if (key === 'ahrefs_rank' && value === 0) {
-          delete mappedData[key];
+        // For metric fields: don't overwrite existing null/N/A with 0
+        if (metricFields.includes(key) && (value === 0 || value === '0' || value === '')) {
+          const existingValue = websiteBeforeUpdate[key];
+          if (existingValue === null || existingValue === undefined) {
+            delete mappedData[key]; // Preserve existing null (N/A)
+          }
         }
       });
 
@@ -2194,7 +2205,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const preparedData = {
         url: newWebsiteData.url,
         protocol: newWebsiteData.protocol || 'https',
-        publisherEmail: newWebsiteData.publisherEmail || existingWebsite.publisherEmail,
+        publisherEmail: (newWebsiteData.publisherEmail || existingWebsite.publisherEmail || '').toLowerCase().trim(),
         publisherName: newWebsiteData.publisherName,
         description: newWebsiteData.description,
         submissionStatus: newWebsiteData.submissionStatus || existingWebsite.submissionStatus,
@@ -2491,7 +2502,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 // --- USER LOOKUP AND LINKING (for replacement) ---
                 if (preparedData.publisherEmail) {
                   const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
-                    where: { email: preparedData.publisherEmail }
+                    where: { email: { $eqi: preparedData.publisherEmail } }
                   });
                   if (existingUser) {
                     preparedData.currentPublisherId = existingUser.id;
@@ -2526,7 +2537,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             let linkedPublisherId = null;
             if (preparedData.publisherEmail) {
               const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
-                where: { email: preparedData.publisherEmail }
+                where: { email: { $eqi: preparedData.publisherEmail } }
               });
               if (existingUser) {
                 linkedPublisherId = existingUser.id;
@@ -2659,7 +2670,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     return {
       url: normalizedUrl,
       protocol: 'https',
-      publisherEmail: websiteData.publisherEmail || 'admin@serpbays.com',
+      publisherEmail: (websiteData.publisherEmail || 'admin@serpbays.com').toLowerCase().trim(),
       publisherName: websiteData.publisherName || 'Unknown Publisher',
       description: websiteData.description || 'Bulk imported website',
       submissionStatus: 'approval_pending',
@@ -2672,9 +2683,30 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       generalLinkInsertionPrice: parseInt(websiteData.generalLinkInsertionPrice) || 0,
       expectedTATHours: parseInt(websiteData.expectedTATHours) || 168,
       minWordCount: parseInt(websiteData.minWordCount) || 500,
-      category: websiteData.category ? websiteData.category.split(',').map(c => c.trim()) : ['General'],
-      countries: websiteData.countries ? websiteData.countries.split(',').map(c => c.trim()) : ['United States'],
-      language: websiteData.language ? websiteData.language.split(',').map(l => l.trim()) : ['English'],
+      category: (() => {
+        if (!websiteData.category) return ['General'];
+        const parsed = Array.isArray(websiteData.category)
+          ? websiteData.category.map(c => c.trim())
+          : websiteData.category.split(',').map(c => c.trim());
+        const { valid } = validateValues(parsed, CATEGORIES_MAP);
+        return valid.length > 0 ? valid : ['General'];
+      })(),
+      countries: (() => {
+        if (!websiteData.countries) return ['United States'];
+        const parsed = Array.isArray(websiteData.countries)
+          ? websiteData.countries.map(c => c.trim())
+          : websiteData.countries.split(',').map(c => c.trim());
+        const { valid } = validateValues(parsed, COUNTRIES_MAP);
+        return valid.length > 0 ? valid : ['United States'];
+      })(),
+      language: (() => {
+        if (!websiteData.language) return ['English'];
+        const parsed = Array.isArray(websiteData.language)
+          ? websiteData.language.map(l => l.trim())
+          : websiteData.language.split(',').map(l => l.trim());
+        const { valid } = validateValues(parsed, LANGUAGES_MAP);
+        return valid.length > 0 ? valid : ['English'];
+      })(),
       backlinkType: normalizeBacklinkType(websiteData.backlinkType),
       backlinkValidity: normalizeBacklinkValidity(websiteData.backlinkValidity) || 'three_years',
       allowedLinks: parseInt(websiteData.allowedLinks) || 1,

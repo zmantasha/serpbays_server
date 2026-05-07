@@ -122,7 +122,11 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           currency: user.user_wallet.currency || 'USD'
         } : null,
         statistics: {
-          totalOrders: (user.advertiserOrders?.length || 0) + (user.publisherOrders?.length || 0),
+          // Populate uses { count: true }, so Strapi returns { count: N } here
+          // — handle the array shape too in case the populate ever changes.
+          totalOrders:
+            (user.advertiserOrders?.count ?? user.advertiserOrders?.length ?? 0) +
+            (user.publisherOrders?.count ?? user.publisherOrders?.length ?? 0),
           totalSpent: 0, // Will be calculated separately if needed
           totalEarnings: 0, // Will be calculated separately if needed
           lastLogin: user.updatedAt, // Using updatedAt as proxy for last login
@@ -429,6 +433,37 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
     } catch (error) {
       console.error('[ADMIN USER STATS ERROR]', error);
       return ctx.internalServerError('Failed to fetch user statistics');
+    }
+  },
+
+  /**
+   * List projects owned by a given user (for admin-assisted order creation).
+   * Read-only. Omits archived projects by default; pass includeArchived=true to include.
+   */
+  async getUserProjects(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { includeArchived } = ctx.query || {};
+      const userId = parseInt(id, 10);
+      if (Number.isNaN(userId)) {
+        return ctx.badRequest('Invalid user id');
+      }
+
+      const where = { owner: userId };
+      if (!includeArchived || includeArchived === 'false') {
+        where.archived = { $ne: true };
+      }
+
+      const projects = await strapi.db.query('api::project.project').findMany({
+        where,
+        orderBy: { createdAt: 'DESC' },
+        select: ['id', 'ProjectName', 'projectUrl', 'archived', 'status', 'createdAt']
+      });
+
+      ctx.send({ data: projects });
+    } catch (error) {
+      console.error('[ADMIN USER PROJECTS ERROR]', error);
+      return ctx.internalServerError('Failed to fetch user projects');
     }
   }
 
