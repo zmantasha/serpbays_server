@@ -130,6 +130,18 @@
     "email_sent_at": {
       "type": "datetime",
       "description": "Timestamp when the transaction notification email was sent; guards against duplicate sends from webhook retries and admin re-runs"
+    },
+    "completedAt": {
+      "type": "datetime",
+      "description": "Timestamp when the transaction reached a terminal success state (set by gateway webhooks)"
+    },
+    "failedAt": {
+      "type": "datetime",
+      "description": "Timestamp when the transaction was marked failed (set by gateway webhooks or manual failure)"
+    },
+    "canceledAt": {
+      "type": "datetime",
+      "description": "Timestamp when the transaction was canceled by the gateway (Stripe payment_intent.canceled, etc.)"
     }
   }
 }

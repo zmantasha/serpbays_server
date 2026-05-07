@@ -299,125 +299,150 @@ async function handlePaymentSucceeded(paymentIntent) {
   try {
     console.log(`[STRIPE] 💰 Payment succeeded: ${paymentIntent.id}`);
 
-    // Find transaction by gatewayTransactionId
-    const transaction = await strapi.db.query('api::transaction.transaction').findOne({
-      where: { gatewayTransactionId: paymentIntent.id },
-      populate: ['user_wallet', 'users_permissions_user']
-    });
+    let invoiceTarget = null; // capture {transaction, user} for after-tx invoice creation
 
-    if (!transaction) {
-      console.error(`[STRIPE] ❌ Transaction not found for Payment Intent: ${paymentIntent.id}`);
-      // This might be a payment not initiated by us, just log and return
-      return;
-    }
+    // ✅ BEST PRACTICE: Use database transaction with row-level locking to prevent race conditions
+    // This ensures only ONE caller (webhook, inline polling, manual reconciliation) can process the same transaction at a time
+    await strapi.db.transaction(async ({ trx }) => {
+      const knex = strapi.db.connection;
 
-    // Check if already processed (idempotency)
-    if (transaction.transactionStatus === 'success') {
-      console.log(`[STRIPE] ℹ️ Transaction ${transaction.id} already processed, skipping (idempotent)`);
-      return;
-    }
+      // ✅ SECURE: Lock the transaction row first (SELECT FOR UPDATE equivalent)
+      const lockedRows = await knex('transactions')
+        .where('gateway_transaction_id', paymentIntent.id)
+        .forUpdate() // Database-level lock
+        .transacting(trx);
 
-    console.log(`[STRIPE] Processing transaction ${transaction.id} for Payment Intent ${paymentIntent.id}`);
-
-    // Get wallet ID from metadata or transaction
-    const walletId = paymentIntent.metadata?.walletId || transaction.user_wallet?.id;
-
-    if (!walletId) {
-      console.error(`[STRIPE] ❌ No wallet ID found for Payment Intent ${paymentIntent.id}`);
-      // Mark transaction as failed
-      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-        data: {
-          transactionStatus: 'failed',
-          metadata: {
-            ...transaction.metadata,
-            error: 'No wallet ID found',
-            processedAt: new Date().toISOString()
-          }
-        }
-      });
-      return;
-    }
-
-    
-
-    // Use database transaction for atomic updates
-    try {
-      // Find the wallet
-      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { id: walletId },
-        populate: ['users_permissions_user']
-      });
-
-      if (!wallet) {
-        throw new Error(`Wallet ${walletId} not found`);
+      if (!lockedRows || lockedRows.length === 0) {
+        console.error(`[STRIPE] ❌ Transaction not found for Payment Intent: ${paymentIntent.id}`);
+        // This might be a payment not initiated by us, just log and return
+        return;
       }
 
-      // Calculate new balance
-      const currentMainBalance = parseFloat(wallet.mainBalance || 0);
-      const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
-      const transactionAmount = parseFloat(transaction.amount);
-      const newMainBalance = currentMainBalance + transactionAmount;
-      const newTotalBalance = newMainBalance + currentPromoBalance;
+      const transactionRow = lockedRows[0];
 
-      console.log(`[STRIPE] 💵 Updating wallet ${walletId}: $${currentMainBalance} + $${transactionAmount} = $${newMainBalance}`);
+      // ✅ CRITICAL IDEMPOTENCY CHECK: Now safe from race conditions under row lock
+      if (transactionRow.transaction_status === 'success') {
+        console.log(`[STRIPE] ℹ️ Transaction ${transactionRow.id} already processed, skipping (idempotent)`);
+        return;
+      }
 
-      // Update wallet balance
-      await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-        data: {
-          mainBalance: newMainBalance,
-          balance: newTotalBalance
-        }
+      // Re-fetch with Strapi shape to get populated relations
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { id: transactionRow.id },
+        populate: ['user_wallet', 'users_permissions_user']
       });
 
-      // Update transaction status
-      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-        data: {
-          transactionStatus: 'success',
-          completedAt: new Date(),
-          metadata: {
-            ...transaction.metadata,
-            stripePaymentIntent: {
-              id: paymentIntent.id,
-              amount: paymentIntent.amount,
-              currency: paymentIntent.currency,
-              status: paymentIntent.status
-            },
-            processedAt: new Date().toISOString(),
-            balanceBefore: currentMainBalance,
-            balanceAfter: newMainBalance
+      console.log(`[STRIPE] Processing transaction ${transaction.id} for Payment Intent ${paymentIntent.id}`);
+
+      // Get wallet ID from metadata or transaction.
+      // Stripe metadata values are always strings; coerce so the integer-keyed
+      // wallet lookup doesn't silently miss under stricter DB drivers.
+      const metadataWalletId = paymentIntent.metadata?.walletId
+        ? Number(paymentIntent.metadata.walletId)
+        : null;
+      const walletId = (Number.isFinite(metadataWalletId) ? metadataWalletId : null)
+        || transaction.user_wallet?.id;
+
+      if (!walletId) {
+        console.error(`[STRIPE] ❌ No wallet ID found for Payment Intent ${paymentIntent.id}`);
+        // Mark transaction as failed
+        await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+          data: {
+            transactionStatus: 'failed',
+            metadata: {
+              ...transaction.metadata,
+              error: 'No wallet ID found',
+              processedAt: new Date().toISOString()
+            }
           }
-        }
-      });
+        });
+        return;
+      }
 
-      console.log(`[STRIPE] ✅ Transaction ${transaction.id} completed successfully`);
-
-      // Create invoice (in background, don't block webhook)
-      createInvoiceForTransaction(transaction, wallet.users_permissions_user)
-        .then(() => {
-          console.log(`[STRIPE] ✅ Invoice created for transaction ${transaction.id}`);
-        })
-        .catch((invoiceError) => {
-          console.error(`[STRIPE] ⚠️ Invoice creation failed for transaction ${transaction.id}:`, invoiceError);
-          // Don't throw error - invoice can be created later
+      // Use database transaction for atomic updates
+      try {
+        // Find the wallet
+        const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { id: walletId },
+          populate: ['users_permissions_user']
         });
 
-    } catch (error) {
-      console.error('[STRIPE] ❌ Error updating wallet balance:', error);
-      
-      // Mark transaction as failed
-      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-        data: {
-          transactionStatus: 'failed',
-          failedAt: new Date(),
-          metadata: {
-            ...transaction.metadata,
-            error: error.message,
-            processedAt: new Date().toISOString()
-          }
+        if (!wallet) {
+          throw new Error(`Wallet ${walletId} not found`);
         }
-      });
-      
-      throw error;
+
+        // Calculate new balance
+        const currentMainBalance = parseFloat(wallet.mainBalance || 0);
+        const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
+        const transactionAmount = parseFloat(transaction.amount);
+        const newMainBalance = currentMainBalance + transactionAmount;
+        const newTotalBalance = newMainBalance + currentPromoBalance;
+
+        console.log(`[STRIPE] 💵 Updating wallet ${walletId}: $${currentMainBalance} + $${transactionAmount} = $${newMainBalance}`);
+
+        // Update wallet balance
+        await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+          data: {
+            mainBalance: newMainBalance,
+            balance: newTotalBalance
+          }
+        });
+
+        // Update transaction status
+        await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+          data: {
+            transactionStatus: 'success',
+            completedAt: new Date(),
+            metadata: {
+              ...transaction.metadata,
+              stripePaymentIntent: {
+                id: paymentIntent.id,
+                amount: paymentIntent.amount,
+                currency: paymentIntent.currency,
+                status: paymentIntent.status
+              },
+              processedAt: new Date().toISOString(),
+              balanceBefore: currentMainBalance,
+              balanceAfter: newMainBalance
+            }
+          }
+        });
+
+        console.log(`[STRIPE] ✅ Transaction ${transaction.id} completed successfully`);
+
+        // Save target for invoice creation outside the lock
+        invoiceTarget = { transaction, user: wallet.users_permissions_user };
+
+      } catch (error) {
+        console.error('[STRIPE] ❌ Error updating wallet balance:', error);
+
+        // Mark transaction as failed
+        await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+          data: {
+            transactionStatus: 'failed',
+            failedAt: new Date(),
+            metadata: {
+              ...transaction.metadata,
+              error: error.message,
+              processedAt: new Date().toISOString()
+            }
+          }
+        });
+
+        throw error;
+      }
+    });
+
+    // Invoice creation runs OUTSIDE the locked block (fire-and-forget)
+    if (invoiceTarget) {
+      createInvoiceForTransaction(invoiceTarget.transaction, invoiceTarget.user)
+        .then(() => {
+          console.log(`[STRIPE] ✅ Invoice created for transaction ${invoiceTarget.transaction.id}`);
+        })
+        .catch((invoiceError) => {
+          console.error(`[STRIPE] ⚠️ Invoice creation failed for transaction ${invoiceTarget.transaction.id}:`, invoiceError);
+          // Don't throw error - invoice can be created later
+        });
     }
 
   } catch (error) {
@@ -527,7 +552,7 @@ async function handlePaymentCanceled(paymentIntent) {
 
     await strapi.entityService.update('api::transaction.transaction', transaction.id, {
       data: {
-        transactionStatus: 'canceled',
+        transactionStatus: 'cancelled',
         canceledAt: new Date(),
         metadata: {
           ...transaction.metadata,
