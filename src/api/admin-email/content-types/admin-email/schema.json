@@ -1,0 +1,76 @@
+{
+  "kind": "collectionType",
+  "collectionName": "admin_emails",
+  "info": {
+    "singularName": "admin-email",
+    "pluralName": "admin-emails",
+    "displayName": "Admin Email",
+    "description": "Free-form transactional emails sent by admins from the admin panel"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "fromAddress": {
+      "type": "string",
+      "required": true
+    },
+    "toAddresses": {
+      "type": "json",
+      "required": true
+    },
+    "ccAddresses": {
+      "type": "json"
+    },
+    "bccAddresses": {
+      "type": "json"
+    },
+    "subject": {
+      "type": "string",
+      "required": true,
+      "maxLength": 255
+    },
+    "bodyHtml": {
+      "type": "richtext",
+      "required": true
+    },
+    "bodyText": {
+      "type": "text"
+    },
+    "senderAdmin": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "contextType": {
+      "type": "enumeration",
+      "enum": [
+        "user",
+        "website",
+        "order",
+        "none"
+      ],
+      "default": "none"
+    },
+    "contextIds": {
+      "type": "json"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "queued",
+        "sent",
+        "failed"
+      ],
+      "default": "queued",
+      "required": true
+    },
+    "providerMessageId": {
+      "type": "string"
+    },
+    "errorMessage": {
+      "type": "text"
+    }
+  }
+}

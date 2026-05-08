@@ -447,6 +447,59 @@ export interface ApiAdminAuditLogAdminAuditLog
   };
 }
 
+export interface ApiAdminEmailAdminEmail extends Struct.CollectionTypeSchema {
+  collectionName: 'admin_emails';
+  info: {
+    description: 'Free-form transactional emails sent by admins from the admin panel';
+    displayName: 'Admin Email';
+    pluralName: 'admin-emails';
+    singularName: 'admin-email';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    bccAddresses: Schema.Attribute.JSON;
+    bodyHtml: Schema.Attribute.RichText & Schema.Attribute.Required;
+    bodyText: Schema.Attribute.Text;
+    ccAddresses: Schema.Attribute.JSON;
+    contextIds: Schema.Attribute.JSON;
+    contextType: Schema.Attribute.Enumeration<
+      ['user', 'website', 'order', 'none']
+    > &
+      Schema.Attribute.DefaultTo<'none'>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    errorMessage: Schema.Attribute.Text;
+    fromAddress: Schema.Attribute.String & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::admin-email.admin-email'
+    > &
+      Schema.Attribute.Private;
+    providerMessageId: Schema.Attribute.String;
+    publishedAt: Schema.Attribute.DateTime;
+    senderAdmin: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    status: Schema.Attribute.Enumeration<['queued', 'sent', 'failed']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'queued'>;
+    subject: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    toAddresses: Schema.Attribute.JSON & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiArticleArticle extends Struct.CollectionTypeSchema {
   collectionName: 'articles';
   info: {
@@ -755,6 +808,81 @@ export interface ApiCommunicationCommunication
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+  };
+}
+
+export interface ApiExitIntentLeadExitIntentLead
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'exit_intent_leads';
+  info: {
+    description: 'Leads captured from the exit-intent popup on app.serpbays.com (buyer + seller tabs)';
+    displayName: 'Exit Intent Lead';
+    pluralName: 'exit-intent-leads';
+    singularName: 'exit-intent-lead';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    clerkUserId: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    countryCode: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 8;
+      }>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    details: Schema.Attribute.Text;
+    email: Schema.Attribute.Email & Schema.Attribute.Required;
+    internalNotes: Schema.Attribute.Text;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::exit-intent-lead.exit-intent-lead'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    path: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    referrer: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 1000;
+      }>;
+    requirements: Schema.Attribute.Text;
+    role: Schema.Attribute.Enumeration<['buyer', 'seller']> &
+      Schema.Attribute.Required;
+    status: Schema.Attribute.Enumeration<
+      ['new', 'contacted', 'qualified', 'won', 'lost', 'spam']
+    > &
+      Schema.Attribute.DefaultTo<'new'>;
+    timeOnSiteSec: Schema.Attribute.Integer;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    userAgent: Schema.Attribute.Text;
+    userEmail: Schema.Attribute.Email;
+    userName: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    websiteUrl: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    whatsapp: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 32;
+      }>;
   };
 }
 
@@ -3699,6 +3827,7 @@ declare module '@strapi/strapi' {
       'admin::user': AdminUser;
       'api::about.about': ApiAboutAbout;
       'api::admin-audit-log.admin-audit-log': ApiAdminAuditLogAdminAuditLog;
+      'api::admin-email.admin-email': ApiAdminEmailAdminEmail;
       'api::article.article': ApiArticleArticle;
       'api::auth.auth': ApiAuthAuth;
       'api::author.author': ApiAuthorAuthor;
@@ -3707,6 +3836,7 @@ declare module '@strapi/strapi' {
       'api::category.category': ApiCategoryCategory;
       'api::chatroom.chatroom': ApiChatroomChatroom;
       'api::communication.communication': ApiCommunicationCommunication;
+      'api::exit-intent-lead.exit-intent-lead': ApiExitIntentLeadExitIntentLead;
       'api::global-config.global-config': ApiGlobalConfigGlobalConfig;
       'api::global.global': ApiGlobalGlobal;
       'api::invoice.invoice': ApiInvoiceInvoice;
