@@ -68,6 +68,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
           },
           publisher: {
             fields: ['id', 'username', 'email', 'firstName', 'lastName']
+          },
+          // Pull only the title from the related order-content row. The
+          // rich-text `content` field is intentionally excluded so the
+          // list query stays lightweight; the detail screen still hits
+          // GET /admin/orders/:id/content for the full body.
+          orderContent: {
+            fields: ['title']
           }
         }
       });
