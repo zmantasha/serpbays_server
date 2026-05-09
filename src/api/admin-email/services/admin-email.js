@@ -25,9 +25,21 @@ const normalizeRecipients = (input) => {
       if (!entry) return null;
       if (typeof entry === 'string') return { email: entry.trim() };
       if (typeof entry === 'object' && entry.email) {
+        // Coerce `data` into a flat string-only map. Anything non-string
+        // is dropped — we never want a recipient field smuggling objects
+        // through into the template renderer.
+        const data = {};
+        if (entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data)) {
+          for (const [k, v] of Object.entries(entry.data)) {
+            if (typeof k === 'string' && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(k)) {
+              data[k] = v == null ? '' : String(v);
+            }
+          }
+        }
         return {
           email: String(entry.email).trim(),
           name: entry.name ? String(entry.name).trim() : undefined,
+          data,
         };
       }
       return null;
@@ -70,6 +82,34 @@ const htmlToText = (html) =>
 
 const stripHeaderInjection = (value) =>
   String(value || '').replace(/[\r\n]+/g, ' ').trim();
+
+// Per-recipient merge: replaces `{{key}}` (with optional whitespace
+// inside the braces) using the recipient's data map. Unknown / missing
+// keys collapse to an empty string — never leak the placeholder syntax
+// to recipients. `escape` controls whether values get HTML-escaped (use
+// true for the body, false for the subject which is plain text).
+const TEMPLATE_RE = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+
+const escapeHtml = (value) =>
+  String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const renderTemplate = (template, data, { escape }) => {
+  if (typeof template !== 'string' || template.indexOf('{{') === -1) {
+    return template;
+  }
+  return template.replace(TEMPLATE_RE, (_match, key) => {
+    const raw = data && Object.prototype.hasOwnProperty.call(data, key)
+      ? data[key]
+      : '';
+    const value = raw == null ? '' : String(raw);
+    return escape ? escapeHtml(value) : value;
+  });
+};
 
 module.exports = createCoreService('api::admin-email.admin-email', ({ strapi }) => ({
 
@@ -146,19 +186,29 @@ module.exports = createCoreService('api::admin-email.admin-email', ({ strapi }) 
       ...bccList.map((r) => ({ ...r, _kind: 'bcc' })),
     ];
 
-    const text = htmlToText(cleanHtml);
     const messageIds = [];
     const errors = [];
 
     for (const recipient of allRecipients) {
+      // Per-recipient render. Subject is plain text → no escape; body is
+      // HTML → escape merge values to neutralise `<script>` / `<` etc.
+      // smuggled in via display names. Header injection is also stripped
+      // from the rendered subject as a second line of defense.
+      const recipientData = recipient.data || {};
+      const renderedSubject = stripHeaderInjection(
+        renderTemplate(cleanSubject, recipientData, { escape: false })
+      );
+      const renderedHtml = renderTemplate(cleanHtml, recipientData, { escape: true });
+      const renderedText = htmlToText(renderedHtml);
+
       try {
         const result = await strapi
           .service('api::global.autosend-service')
           .send({
             to: recipient.email,
-            subject: cleanSubject,
-            html: cleanHtml,
-            text,
+            subject: renderedSubject,
+            html: renderedHtml,
+            text: renderedText,
             tags: ['admin-email', `context:${safeContextType}`],
           });
         if (result && result.messageId) {
