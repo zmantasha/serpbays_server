@@ -114,11 +114,7 @@ const renderTemplate = (template, data, { escape }) => {
 module.exports = createCoreService('api::admin-email.admin-email', ({ strapi }) => ({
 
   resolveFrom() {
-    const from =
-      process.env.ADMIN_EMAIL_FROM ||
-      process.env.EMAIL_FROM ||
-      'noreply@serpbays.com';
-    return from;
+    return process.env.ADMIN_EMAIL_FROM || 'alex@serpbays.com';
   },
 
   async sendAdminEmail({
@@ -205,6 +201,7 @@ module.exports = createCoreService('api::admin-email.admin-email', ({ strapi }) 
         const result = await strapi
           .service('api::global.autosend-service')
           .send({
+            from,
             to: recipient.email,
             subject: renderedSubject,
             html: renderedHtml,

@@ -22,7 +22,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
      * @param {Array<string>} [params.tags] - Optional email tags for analytics
      * @returns {Promise<Object>} AutoSend response with message ID
      */
-    async send({ to, templateId, dynamicData, subject, html, text, tags = ['transactional'] }) {
+    async send({ to, templateId, dynamicData, subject, html, text, tags = ['transactional'], from }) {
         try {
             const apiKey = process.env.AUTOSEND_API_KEY;
 
@@ -38,7 +38,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             // Build email payload - support both template-based and HTML-based emails
             const emailPayload = {
                 from: {
-                    email: process.env.EMAIL_FROM || 'noreply@serpbays.com'
+                    email: from || process.env.EMAIL_FROM || 'noreply@serpbays.com'
                 },
                 to: {
                     email: to
