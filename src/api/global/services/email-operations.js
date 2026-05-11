@@ -234,6 +234,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     try {
       console.log(`[EMAIL DEBUG] sendOrderAcceptanceEmail called for order ${order.id}`);
 
+      const advertiserName = order.advertiser?.username || order.advertiser?.email || 'there';
+
       // Email to advertiser using universal template
       const advertiserEmailData = {
         to: advertiserEmail,
@@ -255,10 +257,16 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           website_url: order.website?.url || '',
           website_name: order.website?.name || order.website?.url || 'Website',
 
-          // User details
-          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
-          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
-          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          // The AutoSend universal template uses {{publisher_name}} for the
+          // top-line greeting on every email — including those sent to the
+          // advertiser. Setting publisher_name to the advertiser's name here
+          // makes the greeting render correctly for advertiser-bound mail.
+          // The publisher's real name is still available via real_publisher_name.
+          publisher_name: advertiserName,
+          real_publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: advertiserName,
+          customer: advertiserName,
+          recipient_name: advertiserName,
 
           // Item details
           item_1_name: order.website?.name || 'Order Service',
@@ -360,6 +368,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     try {
       console.log(`[EMAIL DEBUG] sendOrderDeliveryEmail called for order ${order.id}`);
 
+      const advertiserName = order.advertiser?.username || order.advertiser?.email || 'there';
+
       // Email to advertiser using universal template
       const advertiserEmailData = {
         to: advertiserEmail,
@@ -381,10 +391,15 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           website_url: order.website?.url || '',
           website_name: order.website?.name || order.website?.url || 'Website',
 
-          // User details
-          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
-          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
-          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          // The AutoSend universal template greets with {{publisher_name}};
+          // for advertiser-bound mail we override it to the advertiser's name
+          // so the greeting reads correctly. Publisher's real name lives in
+          // real_publisher_name.
+          publisher_name: advertiserName,
+          real_publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: advertiserName,
+          customer: advertiserName,
+          recipient_name: advertiserName,
 
           // Item details
           item_1_name: order.website?.name || 'Order Service',
@@ -398,7 +413,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
 
           // Delivery-specific conditional fields (shown in template)
-          delivery_proof_url: order.deliveryProofUrl || '',
+          delivery_proof_url: order.deliveryProof || '',
           delivery_message: order.deliveryMessage || '',
 
           // Other conditional fields - not shown for delivery
@@ -673,59 +688,31 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Send withdrawal OTP verification email
+   * Send withdrawal OTP verification email via AutoSend template.
+   * Template variables: first_name, otp, year.
    */
-  async sendWithdrawalOtpEmail(otpCode, userEmail, amount) {
+  async sendWithdrawalOtpEmail(otpCode, userEmail, amount, recipient = {}) {
     try {
+      const firstName =
+        recipient.firstName ||
+        recipient.username ||
+        (userEmail ? userEmail.split('@')[0] : 'there');
+
       const emailData = {
         to: userEmail,
-        subject: 'Serpbays - Withdrawal Verification Code',
-        html: `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-              .content { padding: 30px; background: #f9f9f9; }
-              .otp-box { background: white; padding: 30px; margin: 20px 0; border-radius: 8px; border: 2px solid #2563eb; text-align: center; }
-              .otp-code { font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #2563eb; margin: 10px 0; }
-              .info { background: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 15px 0; }
-              .footer { text-align: center; padding: 15px; color: #666; font-size: 12px; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>Withdrawal Verification</h1>
-              </div>
-              <div class="content">
-                <p>You have requested a withdrawal of <strong>$${amount}</strong> from your Serpbays account.</p>
-                <p>Please use the following verification code to confirm your withdrawal:</p>
-
-                <div class="otp-box">
-                  <p style="margin: 0; color: #666; font-size: 14px;">Your verification code</p>
-                  <div class="otp-code">${otpCode}</div>
-                  <p style="margin: 0; color: #666; font-size: 13px;">This code expires in 5 minutes</p>
-                </div>
-
-                <div class="info">
-                  <strong>Security Notice:</strong> If you did not request this withdrawal, please ignore this email and secure your account immediately.
-                </div>
-              </div>
-              <div class="footer">
-                <p>This is an automated message from Serpbays. Please do not reply to this email.</p>
-              </div>
-            </div>
-          </body>
-          </html>
-        `,
-        text: `Your Serpbays withdrawal verification code is: ${otpCode}. This code expires in 5 minutes. If you did not request this withdrawal, please ignore this email.`
+        templateId: process.env.AUTOSEND_TEMPLATE_WITHDRAWAL_OTP || 'A-a3dc625caab7c580efef',
+        dynamicData: {
+          first_name: firstName,
+          otp: otpCode,
+          amount: amount,
+          year: new Date().getFullYear(),
+        },
+        tags: ['withdrawal', 'otp', 'verification'],
       };
 
-      await strapi.plugins.email.services.email.send(emailData);
-      console.log(`Withdrawal OTP email sent to ${userEmail}`);
+      const result = await strapi.service('api::global.autosend-service').send(emailData);
+      console.log(`[WithdrawalOTP] AutoSend email sent to ${userEmail} (messageId: ${result?.messageId})`);
+      return result;
     } catch (error) {
       console.error('Error sending withdrawal OTP email:', error);
       throw error;

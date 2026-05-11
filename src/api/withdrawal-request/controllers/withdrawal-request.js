@@ -49,9 +49,13 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         }
       });
 
-      // Send OTP email
+      // Send OTP email via AutoSend (template A-a3dc625caab7c580efef).
+      // Pass firstName/username so the {{first_name}} placeholder renders.
       const emailService = strapi.service('api::global.email-operations');
-      await emailService.sendWithdrawalOtpEmail(otpCode, ctx.state.user.email, amount);
+      await emailService.sendWithdrawalOtpEmail(otpCode, ctx.state.user.email, amount, {
+        firstName: ctx.state.user.firstName,
+        username: ctx.state.user.username,
+      });
 
       console.log(`[WithdrawalOTP] OTP sent to user ${userId} for withdrawal of $${amount}`);
 

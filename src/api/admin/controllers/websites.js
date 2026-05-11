@@ -465,7 +465,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           id: website.currentPublisherId?.id || website.originalPublisherId?.id || website.publisherId || 0,
           username: website.currentPublisherId?.username || website.originalPublisherId?.username || website.publisherName || 'Unknown',
           email: website.currentPublisherId?.email || website.originalPublisherId?.email || website.publisherEmail
-            || 'N/A'
+            || 'N/A',
+          firstName: website.currentPublisherId?.firstName || website.originalPublisherId?.firstName || '',
+          lastName: website.currentPublisherId?.lastName || website.originalPublisherId?.lastName || '',
         },
         // SEO Metrics
         metrics: {
@@ -616,7 +618,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           id: website.currentPublisherId?.id || website.originalPublisherId?.id || website.publisherId || 0,
           username: website.currentPublisherId?.username || website.originalPublisherId?.username || website.publisherName || 'Unknown',
           email: website.currentPublisherId?.email || website.originalPublisherId?.email || website.publisherEmail
-            || 'N/A'
+            || 'N/A',
+          firstName: website.currentPublisherId?.firstName || website.originalPublisherId?.firstName || '',
+          lastName: website.currentPublisherId?.lastName || website.originalPublisherId?.lastName || '',
         },
         // Pricing information - return null for empty prices instead of 0
         pricing: {

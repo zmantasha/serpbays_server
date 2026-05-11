@@ -447,6 +447,59 @@ export interface ApiAdminAuditLogAdminAuditLog
   };
 }
 
+export interface ApiAdminEmailAdminEmail extends Struct.CollectionTypeSchema {
+  collectionName: 'admin_emails';
+  info: {
+    description: 'Free-form transactional emails sent by admins from the admin panel';
+    displayName: 'Admin Email';
+    pluralName: 'admin-emails';
+    singularName: 'admin-email';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    bccAddresses: Schema.Attribute.JSON;
+    bodyHtml: Schema.Attribute.RichText & Schema.Attribute.Required;
+    bodyText: Schema.Attribute.Text;
+    ccAddresses: Schema.Attribute.JSON;
+    contextIds: Schema.Attribute.JSON;
+    contextType: Schema.Attribute.Enumeration<
+      ['user', 'website', 'order', 'none']
+    > &
+      Schema.Attribute.DefaultTo<'none'>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    errorMessage: Schema.Attribute.Text;
+    fromAddress: Schema.Attribute.String & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::admin-email.admin-email'
+    > &
+      Schema.Attribute.Private;
+    providerMessageId: Schema.Attribute.String;
+    publishedAt: Schema.Attribute.DateTime;
+    senderAdmin: Schema.Attribute.Relation<
+      'manyToOne',
+      'plugin::users-permissions.user'
+    >;
+    status: Schema.Attribute.Enumeration<['queued', 'sent', 'failed']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'queued'>;
+    subject: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    toAddresses: Schema.Attribute.JSON & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiArticleArticle extends Struct.CollectionTypeSchema {
   collectionName: 'articles';
   info: {
@@ -2756,6 +2809,8 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    canceledAt: Schema.Attribute.DateTime;
+    completedAt: Schema.Attribute.DateTime;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -2766,6 +2821,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 255;
       }>;
+    failedAt: Schema.Attribute.DateTime;
     fee: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
@@ -3894,6 +3950,7 @@ declare module '@strapi/strapi' {
       'admin::user': AdminUser;
       'api::about.about': ApiAboutAbout;
       'api::admin-audit-log.admin-audit-log': ApiAdminAuditLogAdminAuditLog;
+      'api::admin-email.admin-email': ApiAdminEmailAdminEmail;
       'api::article.article': ApiArticleArticle;
       'api::auth.auth': ApiAuthAuth;
       'api::author.author': ApiAuthorAuthor;
