@@ -62,6 +62,15 @@ module.exports = {
       }
     },
     {
+      method: 'PUT',
+      path: '/admin/orders/:id/reject',
+      handler: 'orders.rejectOrder',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
       method: 'GET',
       path: '/admin/orders/:id/content',
       handler: 'orders.getOrderContent',
@@ -83,6 +92,15 @@ module.exports = {
       method: 'POST',
       path: '/admin/orders/:id/chatroom/message',
       handler: 'orders.sendMessage',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
+      method: 'POST',
+      path: '/admin/orders/create-on-behalf',
+      handler: 'orders.createOnBehalf',
       config: {
         policies: ['global::is-admin'],
         middlewares: ['global::admin-logger']

@@ -1,0 +1,116 @@
+{
+  "kind": "collectionType",
+  "collectionName": "shared_lists",
+  "info": {
+    "singularName": "shared-list",
+    "pluralName": "shared-lists",
+    "displayName": "Shared list",
+    "description": "Curated, shareable website lists for customers"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "slug": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "accessMode": {
+      "type": "enumeration",
+      "enum": ["public", "private"],
+      "default": "public",
+      "required": true
+    },
+    "sharedWith": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "plugin::users-permissions.user"
+    },
+    "websites": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::marketplace.marketplace"
+    },
+    "visibleColumns": {
+      "type": "json"
+    },
+    "customRules": {
+      "type": "text"
+    },
+    "pricingMode": {
+      "type": "enumeration",
+      "enum": ["hidden", "marketplace", "markup", "custom"],
+      "default": "marketplace",
+      "required": true
+    },
+    "markupValue": {
+      "type": "decimal",
+      "default": 0
+    },
+    "markupType": {
+      "type": "enumeration",
+      "enum": ["percent", "fixed"],
+      "default": "percent"
+    },
+    "priceOverrides": {
+      "type": "json"
+    },
+    "currency": {
+      "type": "enumeration",
+      "enum": ["USD", "INR", "EUR", "GBP"],
+      "default": "USD"
+    },
+    "allowSearch": {
+      "type": "boolean",
+      "default": true
+    },
+    "allowFilter": {
+      "type": "boolean",
+      "default": true
+    },
+    "allowDownload": {
+      "type": "boolean",
+      "default": false
+    },
+    "expiresAt": {
+      "type": "datetime"
+    },
+    "passwordHash": {
+      "type": "string",
+      "private": true
+    },
+    "createdByAdminId": {
+      "type": "integer"
+    },
+    "archived": {
+      "type": "boolean",
+      "default": false
+    },
+    "viewCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "lastViewedAt": {
+      "type": "datetime"
+    },
+    "snapshotEnabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "snapshotData": {
+      "type": "json",
+      "private": true
+    },
+    "snapshotTakenAt": {
+      "type": "datetime"
+    }
+  }
+}

@@ -71,6 +71,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           title,
           instructions,
           projectName,
+          projectUrl,
           projectId,
           outsourceLinks,
           // Link Insertion specific fields
@@ -107,12 +108,29 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
         // If projectName is provided but no projectId, create a new project
         else if (projectName) {
+          // Resolve a string projectUrl. Prefer the explicit value from the
+          // request; otherwise fall back to the marketplace website URL when
+          // `orderData.website` is a domain string (it may still be a numeric
+          // ID at this point — that case is handled by the explicit field).
+          let resolvedProjectUrl = typeof projectUrl === 'string' ? projectUrl.trim() : '';
+          if (!resolvedProjectUrl && typeof orderData.website === 'string' && !/^\d+$/.test(orderData.website)) {
+            resolvedProjectUrl = orderData.website;
+          }
+          if (!resolvedProjectUrl && (typeof orderData.website === 'number' || /^\d+$/.test(String(orderData.website)))) {
+            const websiteId = parseInt(orderData.website, 10);
+            const mp = await strapi.db.query('api::marketplace.marketplace').findOne({ where: { id: websiteId } });
+            if (mp?.url) resolvedProjectUrl = mp.url;
+          }
+          if (!resolvedProjectUrl) {
+            return ctx.badRequest('projectUrl is required when creating a new project');
+          }
+
           const newProject = await strapi.entityService.create('api::project.project', {
             data: {
               ProjectName: projectName,
               startDate: new Date(),
               owner: user.id,
-              projectUrl: orderData.website // Use the website URL as project URL
+              projectUrl: resolvedProjectUrl
             }
           });
 
@@ -399,7 +417,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           // Add Link Insertion fields if this is a Link Insertion order
           serviceType: serviceType || null,
           existingPostUrl: existingPostUrl || null,
-          anchorText: linkInsertionAnchorText || null,
+          anchorText: typeof linkInsertionAnchorText === 'string' ? linkInsertionAnchorText : null,
           landingPageUrl: landingPageUrl || null,
           linkInsertionLanguage: linkInsertionLanguage || null,
           linkInsertionDescription: linkInsertionDescription || null

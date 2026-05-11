@@ -69,6 +69,15 @@ module.exports = {
         policies: ['global::is-admin'],
         middlewares: ['global::admin-logger']
       }
+    },
+    {
+      method: 'GET',
+      path: '/admin/users/:id/projects',
+      handler: 'users.getUserProjects',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
     }
   ]
 };

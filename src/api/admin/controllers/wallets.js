@@ -415,47 +415,237 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
   },
 
   /**
-   * Create manual transaction (admin action)
+   * Create manual transaction (admin action) — e.g. recording an offline payment.
+   * Atomically updates the user's wallet balance and writes a paired transaction row.
+   * Wallet is only mutated when transactionStatus is 'success'; non-success rows are
+   * recorded for audit only (e.g. logging a pending bank transfer that hasn't cleared).
    */
   async createTransaction(ctx) {
     try {
       const { userId } = ctx.params;
-      const { type, amount, description, status = 'completed' } = ctx.request.body;
+      const {
+        type,
+        amount,
+        description,
+        fundSource = 'main_fund',
+        gateway = 'system',
+        transactionStatus = 'success',
+        fee: feeInput = 0,
+        gatewayTransactionId: gatewayTxnIdInput,
+        externalReference,
+        promoCodeId,
+        notes,
+      } = ctx.request.body;
 
-      console.log(`[ADMIN WALLET] Admin ${ctx.state.user.id} creating transaction for user ${userId}`);
+      const adminUser = ctx.state.user;
+      console.log(`[ADMIN WALLET] Admin ${adminUser.id} creating ${type}/${gateway}/${transactionStatus} transaction for user ${userId}`);
+
+      // Validate type
+      const CREDIT_TYPES = ['deposit', 'refund', 'promo', 'escrow_release'];
+      const DEBIT_TYPES = ['withdrawal', 'fee', 'payment', 'payout', 'escrow_hold'];
+      const ALLOWED_TYPES = [...CREDIT_TYPES, ...DEBIT_TYPES];
+      if (!ALLOWED_TYPES.includes(type)) {
+        return ctx.badRequest(`Invalid transaction type. Allowed: ${ALLOWED_TYPES.join(', ')}`);
+      }
+
+      // Validate gateway (must mirror schema enum)
+      const ALLOWED_GATEWAYS = ['stripe', 'paypal', 'razorpay', 'promo', 'voucher', 'system', 'bank_transfer'];
+      if (!ALLOWED_GATEWAYS.includes(gateway)) {
+        return ctx.badRequest(`Invalid gateway. Allowed: ${ALLOWED_GATEWAYS.join(', ')}`);
+      }
+
+      // Validate status
+      const ALLOWED_STATUSES = ['pending', 'success', 'failed', 'cancelled', 'approved', 'refunded', 'denied', 'paid'];
+      if (!ALLOWED_STATUSES.includes(transactionStatus)) {
+        return ctx.badRequest(`Invalid status. Allowed: ${ALLOWED_STATUSES.join(', ')}`);
+      }
+
+      // Validate amount
+      const parsedAmount = parseFloat(amount);
+      if (!parsedAmount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
+        return ctx.badRequest('Amount must be a positive number');
+      }
+
+      // Validate fee
+      const parsedFee = parseFloat(feeInput) || 0;
+      if (parsedFee < 0) {
+        return ctx.badRequest('Fee cannot be negative');
+      }
+      if (parsedFee >= parsedAmount) {
+        return ctx.badRequest('Fee must be less than amount');
+      }
+      const netAmount = parsedAmount - parsedFee;
+
+      // Validate fund source
+      if (!['main_fund', 'promo_fund'].includes(fundSource)) {
+        return ctx.badRequest('Invalid fund source. Allowed: main_fund, promo_fund');
+      }
+
+      // Description is required so the audit trail explains why the row exists
+      if (!description || !String(description).trim()) {
+        return ctx.badRequest('Description is required');
+      }
 
       // Get user wallet
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { users_permissions_user: userId }
+        where: { users_permissions_user: userId },
+        populate: ['users_permissions_user'],
       });
 
       if (!wallet) {
         return ctx.notFound('Wallet not found for this user');
       }
 
-      // Create transaction
-      const transaction = await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          user_wallet: wallet.id,
-          type,
-          amount: parseFloat(amount),
-          description: description || `Admin ${type}`,
-          status,
-          createdAt: new Date(),
-          updatedAt: new Date()
+      const isCredit = CREDIT_TYPES.includes(type);
+      const isSettled = transactionStatus === 'success';
+      const balanceField = fundSource === 'promo_fund' ? 'promoBalance' : 'mainBalance';
+      const prevFieldBalance = parseFloat(wallet[balanceField] || 0);
+      const prevTotal = parseFloat(wallet.balance || 0);
+
+      // Wallet movement: credit by netAmount (user receives net of fee); debit by gross amount
+      // (full amount leaves wallet, platform retains fee). Only when settled.
+      let nextFieldBalance = prevFieldBalance;
+      let nextTotal = prevTotal;
+      if (isSettled) {
+        if (isCredit) {
+          nextFieldBalance = prevFieldBalance + netAmount;
+          nextTotal = prevTotal + netAmount;
+        } else {
+          if (prevFieldBalance < parsedAmount) {
+            return ctx.badRequest(`Insufficient ${fundSource} balance for ${type}`);
+          }
+          nextFieldBalance = prevFieldBalance - parsedAmount;
+          nextTotal = prevTotal - parsedAmount;
         }
+      }
+
+      const trimmedGatewayTxnId = (gatewayTxnIdInput && String(gatewayTxnIdInput).trim()) || null;
+      const trimmedExternalRef = (externalReference && String(externalReference).trim()) || null;
+      const finalGatewayTxnId =
+        trimmedGatewayTxnId ||
+        trimmedExternalRef ||
+        `ADMIN_MANUAL_${wallet.id}_${Date.now()}`;
+
+      // Atomic update: wallet balance (when settled) + paired transaction row
+      const result = await strapi.db.transaction(async () => {
+        let updatedWallet = wallet;
+        if (isSettled) {
+          updatedWallet = await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
+            data: {
+              [balanceField]: nextFieldBalance,
+              balance: nextTotal,
+            },
+          });
+        }
+
+        const paymentNotesParts = [
+          `Admin: ${adminUser.username || adminUser.id}`,
+          notes ? `Notes: ${notes}` : null,
+          trimmedExternalRef ? `External Ref: ${trimmedExternalRef}` : null,
+        ].filter(Boolean);
+
+        const transaction = await strapi.entityService.create('api::transaction.transaction', {
+          data: {
+            user_wallet: wallet.id,
+            users_permissions_user: userId,
+            type,
+            amount: parsedAmount,
+            netAmount,
+            fee: parsedFee,
+            transactionStatus,
+            gateway,
+            gatewayTransactionId: finalGatewayTxnId,
+            external_transaction_id: trimmedExternalRef || undefined,
+            fund_source: fundSource,
+            description: String(description).trim(),
+            payment_notes: paymentNotesParts.join(' | '),
+            promo_code_id: (promoCodeId && String(promoCodeId).trim()) || undefined,
+            publishedAt: new Date(),
+          },
+        });
+
+        return { updatedWallet, transaction };
       });
 
-      ctx.send({
-        message: 'Transaction created successfully',
-        transaction: {
-          id: transaction.id,
-          type: transaction.type,
-          amount: parseFloat(transaction.amount || 0),
-          description: transaction.description,
-          status: transaction.status,
-          createdAt: transaction.createdAt
+      // Audit log (best-effort — don't fail the operation)
+      try {
+        await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+          data: {
+            adminUser: adminUser.id,
+            action: 'wallet_manual_transaction',
+            targetUser: userId,
+            details: {
+              walletId: wallet.id,
+              type,
+              gateway,
+              transactionStatus,
+              amount: parsedAmount,
+              fee: parsedFee,
+              netAmount,
+              fundSource,
+              previousBalance: prevTotal,
+              newBalance: parseFloat(result.updatedWallet.balance || 0),
+              walletMutated: isSettled,
+              transactionId: result.transaction.id,
+              gatewayTransactionId: finalGatewayTxnId,
+              externalReference: trimmedExternalRef,
+              promoCodeId: promoCodeId || null,
+              description,
+              notes: notes || null,
+            },
+            ipAddress: ctx.request.ip,
+            userAgent: ctx.request.headers['user-agent'],
+          },
+        });
+      } catch (auditErr) {
+        console.error('[ADMIN WALLET] Failed to write audit log:', auditErr.message);
+      }
+
+      // Notification email (best-effort — only credits that actually settled notify users)
+      if (isCredit && isSettled) {
+        try {
+          const userEmail = wallet.users_permissions_user?.email;
+          if (userEmail && result.transaction?.id) {
+            await strapi.service('api::global.email-operations').sendTransactionEmail({
+              transaction: result.transaction,
+              userEmail,
+              statusLabel: 'success',
+              statusMessage: 'Your wallet has been credited successfully.',
+              notes: description,
+              flags: { is_wallet_credit: true, is_manual: true },
+              tags: ['transaction', 'wallet', 'credit', 'manual'],
+            });
+          }
+        } catch (emailErr) {
+          console.error('[ADMIN WALLET] Failed to send manual-transaction email:', emailErr.message);
         }
+      }
+
+      ctx.send({
+        message: isSettled
+          ? 'Transaction created and wallet updated'
+          : 'Transaction recorded (wallet unchanged — non-success status)',
+        transaction: {
+          id: result.transaction.id,
+          type: result.transaction.type,
+          amount: parseFloat(result.transaction.amount || 0),
+          fee: parseFloat(result.transaction.fee || 0),
+          netAmount: parseFloat(result.transaction.netAmount || 0),
+          description: result.transaction.description,
+          transactionStatus: result.transaction.transactionStatus,
+          gateway: result.transaction.gateway,
+          gatewayTransactionId: result.transaction.gatewayTransactionId,
+          external_transaction_id: result.transaction.external_transaction_id,
+          fund_source: result.transaction.fund_source,
+          promo_code_id: result.transaction.promo_code_id,
+          createdAt: result.transaction.createdAt,
+        },
+        wallet: {
+          id: result.updatedWallet.id,
+          mainBalance: parseFloat(result.updatedWallet.mainBalance || 0),
+          promoBalance: parseFloat(result.updatedWallet.promoBalance || 0),
+          balance: parseFloat(result.updatedWallet.balance || 0),
+        },
       });
 
     } catch (error) {

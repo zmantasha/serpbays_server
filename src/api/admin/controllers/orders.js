@@ -185,10 +185,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} assigning publisher ${publisherId} to order ${id}`);
 
+      // Note: assignment does NOT change orderStatus — there is no 'assigned'
+      // value in the schema enum. The order stays in whatever lifecycle stage
+      // it's currently in (typically 'pending'); the publisher relation is
+      // simply set/replaced.
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
           publisher: publisherId,
-          orderStatus: 'assigned',
           assignedAt: new Date()
         },
         populate: ['advertiser', 'publisher']
@@ -221,22 +224,24 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
    */
   async getStats(ctx) {
     try {
-      const total = await strapi.db.query('api::order.order').count();
-      const pending = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'pending' }
-      });
-      const inProgress = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'in_progress' }
-      });
-      const completed = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'completed' }
-      });
-      const cancelled = await strapi.db.query('api::order.order').count({
-        where: { orderStatus: 'cancelled' }
-      });
+      const orderQuery = strapi.db.query('api::order.order');
+
+      // Lifecycle: pending → accepted → delivered → approved → completed,
+      // with cancelled/rejected/disputed as terminal off-paths. "In progress"
+      // = anything mid-flight (accepted/delivered/approved). 'in_progress'
+      // is NOT a value in the schema enum, so the previous query was always 0.
+      const IN_PROGRESS_STATUSES = ['accepted', 'delivered', 'approved'];
+
+      const [total, pending, inProgress, completed, cancelled] = await Promise.all([
+        orderQuery.count(),
+        orderQuery.count({ where: { orderStatus: 'pending' } }),
+        orderQuery.count({ where: { orderStatus: { $in: IN_PROGRESS_STATUSES } } }),
+        orderQuery.count({ where: { orderStatus: 'completed' } }),
+        orderQuery.count({ where: { orderStatus: 'cancelled' } }),
+      ]);
 
       // Calculate total revenue
-      const revenueData = await strapi.db.query('api::order.order').findMany({
+      const revenueData = await orderQuery.findMany({
         where: { orderStatus: 'completed' },
         select: ['totalAmount']
       });
@@ -249,7 +254,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       thisMonth.setDate(1);
       thisMonth.setHours(0, 0, 0, 0);
 
-      const newThisMonth = await strapi.db.query('api::order.order').count({
+      const newThisMonth = await orderQuery.count({
         where: {
           createdAt: {
             $gte: thisMonth.toISOString()
@@ -260,6 +265,9 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       ctx.send({
         total,
         pending,
+        // Frontend reads in_progress (snake_case); inProgress kept for any
+        // other consumers that might rely on the old shape.
+        in_progress: inProgress,
         inProgress,
         completed,
         cancelled,
@@ -274,45 +282,165 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
   },
 
   /**
-   * Cancel order (admin action)
+   * Cancel order (admin action). Mirrors the user-facing cancel flow:
+   * refund escrow → update status → audit log → notifications. The
+   * previous implementation only updated the status, leaving the
+   * advertiser's escrow held forever.
    */
   async cancelOrder(ctx) {
     try {
+      const adminId = ctx.state.user.id;
       const { id } = ctx.params;
-      const { reason } = ctx.request.body;
+      const { reason } = ctx.request.body || {};
 
-      // Log admin action
-      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} cancelling order ${id}. Reason: ${reason}`);
+      console.log(`[ADMIN ACTION] Admin ${adminId} cancelling order ${id}. Reason: ${reason}`);
 
+      // 1. Fetch order with relations (the service helpers populate-walk these)
+      const order = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
+      if (!order) return ctx.notFound('Order not found');
+
+      // 2. Guard against re-cancellation and post-payout states. The refund
+      // helper throws on insufficient escrow, but a cleaner upfront error
+      // is friendlier than "Insufficient escrow balance: have $0".
+      if (order.orderStatus === 'cancelled') {
+        return ctx.badRequest('Order is already cancelled');
+      }
+      if (order.orderStatus === 'completed') {
+        return ctx.badRequest('Cannot cancel a completed order — escrow has already been released to the publisher');
+      }
+      if (order.orderStatus === 'rejected') {
+        return ctx.badRequest('Order is already rejected; escrow was refunded at rejection time');
+      }
+
+      const orderService = strapi.service('api::order.order');
+
+      // 3. Refund escrow to advertiser. Throws on insufficient escrow,
+      // which we surface as a 400 with the underlying message.
+      let refundAmount;
+      try {
+        refundAmount = await orderService.refundEscrowToAdvertiser(order);
+      } catch (refundErr) {
+        console.error('[ADMIN ORDER CANCEL REFUND ERROR]', refundErr);
+        return ctx.badRequest(`Refund failed: ${refundErr.message || 'unknown error'}`);
+      }
+
+      // 4. Update order status only after the refund succeeded so the
+      // operation is safely retryable on intermittent failures.
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
           orderStatus: 'cancelled',
           cancellationReason: reason,
           cancelledAt: new Date(),
-          cancelledBy: ctx.state.user.id
+          cancelledBy: 'admin',
         },
-        populate: ['advertiser', 'publisher']
+        populate: ['advertiser', 'publisher'],
       });
 
-      // Create communication log for cancellation
-      await strapi.entityService.create('api::communication.communication', {
-        data: {
-          sender: ctx.state.user.id,
-          order: id,
-          message: `Order cancelled by admin. Reason: ${reason || 'No reason provided'}`,
-          messageType: 'cancellation',
-          isAdminMessage: true,
-          publishedAt: new Date()
-        }
-      });
+      // 5. Audit log + chatroom communication entry. Both are best-effort —
+      // the cancellation has already happened atomically by this point.
+      try {
+        await orderService.createAuditLog(order, 'cancelled', adminId, reason);
+      } catch (auditErr) {
+        console.warn('[ADMIN ORDER CANCEL] audit log failed:', auditErr?.message);
+      }
+      try {
+        await strapi.entityService.create('api::communication.communication', {
+          data: {
+            sender: adminId,
+            order: id,
+            message: `Order cancelled by admin. Reason: ${reason || 'No reason provided'}`,
+            messageType: 'cancellation',
+            isAdminMessage: true,
+            publishedAt: new Date(),
+          },
+        });
+      } catch (chatErr) {
+        console.warn('[ADMIN ORDER CANCEL] chatroom log failed:', chatErr?.message);
+      }
+
+      // 6. Notifications (email + in-app). Also best-effort.
+      try {
+        await orderService.sendCancellationNotifications(order, 'admin', reason);
+      } catch (notifErr) {
+        console.warn('[ADMIN ORDER CANCEL] notifications failed:', notifErr?.message);
+      }
 
       ctx.send({
-        data: updatedOrder
+        data: {
+          order: updatedOrder,
+          refundAmount,
+          refundedTo: 'advertiser',
+        },
       });
-
     } catch (error) {
       console.error('[ADMIN ORDER CANCEL ERROR]', error);
       return ctx.internalServerError('Failed to cancel order');
+    }
+  },
+
+  /**
+   * Reject order (admin action) — only pending orders can be rejected.
+   * Refunds escrow to advertiser via the order service, then sets
+   * orderStatus='rejected' + rejectionReason + rejectedDate.
+   */
+  async rejectOrder(ctx) {
+    try {
+      const adminId = ctx.state.user.id;
+      const { id } = ctx.params;
+      const { reason } = ctx.request.body || {};
+
+      if (!reason || !String(reason).trim()) {
+        return ctx.badRequest('Rejection reason is required');
+      }
+
+      const existing = await strapi.entityService.findOne('api::order.order', id);
+      if (!existing) return ctx.notFound('Order not found');
+      if (existing.orderStatus !== 'pending') {
+        return ctx.badRequest('Only pending orders can be rejected');
+      }
+
+      console.log(`[ADMIN ACTION] Admin ${adminId} rejecting order ${id}. Reason: ${reason}`);
+
+      // Run escrow refund first; if it fails we don't move the status so the
+      // operation can be safely retried.
+      try {
+        await strapi.service('api::order.order').rejectOrder(id, ctx.state.user);
+      } catch (err) {
+        console.error('[ADMIN ORDER REJECT REFUND ERROR]', err);
+        return ctx.internalServerError(`Refund failed: ${err.message || 'unknown error'}`);
+      }
+
+      const updatedOrder = await strapi.entityService.update('api::order.order', id, {
+        data: {
+          orderStatus: 'rejected',
+          rejectionReason: String(reason).trim(),
+          rejectedDate: new Date(),
+        },
+        populate: ['advertiser', 'publisher'],
+      });
+
+      try {
+        await strapi.entityService.create('api::communication.communication', {
+          data: {
+            sender: adminId,
+            order: id,
+            message: `Order rejected by admin. Reason: ${String(reason).trim()}`,
+            messageType: 'rejection',
+            isAdminMessage: true,
+            publishedAt: new Date(),
+          },
+        });
+      } catch (logErr) {
+        // Log-only failure — don't fail the request, the order is already rejected.
+        console.warn('[ADMIN ORDER REJECT] communication log failed:', logErr?.message);
+      }
+
+      ctx.send({ data: updatedOrder });
+    } catch (error) {
+      console.error('[ADMIN ORDER REJECT ERROR]', error);
+      return ctx.internalServerError('Failed to reject order');
     }
   },
 
@@ -533,6 +661,159 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       console.error('[ADMIN SEND MESSAGE ERROR]', error);
       return ctx.internalServerError('Failed to send message');
     }
+  },
+
+  /**
+   * Create an order on behalf of an advertiser.
+   * Impersonates the advertiser at the service layer by swapping ctx.state.user
+   * and delegating to the real user-facing order controller. Every existing
+   * guardrail (wallet balance, self-order block, project ownership, website
+   * availability) runs unchanged.
+   *
+   * Request body:
+   *   advertiserId: number            (required)
+   *   adminReason: string             (required, non-empty)
+   *   userConsentType: enum           (required: ticket|email|phone|chat)
+   *   userConsentReference: string    (required, non-empty)
+   *   ...order fields matching the user-facing POST /api/orders body
+   */
+  async createOnBehalf(ctx) {
+    const adminId = ctx.state.user?.id;
+    const payload = ctx.request.body?.data || ctx.request.body || {};
+    const {
+      advertiserId,
+      adminReason,
+      userConsentType,
+      userConsentReference,
+      ...orderBody
+    } = payload;
+
+    // --- Input validation (fail before touching anything) ---
+    if (!advertiserId) return ctx.badRequest('advertiserId is required');
+    if (!adminReason || String(adminReason).trim().length === 0) {
+      return ctx.badRequest('adminReason is required');
+    }
+    if (!userConsentType) return ctx.badRequest('userConsentType is required');
+    const allowedConsent = ['ticket', 'email', 'phone', 'chat'];
+    if (!allowedConsent.includes(userConsentType)) {
+      return ctx.badRequest(`userConsentType must be one of: ${allowedConsent.join(', ')}`);
+    }
+    if (!userConsentReference || String(userConsentReference).trim().length === 0) {
+      return ctx.badRequest('userConsentReference is required');
+    }
+
+    // --- Load advertiser ---
+    let advertiser;
+    try {
+      advertiser = await strapi.entityService.findOne('plugin::users-permissions.user', advertiserId, {
+        populate: ['role']
+      });
+    } catch (err) {
+      return ctx.badRequest('Invalid advertiserId');
+    }
+    if (!advertiser) return ctx.notFound('Advertiser not found');
+    if (advertiser.blocked) return ctx.badRequest('Advertiser account is blocked');
+
+    console.log(
+      `[ADMIN ACTION] Admin ${adminId} creating order on behalf of user ${advertiser.id} (${advertiser.email})`
+    );
+
+    // --- Impersonate at the service layer by swapping ctx.state.user/body ---
+    const originalUser = ctx.state.user;
+    const originalBody = ctx.request.body;
+    const originalStatus = ctx.status;
+
+    ctx.state.user = advertiser;
+    // The user controller reads `ctx.request.body.data || ctx.request.body`
+    // so either shape works. Pass the order body directly.
+    ctx.request.body = orderBody;
+
+    let result;
+    try {
+      result = await strapi.controller('api::order.order').create(ctx);
+    } catch (err) {
+      console.error('[ADMIN ORDER CREATE ON BEHALF] Underlying controller threw:', err);
+      // Restore before exiting so subsequent middleware sees original ctx state
+      ctx.state.user = originalUser;
+      ctx.request.body = originalBody;
+      return ctx.internalServerError(err?.message || 'Failed to create order on behalf');
+    } finally {
+      ctx.state.user = originalUser;
+      ctx.request.body = originalBody;
+    }
+
+    // If the underlying controller responded with an error (e.g. insufficient funds,
+    // self-order block, validation), ctx.status will be 4xx/5xx and the body is set.
+    // Surface it as-is — do NOT stamp audit fields or notify the user.
+    if (ctx.status && ctx.status >= 400 && ctx.status !== originalStatus) {
+      return;
+    }
+
+    const createdOrder = result?.data;
+    if (!createdOrder?.id) {
+      console.error('[ADMIN ORDER CREATE ON BEHALF] Unexpected result shape:', result);
+      return ctx.internalServerError('Order creation returned no data');
+    }
+
+    // --- Stamp audit fields on the order (best-effort, non-fatal) ---
+    try {
+      await strapi.entityService.update('api::order.order', createdOrder.id, {
+        data: {
+          createdByAdminId: adminId,
+          adminReason: String(adminReason).trim(),
+          userConsentType,
+          userConsentReference: String(userConsentReference).trim()
+        }
+      });
+    } catch (stampErr) {
+      // Do not fail the request — the order is live and wallet already debited.
+      console.error('[ADMIN ORDER CREATE ON BEHALF] Failed to stamp audit fields:', stampErr);
+    }
+
+    // --- Write persisted audit log (best-effort) ---
+    try {
+      await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+        data: {
+          adminUser: adminId,
+          targetUser: advertiser.id,
+          action: 'order.create_on_behalf',
+          details: {
+            orderId: createdOrder.id,
+            totalAmount: createdOrder.totalAmount,
+            website: createdOrder.website,
+            serviceType: createdOrder.serviceType || 'guest_post',
+            reason: String(adminReason).trim(),
+            consentType: userConsentType,
+            consentReference: String(userConsentReference).trim()
+          },
+          ipAddress: ctx.request.ip || ctx.request.headers?.['x-forwarded-for'] || null,
+          userAgent: ctx.request.headers?.['user-agent'] || null
+        }
+      });
+    } catch (auditErr) {
+      console.error('[ADMIN AUDIT] Failed to write audit log row:', auditErr);
+    }
+
+    // --- Notify advertiser that admin placed an order on their behalf ---
+    try {
+      const emailService = strapi.service('api::global.email-operations');
+      if (emailService && typeof emailService.sendAdminPlacedOrderEmail === 'function') {
+        await emailService.sendAdminPlacedOrderEmail({
+          advertiser,
+          order: createdOrder,
+          adminReason: String(adminReason).trim(),
+          consentType: userConsentType,
+          consentReference: String(userConsentReference).trim()
+        });
+      } else {
+        console.warn('[ADMIN NOTIFY] email-operations.sendAdminPlacedOrderEmail not available — skipping');
+      }
+    } catch (emailErr) {
+      // Non-fatal — the order is placed, user already got the standard order email
+      console.error('[ADMIN NOTIFY] Failed to send admin-placed order email:', emailErr);
+    }
+
+    return result;
   }
 
 }));
