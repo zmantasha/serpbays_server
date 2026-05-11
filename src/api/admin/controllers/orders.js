@@ -136,16 +136,36 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
   async updateStatus(ctx) {
     try {
       const { id } = ctx.params;
-      const { orderStatus, adminNotes } = ctx.request.body;
+      const { orderStatus, adminNotes, deliveryMessage, deliveryProof } = ctx.request.body;
 
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating order ${id} status to ${orderStatus}`);
+
+      // Stamp the lifecycle timestamp that matches the target status so the
+      // email templates show the right date (acceptedDate, deliveredDate,
+      // completedDate).
+      const lifecycleStamp = {};
+      const now = new Date();
+      if (orderStatus === 'accepted') lifecycleStamp.acceptedDate = now;
+      else if (orderStatus === 'delivered') lifecycleStamp.deliveredDate = now;
+      else if (orderStatus === 'completed') lifecycleStamp.completedDate = now;
+
+      // Delivery fields are only meaningful when transitioning to 'delivered'.
+      // Anything sent alongside a different status is ignored to avoid leaking
+      // values into the wrong lifecycle phase.
+      const deliveryFields = {};
+      if (orderStatus === 'delivered') {
+        if (typeof deliveryMessage === 'string') deliveryFields.deliveryMessage = deliveryMessage;
+        if (typeof deliveryProof === 'string') deliveryFields.deliveryProof = deliveryProof;
+      }
 
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
           orderStatus,
           adminNotes,
-          lastStatusUpdate: new Date()
+          lastStatusUpdate: now,
+          ...lifecycleStamp,
+          ...deliveryFields
         },
         populate: ['advertiser', 'publisher']
       });
@@ -162,6 +182,35 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
             publishedAt: new Date()
           }
         });
+      }
+
+      // Fire the same notification email that the user-facing flow sends, so
+      // admin-driven transitions don't go silent. Fire-and-forget so the
+      // 1-2s AutoSend round-trip doesn't keep the admin Quick Actions buttons
+      // stuck in their disabled/loading state. Errors are logged but never
+      // surface to the admin — a mailer hiccup must not roll back the status
+      // change.
+      if (['accepted', 'delivered', 'completed'].includes(orderStatus)) {
+        (async () => {
+          try {
+            const fullOrder = await strapi.entityService.findOne('api::order.order', id, {
+              populate: ['website', 'advertiser', 'publisher']
+            });
+            const advertiserEmail = fullOrder?.advertiser?.email;
+            const publisherEmail = fullOrder?.publisher?.email;
+            const emailService = strapi.service('api::global.email-operations');
+
+            if (orderStatus === 'accepted' && advertiserEmail) {
+              await emailService.sendOrderAcceptanceEmail(fullOrder, advertiserEmail, publisherEmail);
+            } else if (orderStatus === 'delivered' && advertiserEmail) {
+              await emailService.sendOrderDeliveryEmail(fullOrder, advertiserEmail, publisherEmail);
+            } else if (orderStatus === 'completed' && publisherEmail) {
+              await emailService.sendOrderCompletionEmail(fullOrder, publisherEmail, fullOrder.totalAmount);
+            }
+          } catch (emailError) {
+            console.error('[ADMIN ORDER UPDATE STATUS] Email notification failed:', emailError);
+          }
+        })();
       }
 
       ctx.send({

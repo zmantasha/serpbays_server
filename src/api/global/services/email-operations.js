@@ -234,6 +234,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     try {
       console.log(`[EMAIL DEBUG] sendOrderAcceptanceEmail called for order ${order.id}`);
 
+      const advertiserName = order.advertiser?.username || order.advertiser?.email || 'there';
+
       // Email to advertiser using universal template
       const advertiserEmailData = {
         to: advertiserEmail,
@@ -255,10 +257,16 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           website_url: order.website?.url || '',
           website_name: order.website?.name || order.website?.url || 'Website',
 
-          // User details
-          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
-          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
-          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          // The AutoSend universal template uses {{publisher_name}} for the
+          // top-line greeting on every email — including those sent to the
+          // advertiser. Setting publisher_name to the advertiser's name here
+          // makes the greeting render correctly for advertiser-bound mail.
+          // The publisher's real name is still available via real_publisher_name.
+          publisher_name: advertiserName,
+          real_publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: advertiserName,
+          customer: advertiserName,
+          recipient_name: advertiserName,
 
           // Item details
           item_1_name: order.website?.name || 'Order Service',
@@ -360,6 +368,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     try {
       console.log(`[EMAIL DEBUG] sendOrderDeliveryEmail called for order ${order.id}`);
 
+      const advertiserName = order.advertiser?.username || order.advertiser?.email || 'there';
+
       // Email to advertiser using universal template
       const advertiserEmailData = {
         to: advertiserEmail,
@@ -381,10 +391,15 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           website_url: order.website?.url || '',
           website_name: order.website?.name || order.website?.url || 'Website',
 
-          // User details
-          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
-          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
-          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          // The AutoSend universal template greets with {{publisher_name}};
+          // for advertiser-bound mail we override it to the advertiser's name
+          // so the greeting reads correctly. Publisher's real name lives in
+          // real_publisher_name.
+          publisher_name: advertiserName,
+          real_publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: advertiserName,
+          customer: advertiserName,
+          recipient_name: advertiserName,
 
           // Item details
           item_1_name: order.website?.name || 'Order Service',
@@ -398,7 +413,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
 
           // Delivery-specific conditional fields (shown in template)
-          delivery_proof_url: order.deliveryProofUrl || '',
+          delivery_proof_url: order.deliveryProof || '',
           delivery_message: order.deliveryMessage || '',
 
           // Other conditional fields - not shown for delivery
