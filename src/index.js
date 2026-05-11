@@ -138,6 +138,52 @@ module.exports = {
       );
     }
 
+    // ── Auto-grant admin route permissions to super_admin / admin roles ─
+    // Custom routes under src/api/admin/routes/* require explicit permission
+    // rows in up_permissions linked to each admin role; without them the
+    // users-permissions plugin returns 403 before the is-admin policy can
+    // run. When new routes are added (e.g. createOnBehalf, rejectOrder) the
+    // rows don't exist, so requests silently break. This block walks every
+    // declared admin route on boot and creates any missing permission rows.
+    // Idempotent: skips rows that already exist.
+    try {
+      const adminRoles = await strapi.db
+        .query('plugin::users-permissions.role')
+        .findMany({ where: { type: { $in: ['super_admin', 'admin'] } } });
+
+      const actions = new Set();
+      for (const mod of adminRoutes) {
+        for (const route of (mod.routes || [])) {
+          const [controller, method] = String(route.handler || '').split('.');
+          if (controller && method) {
+            actions.add(`api::admin.${controller}.${method}`);
+          }
+        }
+      }
+
+      let granted = 0;
+      for (const role of adminRoles) {
+        for (const action of actions) {
+          const existing = await strapi.db
+            .query('plugin::users-permissions.permission')
+            .findOne({ where: { action, role: role.id } });
+          if (!existing) {
+            await strapi.db
+              .query('plugin::users-permissions.permission')
+              .create({ data: { action, role: role.id } });
+            granted++;
+          }
+        }
+      }
+      if (granted > 0) {
+        strapi.log.info(
+          `[BOOTSTRAP] Granted ${granted} missing admin permission(s) across ${adminRoles.length} role(s)`
+        );
+      }
+    } catch (err) {
+      strapi.log.warn(`[BOOTSTRAP] Could not auto-grant admin route permissions: ${err.message}`);
+    }
+
     // Add request debugging middleware
     strapi.server.use(async (ctx, next) => {
       // Log the request details for debugging
