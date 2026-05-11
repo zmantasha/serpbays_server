@@ -118,9 +118,30 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
         return ctx.notFound('Order not found');
       }
 
+      // The revision message is captured as a communication record (not a
+      // column on order). When the order is mid-revision, surface the most
+      // recent revision-request message so the admin UI can show why the
+      // redo was asked for.
+      let revisionMessage = null;
+      if (order.revisionStatus === 'requested' || order.revisionStatus === 'in_progress') {
+        try {
+          const latest = await strapi.db.query('api::communication.communication').findOne({
+            where: { order: id, communicationStatus: 'requested' },
+            orderBy: { createdAt: 'desc' }
+          });
+          if (latest?.message) {
+            // The user-facing controller persists it as `Revision requested: <message>`;
+            // strip the prefix so the UI doesn't double-label it.
+            revisionMessage = String(latest.message).replace(/^Revision requested:\s*/i, '');
+          }
+        } catch (revErr) {
+          console.error('[ORDER DETAILS] Failed to load revision message:', revErr);
+        }
+      }
+
       console.log('[ORDER DETAILS] Successfully fetched order');
       ctx.send({
-        data: order
+        data: { ...order, revisionMessage }
       });
 
     } catch (error) {
