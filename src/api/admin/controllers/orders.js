@@ -180,13 +180,26 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
         if (typeof deliveryProof === 'string') deliveryFields.deliveryProof = deliveryProof;
       }
 
+      // Re-delivery during an active revision: mirror the publisher's deliver
+      // flow (api::order.order#deliverOrder) and close out the revision so the
+      // "Revision requested" banner disappears.
+      const existing = await strapi.entityService.findOne('api::order.order', id);
+      const revisionClose = {};
+      if (
+        orderStatus === 'delivered' &&
+        (existing?.revisionStatus === 'requested' || existing?.revisionStatus === 'in_progress')
+      ) {
+        revisionClose.revisionStatus = 'completed';
+      }
+
       const updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
           orderStatus,
           adminNotes,
           lastStatusUpdate: now,
           ...lifecycleStamp,
-          ...deliveryFields
+          ...deliveryFields,
+          ...revisionClose
         },
         populate: ['advertiser', 'publisher']
       });
