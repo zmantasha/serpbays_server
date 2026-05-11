@@ -2809,6 +2809,8 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    canceledAt: Schema.Attribute.DateTime;
+    completedAt: Schema.Attribute.DateTime;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -2819,6 +2821,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 255;
       }>;
+    failedAt: Schema.Attribute.DateTime;
     fee: Schema.Attribute.Decimal &
       Schema.Attribute.SetMinMax<
         {
