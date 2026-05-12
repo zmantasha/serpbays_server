@@ -187,6 +187,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         content_type: 'content_type',
       };
 
+      // JSON array columns: stored as serialized arrays like ["News & Media"].
+      // Simple equality cannot match them, so we fall back to a quoted-substring
+      // LIKE so "News & Media" matches ["News & Media"] / ["A","News & Media"].
+      const JSON_ARRAY_FIELDS = new Set(['category', 'other_category', 'language', 'countries']);
+
       Object.entries(filters).forEach(([key, value]) => {
         if (key === '$or') return; // Already handled above
 
@@ -197,6 +202,18 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           if (value.$containsi) {
             query = query.whereRaw('LOWER(??) LIKE ?', [key, `%${String(value.$containsi).toLowerCase()}%`]);
           }
+        } else if (JSON_ARRAY_FIELDS.has(key)) {
+          // ANY-OF semantics across one or more selected values. Accepts a
+          // single string, an array, or a comma-separated string.
+          const values = (Array.isArray(value) ? value : String(value).split(','))
+            .map((v) => String(v).trim())
+            .filter(Boolean);
+          if (values.length === 0) return;
+          query = query.where(function () {
+            values.forEach((v) => {
+              this.orWhereRaw('?? LIKE ?', [key, `%"${v}"%`]).orWhere(key, v);
+            });
+          });
         } else {
           // Simple equality
           query = query.where(key, value);
@@ -328,6 +345,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           title: website.publisher_name || website.url,
           category: website.category,
           subcategory: website.other_category,
+          language: website.language,
+          country: website.countries,
           metrics: {
             dr: metricsSource.ahrefs_dr,
             ahrefsTraffic: metricsSource.ahrefs_traffic,
