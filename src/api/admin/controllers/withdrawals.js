@@ -428,6 +428,38 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         populate: ['publisher']
       });
 
+      // Send "withdrawal paid" email to publisher. Mirrors the approval-email
+      // path; failures are logged but don't fail the action.
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawal.publisher?.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal paid email to ${publisherEmail}`);
+
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendWithdrawalPaidEmail(
+              { ...transaction, payment_notes: paymentNotes },
+              publisherEmail,
+              updatedWithdrawal
+            );
+            console.log(`Withdrawal paid email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, paid email not sent`);
+          }
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal paid email:', emailError);
+      }
+
       ctx.send({
         data: updatedWithdrawal
       });
