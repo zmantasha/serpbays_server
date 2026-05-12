@@ -3930,7 +3930,12 @@ export interface PluginUsersPermissionsUser
     vatGstNumber: Schema.Attribute.String;
     website: Schema.Attribute.String;
     withdrawalOtp: Schema.Attribute.String & Schema.Attribute.Private;
+    withdrawalOtpAmount: Schema.Attribute.Decimal & Schema.Attribute.Private;
+    withdrawalOtpAttempts: Schema.Attribute.Integer &
+      Schema.Attribute.Private &
+      Schema.Attribute.DefaultTo<0>;
     withdrawalOtpExpiry: Schema.Attribute.DateTime & Schema.Attribute.Private;
+    withdrawalOtpSentAt: Schema.Attribute.DateTime & Schema.Attribute.Private;
     withdrawalRequests: Schema.Attribute.Relation<
       'oneToMany',
       'api::withdrawal-request.withdrawal-request'

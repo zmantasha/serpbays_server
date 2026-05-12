@@ -5,6 +5,18 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
+const crypto = require('crypto');
+
+const MAX_OTP_ATTEMPTS = 5;
+
+// Constant-time OTP comparison. Returns false if lengths differ rather than throwing.
+function safeCompareOtp(stored, provided) {
+  if (typeof stored !== 'string' || typeof provided !== 'string') return false;
+  const a = Buffer.from(stored, 'utf8');
+  const b = Buffer.from(provided, 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 module.exports = createCoreController('api::withdrawal-request.withdrawal-request', ({ strapi }) => ({
 
@@ -22,42 +34,65 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       const userId = ctx.state.user.id;
 
-      // Rate limit: check if OTP was sent less than 60 seconds ago
+      const OTP_VALIDITY_MS = 1 * 60 * 1000; // 1 minute
+      const RESEND_COOLDOWN_MS = 60 * 1000;  // 60 seconds between sends
+
+      // Rate limit: use the explicit sent-at timestamp (independent of validity)
       const user = await strapi.entityService.findOne('plugin::users-permissions.user', userId, {
-        fields: ['withdrawalOtpExpiry']
+        fields: ['withdrawalOtpSentAt']
       });
 
-      if (user.withdrawalOtpExpiry) {
-        const expiryTime = new Date(user.withdrawalOtpExpiry).getTime();
-        const otpSentTime = expiryTime - (5 * 60 * 1000); // OTP was sent 5 min before expiry
-        const timeSinceSent = Date.now() - otpSentTime;
-        if (timeSinceSent < 60 * 1000) {
-          const waitSeconds = Math.ceil((60 * 1000 - timeSinceSent) / 1000);
+      if (user.withdrawalOtpSentAt) {
+        const timeSinceSent = Date.now() - new Date(user.withdrawalOtpSentAt).getTime();
+        if (timeSinceSent < RESEND_COOLDOWN_MS) {
+          const waitSeconds = Math.ceil((RESEND_COOLDOWN_MS - timeSinceSent) / 1000);
           return ctx.badRequest(`Please wait ${waitSeconds} seconds before requesting a new OTP`);
         }
       }
 
-      // Generate 6-digit OTP
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+      // Generate 6-digit OTP. Use crypto.randomInt for an unbiased uniform draw.
+      const now = new Date();
+      const otpCode = crypto.randomInt(100000, 1000000).toString();
+      const otpExpiry = new Date(now.getTime() + OTP_VALIDITY_MS);
+      const requestedAmount = parseFloat(amount);
 
-      // Store OTP on user record
+      // Store OTP on user record. Bind it to the requested amount so the same
+      // code cannot authorize a different withdrawal value at confirmation time.
       await strapi.entityService.update('plugin::users-permissions.user', userId, {
         data: {
           withdrawalOtp: otpCode,
-          withdrawalOtpExpiry: otpExpiry
+          withdrawalOtpExpiry: otpExpiry,
+          withdrawalOtpSentAt: now,
+          withdrawalOtpAmount: requestedAmount,
+          withdrawalOtpAttempts: 0
         }
       });
 
-      // Send OTP email via AutoSend (template A-a3dc625caab7c580efef).
-      // Pass firstName/username so the {{first_name}} placeholder renders.
-      const emailService = strapi.service('api::global.email-operations');
-      await emailService.sendWithdrawalOtpEmail(otpCode, ctx.state.user.email, amount, {
-        firstName: ctx.state.user.firstName,
-        username: ctx.state.user.username,
-      });
+      // Send OTP email. If the email send fails, roll back the stored OTP
+      // so a flaky email service can't leave a usable OTP in the database.
+      try {
+        const validityMinutes = Math.round(OTP_VALIDITY_MS / 60000);
+        const emailService = strapi.service('api::global.email-operations');
+        await emailService.sendWithdrawalOtpEmail(otpCode, ctx.state.user.email, amount, {
+          firstName: ctx.state.user.firstName,
+          username: ctx.state.user.username,
+          validityMinutes,
+        });
+      } catch (emailError) {
+        await strapi.entityService.update('plugin::users-permissions.user', userId, {
+          data: {
+            withdrawalOtp: null,
+            withdrawalOtpExpiry: null,
+            withdrawalOtpSentAt: null,
+            withdrawalOtpAmount: null,
+            withdrawalOtpAttempts: 0
+          }
+        });
+        console.error('[WithdrawalOTP] Email send failed, rolled back OTP for user', userId, emailError);
+        return ctx.internalServerError('Could not deliver the verification email. Please try again in a moment.');
+      }
 
-      console.log(`[WithdrawalOTP] OTP sent to user ${userId} for withdrawal of $${amount}`);
+      console.log(`[WithdrawalOTP] OTP sent to user ${userId} for withdrawal of $${requestedAmount}`);
 
       return {
         data: {
@@ -66,8 +101,9 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         }
       };
     } catch (error) {
-      console.error('[WithdrawalOTP] Error sending OTP:', error);
-      return ctx.badRequest('Failed to send verification code');
+      const ref = crypto.randomBytes(4).toString('hex');
+      console.error(`[WithdrawalOTP] Error sending OTP (ref ${ref}):`, error);
+      return ctx.internalServerError(`Failed to send verification code (ref: ${ref}). Please contact support if this persists.`);
     }
   },
 
@@ -99,7 +135,17 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
 
       const userWithOtp = await strapi.entityService.findOne('plugin::users-permissions.user', ctx.state.user.id, {
-        fields: ['withdrawalOtp', 'withdrawalOtpExpiry']
+        fields: ['withdrawalOtp', 'withdrawalOtpExpiry', 'withdrawalOtpAmount', 'withdrawalOtpAttempts']
+      });
+
+      const clearOtp = () => strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
+        data: {
+          withdrawalOtp: null,
+          withdrawalOtpExpiry: null,
+          withdrawalOtpSentAt: null,
+          withdrawalOtpAmount: null,
+          withdrawalOtpAttempts: 0
+        }
       });
 
       if (!userWithOtp.withdrawalOtp || !userWithOtp.withdrawalOtpExpiry) {
@@ -107,21 +153,44 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
 
       if (new Date(userWithOtp.withdrawalOtpExpiry) < new Date()) {
-        // Clear expired OTP
-        await strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
-          data: { withdrawalOtp: null, withdrawalOtpExpiry: null }
-        });
+        await clearOtp();
         return ctx.badRequest('Verification code has expired. Please request a new one.');
       }
 
-      if (userWithOtp.withdrawalOtp !== otpCode) {
-        return ctx.badRequest('Invalid verification code');
+      // Brute-force protection: if too many wrong attempts, invalidate this OTP.
+      const prevAttempts = userWithOtp.withdrawalOtpAttempts || 0;
+      if (prevAttempts >= MAX_OTP_ATTEMPTS) {
+        await clearOtp();
+        return ctx.badRequest('Too many incorrect attempts. Please request a new verification code.');
+      }
+
+      // Bind the OTP to the amount it was issued for. Prevents reusing a
+      // small-amount OTP to authorize a large withdrawal.
+      const requestedAmount = parseFloat(amount);
+      const storedAmount = parseFloat(userWithOtp.withdrawalOtpAmount || 0);
+      if (!Number.isFinite(storedAmount) || Math.abs(storedAmount - requestedAmount) > 0.005) {
+        await strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
+          data: { withdrawalOtpAttempts: prevAttempts + 1 }
+        });
+        return ctx.badRequest('This verification code was issued for a different amount. Please request a new code.');
+      }
+
+      // Constant-time comparison to avoid leaking the OTP through response timing.
+      if (!safeCompareOtp(userWithOtp.withdrawalOtp, otpCode)) {
+        const nextAttempts = prevAttempts + 1;
+        const remaining = Math.max(0, MAX_OTP_ATTEMPTS - nextAttempts);
+        if (remaining === 0) {
+          await clearOtp();
+          return ctx.badRequest('Too many incorrect attempts. Please request a new verification code.');
+        }
+        await strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
+          data: { withdrawalOtpAttempts: nextAttempts }
+        });
+        return ctx.badRequest(`Invalid verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`);
       }
 
       // Clear OTP after successful verification (one-time use)
-      await strapi.entityService.update('plugin::users-permissions.user', ctx.state.user.id, {
-        data: { withdrawalOtp: null, withdrawalOtpExpiry: null }
-      });
+      await clearOtp();
 
       console.log(`[WithdrawalOTP] OTP verified for user ${ctx.state.user.id}`);
 
