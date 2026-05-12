@@ -238,6 +238,19 @@
       "type": "datetime",
       "private": true
     },
+    "withdrawalOtpSentAt": {
+      "type": "datetime",
+      "private": true
+    },
+    "withdrawalOtpAmount": {
+      "type": "decimal",
+      "private": true
+    },
+    "withdrawalOtpAttempts": {
+      "type": "integer",
+      "default": 0,
+      "private": true
+    },
     "aiGenerationCount": {
       "type": "integer",
       "default": 0

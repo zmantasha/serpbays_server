@@ -698,6 +698,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         recipient.username ||
         (userEmail ? userEmail.split('@')[0] : 'there');
 
+      const validityMinutes = recipient.validityMinutes || 10;
+      const validityText = `${validityMinutes} ${validityMinutes === 1 ? 'Minute' : 'Minutes'}`;
       const emailData = {
         to: userEmail,
         templateId: process.env.AUTOSEND_TEMPLATE_WITHDRAWAL_OTP || 'A-a3dc625caab7c580efef',
@@ -705,6 +707,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           first_name: firstName,
           otp: otpCode,
           amount: amount,
+          validity_minutes: validityMinutes,
+          validity_text: validityText,
           year: new Date().getFullYear(),
         },
         tags: ['withdrawal', 'otp', 'verification'],
