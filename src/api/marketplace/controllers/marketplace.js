@@ -45,6 +45,15 @@ async function getLifetimeDeposits(strapi, userId) {
   return rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
 }
 
+async function getCurrentWalletBalance(strapi, userId) {
+  if (!userId) return 0;
+  const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+    where: { users_permissions_user: userId },
+    select: ['balance'],
+  });
+  return wallet ? parseFloat(wallet.balance || 0) : 0;
+}
+
 // Required fields that must be present in CSV
 const REQUIRED_FIELDS = [
   'url',
@@ -532,14 +541,26 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
     // Deposit-gate: advertisers and anonymous users only see the first
     // MARKETPLACE_UNLOCK_MIN_USD-worth of listings (capped at 10 rows) until
-    // they've deposited the minimum. Publishers see only their own and are
-    // never gated.
+    // they've unlocked. Publishers see only their own and are never gated.
+    //
+    // Unlock rule (hybrid): unlock if EITHER
+    //   - lifetime settled deposits >= min  (permanent — real paying users)
+    //   - current wallet balance >= min     (transient — promo/admin credit)
+    // We check current balance first because it short-circuits the deposits
+    // query when the user is already funded.
     const minDepositRequired = getMarketplaceUnlockMin();
     const isPublisherUser =
       user && user.Advertiser === false && user.Publisher === true;
-    const lifetimeDeposits =
-      !isPublisherUser && user ? await getLifetimeDeposits(strapi, user.id) : 0;
-    const gated = !isPublisherUser && lifetimeDeposits < minDepositRequired;
+    let gated = !isPublisherUser;
+    if (gated && user) {
+      const currentBalance = await getCurrentWalletBalance(strapi, user.id);
+      if (currentBalance >= minDepositRequired) {
+        gated = false;
+      } else {
+        const lifetimeDeposits = await getLifetimeDeposits(strapi, user.id);
+        gated = lifetimeDeposits < minDepositRequired;
+      }
+    }
 
     if (gated) {
       if (!ctx.query.pagination) ctx.query.pagination = {};
