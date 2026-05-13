@@ -23,6 +23,28 @@ const PRICE_LIKE_FIELDS = new Set([
   'adv_li_dating_pricing',
 ]);
 
+// "Settled" deposit transaction statuses — these are the rows where money
+// actually landed in the user's wallet. Mirrors transactions getStats.
+const SETTLED_DEPOSIT_STATUSES = ['success', 'paid'];
+
+function getMarketplaceUnlockMin() {
+  const v = parseFloat(process.env.MARKETPLACE_UNLOCK_MIN_USD || '10');
+  return Number.isFinite(v) && v > 0 ? v : 10;
+}
+
+async function getLifetimeDeposits(strapi, userId) {
+  if (!userId) return 0;
+  const rows = await strapi.db.query('api::transaction.transaction').findMany({
+    where: {
+      users_permissions_user: userId,
+      type: 'deposit',
+      transactionStatus: { $in: SETTLED_DEPOSIT_STATUSES },
+    },
+    select: ['amount'],
+  });
+  return rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+}
+
 // Required fields that must be present in CSV
 const REQUIRED_FIELDS = [
   'url',
@@ -508,6 +530,34 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     if (!ctx.query) ctx.query = {};
     if (!ctx.query.filters) ctx.query.filters = {};
 
+    // Deposit-gate: advertisers and anonymous users only see the first
+    // MARKETPLACE_UNLOCK_MIN_USD-worth of listings (capped at 10 rows) until
+    // they've deposited the minimum. Publishers see only their own and are
+    // never gated.
+    const minDepositRequired = getMarketplaceUnlockMin();
+    const isPublisherUser =
+      user && user.Advertiser === false && user.Publisher === true;
+    const lifetimeDeposits =
+      !isPublisherUser && user ? await getLifetimeDeposits(strapi, user.id) : 0;
+    const gated = !isPublisherUser && lifetimeDeposits < minDepositRequired;
+
+    if (gated) {
+      if (!ctx.query.pagination) ctx.query.pagination = {};
+      ctx.query.pagination.page = 1;
+      ctx.query.pagination.pageSize = 10;
+      // Curated preview: ignore the user's sort selection and always show
+      // featured listings first, then highest-traffic rows. The 'default'
+      // sort branch below already implements featured-first +
+      // ahrefs_traffic DESC NULLS LAST.
+      ctx.query.sort = 'default';
+    }
+
+    const withGateMeta = (result) => {
+      if (!result || typeof result !== 'object') return result;
+      result.meta = { ...(result.meta || {}), gated, minDepositRequired };
+      return result;
+    };
+
     // Advertiser (user.Advertiser === true) can see all active listings
     // Publisher (user.Advertiser === false) only sees their listings
     if (user && user.Advertiser === false && user.Publisher === true) {
@@ -911,7 +961,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection, isDefaultSort);
 
         // Return in Strapi v4 format
-        return {
+        return withGateMeta({
           data: sortedResults,
           meta: {
             pagination: {
@@ -921,7 +971,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
               total
             }
           }
-        };
+        });
       } catch (error) {
         console.error('❌ Knex sorting failed, falling back to default:', error.message);
         // Fallback to Strapi's default entityService (without NULLS LAST fix)
@@ -951,12 +1001,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection, isDefaultSort);
           }
 
-          return {
+          return withGateMeta({
             data: results.results,
             meta: {
               pagination: results.pagination
             }
-          };
+          });
         } catch (fallbackError) {
           console.error('❌ Fallback also failed:', fallbackError);
           // Ultimate fallback
@@ -966,7 +1016,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             // Apply post-fetch sorting as final guarantee
             result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection, isDefaultSort);
           }
-          return result;
+          return withGateMeta(result);
         }
       }
     }
@@ -1014,7 +1064,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const sortDirection = postSortParts[1] || 'desc';
       const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection, isDefaultSort);
 
-      return {
+      return withGateMeta({
         data: sortedEntries,
         meta: {
           pagination: {
@@ -1024,7 +1074,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             total
           }
         }
-      };
+      });
     } catch (error) {
       console.error('❌ Error fetching marketplace data:', error);
       // Fallback to super.find if db query fails
@@ -1035,7 +1085,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
         result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc', isDefaultSort);
       }
-      return result;
+      return withGateMeta(result);
     }
   },
 

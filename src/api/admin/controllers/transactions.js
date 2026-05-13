@@ -35,9 +35,12 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         ];
       }
 
-      // Status filter
+      // Status filter — "completed" is a virtual status meaning "settled"
+      // (success OR paid), mirroring the stats controller's SETTLED definition.
       if (status) {
-        filters.transactionStatus = status;
+        filters.transactionStatus = status === 'completed'
+          ? { $in: ['success', 'paid'] }
+          : status;
       }
 
       // Type filter
