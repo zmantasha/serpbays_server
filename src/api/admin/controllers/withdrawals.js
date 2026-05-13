@@ -358,6 +358,10 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         .filter(w => w.withdrawal_status === 'pending')
         .reduce((sum, withdrawal) => sum + parseFloat(withdrawal.amount || 0), 0);
 
+      const paidAmount = totalAmountData
+        .filter(w => w.withdrawal_status === 'paid')
+        .reduce((sum, withdrawal) => sum + parseFloat(withdrawal.amount || 0), 0);
+
       // Get new withdrawal requests this month
       const thisMonth = new Date();
       thisMonth.setDate(1);
@@ -381,6 +385,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         totalAmount: totalAmount.toFixed(2),
         approvedAmount: approvedAmount.toFixed(2),
         pendingAmount: pendingAmount.toFixed(2),
+        paidAmount: paidAmount.toFixed(2),
         newThisMonth
       });
 
