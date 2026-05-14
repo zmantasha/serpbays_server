@@ -6,6 +6,7 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues } = require('../../../constants/website-options');
+const { getPublisherCommissionRate } = require('../../../constants/commission');
 
 // In-memory storage for bulk import progress (since cache might not be available)
 const bulkImportProgress = new Map();
@@ -808,6 +809,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     try {
       const { id } = ctx.params;
       const { adminNotes } = ctx.request.body;
+      const COMMISSION_RATE = getPublisherCommissionRate();
 
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} approving website ${id}`);
@@ -902,30 +904,30 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   adv_li_dating_pricing: updatedWebsite.datingLinkInsertionPrice || 0,
                   // Publisher earnings (80% of advertiser prices)
                   publisher_price: Math.floor(Math.max(
-                    (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.generalGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE
                   )) || 1,
-                  publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * 0.8),
+                  publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE),
                   publisher_casino_pricing: Math.floor(Math.max(
-                    (updatedWebsite.casinoGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.casinoGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.casinoLinkInsertionPrice || 0) * COMMISSION_RATE
                   )),
                   publisher_crypto_pricing: Math.floor(Math.max(
-                    (updatedWebsite.cryptoGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.cryptoGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE
                   )),
                   publisher_cbd_pricing: Math.floor(Math.max(
-                    (updatedWebsite.cbdGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.cbdGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.cbdLinkInsertionPrice || 0) * COMMISSION_RATE
                   )),
                   publisher_dating_pricing: Math.floor(Math.max(
-                    (updatedWebsite.datingGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.datingLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.datingGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.datingLinkInsertionPrice || 0) * COMMISSION_RATE
                   )),
-                  publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8),
-                  publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8),
-                  publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8),
-                  publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * 0.8),
+                  publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * COMMISSION_RATE),
+                  publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE),
+                  publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * COMMISSION_RATE),
+                  publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * COMMISSION_RATE),
                   // Other fields
                   min_word_count: updatedWebsite.minWordCount || 500,
                   backlink_type: updatedWebsite.backlinkType || 'Do follow',
@@ -964,8 +966,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   price: updatedWebsite.generalGuestPostPrice || 0,
                   link_insertion_price: updatedWebsite.generalLinkInsertionPrice || 0,
                   publisher_price: Math.floor(Math.max(
-                    (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.generalGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE
                   )) || 1,
                   dofollow_link: updatedWebsite.allowedLinks || 1,
                   publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
@@ -1334,6 +1336,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     try {
       const { id } = ctx.params;
       const updateData = ctx.request.body;
+      const COMMISSION_RATE = getPublisherCommissionRate();
 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating website ${id}`, updateData);
 
@@ -1424,6 +1427,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const wasApproved = websiteBeforeUpdate?.submissionStatus === 'approved';
       const marketplaceId = websiteBeforeUpdate?.marketplaceId;
 
+      // Tell the publisher-website afterUpdate lifecycle to skip its own
+      // marketplace sync. The admin controller does its own comprehensive
+      // sync below (with filtering); letting the lifecycle also run would
+      // produce a second UPDATE on the marketplace row and therefore a
+      // duplicate update-history entry at the same timestamp.
+      mappedData._skipMarketplaceSync = true;
+
       // Update the website
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: mappedData,
@@ -1481,30 +1491,30 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
               // Publisher earnings (80% of advertiser prices)
               publisher_price: Math.floor(Math.max(
-                (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.generalGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE
               )) || 1,
-              publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * 0.8),
+              publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE),
               publisher_casino_pricing: Math.floor(Math.max(
-                (updatedWebsite.casinoGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.casinoGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.casinoLinkInsertionPrice || 0) * COMMISSION_RATE
               )),
               publisher_crypto_pricing: Math.floor(Math.max(
-                (updatedWebsite.cryptoGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.cryptoGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE
               )),
               publisher_cbd_pricing: Math.floor(Math.max(
-                (updatedWebsite.cbdGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.cbdGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.cbdLinkInsertionPrice || 0) * COMMISSION_RATE
               )),
               publisher_dating_pricing: Math.floor(Math.max(
-                (updatedWebsite.datingGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.datingLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.datingGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.datingLinkInsertionPrice || 0) * COMMISSION_RATE
               )),
-              publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8),
-              publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8),
-              publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8),
-              publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * 0.8),
+              publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * COMMISSION_RATE),
+              publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE),
+              publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * COMMISSION_RATE),
+              publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * COMMISSION_RATE),
 
               // Content requirements
               min_word_count: updatedWebsite.minWordCount || 500,

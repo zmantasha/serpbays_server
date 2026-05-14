@@ -1,3 +1,5 @@
+const { getPublisherCommissionRate } = require('../../../../constants/commission');
+
 const buildCategorySearchValue = (categoryValue) => {
   if (!categoryValue) {
     return '';
@@ -235,7 +237,16 @@ module.exports = {
       }
     }
 
-    // Auto-sync metrics and pricing to marketplace when an approved website's data changes
+    // Auto-sync metrics and pricing to marketplace when an approved website's data changes.
+    // Callers that already wrote to the marketplace directly set
+    // _skipMarketplaceSync=true on their update payload. beforeUpdate moves
+    // that flag into event.state because the data object is mutated before
+    // afterUpdate sees it.
+    if (event.state?.skipMarketplaceSync) {
+      console.log('⏭️ publisher-website afterUpdate: marketplace sync skipped (caller-driven update)');
+      return;
+    }
+
     try {
       const metricsFields = [
         'ahrefs_dr',
@@ -273,6 +284,7 @@ module.exports = {
       const anyPricingChanged = pricingFields.some((f) => Object.prototype.hasOwnProperty.call(dataUpdated, f));
 
       if (result?.submissionStatus === 'approved' && (anyMetricsChanged || anyPricingChanged) && result?.url) {
+        const COMMISSION_RATE = getPublisherCommissionRate();
         const marketplaceList = await strapi.entityService.findMany('api::marketplace.marketplace', {
           filters: { url: result.url },
           limit: 1
@@ -328,52 +340,52 @@ module.exports = {
             publisher_price: ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) > 0 ||
               (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) > 0)
               ? Math.floor(Math.max(
-                ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) || 0) * 0.8,
-                ((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) || 0) * 0.8
+                ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) || 0) * COMMISSION_RATE,
+                ((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) || 0) * COMMISSION_RATE
               )) || 1
               : null,
             publisher_link_insertion_price: (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) > 0
-              ? Math.floor((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) * 0.8)
+              ? Math.floor((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) * COMMISSION_RATE)
               : null,
             publisher_casino_pricing: ((dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice) > 0 ||
               (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) > 0)
               ? Math.floor(Math.max(
-                ((dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice) || 0) * 0.8,
-                ((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) || 0) * 0.8
+                ((dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice) || 0) * COMMISSION_RATE,
+                ((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) || 0) * COMMISSION_RATE
               ))
               : null,
             publisher_crypto_pricing: ((dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice) > 0 ||
               (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) > 0)
               ? Math.floor(Math.max(
-                ((dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice) || 0) * 0.8,
-                ((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) || 0) * 0.8
+                ((dataUpdated.cryptoGuestPostPrice ?? result.cryptoGuestPostPrice) || 0) * COMMISSION_RATE,
+                ((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) || 0) * COMMISSION_RATE
               ))
               : null,
             publisher_cbd_pricing: ((dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice) > 0 ||
               (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) > 0)
               ? Math.floor(Math.max(
-                ((dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice) || 0) * 0.8,
-                ((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) || 0) * 0.8
+                ((dataUpdated.cbdGuestPostPrice ?? result.cbdGuestPostPrice) || 0) * COMMISSION_RATE,
+                ((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) || 0) * COMMISSION_RATE
               ))
               : null,
             publisher_dating_pricing: ((dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice) > 0 ||
               (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) > 0)
               ? Math.floor(Math.max(
-                ((dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice) || 0) * 0.8,
-                ((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) || 0) * 0.8
+                ((dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice) || 0) * COMMISSION_RATE,
+                ((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) || 0) * COMMISSION_RATE
               ))
               : null,
             publisher_li_casino_pricing: (dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) > 0
-              ? Math.floor((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) * 0.8)
+              ? Math.floor((dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice) * COMMISSION_RATE)
               : null,
             publisher_li_crypto_pricing: (dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) > 0
-              ? Math.floor((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) * 0.8)
+              ? Math.floor((dataUpdated.cryptoLinkInsertionPrice ?? result.cryptoLinkInsertionPrice) * COMMISSION_RATE)
               : null,
             publisher_li_cbd_pricing: (dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) > 0
-              ? Math.floor((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) * 0.8)
+              ? Math.floor((dataUpdated.cbdLinkInsertionPrice ?? result.cbdLinkInsertionPrice) * COMMISSION_RATE)
               : null,
             publisher_li_dating_pricing: (dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) > 0
-              ? Math.floor((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) * 0.8)
+              ? Math.floor((dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice) * COMMISSION_RATE)
               : null,
 
             // Update timestamps
@@ -502,6 +514,15 @@ module.exports = {
     const { data } = event.params;
     if (data && Object.prototype.hasOwnProperty.call(data, 'category')) {
       data.category_search = buildCategorySearchValue(data.category);
+    }
+    // _skipMarketplaceSync is a transient signal for afterUpdate, not a real
+    // column. Stash it on event.state so afterUpdate can read it, THEN strip
+    // it from the persisted payload (Strapi would otherwise try to write it
+    // as an unknown column).
+    if (data && Object.prototype.hasOwnProperty.call(data, '_skipMarketplaceSync')) {
+      event.state = event.state || {};
+      event.state.skipMarketplaceSync = data._skipMarketplaceSync === true;
+      delete data._skipMarketplaceSync;
     }
   }
 };
