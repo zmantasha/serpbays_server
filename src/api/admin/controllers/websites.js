@@ -482,6 +482,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         if (!ts) return true; // never updated → treat as stale
         return new Date(ts).getTime() < cutoffMs;
       };
+      // Freshness lives on the (URL-scoped) marketplace row, but the websites
+      // table can show multiple publisher-website snapshots sharing one URL
+      // (current owner + historical ownership-transferred / rejected rows).
+      // Only the actively-maintained row should display freshness — historical
+      // snapshots aren't being edited and would otherwise inherit "Today"
+      // pills from the live record.
+      const isActivePublisherRow = (w) =>
+        (w.submissionStatus || '').toLowerCase() === 'approved';
 
       // Transform data to match frontend expectations with comprehensive fields
       const transformedWebsites = websites.map(website => ({
@@ -582,20 +590,35 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         metrics_update_count: website.metrics_update_count || 0,
         metrics_update_method: website.metrics_update_method,
         // Price/metric freshness — derived from the matching marketplace row.
-        // Used by the admin list to flag stale listings without opening each row.
+        // Only attached to active publisher-website rows; historical snapshots
+        // (ownership_transferred, rejected, pending) are not being edited so
+        // they shouldn't inherit the live record's freshness pills.
         marketplaceId: freshnessByUrl.get(website.url)?.marketplaceId ?? null,
-        lastPriceUpdateAt: freshnessByUrl.get(website.url)?.lastPriceUpdateAt ?? null,
-        lastMetricUpdateAt: freshnessByUrl.get(website.url)?.lastMetricUpdateAt ?? null,
-        priceOverdue: computeOverdue(
-          freshnessByUrl.get(website.url)?.lastPriceUpdateAt,
-          priceCutoffMs
-        ),
-        metricsOverdue: computeOverdue(
-          freshnessByUrl.get(website.url)?.lastMetricUpdateAt,
-          metricsCutoffMs
-        ),
-        priceOverdueThresholdDays: priceOverdueDays,
-        metricsOverdueThresholdDays: metricsOverdueDays,
+        ...(isActivePublisherRow(website)
+          ? {
+              lastPriceUpdateAt: freshnessByUrl.get(website.url)?.lastPriceUpdateAt ?? null,
+              lastMetricUpdateAt: freshnessByUrl.get(website.url)?.lastMetricUpdateAt ?? null,
+              priceOverdue: computeOverdue(
+                freshnessByUrl.get(website.url)?.lastPriceUpdateAt,
+                priceCutoffMs
+              ),
+              metricsOverdue: computeOverdue(
+                freshnessByUrl.get(website.url)?.lastMetricUpdateAt,
+                metricsCutoffMs
+              ),
+              priceOverdueThresholdDays: priceOverdueDays,
+              metricsOverdueThresholdDays: metricsOverdueDays,
+              freshnessApplicable: true,
+            }
+          : {
+              lastPriceUpdateAt: null,
+              lastMetricUpdateAt: null,
+              priceOverdue: false,
+              metricsOverdue: false,
+              priceOverdueThresholdDays: priceOverdueDays,
+              metricsOverdueThresholdDays: metricsOverdueDays,
+              freshnessApplicable: false,
+            }),
       }));
 
       console.log('[ADMIN WEBSITES FIND]', {
