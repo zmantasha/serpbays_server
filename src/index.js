@@ -184,6 +184,40 @@ module.exports = {
       strapi.log.warn(`[BOOTSTRAP] Could not auto-grant admin route permissions: ${err.message}`);
     }
 
+    // ── Grant marketplace update-history route to admin roles ───────────
+    // The /api/marketplaces/:id/history route lives on the public-side
+    // marketplace API (not under api::admin), so the loop above doesn't
+    // cover it. Admins need it for the "Update history" tab.
+    try {
+      const roles = await strapi.db
+        .query('plugin::users-permissions.role')
+        .findMany({
+          where: { type: { $in: ['super_admin', 'admin', 'authenticated'] } },
+        });
+      const action = 'api::marketplace.marketplace.getUpdateHistory';
+      let grantedHistory = 0;
+      for (const role of roles) {
+        const existing = await strapi.db
+          .query('plugin::users-permissions.permission')
+          .findOne({ where: { action, role: role.id } });
+        if (!existing) {
+          await strapi.db
+            .query('plugin::users-permissions.permission')
+            .create({ data: { action, role: role.id } });
+          grantedHistory++;
+        }
+      }
+      if (grantedHistory > 0) {
+        strapi.log.info(
+          `[BOOTSTRAP] Granted marketplace.getUpdateHistory to ${grantedHistory} role(s)`
+        );
+      }
+    } catch (err) {
+      strapi.log.warn(
+        `[BOOTSTRAP] Could not grant marketplace.getUpdateHistory: ${err.message}`
+      );
+    }
+
     // Add request debugging middleware
     strapi.server.use(async (ctx, next) => {
       // Log the request details for debugging

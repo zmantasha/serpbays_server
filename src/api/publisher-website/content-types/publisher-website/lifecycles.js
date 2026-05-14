@@ -381,6 +381,41 @@ module.exports = {
             metrics_update_method: 'lifecycle_auto'
           };
 
+          // Drop price-group marketplace fields whose source publisher-website
+          // fields weren't actually in this request. Without this, the
+          // wholesale rebuild above defaults every untouched niche price to
+          // null/0, generating spurious "— ↔ 0" rows in the marketplace
+          // update history on every save.
+          const dataKeys = new Set(Object.keys(dataUpdated));
+          const PRICE_SYNC_GROUPS = [
+            {
+              triggers: ['generalGuestPostPrice', 'generalLinkInsertionPrice'],
+              fields: ['price', 'link_insertion_price', 'publisher_price', 'publisher_link_insertion_price'],
+            },
+            {
+              triggers: ['casinoGuestPostPrice', 'casinoLinkInsertionPrice'],
+              fields: ['adv_casino_pricing', 'adv_li_casino_pricing', 'publisher_casino_pricing', 'publisher_li_casino_pricing'],
+            },
+            {
+              triggers: ['cryptoGuestPostPrice', 'cryptoLinkInsertionPrice'],
+              fields: ['adv_crypto_pricing', 'adv_li_crypto_pricing', 'publisher_crypto_pricing', 'publisher_li_crypto_pricing'],
+            },
+            {
+              triggers: ['cbdGuestPostPrice', 'cbdLinkInsertionPrice'],
+              fields: ['adv_cbd_pricing', 'adv_li_cbd_pricing', 'publisher_cbd_pricing', 'publisher_li_cbd_pricing'],
+            },
+            {
+              triggers: ['datingGuestPostPrice', 'datingLinkInsertionPrice'],
+              fields: ['adv_dating_pricing', 'adv_li_dating_pricing', 'publisher_dating_pricing', 'publisher_li_dating_pricing'],
+            },
+          ];
+          for (const group of PRICE_SYNC_GROUPS) {
+            const triggered = group.triggers.some((t) => dataKeys.has(t));
+            if (!triggered) {
+              for (const f of group.fields) delete updateDataMarketplace[f];
+            }
+          }
+
           await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
             data: updateDataMarketplace
           });

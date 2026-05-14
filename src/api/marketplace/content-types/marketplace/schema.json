@@ -380,6 +380,20 @@
       "relation": "oneToMany",
       "target": "api::website-update-request.website-update-request",
       "mappedBy": "marketplace"
+    },
+    "updateHistory": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::marketplace-update-history.marketplace-update-history",
+      "mappedBy": "marketplace"
+    },
+    "lastPriceUpdateAt": {
+      "type": "datetime",
+      "description": "Most recent change timestamp for any tracked price field. Stamped automatically by the marketplace lifecycle hook."
+    },
+    "lastMetricUpdateAt": {
+      "type": "datetime",
+      "description": "Most recent change timestamp for any tracked metric field. Stamped automatically by the marketplace lifecycle hook."
     }
   }
 }

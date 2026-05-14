@@ -452,6 +452,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Get total count for pagination (optimized - only count, no data fetch)
       const total = await strapi.db.query('api::publisher-website.publisher-website').count({ where: filters });
 
+      // Look up freshness timestamps from the matching marketplace rows.
+      // Match is by URL (the canonical string each entity stores). Batched
+      // in one query so the list endpoint stays N+0 instead of N+1.
+      const priceOverdueDays = parseInt(process.env.MARKETPLACE_PRICE_OVERDUE_DAYS, 10) || 90;
+      const metricsOverdueDays = parseInt(process.env.MARKETPLACE_METRICS_OVERDUE_DAYS, 10) || 30;
+      const priceCutoffMs = Date.now() - priceOverdueDays * 24 * 60 * 60 * 1000;
+      const metricsCutoffMs = Date.now() - metricsOverdueDays * 24 * 60 * 60 * 1000;
+      const urls = Array.from(
+        new Set(websites.map(w => w.url).filter(Boolean))
+      );
+      const freshnessByUrl = new Map();
+      if (urls.length > 0) {
+        const rows = await strapi.db
+          .query('api::marketplace.marketplace')
+          .findMany({
+            where: { url: { $in: urls } },
+            select: ['id', 'url', 'lastPriceUpdateAt', 'lastMetricUpdateAt'],
+          });
+        for (const row of rows) {
+          freshnessByUrl.set(row.url, {
+            marketplaceId: row.id,
+            lastPriceUpdateAt: row.lastPriceUpdateAt || null,
+            lastMetricUpdateAt: row.lastMetricUpdateAt || null,
+          });
+        }
+      }
+      const computeOverdue = (ts, cutoffMs) => {
+        if (!ts) return true; // never updated → treat as stale
+        return new Date(ts).getTime() < cutoffMs;
+      };
+
       // Transform data to match frontend expectations with comprehensive fields
       const transformedWebsites = websites.map(website => ({
         id: website.id,
@@ -549,7 +580,22 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         // SEO Metrics tracking
         metrics_last_updated: website.metrics_last_updated,
         metrics_update_count: website.metrics_update_count || 0,
-        metrics_update_method: website.metrics_update_method
+        metrics_update_method: website.metrics_update_method,
+        // Price/metric freshness — derived from the matching marketplace row.
+        // Used by the admin list to flag stale listings without opening each row.
+        marketplaceId: freshnessByUrl.get(website.url)?.marketplaceId ?? null,
+        lastPriceUpdateAt: freshnessByUrl.get(website.url)?.lastPriceUpdateAt ?? null,
+        lastMetricUpdateAt: freshnessByUrl.get(website.url)?.lastMetricUpdateAt ?? null,
+        priceOverdue: computeOverdue(
+          freshnessByUrl.get(website.url)?.lastPriceUpdateAt,
+          priceCutoffMs
+        ),
+        metricsOverdue: computeOverdue(
+          freshnessByUrl.get(website.url)?.lastMetricUpdateAt,
+          metricsCutoffMs
+        ),
+        priceOverdueThresholdDays: priceOverdueDays,
+        metricsOverdueThresholdDays: metricsOverdueDays,
       }));
 
       console.log('[ADMIN WEBSITES FIND]', {
@@ -699,6 +745,22 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         metrics_update_count: website.metrics_update_count ?? 0,
         metrics_update_method: website.metrics_update_method ?? null
       };
+
+      // Attach the corresponding marketplace listing's ID (if any) so the
+      // admin UI can deep-link to /marketplaces/:id/history for this site.
+      // The link is by URL — the same string both entities store as the
+      // canonical domain.
+      try {
+        if (website.url) {
+          const marketplaceRow = await strapi.db
+            .query('api::marketplace.marketplace')
+            .findOne({ where: { url: website.url }, select: ['id'] });
+          transformedWebsite.marketplaceId = marketplaceRow?.id ?? null;
+        }
+      } catch (lookupErr) {
+        console.warn('[ADMIN WEBSITE FIND ONE] marketplace lookup failed:', lookupErr.message);
+        transformedWebsite.marketplaceId = null;
+      }
 
       console.log('[ADMIN WEBSITE FIND ONE]', {
         websiteId: id,
@@ -1476,6 +1538,45 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 delete marketplaceUpdateData[key];
               }
             });
+
+            // Drop price-group marketplace fields whose source publisher-website
+            // fields weren't actually in this request. The wholesale rebuild
+            // above defaults missing prices to 0, which used to clobber every
+            // listing's niche pricing on every save and pollute the update
+            // history with spurious "— → 0" rows.
+            const mappedKeys = new Set(Object.keys(mappedData));
+            const SYNC_GROUPS = [
+              {
+                triggers: ['generalGuestPostPrice', 'generalLinkInsertionPrice'],
+                fields: ['price', 'link_insertion_price', 'publisher_price', 'publisher_link_insertion_price'],
+              },
+              {
+                triggers: ['casinoGuestPostPrice', 'casinoLinkInsertionPrice'],
+                fields: ['adv_casino_pricing', 'adv_li_casino_pricing', 'publisher_casino_pricing', 'publisher_li_casino_pricing'],
+              },
+              {
+                triggers: ['cryptoGuestPostPrice', 'cryptoLinkInsertionPrice'],
+                fields: ['adv_crypto_pricing', 'adv_li_crypto_pricing', 'publisher_crypto_pricing', 'publisher_li_crypto_pricing'],
+              },
+              {
+                triggers: ['cbdGuestPostPrice', 'cbdLinkInsertionPrice'],
+                fields: ['adv_cbd_pricing', 'adv_li_cbd_pricing', 'publisher_cbd_pricing', 'publisher_li_cbd_pricing'],
+              },
+              {
+                triggers: ['datingGuestPostPrice', 'datingLinkInsertionPrice'],
+                fields: ['adv_dating_pricing', 'adv_li_dating_pricing', 'publisher_dating_pricing', 'publisher_li_dating_pricing'],
+              },
+              {
+                triggers: ['copywritingPrice'],
+                fields: ['publisher_writing_price'],
+              },
+            ];
+            for (const group of SYNC_GROUPS) {
+              const triggered = group.triggers.some((t) => mappedKeys.has(t));
+              if (!triggered) {
+                for (const f of group.fields) delete marketplaceUpdateData[f];
+              }
+            }
 
             // Update marketplace using database query API
             const updatedMarketplace = await strapi.db.query('api::marketplace.marketplace').update({

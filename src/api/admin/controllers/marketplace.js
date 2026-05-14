@@ -771,6 +771,15 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       if (updateData.isFeaturedGuestPost !== undefined) strapiData.isFeaturedGuestPost = updateData.isFeaturedGuestPost;
       if (updateData.isFeaturedLinkInsertion !== undefined) strapiData.isFeaturedLinkInsertion = updateData.isFeaturedLinkInsertion;
 
+      // Attach audit context so the marketplace lifecycle can attribute the
+      // resulting update-history row to this admin actor.
+      strapiData._audit = {
+        source: 'admin',
+        userId: ctx.state.user?.id || null,
+        changedBy:
+          ctx.state.user?.username || ctx.state.user?.email || null,
+      };
+
       const updatedWebsite = await strapi.entityService.update('api::marketplace.marketplace', id, {
         data: strapiData
       });
