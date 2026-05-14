@@ -78,6 +78,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         category = '',
         daFilter = '',
         metricsUpdateFilter = '',
+        freshness = '', // 'all' | 'overdue' | 'fresh' | 'never'
         minDA = '',
         maxDA = '',
         minDR = '',
@@ -392,6 +393,72 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // Only log filters in development mode
+      // Freshness filter — joins the marketplace table by URL because the
+      // lastPriceUpdateAt / lastMetricUpdateAt timestamps live there.
+      //   overdue : either price or metrics is stale (past the threshold, or NULL)
+      //   fresh   : both within thresholds
+      //   never   : both timestamps NULL (never recorded)
+      // Restricted to approved publisher-website rows since historical
+      // snapshots inherit the live row's freshness in the response and
+      // shouldn't be reachable through these filters.
+      if (freshness && freshness !== 'all') {
+        const priceOverdueDays = parseInt(process.env.MARKETPLACE_PRICE_OVERDUE_DAYS, 10) || 90;
+        const metricsOverdueDays = parseInt(process.env.MARKETPLACE_METRICS_OVERDUE_DAYS, 10) || 30;
+        const priceCutoff = new Date(Date.now() - priceOverdueDays * 86400000).toISOString();
+        const metricsCutoff = new Date(Date.now() - metricsOverdueDays * 86400000).toISOString();
+
+        let mpWhere = null;
+        if (freshness === 'overdue') {
+          mpWhere = {
+            $or: [
+              { lastPriceUpdateAt: { $null: true } },
+              { lastPriceUpdateAt: { $lt: priceCutoff } },
+              { lastMetricUpdateAt: { $null: true } },
+              { lastMetricUpdateAt: { $lt: metricsCutoff } },
+            ],
+          };
+        } else if (freshness === 'fresh') {
+          mpWhere = {
+            $and: [
+              { lastPriceUpdateAt: { $notNull: true } },
+              { lastPriceUpdateAt: { $gte: priceCutoff } },
+              { lastMetricUpdateAt: { $notNull: true } },
+              { lastMetricUpdateAt: { $gte: metricsCutoff } },
+            ],
+          };
+        } else if (freshness === 'never') {
+          mpWhere = {
+            $and: [
+              { lastPriceUpdateAt: { $null: true } },
+              { lastMetricUpdateAt: { $null: true } },
+            ],
+          };
+        }
+
+        if (mpWhere) {
+          const matching = await strapi.db
+            .query('api::marketplace.marketplace')
+            .findMany({ where: mpWhere, select: ['url'] });
+          const allowedUrls = matching.map((m) => m.url).filter(Boolean);
+          if (allowedUrls.length === 0) {
+            // No marketplace row matches → return an empty page directly.
+            return ctx.send({
+              data: [],
+              meta: {
+                pagination: {
+                  page: parseInt(page),
+                  pageSize: parseInt(pageSize),
+                  pageCount: 0,
+                  total: 0,
+                },
+              },
+            });
+          }
+          filters.url = { $in: allowedUrls };
+          filters.submissionStatus = 'approved';
+        }
+      }
+
       if (process.env.NODE_ENV === 'development') {
         console.log('[ADMIN WEBSITES FILTERS]', JSON.stringify(filters, null, 2));
       }
