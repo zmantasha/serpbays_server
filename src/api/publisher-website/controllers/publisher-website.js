@@ -97,7 +97,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           publisherName: user.username || user.email,
           websiteName: data.url,
           websiteUrl: data.url,
-          actionType: 'Added',
+          actionType: 'Submitted for Moderation',
           is_added: true
         });
       } catch (emailError) {
