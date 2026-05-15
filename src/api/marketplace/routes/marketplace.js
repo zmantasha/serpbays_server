@@ -119,5 +119,15 @@ module.exports = {
         middlewares: [],
       },
     },
+    // Update history (price/metric audit trail) for a single listing
+    {
+      method: 'GET',
+      path: '/marketplaces/:id/history',
+      handler: 'marketplace.getUpdateHistory',
+      config: {
+        policies: ['global::is-authenticated'],
+        middlewares: [],
+      },
+    },
   ],
 };

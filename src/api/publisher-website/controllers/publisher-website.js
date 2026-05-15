@@ -5,6 +5,7 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
+const { getPublisherCommissionRate } = require('../../../constants/commission');
 
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
   // Create new publisher website submission
@@ -96,7 +97,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           publisherName: user.username || user.email,
           websiteName: data.url,
           websiteUrl: data.url,
-          actionType: 'Added',
+          actionType: 'Submitted for Moderation',
           is_added: true
         });
       } catch (emailError) {
@@ -785,6 +786,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return validityMap[value] || 'Lifetime';
       };
 
+      // Platform commission share — env-configurable via PUBLISHER_COMMISSION_RATE
+      // (default 1.0 = publisher gets 100%). The publisher_* payout fields
+      // below all multiply the advertiser price by this rate.
+      const COMMISSION_RATE = getPublisherCommissionRate();
+
       // Extract publisher info BEFORE creating the marketplaceData object
       // Handle both populated object and raw ID for currentPublisherId
       const publisherUser = submission.currentPublisherId;
@@ -834,56 +840,56 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         adv_dating_pricing: submission.datingGuestPostPrice > 0 ? submission.datingGuestPostPrice : null,
         adv_li_dating_pricing: submission.datingLinkInsertionPrice > 0 ? submission.datingLinkInsertionPrice : null,
 
-        // PUBLISHER EARNINGS (advertiser price - 20% = 80% of what they entered)
+        // PUBLISHER EARNINGS = advertiser price × PUBLISHER_COMMISSION_RATE
         // Only calculate if price is provided, otherwise null
         publisher_price: (submission.generalGuestPostPrice > 0 || submission.generalLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-            (submission.generalGuestPostPrice || 0) * 0.8,
-            (submission.generalLinkInsertionPrice || 0) * 0.8
+            (submission.generalGuestPostPrice || 0) * COMMISSION_RATE,
+            (submission.generalLinkInsertionPrice || 0) * COMMISSION_RATE
           )) || 1
           : null,
         publisher_link_insertion_price: submission.generalLinkInsertionPrice > 0
-          ? Math.floor(submission.generalLinkInsertionPrice * 0.8)
+          ? Math.floor(submission.generalLinkInsertionPrice * COMMISSION_RATE)
           : null,
 
         // Publisher earnings for sensitive categories
         publisher_casino_pricing: (submission.casinoGuestPostPrice > 0 || submission.casinoLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-            (submission.casinoGuestPostPrice || 0) * 0.8,
-            (submission.casinoLinkInsertionPrice || 0) * 0.8
+            (submission.casinoGuestPostPrice || 0) * COMMISSION_RATE,
+            (submission.casinoLinkInsertionPrice || 0) * COMMISSION_RATE
           ))
           : null,
         publisher_crypto_pricing: (submission.cryptoGuestPostPrice > 0 || submission.cryptoLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-            (submission.cryptoGuestPostPrice || 0) * 0.8,
-            (submission.cryptoLinkInsertionPrice || 0) * 0.8
+            (submission.cryptoGuestPostPrice || 0) * COMMISSION_RATE,
+            (submission.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE
           ))
           : null,
         publisher_cbd_pricing: (submission.cbdGuestPostPrice > 0 || submission.cbdLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-            (submission.cbdGuestPostPrice || 0) * 0.8,
-            (submission.cbdLinkInsertionPrice || 0) * 0.8
+            (submission.cbdGuestPostPrice || 0) * COMMISSION_RATE,
+            (submission.cbdLinkInsertionPrice || 0) * COMMISSION_RATE
           ))
           : null,
         publisher_dating_pricing: (submission.datingGuestPostPrice > 0 || submission.datingLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
-            (submission.datingGuestPostPrice || 0) * 0.8,
-            (submission.datingLinkInsertionPrice || 0) * 0.8
+            (submission.datingGuestPostPrice || 0) * COMMISSION_RATE,
+            (submission.datingLinkInsertionPrice || 0) * COMMISSION_RATE
           ))
           : null,
 
         // Publisher earnings for specific Link Insertion sensitive categories
         publisher_li_casino_pricing: submission.casinoLinkInsertionPrice > 0
-          ? Math.floor(submission.casinoLinkInsertionPrice * 0.8)
+          ? Math.floor(submission.casinoLinkInsertionPrice * COMMISSION_RATE)
           : null,
         publisher_li_crypto_pricing: submission.cryptoLinkInsertionPrice > 0
-          ? Math.floor(submission.cryptoLinkInsertionPrice * 0.8)
+          ? Math.floor(submission.cryptoLinkInsertionPrice * COMMISSION_RATE)
           : null,
         publisher_li_cbd_pricing: submission.cbdLinkInsertionPrice > 0
-          ? Math.floor(submission.cbdLinkInsertionPrice * 0.8)
+          ? Math.floor(submission.cbdLinkInsertionPrice * COMMISSION_RATE)
           : null,
         publisher_li_dating_pricing: submission.datingLinkInsertionPrice > 0
-          ? Math.floor(submission.datingLinkInsertionPrice * 0.8)
+          ? Math.floor(submission.datingLinkInsertionPrice * COMMISSION_RATE)
           : null,
 
         min_word_count: submission.minWordCount,

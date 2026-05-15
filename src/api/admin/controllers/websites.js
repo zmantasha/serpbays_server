@@ -6,6 +6,7 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues } = require('../../../constants/website-options');
+const { getPublisherCommissionRate } = require('../../../constants/commission');
 
 // In-memory storage for bulk import progress (since cache might not be available)
 const bulkImportProgress = new Map();
@@ -77,6 +78,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         category = '',
         daFilter = '',
         metricsUpdateFilter = '',
+        freshness = '', // 'all' | 'overdue' | 'fresh' | 'never'
+        priceAgeMinDays = '', // numeric — show approved listings whose price hasn't been refreshed in >= N days. NULL lastPriceUpdateAt is treated as infinitely old (matches `freshness=overdue`).
         minDA = '',
         maxDA = '',
         minDR = '',
@@ -153,20 +156,39 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // Search filter - search by domain (url), title/description, or publisher
-      // Trim whitespace from search term
+      // Search filter — search by domain (url), publisher name/email, ID,
+      // or description.
+      //
+      // Auto-detect: when the term LOOKS like a domain (contains a dot,
+      // no @ sign, no spaces, not a pure integer) we narrow the search
+      // to the URL column only. Without this, typing "wordscloud.in"
+      // matches every site whose publisher email lives at @wordscloud.in
+      // — which in staging is ~all of them. The narrowing is purely a
+      // signal-vs-noise win; non-domain terms (publisher names, partial
+      // emails, IDs) still fan out to every searchable field.
       const trimmedSearch = search ? String(search).trim() : '';
       if (trimmedSearch) {
-        const parsedId = parseInt(trimmedSearch) || 0;
-        filters.$or = [
-          { url: { $containsi: trimmedSearch } },
-          { publisherName: { $containsi: trimmedSearch } },
-          { publisherEmail: { $containsi: trimmedSearch } },
-          { description: { $containsi: trimmedSearch } },
-          { id: { $eq: parsedId } },
-          { currentPublisherId: { $eq: parsedId } },
-          { originalPublisherId: { $eq: parsedId } }
-        ];
+        const looksLikeDomain =
+          /\./.test(trimmedSearch) &&
+          !/[@\s]/.test(trimmedSearch) &&
+          !/^\d+$/.test(trimmedSearch);
+
+        if (looksLikeDomain) {
+          addAndFilter({ url: { $containsi: trimmedSearch } });
+        } else {
+          const parsedId = parseInt(trimmedSearch) || 0;
+          addAndFilter({
+            $or: [
+              { url: { $containsi: trimmedSearch } },
+              { publisherName: { $containsi: trimmedSearch } },
+              { publisherEmail: { $containsi: trimmedSearch } },
+              { description: { $containsi: trimmedSearch } },
+              { id: { $eq: parsedId } },
+              { currentPublisherId: { $eq: parsedId } },
+              { originalPublisherId: { $eq: parsedId } },
+            ],
+          });
+        }
       }
 
       // Status filter
@@ -342,24 +364,46 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // Metrics status filter - filter by metrics availability and approval status
+      // Website status filter — workflow stages, mirrors the pills in the
+      // admin panel header bar. Four pills are mutually disjoint:
+      //   Live           = approved
+      //   Ready          = approval_pending + DA AND DR present (rows where
+      //                    the Approve/Reject buttons appear)
+      //   NewlySubmitted = approval_pending + DA OR DR missing (publisher
+      //                    submitted recently but metrics not yet provided)
+      //   Incomplete     = submissionStatus IN (pending_verification,
+      //                    pending_final_submission) — publisher started
+      //                    adding the site but didn't finish
+      //   Missing        = legacy: all metrics null (no longer surfaced as
+      //                    a pill but accepted for backward compat)
       if (metricsStatus && metricsStatus !== 'All') {
-        console.log(`[ADMIN WEBSITES] Applying metrics status filter: ${metricsStatus}`);
+        console.log(`[ADMIN WEBSITES] Applying website status filter: ${metricsStatus}`);
 
         if (metricsStatus === 'Ready') {
-          // "Ready (Has Metrics)" = has metrics AND NOT approved (pending with complete metrics)
-          // Status must be approval_pending (ready for approval)
           filters.submissionStatus = 'approval_pending';
+          addAndFilter({
+            $and: [
+              { moz_da: { $notNull: true } },
+              { ahrefs_dr: { $notNull: true } },
+            ],
+          });
+          console.log('[ADMIN WEBSITES] Applied "Ready for approval" filter: approval_pending + DA & DR present');
 
-          // Must have at least ONE valid metric (DA >= 0 OR DR >= 0 OR Traffic >= 0)
+        } else if (metricsStatus === 'NewlySubmitted') {
+          filters.submissionStatus = 'approval_pending';
           addAndFilter({
             $or: [
-              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gte: 0 } }] },
-              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gte: 0 } }] },
-              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gte: 0 } }] }
-            ]
+              { moz_da: { $null: true } },
+              { ahrefs_dr: { $null: true } },
+            ],
           });
-          console.log('[ADMIN WEBSITES] Applied "Ready" filter: approval_pending + has metrics (including 0)');
+          console.log('[ADMIN WEBSITES] Applied "Newly submitted" filter: approval_pending + DA or DR missing');
+
+        } else if (metricsStatus === 'Incomplete') {
+          filters.submissionStatus = {
+            $in: ['pending_verification', 'pending_final_submission'],
+          };
+          console.log('[ADMIN WEBSITES] Applied "Incomplete" filter: pending_verification OR pending_final_submission');
 
         } else if (metricsStatus === 'Live') {
           // "Live (On Marketplace)" = has metrics AND approved (live on marketplace)
@@ -377,8 +421,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           console.log('[ADMIN WEBSITES] Applied "Live" filter: approved + has metrics (including 0)');
 
         } else if (metricsStatus === 'Missing') {
-          // "Metrics Missing" = lacks all metrics (DA, DR, and Traffic are all null)
-          // All three metrics must be null (0 is considered a valid value)
+          // Legacy: lacks all metrics (DA, DR, and Traffic are all null).
           addAndFilter({
             $and: [
               { moz_da: { $null: true } },
@@ -386,11 +429,96 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               { ahrefs_traffic: { $null: true } }
             ]
           });
-          console.log('[ADMIN WEBSITES] Applied "Missing" filter: all metrics are null (0 is valid)');
+          console.log('[ADMIN WEBSITES] Applied "Missing" (legacy) filter: all metrics are null');
         }
       }
 
-      // Only log filters in development mode
+      // Marketplace-side filters — joined to publisher-websites by URL since
+      // lastPriceUpdateAt / lastMetricUpdateAt live on the marketplace row.
+      //
+      //   freshness=overdue : price OR metrics is stale (past threshold or NULL)
+      //   freshness=fresh   : both within thresholds
+      //   freshness=never   : both timestamps NULL
+      //   priceAgeMinDays=N : approved listings whose price hasn't been
+      //                       refreshed in >= N days (NULL counts as infinitely old)
+      //
+      // Both can be combined; conditions are ANDed when more than one is set.
+      // Restricted to approved publisher-website rows since historical
+      // snapshots inherit the live row's freshness in the response.
+      const mpConditions = [];
+
+      if (freshness && freshness !== 'all') {
+        const priceOverdueDays = parseInt(process.env.MARKETPLACE_PRICE_OVERDUE_DAYS, 10) || 90;
+        const metricsOverdueDays = parseInt(process.env.MARKETPLACE_METRICS_OVERDUE_DAYS, 10) || 30;
+        const priceCutoff = new Date(Date.now() - priceOverdueDays * 86400000).toISOString();
+        const metricsCutoff = new Date(Date.now() - metricsOverdueDays * 86400000).toISOString();
+
+        if (freshness === 'overdue') {
+          mpConditions.push({
+            $or: [
+              { lastPriceUpdateAt: { $null: true } },
+              { lastPriceUpdateAt: { $lt: priceCutoff } },
+              { lastMetricUpdateAt: { $null: true } },
+              { lastMetricUpdateAt: { $lt: metricsCutoff } },
+            ],
+          });
+        } else if (freshness === 'fresh') {
+          mpConditions.push({
+            $and: [
+              { lastPriceUpdateAt: { $notNull: true } },
+              { lastPriceUpdateAt: { $gte: priceCutoff } },
+              { lastMetricUpdateAt: { $notNull: true } },
+              { lastMetricUpdateAt: { $gte: metricsCutoff } },
+            ],
+          });
+        } else if (freshness === 'never') {
+          mpConditions.push({
+            $and: [
+              { lastPriceUpdateAt: { $null: true } },
+              { lastMetricUpdateAt: { $null: true } },
+            ],
+          });
+        }
+      }
+
+      if (priceAgeMinDays !== '' && priceAgeMinDays != null) {
+        const n = parseInt(priceAgeMinDays, 10);
+        if (Number.isFinite(n) && n >= 0) {
+          const cutoff = new Date(Date.now() - n * 86400000).toISOString();
+          mpConditions.push({
+            $or: [
+              { lastPriceUpdateAt: { $null: true } },
+              { lastPriceUpdateAt: { $lt: cutoff } },
+            ],
+          });
+        }
+      }
+
+      if (mpConditions.length > 0) {
+        const mpWhere =
+          mpConditions.length === 1 ? mpConditions[0] : { $and: mpConditions };
+        const matching = await strapi.db
+          .query('api::marketplace.marketplace')
+          .findMany({ where: mpWhere, select: ['url'] });
+        const allowedUrls = matching.map((m) => m.url).filter(Boolean);
+        if (allowedUrls.length === 0) {
+          // No marketplace row matches → return an empty page directly.
+          return ctx.send({
+            data: [],
+            meta: {
+              pagination: {
+                page: parseInt(page),
+                pageSize: parseInt(pageSize),
+                pageCount: 0,
+                total: 0,
+              },
+            },
+          });
+        }
+        filters.url = { $in: allowedUrls };
+        filters.submissionStatus = 'approved';
+      }
+
       if (process.env.NODE_ENV === 'development') {
         console.log('[ADMIN WEBSITES FILTERS]', JSON.stringify(filters, null, 2));
       }
@@ -451,6 +579,46 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Get total count for pagination (optimized - only count, no data fetch)
       const total = await strapi.db.query('api::publisher-website.publisher-website').count({ where: filters });
+
+      // Look up freshness timestamps from the matching marketplace rows.
+      // Match is by URL (the canonical string each entity stores). Batched
+      // in one query so the list endpoint stays N+0 instead of N+1.
+      const priceOverdueDays = parseInt(process.env.MARKETPLACE_PRICE_OVERDUE_DAYS, 10) || 90;
+      const metricsOverdueDays = parseInt(process.env.MARKETPLACE_METRICS_OVERDUE_DAYS, 10) || 30;
+      const priceCutoffMs = Date.now() - priceOverdueDays * 24 * 60 * 60 * 1000;
+      const metricsCutoffMs = Date.now() - metricsOverdueDays * 24 * 60 * 60 * 1000;
+      const urls = Array.from(
+        new Set(websites.map(w => w.url).filter(Boolean))
+      );
+      const freshnessByUrl = new Map();
+      if (urls.length > 0) {
+        const rows = await strapi.db
+          .query('api::marketplace.marketplace')
+          .findMany({
+            where: { url: { $in: urls } },
+            select: ['id', 'url', 'lastPriceUpdateAt', 'lastMetricUpdateAt', 'status'],
+          });
+        for (const row of rows) {
+          freshnessByUrl.set(row.url, {
+            marketplaceId: row.id,
+            lastPriceUpdateAt: row.lastPriceUpdateAt || null,
+            lastMetricUpdateAt: row.lastMetricUpdateAt || null,
+            marketplaceStatus: row.status || null,
+          });
+        }
+      }
+      const computeOverdue = (ts, cutoffMs) => {
+        if (!ts) return true; // never updated → treat as stale
+        return new Date(ts).getTime() < cutoffMs;
+      };
+      // Freshness lives on the (URL-scoped) marketplace row, but the websites
+      // table can show multiple publisher-website snapshots sharing one URL
+      // (current owner + historical ownership-transferred / rejected rows).
+      // Only the actively-maintained row should display freshness — historical
+      // snapshots aren't being edited and would otherwise inherit "Today"
+      // pills from the live record.
+      const isActivePublisherRow = (w) =>
+        (w.submissionStatus || '').toLowerCase() === 'approved';
 
       // Transform data to match frontend expectations with comprehensive fields
       const transformedWebsites = websites.map(website => ({
@@ -549,7 +717,38 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         // SEO Metrics tracking
         metrics_last_updated: website.metrics_last_updated,
         metrics_update_count: website.metrics_update_count || 0,
-        metrics_update_method: website.metrics_update_method
+        metrics_update_method: website.metrics_update_method,
+        // Price/metric freshness — derived from the matching marketplace row.
+        // Only attached to active publisher-website rows; historical snapshots
+        // (ownership_transferred, rejected, pending) are not being edited so
+        // they shouldn't inherit the live record's freshness pills.
+        marketplaceId: freshnessByUrl.get(website.url)?.marketplaceId ?? null,
+        marketplaceStatus: freshnessByUrl.get(website.url)?.marketplaceStatus ?? null,
+        ...(isActivePublisherRow(website)
+          ? {
+              lastPriceUpdateAt: freshnessByUrl.get(website.url)?.lastPriceUpdateAt ?? null,
+              lastMetricUpdateAt: freshnessByUrl.get(website.url)?.lastMetricUpdateAt ?? null,
+              priceOverdue: computeOverdue(
+                freshnessByUrl.get(website.url)?.lastPriceUpdateAt,
+                priceCutoffMs
+              ),
+              metricsOverdue: computeOverdue(
+                freshnessByUrl.get(website.url)?.lastMetricUpdateAt,
+                metricsCutoffMs
+              ),
+              priceOverdueThresholdDays: priceOverdueDays,
+              metricsOverdueThresholdDays: metricsOverdueDays,
+              freshnessApplicable: true,
+            }
+          : {
+              lastPriceUpdateAt: null,
+              lastMetricUpdateAt: null,
+              priceOverdue: false,
+              metricsOverdue: false,
+              priceOverdueThresholdDays: priceOverdueDays,
+              metricsOverdueThresholdDays: metricsOverdueDays,
+              freshnessApplicable: false,
+            }),
       }));
 
       console.log('[ADMIN WEBSITES FIND]', {
@@ -700,6 +899,22 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         metrics_update_method: website.metrics_update_method ?? null
       };
 
+      // Attach the corresponding marketplace listing's ID (if any) so the
+      // admin UI can deep-link to /marketplaces/:id/history for this site.
+      // The link is by URL — the same string both entities store as the
+      // canonical domain.
+      try {
+        if (website.url) {
+          const marketplaceRow = await strapi.db
+            .query('api::marketplace.marketplace')
+            .findOne({ where: { url: website.url }, select: ['id'] });
+          transformedWebsite.marketplaceId = marketplaceRow?.id ?? null;
+        }
+      } catch (lookupErr) {
+        console.warn('[ADMIN WEBSITE FIND ONE] marketplace lookup failed:', lookupErr.message);
+        transformedWebsite.marketplaceId = null;
+      }
+
       console.log('[ADMIN WEBSITE FIND ONE]', {
         websiteId: id,
         originalWebsite: website,
@@ -723,6 +938,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     try {
       const { id } = ctx.params;
       const { adminNotes } = ctx.request.body;
+      const COMMISSION_RATE = getPublisherCommissionRate();
 
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} approving website ${id}`);
@@ -817,30 +1033,30 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   adv_li_dating_pricing: updatedWebsite.datingLinkInsertionPrice || 0,
                   // Publisher earnings (80% of advertiser prices)
                   publisher_price: Math.floor(Math.max(
-                    (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.generalGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE
                   )) || 1,
-                  publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * 0.8),
+                  publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE),
                   publisher_casino_pricing: Math.floor(Math.max(
-                    (updatedWebsite.casinoGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.casinoGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.casinoLinkInsertionPrice || 0) * COMMISSION_RATE
                   )),
                   publisher_crypto_pricing: Math.floor(Math.max(
-                    (updatedWebsite.cryptoGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.cryptoGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE
                   )),
                   publisher_cbd_pricing: Math.floor(Math.max(
-                    (updatedWebsite.cbdGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.cbdGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.cbdLinkInsertionPrice || 0) * COMMISSION_RATE
                   )),
                   publisher_dating_pricing: Math.floor(Math.max(
-                    (updatedWebsite.datingGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.datingLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.datingGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.datingLinkInsertionPrice || 0) * COMMISSION_RATE
                   )),
-                  publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8),
-                  publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8),
-                  publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8),
-                  publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * 0.8),
+                  publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * COMMISSION_RATE),
+                  publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE),
+                  publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * COMMISSION_RATE),
+                  publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * COMMISSION_RATE),
                   // Other fields
                   min_word_count: updatedWebsite.minWordCount || 500,
                   backlink_type: updatedWebsite.backlinkType || 'Do follow',
@@ -879,8 +1095,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   price: updatedWebsite.generalGuestPostPrice || 0,
                   link_insertion_price: updatedWebsite.generalLinkInsertionPrice || 0,
                   publisher_price: Math.floor(Math.max(
-                    (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
-                    (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+                    (updatedWebsite.generalGuestPostPrice || 0) * COMMISSION_RATE,
+                    (updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE
                   )) || 1,
                   dofollow_link: updatedWebsite.allowedLinks || 1,
                   publisher_name: updatedWebsite.publisherName || updatedWebsite.publisherEmail?.split('@')[0],
@@ -1249,8 +1465,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     try {
       const { id } = ctx.params;
       const updateData = ctx.request.body;
+      const COMMISSION_RATE = getPublisherCommissionRate();
 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating website ${id}`, updateData);
+
+      // Optional: when an admin saves through the JIT "Refresh metrics now"
+      // flow they pass refreshSource so we know which tool's freshness clock
+      // to advance on the marketplace row. Stripped from updateData before
+      // mapping so it isn't treated as a publisher-website field.
+      const VALID_REFRESH_SOURCES = ['ahrefs', 'moz', 'semrush'];
+      const refreshSource =
+        updateData.refreshSource && VALID_REFRESH_SOURCES.includes(updateData.refreshSource)
+          ? updateData.refreshSource
+          : null;
+      delete updateData.refreshSource;
 
       // Get the website before update to preserve required private fields
       const websiteBeforeUpdate = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
@@ -1339,6 +1567,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const wasApproved = websiteBeforeUpdate?.submissionStatus === 'approved';
       const marketplaceId = websiteBeforeUpdate?.marketplaceId;
 
+      // Tell the publisher-website afterUpdate lifecycle to skip its own
+      // marketplace sync. The admin controller does its own comprehensive
+      // sync below (with filtering); letting the lifecycle also run would
+      // produce a second UPDATE on the marketplace row and therefore a
+      // duplicate update-history entry at the same timestamp.
+      mappedData._skipMarketplaceSync = true;
+
       // Update the website
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: mappedData,
@@ -1396,30 +1631,30 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
               // Publisher earnings (80% of advertiser prices)
               publisher_price: Math.floor(Math.max(
-                (updatedWebsite.generalGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.generalLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.generalGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE
               )) || 1,
-              publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * 0.8),
+              publisher_link_insertion_price: Math.floor((updatedWebsite.generalLinkInsertionPrice || 0) * COMMISSION_RATE),
               publisher_casino_pricing: Math.floor(Math.max(
-                (updatedWebsite.casinoGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.casinoGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.casinoLinkInsertionPrice || 0) * COMMISSION_RATE
               )),
               publisher_crypto_pricing: Math.floor(Math.max(
-                (updatedWebsite.cryptoGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.cryptoGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE
               )),
               publisher_cbd_pricing: Math.floor(Math.max(
-                (updatedWebsite.cbdGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.cbdGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.cbdLinkInsertionPrice || 0) * COMMISSION_RATE
               )),
               publisher_dating_pricing: Math.floor(Math.max(
-                (updatedWebsite.datingGuestPostPrice || 0) * 0.8,
-                (updatedWebsite.datingLinkInsertionPrice || 0) * 0.8
+                (updatedWebsite.datingGuestPostPrice || 0) * COMMISSION_RATE,
+                (updatedWebsite.datingLinkInsertionPrice || 0) * COMMISSION_RATE
               )),
-              publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * 0.8),
-              publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * 0.8),
-              publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * 0.8),
-              publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * 0.8),
+              publisher_li_casino_pricing: Math.floor((updatedWebsite.casinoLinkInsertionPrice || 0) * COMMISSION_RATE),
+              publisher_li_crypto_pricing: Math.floor((updatedWebsite.cryptoLinkInsertionPrice || 0) * COMMISSION_RATE),
+              publisher_li_cbd_pricing: Math.floor((updatedWebsite.cbdLinkInsertionPrice || 0) * COMMISSION_RATE),
+              publisher_li_dating_pricing: Math.floor((updatedWebsite.datingLinkInsertionPrice || 0) * COMMISSION_RATE),
 
               // Content requirements
               min_word_count: updatedWebsite.minWordCount || 500,
@@ -1476,6 +1711,57 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 delete marketplaceUpdateData[key];
               }
             });
+
+            // Drop price-group marketplace fields whose source publisher-website
+            // fields weren't actually in this request. The wholesale rebuild
+            // above defaults missing prices to 0, which used to clobber every
+            // listing's niche pricing on every save and pollute the update
+            // history with spurious "— → 0" rows.
+            const mappedKeys = new Set(Object.keys(mappedData));
+            const SYNC_GROUPS = [
+              {
+                triggers: ['generalGuestPostPrice', 'generalLinkInsertionPrice'],
+                fields: ['price', 'link_insertion_price', 'publisher_price', 'publisher_link_insertion_price'],
+              },
+              {
+                triggers: ['casinoGuestPostPrice', 'casinoLinkInsertionPrice'],
+                fields: ['adv_casino_pricing', 'adv_li_casino_pricing', 'publisher_casino_pricing', 'publisher_li_casino_pricing'],
+              },
+              {
+                triggers: ['cryptoGuestPostPrice', 'cryptoLinkInsertionPrice'],
+                fields: ['adv_crypto_pricing', 'adv_li_crypto_pricing', 'publisher_crypto_pricing', 'publisher_li_crypto_pricing'],
+              },
+              {
+                triggers: ['cbdGuestPostPrice', 'cbdLinkInsertionPrice'],
+                fields: ['adv_cbd_pricing', 'adv_li_cbd_pricing', 'publisher_cbd_pricing', 'publisher_li_cbd_pricing'],
+              },
+              {
+                triggers: ['datingGuestPostPrice', 'datingLinkInsertionPrice'],
+                fields: ['adv_dating_pricing', 'adv_li_dating_pricing', 'publisher_dating_pricing', 'publisher_li_dating_pricing'],
+              },
+              {
+                triggers: ['copywritingPrice'],
+                fields: ['publisher_writing_price'],
+              },
+            ];
+            for (const group of SYNC_GROUPS) {
+              const triggered = group.triggers.some((t) => mappedKeys.has(t));
+              if (!triggered) {
+                for (const f of group.fields) delete marketplaceUpdateData[f];
+              }
+            }
+
+            // When the JIT refresh path passes refreshSource, stamp the
+            // matching per-tool clock so the bulk-refresh dashboard sees the
+            // site as freshly refreshed for that tool. The lifecycle's
+            // diff logic doesn't touch these columns (they're not in
+            // TRACKED_*_FIELDS), so we set them directly here.
+            if (refreshSource) {
+              const now = new Date();
+              if (refreshSource === 'ahrefs') marketplaceUpdateData.lastAhrefsRefreshAt = now;
+              else if (refreshSource === 'moz') marketplaceUpdateData.lastMozRefreshAt = now;
+              else if (refreshSource === 'semrush') marketplaceUpdateData.lastSemrushRefreshAt = now;
+            }
 
             // Update marketplace using database query API
             const updatedMarketplace = await strapi.db.query('api::marketplace.marketplace').update({
@@ -1840,8 +2126,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.send(cachedStats)
       }
 
-      // Get counts by status in parallel for better performance
-      const [total, pending, approved, rejected] = await Promise.all([
+      // 72-hour cutoff for the "needs attention" notification badge.
+      const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+      // Get counts by status in parallel for better performance. `live` and
+      // `ready` add a metrics-complete predicate (moz_da AND ahrefs_dr both
+      // non-NULL) so the dashboard cards mirror what the UI badges show on
+      // each row, not just the raw status counts.
+      // `newlySubmittedLast72h` + `incompleteLast72h` drive the in-toolbar
+      // notification: sites submitted within the last 72 hours that haven't
+      // been approved/rejected/finished yet. After 72h they fall out of the
+      // badge but remain in the DB.
+      const [total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h] = await Promise.all([
         strapi.db.query('api::publisher-website.publisher-website').count(),
         strapi.db.query('api::publisher-website.publisher-website').count({
           where: { submissionStatus: 'approval_pending' }
@@ -1851,10 +2147,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }),
         strapi.db.query('api::publisher-website.publisher-website').count({
           where: { submissionStatus: 'rejected' }
-        })
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: 'approved',
+            moz_da: { $notNull: true },
+            ahrefs_dr: { $notNull: true },
+          }
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: { $ne: 'approved' },
+            moz_da: { $notNull: true },
+            ahrefs_dr: { $notNull: true },
+          }
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: 'approval_pending',
+            createdAt: { $gte: seventyTwoHoursAgo },
+          },
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: { $in: ['pending_verification', 'pending_final_submission'] },
+            createdAt: { $gte: seventyTwoHoursAgo },
+          },
+        }),
       ]);
 
-      console.log('[ADMIN WEBSITE STATS] Counts:', { total, pending, approved, rejected });
+      console.log('[ADMIN WEBSITE STATS] Counts:', { total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h });
 
       // Get new websites this month
       const thisMonth = new Date();
@@ -1874,7 +2196,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         pendingWebsites: pending,
         approvedWebsites: approved,
         rejectedWebsites: rejected,
-        newThisMonth
+        liveWebsites: live,
+        readyWebsites: ready,
+        newlySubmittedLast72h,
+        incompleteLast72h,
+        newThisMonth,
       };
 
       console.log('[ADMIN WEBSITE STATS]', statsData);

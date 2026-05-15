@@ -1,6 +1,7 @@
 'use strict';
 
 const { createCoreController } = require('@strapi/strapi').factories;
+const { getPublisherCommissionRate } = require('../../../constants/commission');
 
 module.exports = createCoreController('api::website-update-request.website-update-request', ({ strapi }) => ({
   async findPending(ctx) {
@@ -105,10 +106,11 @@ module.exports = createCoreController('api::website-update-request.website-updat
 
       // Prepare apply data with proper type coercion
       const applyData = {};
+      const COMMISSION_RATE = getPublisherCommissionRate();
       const computeShare = (value) => {
         const num = typeof value === 'number' ? value : Number(value);
         if (!Number.isFinite(num) || num < 0) return null;
-        return Math.floor(num * 0.8);
+        return Math.floor(num * COMMISSION_RATE);
       };
 
       // Coerce all numeric fields properly
@@ -285,6 +287,13 @@ module.exports = createCoreController('api::website-update-request.website-updat
         });
 
         if (Object.keys(publisherUpdate).length > 0) {
+          // Skip the publisher-website afterUpdate lifecycle's marketplace
+          // sync — we already updated the marketplace row directly above.
+          // Without this flag the lifecycle would issue a second UPDATE on
+          // the same marketplace row with possibly stale-computed publisher
+          // payout fields, producing a duplicate update-history entry at
+          // the same timestamp.
+          publisherUpdate._skipMarketplaceSync = true;
           await strapi.entityService.update('api::publisher-website.publisher-website', request.publisherWebsite.id, {
             data: publisherUpdate
           });

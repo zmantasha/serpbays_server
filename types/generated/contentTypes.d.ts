@@ -1093,6 +1093,49 @@ export interface ApiMarketplaceListMarketplaceList
   };
 }
 
+export interface ApiMarketplaceUpdateHistoryMarketplaceUpdateHistory
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'marketplace_update_histories';
+  info: {
+    description: 'Immutable audit trail of price/metric changes to marketplace listings';
+    displayName: 'Marketplace Update History';
+    pluralName: 'marketplace-update-histories';
+    singularName: 'marketplace-update-history';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    changedAt: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    changedBy: Schema.Attribute.String;
+    changedFields: Schema.Attribute.JSON & Schema.Attribute.Required;
+    changes: Schema.Attribute.JSON & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::marketplace-update-history.marketplace-update-history'
+    > &
+      Schema.Attribute.Private;
+    marketplace: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::marketplace.marketplace'
+    >;
+    publishedAt: Schema.Attribute.DateTime;
+    source: Schema.Attribute.Enumeration<
+      ['admin', 'publisher', 'import', 'api', 'system']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'api'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    userId: Schema.Attribute.Integer;
+  };
+}
+
 export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
   collectionName: 'marketplaces';
   info: {
@@ -1248,6 +1291,8 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     isFeaturedLinkInsertion: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
     language: Schema.Attribute.JSON & Schema.Attribute.Required;
+    lastMetricUpdateAt: Schema.Attribute.DateTime;
+    lastPriceUpdateAt: Schema.Attribute.DateTime;
     link_insertion_price: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -1438,6 +1483,10 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    updateHistory: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::marketplace-update-history.marketplace-update-history'
+    >;
     updateRequests: Schema.Attribute.Relation<
       'oneToMany',
       'api::website-update-request.website-update-request'
@@ -3969,6 +4018,7 @@ declare module '@strapi/strapi' {
       'api::global.global': ApiGlobalGlobal;
       'api::invoice.invoice': ApiInvoiceInvoice;
       'api::marketplace-list.marketplace-list': ApiMarketplaceListMarketplaceList;
+      'api::marketplace-update-history.marketplace-update-history': ApiMarketplaceUpdateHistoryMarketplaceUpdateHistory;
       'api::marketplace.marketplace': ApiMarketplaceMarketplace;
       'api::notification.notification': ApiNotificationNotification;
       'api::offer-condition.offer-condition': ApiOfferConditionOfferCondition;

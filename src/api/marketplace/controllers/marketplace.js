@@ -1571,5 +1571,74 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       console.error('Error in bulk TAT update:', error);
       return ctx.badRequest(error.message);
     }
-  }
+  },
+
+  /**
+   * GET /marketplaces/:id/history
+   * Returns the immutable update audit trail for a single marketplace listing.
+   * Query params:
+   *   - days: filter to entries within the last N days (older rows still
+   *           live in the DB, just hidden by this query). Omit for full history.
+   *   - field: filter to entries that touched this exact field name.
+   *   - page, pageSize: paginate.
+   */
+  async getUpdateHistory(ctx) {
+    try {
+      const id = parseInt(ctx.params.id, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return ctx.badRequest('Invalid marketplace id');
+      }
+
+      const page = Math.max(1, parseInt(ctx.query.page, 10) || 1);
+      const pageSize = Math.min(
+        200,
+        Math.max(1, parseInt(ctx.query.pageSize, 10) || 50)
+      );
+      const days = parseInt(ctx.query.days, 10);
+      const field = typeof ctx.query.field === 'string' ? ctx.query.field : null;
+
+      const where = { marketplace: id };
+      if (Number.isFinite(days) && days > 0) {
+        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        where.changedAt = { $gte: since.toISOString() };
+      }
+      if (field) {
+        // JSON `changedFields` is an array — use $contains for substring match
+        // (covers SQLite and Postgres JSON column behavior).
+        where.changedFields = { $contains: field };
+      }
+
+      const histQuery = strapi.db.query(
+        'api::marketplace-update-history.marketplace-update-history'
+      );
+      const [rows, total] = await Promise.all([
+        histQuery.findMany({
+          where,
+          orderBy: { changedAt: 'desc' },
+          offset: (page - 1) * pageSize,
+          limit: pageSize,
+        }),
+        histQuery.count({ where }),
+      ]);
+
+      return {
+        data: rows,
+        meta: {
+          pagination: {
+            page,
+            pageSize,
+            total,
+            pageCount: Math.ceil(total / pageSize),
+          },
+          filters: {
+            days: Number.isFinite(days) && days > 0 ? days : null,
+            field: field || null,
+          },
+        },
+      };
+    } catch (error) {
+      console.error('[marketplace.getUpdateHistory]', error);
+      return ctx.internalServerError('Failed to fetch update history');
+    }
+  },
 }));
