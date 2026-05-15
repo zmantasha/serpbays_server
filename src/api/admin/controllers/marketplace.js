@@ -795,6 +795,80 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   },
 
   /**
+   * Re-confirm that the current price on a marketplace listing is still
+   * valid — bumps lastPriceUpdateAt to now() without changing any price
+   * fields. Used when an admin manually verifies a listing and finds the
+   * price unchanged; gives them a way to push the row out of the "stale"
+   * bucket without faking a price edit.
+   *
+   * The marketplace lifecycle's diff logic won't stamp lastPriceUpdateAt
+   * here because no tracked field changed, and it won't write a history
+   * row either. We handle both explicitly: direct db.query update for the
+   * timestamp, manual history insert with source='admin-confirm' so the
+   * audit trail still records the action.
+   */
+  async confirmPrice(ctx) {
+    try {
+      const { id } = ctx.params;
+      const marketplaceId = parseInt(id, 10);
+      if (!Number.isFinite(marketplaceId)) {
+        return ctx.badRequest('Invalid marketplace id');
+      }
+
+      const existing = await strapi.db
+        .query('api::marketplace.marketplace')
+        .findOne({
+          where: { id: marketplaceId },
+          select: ['id', 'url', 'lastPriceUpdateAt'],
+        });
+      if (!existing) {
+        return ctx.notFound('Marketplace listing not found');
+      }
+
+      const now = new Date();
+      const updated = await strapi.db
+        .query('api::marketplace.marketplace')
+        .update({
+          where: { id: marketplaceId },
+          data: { lastPriceUpdateAt: now },
+        });
+
+      try {
+        await strapi.db
+          .query('api::marketplace-update-history.marketplace-update-history')
+          .create({
+            data: {
+              marketplace: marketplaceId,
+              changes: {},
+              changedFields: [],
+              source: 'admin-confirm',
+              changedBy:
+                ctx.state.user?.username || ctx.state.user?.email || null,
+              userId: ctx.state.user?.id || null,
+              changedAt: now,
+            },
+          });
+      } catch (err) {
+        console.error('[ADMIN CONFIRM PRICE] history write failed:', err.message);
+      }
+
+      console.log(
+        `[ADMIN ACTION] Admin ${ctx.state.user?.id} confirmed price freshness for marketplace ${marketplaceId} (${existing.url})`
+      );
+
+      ctx.send({
+        data: {
+          id: updated.id,
+          lastPriceUpdateAt: updated.lastPriceUpdateAt,
+        },
+      });
+    } catch (error) {
+      console.error('[ADMIN CONFIRM PRICE ERROR]', error);
+      return ctx.internalServerError('Failed to confirm price freshness');
+    }
+  },
+
+  /**
    * Toggle website status (activate/deactivate)
    */
   async toggleStatus(ctx) {

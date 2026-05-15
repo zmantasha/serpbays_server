@@ -53,6 +53,15 @@ module.exports = {
       }
     },
     {
+      method: 'POST',
+      path: '/admin/marketplace/:id/confirm-price',
+      handler: 'marketplace.confirmPrice',
+      config: {
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
       method: 'DELETE',
       path: '/admin/marketplace/:id',
       handler: 'marketplace.delete',

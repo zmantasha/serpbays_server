@@ -79,6 +79,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         daFilter = '',
         metricsUpdateFilter = '',
         freshness = '', // 'all' | 'overdue' | 'fresh' | 'never'
+        priceAgeMinDays = '', // numeric — show approved listings whose price hasn't been refreshed in >= N days. NULL lastPriceUpdateAt is treated as infinitely old (matches `freshness=overdue`).
         minDA = '',
         maxDA = '',
         minDR = '',
@@ -392,71 +393,90 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // Only log filters in development mode
-      // Freshness filter — joins the marketplace table by URL because the
-      // lastPriceUpdateAt / lastMetricUpdateAt timestamps live there.
-      //   overdue : either price or metrics is stale (past the threshold, or NULL)
-      //   fresh   : both within thresholds
-      //   never   : both timestamps NULL (never recorded)
+      // Marketplace-side filters — joined to publisher-websites by URL since
+      // lastPriceUpdateAt / lastMetricUpdateAt live on the marketplace row.
+      //
+      //   freshness=overdue : price OR metrics is stale (past threshold or NULL)
+      //   freshness=fresh   : both within thresholds
+      //   freshness=never   : both timestamps NULL
+      //   priceAgeMinDays=N : approved listings whose price hasn't been
+      //                       refreshed in >= N days (NULL counts as infinitely old)
+      //
+      // Both can be combined; conditions are ANDed when more than one is set.
       // Restricted to approved publisher-website rows since historical
-      // snapshots inherit the live row's freshness in the response and
-      // shouldn't be reachable through these filters.
+      // snapshots inherit the live row's freshness in the response.
+      const mpConditions = [];
+
       if (freshness && freshness !== 'all') {
         const priceOverdueDays = parseInt(process.env.MARKETPLACE_PRICE_OVERDUE_DAYS, 10) || 90;
         const metricsOverdueDays = parseInt(process.env.MARKETPLACE_METRICS_OVERDUE_DAYS, 10) || 30;
         const priceCutoff = new Date(Date.now() - priceOverdueDays * 86400000).toISOString();
         const metricsCutoff = new Date(Date.now() - metricsOverdueDays * 86400000).toISOString();
 
-        let mpWhere = null;
         if (freshness === 'overdue') {
-          mpWhere = {
+          mpConditions.push({
             $or: [
               { lastPriceUpdateAt: { $null: true } },
               { lastPriceUpdateAt: { $lt: priceCutoff } },
               { lastMetricUpdateAt: { $null: true } },
               { lastMetricUpdateAt: { $lt: metricsCutoff } },
             ],
-          };
+          });
         } else if (freshness === 'fresh') {
-          mpWhere = {
+          mpConditions.push({
             $and: [
               { lastPriceUpdateAt: { $notNull: true } },
               { lastPriceUpdateAt: { $gte: priceCutoff } },
               { lastMetricUpdateAt: { $notNull: true } },
               { lastMetricUpdateAt: { $gte: metricsCutoff } },
             ],
-          };
+          });
         } else if (freshness === 'never') {
-          mpWhere = {
+          mpConditions.push({
             $and: [
               { lastPriceUpdateAt: { $null: true } },
               { lastMetricUpdateAt: { $null: true } },
             ],
-          };
+          });
         }
+      }
 
-        if (mpWhere) {
-          const matching = await strapi.db
-            .query('api::marketplace.marketplace')
-            .findMany({ where: mpWhere, select: ['url'] });
-          const allowedUrls = matching.map((m) => m.url).filter(Boolean);
-          if (allowedUrls.length === 0) {
-            // No marketplace row matches → return an empty page directly.
-            return ctx.send({
-              data: [],
-              meta: {
-                pagination: {
-                  page: parseInt(page),
-                  pageSize: parseInt(pageSize),
-                  pageCount: 0,
-                  total: 0,
-                },
-              },
-            });
-          }
-          filters.url = { $in: allowedUrls };
-          filters.submissionStatus = 'approved';
+      if (priceAgeMinDays !== '' && priceAgeMinDays != null) {
+        const n = parseInt(priceAgeMinDays, 10);
+        if (Number.isFinite(n) && n >= 0) {
+          const cutoff = new Date(Date.now() - n * 86400000).toISOString();
+          mpConditions.push({
+            $or: [
+              { lastPriceUpdateAt: { $null: true } },
+              { lastPriceUpdateAt: { $lt: cutoff } },
+            ],
+          });
         }
+      }
+
+      if (mpConditions.length > 0) {
+        const mpWhere =
+          mpConditions.length === 1 ? mpConditions[0] : { $and: mpConditions };
+        const matching = await strapi.db
+          .query('api::marketplace.marketplace')
+          .findMany({ where: mpWhere, select: ['url'] });
+        const allowedUrls = matching.map((m) => m.url).filter(Boolean);
+        if (allowedUrls.length === 0) {
+          // No marketplace row matches → return an empty page directly.
+          return ctx.send({
+            data: [],
+            meta: {
+              pagination: {
+                page: parseInt(page),
+                pageSize: parseInt(pageSize),
+                pageCount: 0,
+                total: 0,
+              },
+            },
+          });
+        }
+        filters.url = { $in: allowedUrls };
+        filters.submissionStatus = 'approved';
       }
 
       if (process.env.NODE_ENV === 'development') {
