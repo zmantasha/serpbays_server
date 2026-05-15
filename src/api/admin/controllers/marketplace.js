@@ -874,19 +874,31 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   async toggleStatus(ctx) {
     try {
       const { id } = ctx.params;
-      const { active } = ctx.request.body;
+      const { active, reason } = ctx.request.body;
 
-      // Log admin action
-      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} ${active ? 'activating' : 'deactivating'} marketplace website ${id}`);
+      // Marketplace listings carry a real `status` enum (active / paused /
+      // delisted / rejected / draft). The earlier toggle wrote to
+      // publishedAt — a Strapi internal field — which had no effect on the
+      // listing's visibility. Now we set the enum directly: active=true →
+      // 'active', active=false → 'delisted' (with optional reason).
+      const newStatus = active ? 'active' : 'delisted';
+      console.log(
+        `[ADMIN ACTION] Admin ${ctx.state.user?.id} setting marketplace ${id} status → ${newStatus}`
+      );
+
+      const updateData = { status: newStatus };
+      if (active) {
+        updateData.delistedReason = null;
+      } else if (typeof reason === 'string' && reason.trim()) {
+        updateData.delistedReason = reason.trim();
+      }
 
       const updatedWebsite = await strapi.entityService.update('api::marketplace.marketplace', id, {
-        data: {
-          publishedAt: active ? new Date() : null
-        }
+        data: updateData,
       });
 
       ctx.send({
-        data: updatedWebsite
+        data: updatedWebsite,
       });
 
     } catch (error) {

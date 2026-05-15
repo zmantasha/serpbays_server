@@ -394,6 +394,34 @@
     "lastMetricUpdateAt": {
       "type": "datetime",
       "description": "Most recent change timestamp for any tracked metric field. Stamped automatically by the marketplace lifecycle hook."
+    },
+    "lastAhrefsRefreshAt": {
+      "type": "datetime",
+      "description": "Last time this row was refreshed from an Ahrefs source (bulk CSV or JIT). Drives the per-tool freshness dashboard."
+    },
+    "lastMozRefreshAt": {
+      "type": "datetime",
+      "description": "Last time this row was refreshed from a Moz source (bulk CSV or JIT)."
+    },
+    "lastSemrushRefreshAt": {
+      "type": "datetime",
+      "description": "Last time this row was refreshed from a Semrush source (bulk CSV or JIT)."
+    },
+    "lastAhrefsExportAt": {
+      "type": "datetime",
+      "description": "Last time this row was included in an Ahrefs domain export. Advances on intent (export); refresh-at advances on confirmed upload-back."
+    },
+    "lastMozExportAt": {
+      "type": "datetime",
+      "description": "Last time this row was included in a Moz domain export."
+    },
+    "lastSemrushExportAt": {
+      "type": "datetime",
+      "description": "Last time this row was included in a Semrush domain export."
+    },
+    "bulkRefreshSkipTools": {
+      "type": "json",
+      "description": "Array of tool ids (ahrefs|moz|semrush) the admin has marked \"skip\" for this site so it stops appearing in future cohort exports. Default []."
     }
   }
 }

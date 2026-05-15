@@ -156,20 +156,39 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // Search filter - search by domain (url), title/description, or publisher
-      // Trim whitespace from search term
+      // Search filter — search by domain (url), publisher name/email, ID,
+      // or description.
+      //
+      // Auto-detect: when the term LOOKS like a domain (contains a dot,
+      // no @ sign, no spaces, not a pure integer) we narrow the search
+      // to the URL column only. Without this, typing "wordscloud.in"
+      // matches every site whose publisher email lives at @wordscloud.in
+      // — which in staging is ~all of them. The narrowing is purely a
+      // signal-vs-noise win; non-domain terms (publisher names, partial
+      // emails, IDs) still fan out to every searchable field.
       const trimmedSearch = search ? String(search).trim() : '';
       if (trimmedSearch) {
-        const parsedId = parseInt(trimmedSearch) || 0;
-        filters.$or = [
-          { url: { $containsi: trimmedSearch } },
-          { publisherName: { $containsi: trimmedSearch } },
-          { publisherEmail: { $containsi: trimmedSearch } },
-          { description: { $containsi: trimmedSearch } },
-          { id: { $eq: parsedId } },
-          { currentPublisherId: { $eq: parsedId } },
-          { originalPublisherId: { $eq: parsedId } }
-        ];
+        const looksLikeDomain =
+          /\./.test(trimmedSearch) &&
+          !/[@\s]/.test(trimmedSearch) &&
+          !/^\d+$/.test(trimmedSearch);
+
+        if (looksLikeDomain) {
+          addAndFilter({ url: { $containsi: trimmedSearch } });
+        } else {
+          const parsedId = parseInt(trimmedSearch) || 0;
+          addAndFilter({
+            $or: [
+              { url: { $containsi: trimmedSearch } },
+              { publisherName: { $containsi: trimmedSearch } },
+              { publisherEmail: { $containsi: trimmedSearch } },
+              { description: { $containsi: trimmedSearch } },
+              { id: { $eq: parsedId } },
+              { currentPublisherId: { $eq: parsedId } },
+              { originalPublisherId: { $eq: parsedId } },
+            ],
+          });
+        }
       }
 
       // Status filter
@@ -345,24 +364,46 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // Metrics status filter - filter by metrics availability and approval status
+      // Website status filter — workflow stages, mirrors the pills in the
+      // admin panel header bar. Four pills are mutually disjoint:
+      //   Live           = approved
+      //   Ready          = approval_pending + DA AND DR present (rows where
+      //                    the Approve/Reject buttons appear)
+      //   NewlySubmitted = approval_pending + DA OR DR missing (publisher
+      //                    submitted recently but metrics not yet provided)
+      //   Incomplete     = submissionStatus IN (pending_verification,
+      //                    pending_final_submission) — publisher started
+      //                    adding the site but didn't finish
+      //   Missing        = legacy: all metrics null (no longer surfaced as
+      //                    a pill but accepted for backward compat)
       if (metricsStatus && metricsStatus !== 'All') {
-        console.log(`[ADMIN WEBSITES] Applying metrics status filter: ${metricsStatus}`);
+        console.log(`[ADMIN WEBSITES] Applying website status filter: ${metricsStatus}`);
 
         if (metricsStatus === 'Ready') {
-          // "Ready (Has Metrics)" = has metrics AND NOT approved (pending with complete metrics)
-          // Status must be approval_pending (ready for approval)
           filters.submissionStatus = 'approval_pending';
+          addAndFilter({
+            $and: [
+              { moz_da: { $notNull: true } },
+              { ahrefs_dr: { $notNull: true } },
+            ],
+          });
+          console.log('[ADMIN WEBSITES] Applied "Ready for approval" filter: approval_pending + DA & DR present');
 
-          // Must have at least ONE valid metric (DA >= 0 OR DR >= 0 OR Traffic >= 0)
+        } else if (metricsStatus === 'NewlySubmitted') {
+          filters.submissionStatus = 'approval_pending';
           addAndFilter({
             $or: [
-              { $and: [{ moz_da: { $notNull: true } }, { moz_da: { $gte: 0 } }] },
-              { $and: [{ ahrefs_dr: { $notNull: true } }, { ahrefs_dr: { $gte: 0 } }] },
-              { $and: [{ ahrefs_traffic: { $notNull: true } }, { ahrefs_traffic: { $gte: 0 } }] }
-            ]
+              { moz_da: { $null: true } },
+              { ahrefs_dr: { $null: true } },
+            ],
           });
-          console.log('[ADMIN WEBSITES] Applied "Ready" filter: approval_pending + has metrics (including 0)');
+          console.log('[ADMIN WEBSITES] Applied "Newly submitted" filter: approval_pending + DA or DR missing');
+
+        } else if (metricsStatus === 'Incomplete') {
+          filters.submissionStatus = {
+            $in: ['pending_verification', 'pending_final_submission'],
+          };
+          console.log('[ADMIN WEBSITES] Applied "Incomplete" filter: pending_verification OR pending_final_submission');
 
         } else if (metricsStatus === 'Live') {
           // "Live (On Marketplace)" = has metrics AND approved (live on marketplace)
@@ -380,8 +421,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           console.log('[ADMIN WEBSITES] Applied "Live" filter: approved + has metrics (including 0)');
 
         } else if (metricsStatus === 'Missing') {
-          // "Metrics Missing" = lacks all metrics (DA, DR, and Traffic are all null)
-          // All three metrics must be null (0 is considered a valid value)
+          // Legacy: lacks all metrics (DA, DR, and Traffic are all null).
           addAndFilter({
             $and: [
               { moz_da: { $null: true } },
@@ -389,7 +429,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               { ahrefs_traffic: { $null: true } }
             ]
           });
-          console.log('[ADMIN WEBSITES] Applied "Missing" filter: all metrics are null (0 is valid)');
+          console.log('[ADMIN WEBSITES] Applied "Missing" (legacy) filter: all metrics are null');
         }
       }
 
@@ -556,13 +596,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           .query('api::marketplace.marketplace')
           .findMany({
             where: { url: { $in: urls } },
-            select: ['id', 'url', 'lastPriceUpdateAt', 'lastMetricUpdateAt'],
+            select: ['id', 'url', 'lastPriceUpdateAt', 'lastMetricUpdateAt', 'status'],
           });
         for (const row of rows) {
           freshnessByUrl.set(row.url, {
             marketplaceId: row.id,
             lastPriceUpdateAt: row.lastPriceUpdateAt || null,
             lastMetricUpdateAt: row.lastMetricUpdateAt || null,
+            marketplaceStatus: row.status || null,
           });
         }
       }
@@ -682,6 +723,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         // (ownership_transferred, rejected, pending) are not being edited so
         // they shouldn't inherit the live record's freshness pills.
         marketplaceId: freshnessByUrl.get(website.url)?.marketplaceId ?? null,
+        marketplaceStatus: freshnessByUrl.get(website.url)?.marketplaceStatus ?? null,
         ...(isActivePublisherRow(website)
           ? {
               lastPriceUpdateAt: freshnessByUrl.get(website.url)?.lastPriceUpdateAt ?? null,
@@ -1427,6 +1469,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating website ${id}`, updateData);
 
+      // Optional: when an admin saves through the JIT "Refresh metrics now"
+      // flow they pass refreshSource so we know which tool's freshness clock
+      // to advance on the marketplace row. Stripped from updateData before
+      // mapping so it isn't treated as a publisher-website field.
+      const VALID_REFRESH_SOURCES = ['ahrefs', 'moz', 'semrush'];
+      const refreshSource =
+        updateData.refreshSource && VALID_REFRESH_SOURCES.includes(updateData.refreshSource)
+          ? updateData.refreshSource
+          : null;
+      delete updateData.refreshSource;
+
       // Get the website before update to preserve required private fields
       const websiteBeforeUpdate = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
         populate: ['currentPublisherId', 'originalPublisherId']
@@ -1696,6 +1749,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               if (!triggered) {
                 for (const f of group.fields) delete marketplaceUpdateData[f];
               }
+            }
+
+            // When the JIT refresh path passes refreshSource, stamp the
+            // matching per-tool clock so the bulk-refresh dashboard sees the
+            // site as freshly refreshed for that tool. The lifecycle's
+            // diff logic doesn't touch these columns (they're not in
+            // TRACKED_*_FIELDS), so we set them directly here.
+            if (refreshSource) {
+              const now = new Date();
+              if (refreshSource === 'ahrefs') marketplaceUpdateData.lastAhrefsRefreshAt = now;
+              else if (refreshSource === 'moz') marketplaceUpdateData.lastMozRefreshAt = now;
+              else if (refreshSource === 'semrush') marketplaceUpdateData.lastSemrushRefreshAt = now;
             }
 
             // Update marketplace using database query API
@@ -2061,8 +2126,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.send(cachedStats)
       }
 
-      // Get counts by status in parallel for better performance
-      const [total, pending, approved, rejected] = await Promise.all([
+      // 72-hour cutoff for the "needs attention" notification badge.
+      const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+      // Get counts by status in parallel for better performance. `live` and
+      // `ready` add a metrics-complete predicate (moz_da AND ahrefs_dr both
+      // non-NULL) so the dashboard cards mirror what the UI badges show on
+      // each row, not just the raw status counts.
+      // `newlySubmittedLast72h` + `incompleteLast72h` drive the in-toolbar
+      // notification: sites submitted within the last 72 hours that haven't
+      // been approved/rejected/finished yet. After 72h they fall out of the
+      // badge but remain in the DB.
+      const [total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h] = await Promise.all([
         strapi.db.query('api::publisher-website.publisher-website').count(),
         strapi.db.query('api::publisher-website.publisher-website').count({
           where: { submissionStatus: 'approval_pending' }
@@ -2072,10 +2147,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }),
         strapi.db.query('api::publisher-website.publisher-website').count({
           where: { submissionStatus: 'rejected' }
-        })
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: 'approved',
+            moz_da: { $notNull: true },
+            ahrefs_dr: { $notNull: true },
+          }
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: { $ne: 'approved' },
+            moz_da: { $notNull: true },
+            ahrefs_dr: { $notNull: true },
+          }
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: 'approval_pending',
+            createdAt: { $gte: seventyTwoHoursAgo },
+          },
+        }),
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: { $in: ['pending_verification', 'pending_final_submission'] },
+            createdAt: { $gte: seventyTwoHoursAgo },
+          },
+        }),
       ]);
 
-      console.log('[ADMIN WEBSITE STATS] Counts:', { total, pending, approved, rejected });
+      console.log('[ADMIN WEBSITE STATS] Counts:', { total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h });
 
       // Get new websites this month
       const thisMonth = new Date();
@@ -2095,7 +2196,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         pendingWebsites: pending,
         approvedWebsites: approved,
         rejectedWebsites: rejected,
-        newThisMonth
+        liveWebsites: live,
+        readyWebsites: ready,
+        newlySubmittedLast72h,
+        incompleteLast72h,
+        newThisMonth,
       };
 
       console.log('[ADMIN WEBSITE STATS]', statsData);

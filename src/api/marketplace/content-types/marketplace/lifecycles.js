@@ -186,6 +186,10 @@ module.exports = {
             source: audit.source || 'api',
             changedBy: audit.changedBy || null,
             userId: audit.userId || null,
+            // Populated for bulk-refresh paths so a job's full set of
+            // changes can be enumerated later by querying this column.
+            // Null for ordinary admin/publisher edits.
+            bulkJobId: audit.bulkJobId || null,
             changedAt: new Date(),
           },
         });
