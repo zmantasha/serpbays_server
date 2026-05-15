@@ -195,10 +195,14 @@ async function lookupRowsByCanonicalUrls(canonicalUrls) {
     if (canon && wanted.has(canon)) matchedMarketplaces.set(canon, row);
   }
 
-  // Find publisher-websites for the matched URLs. We search by raw URL
-  // first; if that misses we'd need a broader scan. The bulk import path
-  // here originally added publisher-websites via the same canonical
-  // input, so direct match works for most cases.
+  // We accept BOTH approved+active and pending publisher_websites:
+  //   approved + marketplace=active → dual-write (publisher + marketplace
+  //                                    with full audit trail)
+  //   pending (no marketplace yet)   → publisher_websites only. Lets
+  //                                    admin fill metrics on newly-
+  //                                    submitted sites before approving.
+  //
+  // Find approved publisher_websites whose URLs match active marketplaces.
   if (matchedMarketplaces.size > 0) {
     const matchedUrls = Array.from(matchedMarketplaces.values()).map((m) => m.url);
     page = 1;
@@ -220,30 +224,69 @@ async function lookupRowsByCanonicalUrls(canonicalUrls) {
     }
   }
 
-  // Build canon → publisher-website map. If multiple publisher-websites
-  // share a URL (ownership transfer history), prefer the one with the
-  // most recent updatedAt — that's the active record.
-  const publisherWebsiteByCanon = new Map();
+  // Find pending publisher_websites by canonical URL. Need a broader
+  // scan since there's no pre-filtered URL list here; pending volume is
+  // typically small relative to total. At higher scale we'd back this
+  // by a canonical_url column + index.
+  const pendingPublisherWebsites = [];
+  page = 1;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const rows = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+      where: { submissionStatus: 'approval_pending' },
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    });
+    if (rows.length === 0) break;
+    for (const pw of rows) {
+      const canon = canonicalizeUrl(pw.url);
+      if (canon && wanted.has(canon)) pendingPublisherWebsites.push(pw);
+    }
+    if (rows.length < pageSize) break;
+    page += 1;
+    if (page > 200) break;
+  }
+
+  // Build canon → publisher-website map for approved sites. If multiple
+  // share a URL (ownership transfer history), prefer the most recently
+  // updated one.
+  const approvedByCanon = new Map();
   for (const pw of publisherWebsites) {
     const canon = canonicalizeUrl(pw.url);
     if (!canon) continue;
-    const existing = publisherWebsiteByCanon.get(canon);
+    const existing = approvedByCanon.get(canon);
     if (!existing || new Date(pw.updatedAt) > new Date(existing.updatedAt)) {
-      publisherWebsiteByCanon.set(canon, pw);
+      approvedByCanon.set(canon, pw);
+    }
+  }
+  const pendingByCanon = new Map();
+  for (const pw of pendingPublisherWebsites) {
+    const canon = canonicalizeUrl(pw.url);
+    if (!canon) continue;
+    const existing = pendingByCanon.get(canon);
+    if (!existing || new Date(pw.updatedAt) > new Date(existing.updatedAt)) {
+      pendingByCanon.set(canon, pw);
     }
   }
 
-  // Final map: only canon URLs that have BOTH a marketplace and a
-  // publisher-website. Missing publisher-website → not writable.
+  // Final map. Approved pairs take precedence (full dual-write); pending
+  // sites fill in the gap for URLs that don't have an active marketplace.
   const map = new Map();
   for (const [canon, mp] of matchedMarketplaces) {
-    const pw = publisherWebsiteByCanon.get(canon);
+    const pw = approvedByCanon.get(canon);
     if (pw) map.set(canon, { marketplace: mp, publisherWebsite: pw });
   }
+  for (const [canon, pw] of pendingByCanon) {
+    if (!map.has(canon)) {
+      map.set(canon, { marketplace: null, publisherWebsite: pw });
+    }
+  }
 
+  const approvedCount = Array.from(map.values()).filter((p) => p.marketplace).length;
+  const pendingCount = map.size - approvedCount;
   console.log(
-    `[BULK-REFRESH] lookup: wanted=${wanted.size} marketplaces=${matchedMarketplaces.size} ` +
-    `publisher-websites=${publisherWebsiteByCanon.size} writable=${map.size}`
+    `[BULK-REFRESH] lookup: wanted=${wanted.size} writable=${map.size} ` +
+    `(approved=${approvedCount} pending=${pendingCount})`
   );
   return map;
 }
@@ -370,8 +413,9 @@ async function buildPreview({ tool, csvText, csvFilename = null }) {
       rowIndex: row._rowIndex,
       urlRaw: row.urlRaw || row.url,
       url: row.url,
-      marketplaceId: mp.id,
+      marketplaceId: mp ? mp.id : null,
       publisherWebsiteId: pw.id,
+      isPending: !mp,
       status,
       current: Object.fromEntries(
         profile.allowedFields.map((f) => [f, pw[f] ?? null])
@@ -469,10 +513,13 @@ async function commitCsv({ tool, csvText, csvFilename = null, label = null, acto
       // rows we already wrote. The job row stays in 'processing' and
       // gets to 'failed' if we throw out of the loop.
       for (const row of chunk) {
-        // 1) Write to publisher_websites (source of truth that /websites
-        //    displays). Pass _skipMarketplaceSync so the lifecycle's
-        //    auto-sync doesn't write to marketplace WITHOUT our audit
-        //    context — we do that ourselves in step 2.
+        const isPending = !row.marketplaceId;
+
+        // 1) Always write to publisher_websites (source of truth).
+        //    _skipMarketplaceSync prevents the lifecycle's auto-sync
+        //    from writing to marketplace WITHOUT our audit context
+        //    (we do that ourselves in step 2 for approved rows).
+        //    For pending rows there's no marketplace to sync to anyway.
         await strapi.entityService.update(
           'api::publisher-website.publisher-website',
           row.publisherWebsiteId,
@@ -484,24 +531,24 @@ async function commitCsv({ tool, csvText, csvFilename = null, label = null, acto
           }
         );
 
-        // 2) Write to marketplace directly with audit context so the
-        //    marketplace_update_history row gets source='bulk-<tool>'
-        //    and bulkJobId. Also stamp the per-tool refresh clock here
-        //    (the lifecycle's diff logic doesn't track per-tool stamps).
-        //    Attestation model — clock advances even on no-op rows.
-        const mpData = mapFieldsForMarketplace(row.next);
-        mpData[profile.refreshTimestampColumn] = now;
-        mpData._audit = {
-          source: profile.historySource,
-          userId: actor?.id || null,
-          changedBy: actor?.email || actor?.username || null,
-          bulkJobId: job.id,
-        };
-        await strapi.entityService.update(
-          'api::marketplace.marketplace',
-          row.marketplaceId,
-          { data: mpData }
-        );
+        // 2) For approved sites: dual-write to marketplace with audit
+        //    context and per-tool clock advance. Skipped for pending
+        //    sites since they don't have a marketplace row yet.
+        if (!isPending) {
+          const mpData = mapFieldsForMarketplace(row.next);
+          mpData[profile.refreshTimestampColumn] = now;
+          mpData._audit = {
+            source: profile.historySource,
+            userId: actor?.id || null,
+            changedBy: actor?.email || actor?.username || null,
+            bulkJobId: job.id,
+          };
+          await strapi.entityService.update(
+            'api::marketplace.marketplace',
+            row.marketplaceId,
+            { data: mpData }
+          );
+        }
 
         if (row.status === 'will-update') updatedCount += 1;
         else unchangedCount += 1;
@@ -554,7 +601,19 @@ const TOOL_COLUMNS = {
   semrush: { refresh: 'last_semrush_refresh_at', export: 'last_semrush_export_at' },
 };
 
-async function exportCohort({ tool, limit = null, recentExportThresholdDays = 7, actor = null }) {
+// Cohort modes:
+//   'active-oldest'           — default: marketplace status='active', oldest per-tool refresh first
+//   'pending-missing-metrics' — publisher_websites with submissionStatus='approval_pending'
+//                                AND (moz_da IS NULL OR ahrefs_dr IS NULL), oldest createdAt first
+//                                (these sites have no marketplace row yet; the goal is to fill
+//                                in metrics so admin can approve/reject)
+async function exportCohort({
+  tool,
+  limit = null,
+  recentExportThresholdDays = 7,
+  cohort = 'active-oldest',
+  actor = null,
+}) {
   const profile = getProfile(tool);
   if (!profile) throw new Error(`Unknown tool: ${tool}`);
   const cols = TOOL_COLUMNS[tool];
@@ -569,46 +628,58 @@ async function exportCohort({ tool, limit = null, recentExportThresholdDays = 7,
     : profile.batchCap;
   const effectiveLimit = Math.min(requestedLimit, profile.batchCap * 5);
 
-  const thresholdDays = Number.isFinite(parseInt(recentExportThresholdDays, 10))
-    ? Math.max(0, parseInt(recentExportThresholdDays, 10))
-    : 7;
-  const exportCutoff = thresholdDays > 0
-    ? new Date(Date.now() - thresholdDays * 86400000).toISOString()
-    : null;
+  let rows;
+  let jobLabelSuffix;
 
-  // Cohort selection — hits the partial index on (last_<tool>_refresh_at)
-  // WHERE status='active'. NULLS FIRST so rows that have never been
-  // refreshed surface at the top of the queue. Recently-exported rows are
-  // excluded so admin doesn't re-export domains they haven't refreshed
-  // back yet. Skip-flagged sites are excluded entirely.
-  const filterParts = [`status = 'active'`];
-  if (exportCutoff) {
-    filterParts.push(`(${cols.export} IS NULL OR ${cols.export} < ?)`);
+  if (cohort === 'pending-missing-metrics') {
+    // Pending submissions that haven't had DA or DR filled in yet. Admin
+    // wants to look these up so they can decide approve/reject. No
+    // per-tool export-timestamp column on publisher_websites — pending
+    // sites don't have a marketplace row — so we skip the timestamp
+    // bookkeeping for this cohort.
+    const { rows: pending } = await knex.raw(
+      `
+      SELECT id, url, created_at
+      FROM publisher_websites
+      WHERE submission_status = 'approval_pending'
+        AND (moz_da IS NULL OR ahrefs_dr IS NULL)
+      ORDER BY created_at ASC NULLS LAST, id ASC
+      LIMIT ${effectiveLimit}
+      `
+    );
+    rows = pending;
+    jobLabelSuffix = 'pending — missing metrics';
+  } else {
+    // Default cohort: active marketplace rows, oldest-refresh-first.
+    const thresholdDays = Number.isFinite(parseInt(recentExportThresholdDays, 10))
+      ? Math.max(0, parseInt(recentExportThresholdDays, 10))
+      : 7;
+    const exportCutoff = thresholdDays > 0
+      ? new Date(Date.now() - thresholdDays * 86400000).toISOString()
+      : null;
+
+    const filterParts = [`status = 'active'`];
+    if (exportCutoff) filterParts.push(`(${cols.export} IS NULL OR ${cols.export} < ?)`);
+    filterParts.push(`NOT (bulk_refresh_skip_tools @> ?::jsonb)`);
+    const bindings = [];
+    if (exportCutoff) bindings.push(exportCutoff);
+    bindings.push(JSON.stringify([tool]));
+
+    const { rows: active } = await knex.raw(
+      `
+      SELECT id, url, ${cols.refresh} AS refresh_at, ${cols.export} AS export_at
+      FROM marketplaces
+      WHERE ${filterParts.join(' AND ')}
+      ORDER BY ${cols.refresh} ASC NULLS FIRST, id ASC
+      LIMIT ${effectiveLimit}
+      `,
+      bindings
+    );
+    rows = active;
+    jobLabelSuffix = 'active — oldest refresh';
   }
-  // bulkRefreshSkipTools is a jsonb array; exclude rows where this tool
-  // is in it. @> is the "contains" operator.
-  filterParts.push(`NOT (bulk_refresh_skip_tools @> ?::jsonb)`);
 
-  const bindings = [];
-  if (exportCutoff) bindings.push(exportCutoff);
-  bindings.push(JSON.stringify([tool]));
-
-  // First do a quick count for the live "eligible" preview (cheap with
-  // index) — admin can call this without paying the SELECT cost.
-  // (Used by the dry-run path; the actual export does SELECT in one shot.)
-  const selectSql = `
-    SELECT id, url, ${cols.refresh} AS refresh_at, ${cols.export} AS export_at
-    FROM marketplaces
-    WHERE ${filterParts.join(' AND ')}
-    ORDER BY ${cols.refresh} ASC NULLS FIRST, id ASC
-    LIMIT ${effectiveLimit}
-  `;
-
-  const { rows: cohort } = await knex.raw(selectSql, bindings);
-
-  if (cohort.length === 0) {
-    // Empty cohort still gets a job row so the audit trail shows the
-    // attempt — useful for debugging.
+  if (rows.length === 0) {
     const emptyJob = await strapi.db.query('api::bulk-refresh-job.bulk-refresh-job').create({
       data: {
         tool,
@@ -617,7 +688,7 @@ async function exportCohort({ tool, limit = null, recentExportThresholdDays = 7,
         rowCount: 0,
         createdByUserId: actor?.id || null,
         createdByEmail: actor?.email || actor?.username || null,
-        label: `Export · ${profile.label} · 0 sites (no eligible cohort)`,
+        label: `Export · ${profile.label} · 0 sites (${jobLabelSuffix})`,
       },
     });
     return {
@@ -628,44 +699,62 @@ async function exportCohort({ tool, limit = null, recentExportThresholdDays = 7,
     };
   }
 
-  // Bulk update last_<tool>_export_at on the cohort in ONE round-trip.
-  const ids = cohort.map((r) => r.id);
-  const now = new Date();
-  await knex.raw(
-    `UPDATE marketplaces SET ${cols.export} = ? WHERE id = ANY(?::int[])`,
-    [now.toISOString(), ids]
-  );
+  // Bulk-update last_<tool>_export_at on the cohort in ONE round-trip,
+  // but only for the active-oldest cohort (pending sites don't have a
+  // marketplace row to stamp).
+  if (cohort !== 'pending-missing-metrics') {
+    const ids = rows.map((r) => r.id);
+    const now = new Date();
+    await knex.raw(
+      `UPDATE marketplaces SET ${cols.export} = ? WHERE id = ANY(?::int[])`,
+      [now.toISOString(), ids]
+    );
+  }
 
-  // CSV: just a URL column. Every tool's batch-analysis UI accepts a
-  // single-column list of domains, one per line.
-  const csvText = 'url\n' + cohort.map((r) => r.url).join('\n') + '\n';
+  const csvText = 'url\n' + rows.map((r) => r.url).join('\n') + '\n';
 
-  // Create a job row for the audit trail.
   const job = await strapi.db.query('api::bulk-refresh-job.bulk-refresh-job').create({
     data: {
       tool,
       jobType: 'export',
       status: 'complete',
-      rowCount: cohort.length,
+      rowCount: rows.length,
       createdByUserId: actor?.id || null,
       createdByEmail: actor?.email || actor?.username || null,
-      label: `Export · ${profile.label} · ${cohort.length} sites`,
+      label: `Export · ${profile.label} · ${rows.length} sites (${jobLabelSuffix})`,
     },
   });
 
-  const filename = `${tool}-domains-${new Date().toISOString().slice(0, 10)}.csv`;
-  return { jobId: job.id, count: cohort.length, csvText, filename };
+  const filename = `${tool}-${cohort === 'pending-missing-metrics' ? 'pending' : 'domains'}-${new Date().toISOString().slice(0, 10)}.csv`;
+  return { jobId: job.id, count: rows.length, csvText, filename };
 }
 
 // Count-only variant — used by the UI to show a live "X eligible sites"
 // preview without committing the export.
-async function countEligibleForExport({ tool, recentExportThresholdDays = 7 }) {
+async function countEligibleForExport({
+  tool,
+  recentExportThresholdDays = 7,
+  cohort = 'active-oldest',
+}) {
   const profile = getProfile(tool);
   if (!profile) throw new Error(`Unknown tool: ${tool}`);
   const cols = TOOL_COLUMNS[tool];
   if (!cols) throw new Error(`No column map for tool: ${tool}`);
 
   const knex = strapi.db.connection;
+
+  if (cohort === 'pending-missing-metrics') {
+    const { rows } = await knex.raw(
+      `
+      SELECT COUNT(*)::int AS c
+      FROM publisher_websites
+      WHERE submission_status = 'approval_pending'
+        AND (moz_da IS NULL OR ahrefs_dr IS NULL)
+      `
+    );
+    return rows[0]?.c || 0;
+  }
+
   const thresholdDays = Number.isFinite(parseInt(recentExportThresholdDays, 10))
     ? Math.max(0, parseInt(recentExportThresholdDays, 10))
     : 7;

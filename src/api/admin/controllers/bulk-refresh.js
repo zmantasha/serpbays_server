@@ -188,11 +188,12 @@ module.exports = {
    */
   async eligibleCount(ctx) {
     try {
-      const { tool, recentExportThresholdDays } = ctx.query;
+      const { tool, recentExportThresholdDays, cohort } = ctx.query;
       validateTool(tool);
       const count = await bulkRefreshService.countEligibleForExport({
         tool,
         recentExportThresholdDays: parseInt(recentExportThresholdDays, 10),
+        cohort: cohort || 'active-oldest',
       });
       ctx.send({ data: { count } });
     } catch (err) {
@@ -210,13 +211,14 @@ module.exports = {
    */
   async export(ctx) {
     try {
-      const { tool, limit, recentExportThresholdDays } = ctx.request.body || {};
+      const { tool, limit, recentExportThresholdDays, cohort } = ctx.request.body || {};
       validateTool(tool);
 
       const result = await bulkRefreshService.exportCohort({
         tool,
         limit: parseInt(limit, 10),
         recentExportThresholdDays: parseInt(recentExportThresholdDays, 10),
+        cohort: cohort || 'active-oldest',
         actor: getActor(ctx),
       });
 
