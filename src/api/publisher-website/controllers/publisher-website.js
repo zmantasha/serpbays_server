@@ -828,8 +828,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         url: submission.url,
 
         // ADVERTISER PRICING (what publisher entered - this is what advertisers pay)
-        // If price is not provided (null/undefined/0), keep as null
-        price: submission.generalGuestPostPrice > 0 ? submission.generalGuestPostPrice : null,
+        // marketplace.price is the guest-post rate. Schema marks it required
+        // with min:0, and Yup rejects null with "must be a number" / NaN. For
+        // link-insertion-only sites (generalGuestPostPrice=0) use 0 instead of
+        // null — matches the schema and the fallback path's `|| 0` convention.
+        price: submission.generalGuestPostPrice > 0 ? submission.generalGuestPostPrice : 0,
         link_insertion_price: submission.generalLinkInsertionPrice > 0 ? submission.generalLinkInsertionPrice : null,
         adv_casino_pricing: submission.casinoGuestPostPrice > 0 ? submission.casinoGuestPostPrice : null,
         adv_li_casino_pricing: submission.casinoLinkInsertionPrice > 0 ? submission.casinoLinkInsertionPrice : null,

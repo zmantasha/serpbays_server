@@ -25,6 +25,27 @@
 
 module.exports = {
   async up(knex) {
+    // Source column `last_metric_update_at` is declared in schema.json and
+    // created by syncSchema(), which runs AFTER migrations. On the first boot
+    // after this migration was authored it doesn't exist yet, so an
+    // unconditional UPDATE crashes bootstrap. Guard with information_schema:
+    // if the source column is missing, skip cleanly so syncSchema() can run
+    // and the app can boot. Legacy NULL rows will need a follow-up backfill.
+    const { rows } = await knex.raw(
+      `SELECT 1
+         FROM information_schema.columns
+        WHERE table_name = 'marketplaces'
+          AND column_name = 'last_metric_update_at'
+        LIMIT 1`
+    );
+    if (rows.length === 0) {
+      console.log(
+        '[MIGRATION] Skipping per-tool backfill: source column last_metric_update_at not yet present. ' +
+          'syncSchema() will create it after migrations finish; legacy NULL rows will need a follow-up backfill.'
+      );
+      return;
+    }
+
     console.log('[MIGRATION] Backfilling per-tool refresh timestamps from last_metric_update_at...');
 
     const ahrefs = await knex.raw(`

@@ -1116,7 +1116,26 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         } catch (marketplaceError) {
           console.error(`[ADMIN ACTION] Error adding website ${updatedWebsite.url} to marketplace:`, marketplaceError);
           console.error(`[ADMIN ACTION] Error details:`, marketplaceError.message, marketplaceError.stack);
-          // Don't fail the approval if marketplace creation fails
+
+          // Swallowing this catch is exactly what hid the 2026-04-17 batch:
+          // publisher_website ended up 'approved' but the marketplace row was
+          // never created. Revert the status so the admin can retry, and
+          // re-throw so the outer catch surfaces a real HTTP error.
+          // Matches the convention used by publisher-website afterUpdate Block 1
+          // (content-types/publisher-website/lifecycles.js:73-87).
+          try {
+            await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+              data: {
+                submissionStatus: 'verified_pending_review',
+                reviewNotes: `Marketplace creation failed during approval: ${marketplaceError.message}`,
+              },
+            });
+            console.error(`[ADMIN ACTION] Reverted publisher_website ${id} to verified_pending_review`);
+          } catch (revertError) {
+            console.error(`[ADMIN ACTION] Failed to revert publisher_website ${id} after marketplace failure:`, revertError.message);
+          }
+
+          throw new Error(`Approval rolled back — marketplace listing creation failed: ${marketplaceError.message}`);
         }
       }
 
@@ -1231,7 +1250,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
     } catch (error) {
       console.error('[ADMIN WEBSITE APPROVE ERROR]', error);
-      return ctx.internalServerError('Failed to approve website');
+      return ctx.internalServerError(error.message || 'Failed to approve website');
     }
   },
 
@@ -3626,9 +3645,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             }
           });
 
-          results.push({ id, status: 'approved' });
-
-          // Add to marketplace if not already there
+          // Add to marketplace if not already there. results.push is deferred
+          // until after this block so a marketplace failure doesn't get
+          // reported as a successful approval in the response.
           if (updatedWebsite.url) {
             try {
               const existingMarketplaceRecord = await strapi.entityService.findMany('api::marketplace.marketplace', {
@@ -3662,8 +3681,27 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               }
             } catch (marketplaceError) {
               console.error(`Error adding website ${updatedWebsite.url} to marketplace:`, marketplaceError);
+
+              // Mirror the single-approve hardening: revert submissionStatus so
+              // the admin can retry, then re-throw so the per-id outer catch
+              // records this in errors[] instead of silently leaving the
+              // publisher_website 'approved' with no marketplace row.
+              try {
+                await strapi.entityService.update('api::publisher-website.publisher-website', id, {
+                  data: {
+                    submissionStatus: 'verified_pending_review',
+                    reviewNotes: `Marketplace creation failed during bulk approval: ${marketplaceError.message}`,
+                  },
+                });
+              } catch (revertError) {
+                console.error(`[ADMIN BULK ACTION] Failed to revert publisher_website ${id}:`, revertError.message);
+              }
+
+              throw new Error(`Approval rolled back — marketplace listing creation failed: ${marketplaceError.message}`);
             }
           }
+
+          results.push({ id, status: 'approved' });
 
         } catch (error) {
           console.error(`Error approving website ${id}:`, error);
