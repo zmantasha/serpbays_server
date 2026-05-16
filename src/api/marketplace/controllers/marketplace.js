@@ -7,6 +7,7 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 const { parse } = require('csv-parse/sync');
 const fs = require('fs');
+const { normalizeUrl } = require('../../../utils/normalize-url');
 
 // Price-like columns. When sorting by any of these, both NULL and 0 are
 // treated as "no price" so they fall to the bottom of an ascending sort.
@@ -1142,8 +1143,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     }
 
     try {
-      // Clean the domain (remove protocol and trailing slashes) and normalize to lowercase
-      const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
+      const cleanDomain = normalizeUrl(domain);
 
       // Check if domain exists in marketplace
       const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
@@ -1280,6 +1280,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
           // Check for duplicate URLs
           if (convertedData.url) {
+            convertedData.url = normalizeUrl(convertedData.url);
             const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
               where: { url: convertedData.url }
             });

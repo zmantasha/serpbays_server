@@ -1,3 +1,5 @@
+const { normalizeUrl } = require('../../../../utils/normalize-url');
+
 // Fields whose changes are recorded into marketplace-update-history.
 // Two groups so future reads can filter "price-only" or "metric-only" updates.
 const TRACKED_PRICE_FIELDS = [
@@ -71,6 +73,8 @@ module.exports = {
   beforeCreate(event) {
     const { data } = event.params;
 
+    if (data && data.url) data.url = normalizeUrl(data.url);
+
     // Calculate placement speed if TAT is provided
     if (data.tat !== undefined) {
       data.placement_speed = calculatePlacementSpeed(data.tat);
@@ -89,6 +93,8 @@ module.exports = {
   // (Strapi would otherwise fail trying to persist an unknown attribute).
   async beforeUpdate(event) {
     const { data, where } = event.params;
+
+    if (data && data.url) data.url = normalizeUrl(data.url);
 
     // Recalculate placement speed if TAT is being updated
     if (data.tat !== undefined) {
