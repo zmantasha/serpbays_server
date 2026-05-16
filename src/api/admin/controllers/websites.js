@@ -1217,7 +1217,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             publisherName: updatedWebsite.publisherName || pubEmail,
             websiteName: updatedWebsite.url,
             websiteUrl: updatedWebsite.url,
-            actionType: 'Approved & Live',
+            actionType: 'Approved and Live',
             notes: updatedWebsite.adminNotes || ''
           });
         }

@@ -89,20 +89,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
       }
 
-      // Send website added email notification
-      try {
-        const emailService = strapi.service('api::global.email-operations');
-        await emailService.sendWebsiteStatusEmail({
-          publisherEmail: user.email,
-          publisherName: user.username || user.email,
-          websiteName: data.url,
-          websiteUrl: data.url,
-          actionType: 'Submitted for Moderation',
-          is_added: true
-        });
-      } catch (emailError) {
-        console.error('[EMAIL] Failed to send website added email:', emailError.message);
-      }
+      // Moderation email is intentionally not sent here. Adding a website
+      // just creates the record (status pending_verification or
+      // pending_final_submission). The "Submitted for Moderation" email is
+      // fired by the lifecycle hook when the status actually transitions to
+      // approval_pending via the client's Submit for Review action.
 
       return { data: result };
     } catch (error) {
@@ -586,7 +577,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             publisherName: submission.publisherName || submission.publisherEmail,
             websiteName: submission.url,
             websiteUrl: submission.url,
-            actionType: 'Approved & Live',
+            actionType: 'Approved and Live',
             notes: ctx.request.body.reviewNotes || ''
           });
         } catch (emailError) {

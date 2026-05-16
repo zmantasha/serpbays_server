@@ -2440,7 +2440,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
    * @param {string} params.publisherName - Publisher's name for greeting
    * @param {string} params.websiteName - Website name/domain
    * @param {string} params.websiteUrl - Website URL
-   * @param {string} params.actionType - Status label (e.g. "Approved & Live", "Rejected", "Removed")
+   * @param {string} params.actionType - Status label (e.g. "Approved and Live", "Rejected", "Removed")
    * @param {string} [params.notes] - Optional notes (rejection reason, admin notes, etc.)
    * @param {boolean} [params.is_added] - Set to true for "website added" variant
    */
