@@ -1,0 +1,77 @@
+{
+  "kind": "collectionType",
+  "collectionName": "bulk_refresh_jobs",
+  "info": {
+    "singularName": "bulk-refresh-job",
+    "pluralName": "bulk-refresh-jobs",
+    "displayName": "Bulk Refresh Job",
+    "description": "One row per bulk metric refresh operation (export of a domain list, upload of a tool's CSV output, revert of a prior upload). Joined to marketplace-update-history rows via bulkJobId."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "tool": {
+      "type": "enumeration",
+      "enum": ["ahrefs", "moz", "semrush", "price"],
+      "required": true,
+      "description": "Job scope: ahrefs/moz/semrush for per-tool metric refreshes; 'price' for bulk price update jobs (no specific tool)."
+    },
+    "jobType": {
+      "type": "enumeration",
+      "enum": ["export", "upload", "revert"],
+      "required": true
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["pending", "processing", "complete", "failed", "reverted"],
+      "default": "pending",
+      "required": true
+    },
+    "rowCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "updatedCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "unchangedCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "outOfRangeCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "unmatchedUrlCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "csvFileHash": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "csvFilename": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "label": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "errorMessage": {
+      "type": "text"
+    },
+    "revertedJobId": {
+      "type": "integer"
+    },
+    "createdByUserId": {
+      "type": "integer"
+    },
+    "createdByEmail": {
+      "type": "string",
+      "maxLength": 255
+    }
+  }
+}

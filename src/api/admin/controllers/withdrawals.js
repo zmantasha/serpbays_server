@@ -1,0 +1,532 @@
+'use strict';
+
+/**
+ * Admin Withdrawals Management Controller
+ */
+
+const { createCoreController } = require('@strapi/strapi').factories;
+
+module.exports = createCoreController('api::withdrawal-request.withdrawal-request', ({ strapi }) => ({
+
+  /**
+   * Get all withdrawal requests with pagination and filters for admin panel
+   */
+  async find(ctx) {
+    try {
+      const {
+        page = 1,
+        pageSize = 20,
+        sort = 'createdAt:desc',
+        search = '',
+        status = '',
+        userId = ''
+      } = ctx.query;
+
+      // Build filters
+      const filters = {};
+
+      // Search filter
+      if (search) {
+        filters.$or = [
+          { id: { $eq: parseInt(search) || 0 } }
+        ];
+      }
+
+      // Status filter
+      if (status) {
+        filters.withdrawal_status = status;
+      }
+
+      // User filter
+      if (userId) {
+        filters.publisher = userId;
+      }
+
+      const pageNum = parseInt(page) || 1;
+      const pageSizeNum = parseInt(pageSize) || 20;
+
+      // entityService.findPage paginates natively and returns { results, pagination }
+      const { results, pagination } = await strapi.entityService.findPage('api::withdrawal-request.withdrawal-request', {
+        filters,
+        sort,
+        page: pageNum,
+        pageSize: pageSizeNum,
+        populate: ['publisher']
+      });
+
+      console.log(`[ADMIN WITHDRAWALS FIND] page=${pageNum} pageSize=${pageSizeNum} returned=${results.length} total=${pagination.total}`);
+
+      ctx.send({
+        data: results,
+        meta: { pagination }
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWALS FIND ERROR]', error);
+      return ctx.internalServerError('Failed to fetch withdrawal requests');
+    }
+  },
+
+  /**
+   * Get single withdrawal request with full details
+   */
+  async findOne(ctx) {
+    try {
+      const { id } = ctx.params;
+
+      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: {
+          publisher: {
+            fields: ['id', 'username', 'email', 'firstName', 'lastName', 'phoneNumber']
+          }
+        }
+      });
+
+      if (!withdrawal) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      ctx.send({
+        data: withdrawal
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL FIND ONE ERROR]', error);
+      return ctx.internalServerError('Failed to fetch withdrawal request details');
+    }
+  },
+
+  /**
+   * Approve withdrawal request (admin action)
+   */
+  async approve(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { adminNotes, paymentReference } = ctx.request.body;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} approving withdrawal ${id}`);
+
+      // Get withdrawal request details
+      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: ['publisher']
+      });
+
+      if (!withdrawal) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      if (withdrawal.withdrawal_status !== 'pending') {
+        return ctx.badRequest('Withdrawal request has already been processed');
+      }
+
+      // Update withdrawal request
+      const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: {
+          withdrawal_status: 'approved',
+          adminNotes,
+          paymentReference,
+          approvedAt: new Date(),
+          approvedBy: ctx.state.user.id,
+          processedAt: new Date()
+        },
+        populate: ['publisher']
+      });
+
+      // NOTE: Wallet balance is not modified here during approval.
+      // The pendingWithdrawalBalance will only be reduced when the withdrawal is marked as paid.
+      // Approval is just an internal admin confirmation step.
+
+      // NOTE: No transaction created here. Transaction will only be created when marked as paid.
+      // Approval is an internal admin action, not a financial transaction.
+
+      // Send email notification about approval
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawal.publisher?.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal approval email to ${publisherEmail}`);
+
+          // Get the transaction record
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendTransactionApprovalEmail(transaction, publisherEmail);
+            console.log(`Withdrawal approval email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, email not sent`);
+          }
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal approval email:', emailError);
+        // Don't fail the approval if email fails
+      }
+
+      ctx.send({
+        data: updatedWithdrawal
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL APPROVE ERROR]', error);
+      return ctx.internalServerError('Failed to approve withdrawal request');
+    }
+  },
+
+  /**
+   * Reject withdrawal request (admin action)
+   */
+  async reject(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { reason } = ctx.request.body;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} rejecting withdrawal ${id}. Reason: ${reason}`);
+
+      // Get withdrawal request details
+      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: ['publisher']
+      });
+
+      if (!withdrawal) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      if (withdrawal.withdrawal_status !== 'pending') {
+        return ctx.badRequest('Withdrawal request has already been processed');
+      }
+
+      // Update withdrawal request
+      const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: {
+          withdrawal_status: 'denied',
+          denial_reason: reason,
+          rejected_at: new Date(),
+          rejected_by: ctx.state.user.id,
+          processedAt: new Date()
+        },
+        populate: ['publisher']
+      });
+
+      // Note: Wallet balance updates are handled automatically by the lifecycle system
+      // when the withdrawal status changes to 'denied'
+
+      // Send email notification about denial
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawal.publisher?.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal denial email to ${publisherEmail}`);
+
+          // Get the transaction record
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendTransactionDenialEmail(transaction, publisherEmail, reason);
+            console.log(`Withdrawal denial email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, email not sent`);
+          }
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal denial email:', emailError);
+        // Don't fail the rejection if email fails
+      }
+
+      ctx.send({
+        data: updatedWithdrawal
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL REJECT ERROR]', error);
+      return ctx.internalServerError('Failed to reject withdrawal request');
+    }
+  },
+
+  /**
+   * Pay withdrawal request (admin action) - actually deduct amount when paying
+   */
+  async pay(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { paymentReference, paymentMethod } = ctx.request.body;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} paying withdrawal ${id}`);
+
+      // Get withdrawal request details
+      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: ['publisher']
+      });
+
+      if (!withdrawal) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      if (withdrawal.withdrawal_status !== 'approved') {
+        return ctx.badRequest('Withdrawal request must be approved before it can be paid');
+      }
+
+      // Update withdrawal request
+      const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: {
+          withdrawal_status: 'paid',
+          paymentReference,
+          paymentMethod,
+          paidAt: new Date(),
+          paidBy: ctx.state.user.id,
+          processedAt: new Date()
+        },
+        populate: ['publisher']
+      });
+
+      // Note: Wallet balance updates are handled automatically by the lifecycle system
+      // when the withdrawal status changes to 'paid'
+
+      // Create transaction record for the actual payment
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          users_permissions_user: withdrawal.publisher.id,
+          transactionType: 'withdrawal',
+          transactionStatus: 'completed',
+          amount: withdrawal.amount,
+          currency: withdrawal.currency || 'USD',
+          description: `Withdrawal paid - ${paymentReference || 'No reference'}`,
+          transactionId: `WD-${id}-${Date.now()}`,
+          paymentGateway: paymentMethod || 'manual',
+          publishedAt: new Date()
+        }
+      });
+
+      ctx.send({
+        data: updatedWithdrawal
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL PAY ERROR]', error);
+      return ctx.internalServerError('Failed to pay withdrawal request');
+    }
+  },
+
+  /**
+   * Get withdrawal statistics for admin dashboard
+   */
+  async getStats(ctx) {
+    try {
+      const total = await strapi.db.query('api::withdrawal-request.withdrawal-request').count();
+      const pending = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+        where: { withdrawal_status: 'pending' }
+      });
+      const approved = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+        where: { withdrawal_status: 'approved' }
+      });
+      const denied = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+        where: { withdrawal_status: 'denied' }
+      });
+      const paid = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+        where: { withdrawal_status: 'paid' }
+      });
+
+      // Calculate total amount requested
+      const totalAmountData = await strapi.db.query('api::withdrawal-request.withdrawal-request').findMany({
+        select: ['amount', 'withdrawal_status']
+      });
+
+      const totalAmount = totalAmountData.reduce((sum, withdrawal) => {
+        return sum + parseFloat(withdrawal.amount || 0);
+      }, 0);
+
+      const approvedAmount = totalAmountData
+        .filter(w => w.withdrawal_status === 'approved')
+        .reduce((sum, withdrawal) => sum + parseFloat(withdrawal.amount || 0), 0);
+
+      const pendingAmount = totalAmountData
+        .filter(w => w.withdrawal_status === 'pending')
+        .reduce((sum, withdrawal) => sum + parseFloat(withdrawal.amount || 0), 0);
+
+      const paidAmount = totalAmountData
+        .filter(w => w.withdrawal_status === 'paid')
+        .reduce((sum, withdrawal) => sum + parseFloat(withdrawal.amount || 0), 0);
+
+      // Get new withdrawal requests this month
+      const thisMonth = new Date();
+      thisMonth.setDate(1);
+      thisMonth.setHours(0, 0, 0, 0);
+
+      const newThisMonth = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+        where: {
+          createdAt: {
+            $gte: thisMonth.toISOString()
+          }
+        }
+      });
+
+      ctx.send({
+        totalRequests: total,
+        total,
+        pending,
+        approved,
+        denied,
+        paid,
+        totalAmount: totalAmount.toFixed(2),
+        approvedAmount: approvedAmount.toFixed(2),
+        pendingAmount: pendingAmount.toFixed(2),
+        paidAmount: paidAmount.toFixed(2),
+        newThisMonth
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL STATS ERROR]', error);
+      return ctx.internalServerError('Failed to fetch withdrawal statistics');
+    }
+  },
+
+  /**
+   * Mark withdrawal as paid (admin action)
+   */
+  async markAsPaid(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { paymentReference, paymentNotes, paymentDate } = ctx.request.body;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} marking withdrawal ${id} as paid`);
+
+      // Get withdrawal request details
+      const withdrawal = await strapi.entityService.findOne('api::withdrawal-request.withdrawal-request', id, {
+        populate: ['publisher']
+      });
+
+      if (!withdrawal) {
+        return ctx.notFound('Withdrawal request not found');
+      }
+
+      if (withdrawal.withdrawal_status !== 'approved') {
+        return ctx.badRequest('Withdrawal request must be approved before marking as paid');
+      }
+
+      // Update withdrawal request — the afterUpdate lifecycle (status='paid')
+      // handles wallet pendingWithdrawalBalance deduction and transaction-record update.
+      const updatedWithdrawal = await strapi.entityService.update('api::withdrawal-request.withdrawal-request', id, {
+        data: {
+          withdrawal_status: 'paid',
+          payment_reference: paymentReference,
+          payment_notes: paymentNotes,
+          external_transaction_id: paymentReference,
+          paid_at: paymentDate ? new Date(paymentDate) : new Date(),
+          paid_by: ctx.state.user.id
+        },
+        populate: ['publisher']
+      });
+
+      // Send "withdrawal paid" email to publisher. Mirrors the approval-email
+      // path; failures are logged but don't fail the action.
+      try {
+        const emailService = strapi.service('api::global.email-operations');
+        const publisherEmail = withdrawal.publisher?.email;
+
+        if (publisherEmail) {
+          console.log(`[WithdrawalController] Sending withdrawal paid email to ${publisherEmail}`);
+
+          const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+            where: {
+              users_permissions_user: withdrawal.publisher.id,
+              type: 'withdrawal',
+              description: { $contains: `Withdrawal request #${id}` }
+            }
+          });
+
+          if (transaction) {
+            await emailService.sendWithdrawalPaidEmail(
+              { ...transaction, payment_notes: paymentNotes },
+              publisherEmail,
+              updatedWithdrawal
+            );
+            console.log(`Withdrawal paid email sent for withdrawal #${id}`);
+          } else {
+            console.warn(`No transaction found for withdrawal request #${id}, paid email not sent`);
+          }
+        }
+      } catch (emailError) {
+        console.error('Failed to send withdrawal paid email:', emailError);
+      }
+
+      ctx.send({
+        data: updatedWithdrawal
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL MARK AS PAID ERROR]', error.message || error);
+      console.error('[ADMIN WITHDRAWAL MARK AS PAID STACK]', error.stack);
+      return ctx.internalServerError('Failed to mark withdrawal as paid: ' + (error.message || 'Unknown error'));
+    }
+  },
+
+  /**
+   * Bulk process withdrawals (admin action)
+   */
+  async bulkProcess(ctx) {
+    try {
+      const { withdrawalIds, action, notes } = ctx.request.body;
+
+      if (!Array.isArray(withdrawalIds) || withdrawalIds.length === 0) {
+        return ctx.badRequest('No withdrawal IDs provided');
+      }
+
+      if (!['approve', 'reject'].includes(action)) {
+        return ctx.badRequest('Invalid action. Must be "approve" or "reject"');
+      }
+
+      const results = [];
+
+      for (const withdrawalId of withdrawalIds) {
+        try {
+          if (action === 'approve') {
+            await this.approve({
+              params: { id: withdrawalId },
+              request: { body: { adminNotes: notes } },
+              state: ctx.state,
+              send: () => { } // Mock send function
+            });
+          } else {
+            await this.reject({
+              params: { id: withdrawalId },
+              request: { body: { reason: notes } },
+              state: ctx.state,
+              send: () => { } // Mock send function
+            });
+          }
+          results.push({ id: withdrawalId, status: 'success' });
+        } catch (error) {
+          results.push({ id: withdrawalId, status: 'error', message: error.message });
+        }
+      }
+
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} bulk ${action} ${withdrawalIds.length} withdrawals`);
+
+      ctx.send({
+        message: `Bulk ${action} completed`,
+        results
+      });
+
+    } catch (error) {
+      console.error('[ADMIN WITHDRAWAL BULK PROCESS ERROR]', error);
+      return ctx.internalServerError('Failed to process bulk withdrawal action');
+    }
+  }
+
+}));

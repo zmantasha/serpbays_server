@@ -8,7 +8,16 @@
         "description": "Manages customer invoices for wallet transactions"
       },
       "options": {
-        "draftAndPublish": false
+        "draftAndPublish": false,
+        "privateAttributes": [
+          "billingName",
+          "billingAddress",
+          "billingCity",
+          "billingCountry",
+          "billingPincode",
+          "billingVatGst",
+          "notes"
+        ]
       },
       "pluginOptions": {},
       "attributes": {
@@ -25,34 +34,68 @@
           "type": "relation",
           "relation": "manyToOne",
           "target": "plugin::users-permissions.user",
-          "inversedBy": "invoices" 
+          "inversedBy": "invoices"
         },
         "transactionId": {
           "type": "string",
           "required": true
         },
-        "billingName": { "type": "string", "required": true },
-        "billingAddress": { "type": "text", "required": true },
-        "billingCity": { "type": "string" },
-        "billingCountry": { "type": "string" },
-        "billingPincode": { "type": "string" },
-        "billingVatGst": { "type": "string" },
+        "billingName": {
+          "type": "string",
+          "required": true
+        },
+        "billingAddress": {
+          "type": "text",
+          "required": true
+        },
+        "billingCity": {
+          "type": "string"
+        },
+        "billingCountry": {
+          "type": "string"
+        },
+        "billingPincode": {
+          "type": "string"
+        },
+        "billingVatGst": {
+          "type": "string"
+        },
         "lineItems": {
           "type": "json",
           "required": true
         },
-        "subtotal": { "type": "decimal", "required": true },
-        "taxAmount": { "type": "decimal", "default": 0 },
-        "totalAmount": { "type": "decimal", "required": true },
-        "currency": { "type": "string", "required": true },
+        "subtotal": {
+          "type": "decimal",
+          "required": true
+        },
+        "taxAmount": {
+          "type": "decimal",
+          "default": 0
+        },
+        "totalAmount": {
+          "type": "decimal",
+          "required": true
+        },
+        "currency": {
+          "type": "string",
+          "required": true
+        },
         "status": {
           "type": "enumeration",
-          "enum": ["draft", "paid", "void"],
+          "enum": [
+            "draft",
+            "paid",
+            "void"
+          ],
           "default": "paid",
           "required": true
         },
-        "pdfUrl": { "type": "string" },
-        "notes": { "type": "text" },
+        "pdfUrl": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "text"
+        },
         "invoice": {
           "type": "relation",
           "relation": "oneToOne",

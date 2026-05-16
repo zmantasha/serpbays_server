@@ -4,58 +4,30 @@
  * user-wallet router
  */
 
-const { createCoreRouter } = require('@strapi/strapi').factories;
-
 module.exports = {
-    routes: [
-        {
-            method: 'GET',
-            path: '/api/user-wallets',
-      handler: 'user-wallet.find',
-            config: {
+  routes: [
+    {
+      method: 'POST',
+      path: '/api/wallet/add-funds',
+      handler: 'user-wallet.addFunds',
+      config: {
         auth: {
-          scope: ['api::user-wallet.user-wallet.find']
-        }
-      }
+          scope: ['api::user-wallet.user-wallet.addFunds']
         },
-        {
-            method: 'GET',
-            path: '/api/user-wallets/:id',
-      handler: 'user-wallet.findOne',
-            config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.findOne']
-        }
+        policies: [],
+        middlewares: []
       }
-        },
-        {
-            method: 'POST',
-            path: '/api/user-wallets',
-      handler: 'user-wallet.create',
-            config: {
+    },
+    {
+      method: 'POST',
+      path: '/api/api/wallet/add-funds',
+      handler: 'user-wallet.addFunds',
+      config: {
         auth: {
-          scope: ['api::user-wallet.user-wallet.create']
-        }
-      }
+          scope: ['api::user-wallet.user-wallet.addFunds']
         },
-        {
-            method: 'PUT',
-            path: '/api/user-wallets/:id',
-      handler: 'user-wallet.update',
-            config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.update']
-        }
-      }
-        },
-        {
-            method: 'DELETE',
-            path: '/api/user-wallets/:id',
-      handler: 'user-wallet.delete',
-            config: {
-        auth: {
-          scope: ['api::user-wallet.user-wallet.delete']
-        }
+        policies: [],
+        middlewares: []
       }
     },
     {
@@ -64,28 +36,144 @@ module.exports = {
       handler: 'user-wallet.getBalance',
       config: {
         auth: {
-          scope: ['api::user-wallet.user-wallet.find']
-        }
+          scope: ['api::user-wallet.user-wallet.getBalance']
+        },
+        policies: [],
+        middlewares: []
       }
     },
-        {
-            method: 'GET',
+    {
+      method: 'GET',
+      path: '/api/wallet/balance',
+      handler: 'user-wallet.getBalance',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getBalance']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'GET',
+      path: '/api/wallet/available-balance',
+      handler: 'user-wallet.getAvailableBalance',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getAvailableBalance']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'GET',
+      path: '/api/api/wallet/available-balance',
+      handler: 'user-wallet.getAvailableBalance',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getAvailableBalance']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'GET',
       path: '/api/wallet/transactions',
       handler: 'user-wallet.getTransactions',
-            config: {
+      config: {
         auth: {
-          scope: ['api::user-wallet.user-wallet.find']
-        }
+          scope: ['api::user-wallet.user-wallet.getTransactions']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'GET',
+      path: '/api/api/wallet/transactions',
+      handler: 'user-wallet.getTransactions',
+      config: {
+        auth: {
+          scope: ['api::user-wallet.user-wallet.getTransactions']
+        },
+        policies: [],
+        middlewares: []
       }
     },
     {
       method: 'POST',
-      path: '/api/wallet/create',
+      path: '/wallet/create',
       handler: 'user-wallet.createWallet',
       config: {
         auth: {
-          scope: ['api::user-wallet.user-wallet.create']
-        }
+          scope: ['api::user-wallet.user-wallet.createWallet']
+        },
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/wallet/check-promo',
+      handler: 'user-wallet.checkPromoCode',
+      config: {
+        auth: {},
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/check-promo',
+      handler: 'user-wallet.checkPromoCode',
+      config: {
+        auth: {},
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/wallet/test-post',
+      handler: async (ctx) => {
+        ctx.body = { message: 'POST route works' };
+      },
+      config: {
+        auth: false,
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/wallet/redeem-promo',
+      handler: 'user-wallet.redeemPromo',
+      config: {
+        auth: {},
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/redeem-promo',
+      handler: 'user-wallet.redeemPromo',
+      config: {
+        auth: {},
+        policies: [],
+        middlewares: []
+      }
+    },
+    {
+      method: 'POST',
+      path: '/api/wallet/fix-earnings',
+      handler: 'user-wallet.fixCompletedOrderEarnings',
+      config: {
+        auth: {},
+        policies: [],
+        middlewares: []
       }
     }
   ]

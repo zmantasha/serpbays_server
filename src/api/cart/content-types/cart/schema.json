@@ -1,0 +1,33 @@
+{
+  "kind": "collectionType",
+  "collectionName": "carts",
+  "info": {
+    "singularName": "cart",
+    "pluralName": "carts",
+    "displayName": "Cart",
+    "description": "User shopping cart"
+  },
+  "options": {
+    "draftAndPublish": false,
+    "comment": ""
+  },
+  "attributes": {
+    "items": {
+      "type": "json",
+      "required": true,
+      "description": "Array of cart items with marketplace references: {id, marketplaceId, quantity, isSensitive, specialCategory}"
+    },
+    "formData": {
+      "type": "json",
+      "required": true
+    },
+    "sourceProjectId": {
+      "type": "integer"
+    },
+    "user": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "plugin::users-permissions.user"
+    }
+  }
+} 

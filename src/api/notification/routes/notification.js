@@ -49,42 +49,6 @@ const customRoutes = {
       },
     },
     {
-      method: 'GET',
-      path: '/notifications/unread-count',
-      handler: 'notification.getUnreadCount',
-      config: {
-        policies: [],
-        middlewares: [],
-      },
-    },
-    {
-      method: 'POST',
-      path: '/notifications/test',
-      handler: 'notification.createTestNotification',
-      config: {
-        policies: [],
-        middlewares: [],
-      },
-    },
-    {
-      method: 'POST',
-      path: '/notifications/test-order',
-      handler: 'notification.testOrderNotification',
-      config: {
-        policies: [],
-        middlewares: [],
-      },
-    },
-    {
-      method: 'POST',
-      path: '/notifications/test-all',
-      handler: 'notification.testAllNotifications',
-      config: {
-        policies: [],
-        middlewares: [],
-      },
-    },
-    {
       method: 'POST',
       path: '/notifications/test-basic',
       handler: 'notification.testBasicNotification',
@@ -92,16 +56,7 @@ const customRoutes = {
         policies: [],
         middlewares: [],
       },
-    },
-    {
-      method: 'POST',
-      path: '/notifications/test-withdrawal',
-      handler: 'notification.testWithdrawalNotifications',
-      config: {
-        policies: [],
-        middlewares: [],
-      },
-    },
+    }
   ],
 };
 

@@ -1,0 +1,25 @@
+{
+  "kind": "collectionType",
+  "collectionName": "shared_list_templates",
+  "info": {
+    "singularName": "shared-list-template",
+    "pluralName": "shared-list-templates",
+    "displayName": "Shared list template",
+    "description": "Reusable column-set + display preset for shared lists"
+  },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "name": { "type": "string", "required": true },
+    "description": { "type": "text" },
+    "visibleColumns": { "type": "json", "required": true },
+    "allowSearch": { "type": "boolean", "default": true },
+    "allowFilter": { "type": "boolean", "default": true },
+    "allowDownload": { "type": "boolean", "default": false },
+    "currency": {
+      "type": "enumeration",
+      "enum": ["USD", "INR", "EUR", "GBP"],
+      "default": "USD"
+    },
+    "createdByAdminId": { "type": "integer" }
+  }
+}

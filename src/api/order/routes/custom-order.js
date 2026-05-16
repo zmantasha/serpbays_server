@@ -51,6 +51,19 @@ module.exports = {
         }
       },
     },
+    // Route to migrate marketplace snapshots to existing orders
+    {
+      method: 'POST',
+      path: '/orders/migrate-snapshots',
+      handler: 'order.migrateSnapshots',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.update']
+        }
+      },
+    },
     // Route to fix links in order content
     {
       method: 'POST',
@@ -62,6 +75,19 @@ module.exports = {
         auth: {
           scope: ['api::order.order.update']
         }
+      },
+    },
+    // Lightweight route to get only order counts for navbar badges
+    {
+      method: 'GET',
+      path: '/orders/counts',
+      handler: 'order.getCounts',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.find'],
+        },
       },
     },
     // Route to get orders available for publishers to accept
@@ -191,6 +217,19 @@ module.exports = {
         policies: [],
         auth: {
           scope: ['api::order.order.update'],
+        },
+      },
+    },
+    // Route for cancelling an order
+    {
+      method: 'POST',
+      path: '/orders/:id/cancel',
+      handler: 'order.cancelOrder',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::order.order.cancelOrder'],
         },
       },
     },

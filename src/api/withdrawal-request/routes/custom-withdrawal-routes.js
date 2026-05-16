@@ -1,5 +1,18 @@
 module.exports = {
   routes: [
+    // Route for sending withdrawal OTP verification
+    {
+      method: 'POST',
+      path: '/withdrawal-requests/send-otp',
+      handler: 'withdrawal-request.sendWithdrawalOtp',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::withdrawal-request.withdrawal-request.create']
+        }
+      },
+    },
     // Route for users to create withdrawal requests
     {
       method: 'POST',
@@ -31,6 +44,19 @@ module.exports = {
       method: 'GET',
       path: '/withdrawal-requests/available-balance',
       handler: 'withdrawal-request.getAvailableBalance',
+      config: {
+        middlewares: [],
+        policies: [],
+        auth: {
+          scope: ['api::withdrawal-request.withdrawal-request.find']
+        }
+      },
+    },
+    // Route for exporting all my withdrawals
+    {
+      method: 'GET',
+      path: '/withdrawal-requests/my/export',
+      handler: 'withdrawal-request.exportAllMyWithdrawals',
       config: {
         middlewares: [],
         policies: [],

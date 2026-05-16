@@ -8,14 +8,10 @@
     "description": "Details for outsourced content orders"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "pluginOptions": {},
   "attributes": {
-    "projectName": {
-      "type": "string",
-      "required": true
-    },
     "links": {
       "type": "json",
       "description": "JSON array of link objects with URL and anchor text"
@@ -31,4 +27,4 @@
       "inversedBy": "outsourcedContent"
     }
   }
-} 
+}

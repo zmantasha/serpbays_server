@@ -1,0 +1,65 @@
+{
+  "kind": "collectionType",
+  "collectionName": "marketplace_update_histories",
+  "info": {
+    "singularName": "marketplace-update-history",
+    "pluralName": "marketplace-update-histories",
+    "displayName": "Marketplace Update History",
+    "description": "Immutable audit trail of price/metric changes to marketplace listings"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "marketplace": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::marketplace.marketplace",
+      "inversedBy": "updateHistory"
+    },
+    "changes": {
+      "type": "json",
+      "required": true,
+      "description": "Per-field diff: { fieldName: { from: <prev>, to: <new> } }"
+    },
+    "changedFields": {
+      "type": "json",
+      "required": true,
+      "description": "Flat array of changed field names, denormalized for fast filtering"
+    },
+    "source": {
+      "type": "enumeration",
+      "enum": [
+        "admin",
+        "admin-confirm",
+        "admin-revert",
+        "publisher",
+        "import",
+        "api",
+        "system",
+        "bulk-ahrefs",
+        "bulk-moz",
+        "bulk-semrush",
+        "bulk-price"
+      ],
+      "default": "api",
+      "required": true
+    },
+    "changedBy": {
+      "type": "string",
+      "description": "Username or email of the actor when known"
+    },
+    "userId": {
+      "type": "integer",
+      "description": "Numeric ID of the acting user when known"
+    },
+    "changedAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "bulkJobId": {
+      "type": "integer",
+      "description": "Soft FK to bulk_refresh_jobs.id. Populated when this history row was written as part of a bulk-refresh upload or revert, so revert can scan back to all rows belonging to one job."
+    }
+  }
+}

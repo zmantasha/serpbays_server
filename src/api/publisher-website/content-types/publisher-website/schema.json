@@ -1,0 +1,487 @@
+{
+  "kind": "collectionType",
+  "collectionName": "publisher_websites",
+  "info": {
+    "singularName": "publisher-website",
+    "pluralName": "publisher-websites",
+    "displayName": "Publisher Website Submission",
+    "description": "Website submissions from publishers for marketplace approval"
+  },
+  "options": {
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "publisherEmail",
+      "publisherName",
+      "gscRefreshToken",
+      "reviewNotes",
+      "changeRequests",
+      "claimedFrom"
+    ]
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "url": {
+      "type": "string",
+      "required": true,
+      "description": "Website URL without protocol"
+    },
+    "protocol": {
+      "type": "enumeration",
+      "enum": [
+        "https",
+        "http"
+      ],
+      "default": "https",
+      "description": "Website protocol"
+    },
+    "publisherEmail": {
+      "type": "email",
+      "required": true,
+      "description": "Email of the publisher submitting the website"
+    },
+    "publisherName": {
+      "type": "string",
+      "description": "Name of the publisher"
+    },
+    "verificationMethod": {
+      "type": "enumeration",
+      "enum": [
+        "google-search-console",
+        "google-analytics",
+        "html-file",
+        "meta-tag",
+        "reseller-code"
+      ],
+      "description": "Method used to verify website ownership"
+    },
+    "gscVerified": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether website is verified through Google Search Console"
+    },
+    "gscVerifiedAt": {
+      "type": "datetime",
+      "description": "When Google Search Console verification was completed"
+    },
+    "gscPermissionLevel": {
+      "type": "enumeration",
+      "enum": [
+        "siteOwner",
+        "siteFullUser",
+        "siteUnverifiedUser",
+        "siteRestrictedUser"
+      ],
+      "description": "Permission level in Google Search Console"
+    },
+    "gscRefreshToken": {
+      "type": "text",
+      "private": true,
+      "description": "Encrypted Google Search Console refresh token"
+    },
+    "description": {
+      "type": "text",
+      "required": false,
+      "maxLength": 1000,
+      "description": "Website description and audience information"
+    },
+    "guidelines": {
+      "type": "text",
+      "maxLength": 5000,
+      "description": "Content guidelines and requirements"
+    },
+    "publicationLocation": {
+      "type": "text",
+      "maxLength": 200,
+      "description": "Where the article will be published - publisher-defined text describing publication location, URL, or additional details"
+    },
+    "generalGuestPostPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "General guest post pricing"
+    },
+    "generalLinkInsertionPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "General link insertion pricing"
+    },
+    "casinoAccepted": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether casino content is accepted"
+    },
+    "casinoGuestPostPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Casino guest post pricing"
+    },
+    "casinoLinkInsertionPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Casino link insertion pricing"
+    },
+    "cryptoAccepted": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether crypto content is accepted"
+    },
+    "cryptoGuestPostPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Crypto guest post pricing"
+    },
+    "cryptoLinkInsertionPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Crypto link insertion pricing"
+    },
+    "cbdAccepted": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether CBD content is accepted"
+    },
+    "cbdGuestPostPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "CBD guest post pricing"
+    },
+    "cbdLinkInsertionPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "CBD link insertion pricing"
+    },
+    "datingAccepted": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether dating content is accepted"
+    },
+    "datingGuestPostPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Dating guest post pricing"
+    },
+    "datingLinkInsertionPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Dating link insertion pricing"
+    },
+    "backlinkType": {
+      "type": "enumeration",
+      "enum": [
+        "Do follow",
+        "No follow"
+      ],
+      "required": false,
+      "default": "Do follow",
+      "description": "Type of backlinks offered"
+    },
+    "allowedLinks": {
+      "type": "integer",
+      "min": 1,
+      "max": 10,
+      "default": 1,
+      "description": "Number of allowed links per post"
+    },
+    "backlinkValidity": {
+      "type": "enumeration",
+      "enum": [
+        "one_year",
+        "three_years",
+        "five_years",
+        "lifetime"
+      ],
+      "default": "one_year",
+      "description": "How long backlinks remain valid"
+    },
+    "category": {
+      "type": "json",
+      "required": false,
+      "description": "Primary website category"
+    },
+    "category_search": {
+      "type": "text",
+      "default": "",
+      "private": true,
+      "configurable": false,
+      "description": "Lowercased pipe-delimited categories for fast text filtering"
+    },
+    "minWordCount": {
+      "type": "integer",
+      "required": false,
+      "min": 0,
+      "default": 500,
+      "description": "Minimum word count for content"
+    },
+    "countries": {
+      "type": "json",
+      "required": false,
+      "default": [
+        "United States"
+      ],
+      "description": "Target countries (max 3, first is primary)"
+    },
+    "language": {
+      "type": "json",
+      "required": false,
+      "default": [
+        "English"
+      ],
+      "description": "Primary language"
+    },
+    "sponsored": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether links will be marked as sponsored"
+    },
+    "ugc": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether links will be marked as UGC"
+    },
+    "isPRSite": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this is a press release site"
+    },
+    "doCopywriting": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether copywriting services are offered"
+    },
+    "copywritingPrice": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Price for copywriting services"
+    },
+    "expectedTATHours": {
+      "type": "integer",
+      "min": 1,
+      "default": 168,
+      "description": "Expected turnaround time in hours"
+    },
+    "samplePosts": {
+      "type": "json",
+      "description": "Array of sample post URLs"
+    },
+    "submissionStatus": {
+      "type": "enumeration",
+      "enum": [
+        "pending_verification",
+        "pending_final_submission",
+        "approval_pending",
+        "rejected",
+        "approved",
+        "listing_paused",
+        "ownership_claimed",
+        "ownership_transferred"
+      ],
+      "default": "pending_verification",
+      "description": "Current status of the website submission"
+    },
+    "reviewNotes": {
+      "type": "text",
+      "description": "Internal review notes from the team"
+    },
+    "rejectionReason": {
+      "type": "text",
+      "description": "Reason for rejection if applicable"
+    },
+    "reviewedBy": {
+      "type": "string",
+      "description": "Team member who reviewed the submission"
+    },
+    "reviewedAt": {
+      "type": "datetime",
+      "description": "When the review was completed"
+    },
+    "approvedAt": {
+      "type": "datetime",
+      "description": "When the website was approved"
+    },
+    "marketplaceId": {
+      "type": "integer",
+      "description": "ID of the created marketplace entry after approval"
+    },
+    "changeRequests": {
+      "type": "text",
+      "description": "Specific changes requested by admin"
+    },
+    "reviewStartedAt": {
+      "type": "datetime",
+      "description": "When the review process started"
+    },
+    "stepCompleted": {
+      "type": "integer",
+      "min": 1,
+      "max": 4,
+      "default": 1,
+      "description": "Last completed step in the 4-step process"
+    },
+    "urlAddedAt": {
+      "type": "datetime",
+      "description": "When the URL was first added (Step 1)"
+    },
+    "detailsCompletedAt": {
+      "type": "datetime",
+      "description": "When website details and pricing were completed (Step 3-4)"
+    },
+    "pausedAt": {
+      "type": "datetime",
+      "description": "When the listing was paused"
+    },
+    "resumedAt": {
+      "type": "datetime",
+      "description": "When the listing was last resumed"
+    },
+    "resellerCode": {
+      "type": "string",
+      "maxLength": 50,
+      "description": "Reseller code used to add this website (if any)"
+    },
+    "addedByReseller": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this website was added using a reseller code"
+    },
+    "originalPublisherId": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Original publisher who added the website (reseller)"
+    },
+    "currentPublisherId": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "Current publisher who owns the website"
+    },
+    "ownershipTransferredAt": {
+      "type": "datetime",
+      "description": "When ownership was transferred from reseller to real owner"
+    },
+    "ownershipTransferReason": {
+      "type": "enumeration",
+      "enum": [
+        "claimed_by_owner",
+        "admin_transfer",
+        "other"
+      ],
+      "description": "Reason for ownership transfer"
+    },
+    "claimingInProgress": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether someone is currently claiming this website"
+    },
+    "claimedBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user",
+      "description": "User who is claiming ownership (pending approval)"
+    },
+    "claimSubmittedAt": {
+      "type": "datetime",
+      "description": "When ownership claim was submitted"
+    },
+    "originalWebsiteId": {
+      "type": "integer",
+      "description": "ID of the original website being claimed (for claim entries)"
+    },
+    "claimedFrom": {
+      "type": "string",
+      "description": "Email of the original publisher when this website was claimed"
+    },
+    "claimedAt": {
+      "type": "datetime",
+      "description": "When this website was successfully claimed by the new owner"
+    },
+    "newOwnerWebsiteId": {
+      "type": "integer",
+      "description": "ID of the new website entry created for the new owner (for original websites that were claimed)"
+    },
+    "ahrefs_dr": {
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
+      "description": "Ahrefs Domain Rating (0-100)"
+    },
+    "ahrefs_traffic": {
+      "type": "integer",
+      "min": 0,
+      "description": "Ahrefs traffic estimate (numbers only)"
+    },
+    "ahrefs_rank": {
+      "type": "integer",
+      "min": 1,
+      "description": "Ahrefs global rank"
+    },
+    "moz_da": {
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
+      "description": "Moz Domain Authority (0-100)"
+    },
+    "semrush_authority_score": {
+      "type": "decimal",
+      "min": 0,
+      "max": 1000,
+      "description": "Semrush Authority Score (0-1000)"
+    },
+    "semrush_traffic": {
+      "type": "integer",
+      "min": 0,
+      "description": "Semrush traffic estimate (numbers only)"
+    },
+    "moz_spam_score": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "description": "Moz Spam Score (0-100)"
+    },
+    "ahrefs_referring_domain": {
+      "type": "integer",
+      "min": 0,
+      "description": "Ahrefs referring domains count"
+    },
+    "ahrefs_keywords": {
+      "type": "integer",
+      "min": 0,
+      "description": "Ahrefs organic keywords count"
+    },
+    "metrics_last_updated": {
+      "type": "datetime",
+      "description": "When SEO metrics were last updated (manually or via API)"
+    },
+    "metrics_update_count": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Number of times metrics have been updated"
+    },
+    "metrics_update_method": {
+      "type": "enumeration",
+      "enum": [
+        "manual",
+        "api",
+        "bulk_import"
+      ],
+      "description": "Method used for last metrics update"
+    },
+    "updateRequests": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::website-update-request.website-update-request",
+      "mappedBy": "publisherWebsite"
+    }
+  }
+}

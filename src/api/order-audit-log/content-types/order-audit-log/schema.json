@@ -1,0 +1,49 @@
+{
+    "kind": "collectionType",
+    "collectionName": "order_audit_logs",
+    "info": {
+        "singularName": "order-audit-log",
+        "pluralName": "order-audit-logs",
+        "displayName": "Order Audit Log",
+        "description": "Log of all important actions taken on an order"
+    },
+    "options": {
+        "draftAndPublish": false
+    },
+    "pluginOptions": {},
+    "attributes": {
+        "order": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::order.order"
+        },
+        "action": {
+            "type": "string",
+            "required": true,
+            "description": "The action performed (e.g., created, accepted, cancelled)"
+        },
+        "performedBy": {
+            "type": "relation",
+            "relation": "oneToOne",
+            "target": "plugin::users-permissions.user"
+        },
+        "previousStatus": {
+            "type": "string"
+        },
+        "newStatus": {
+            "type": "string"
+        },
+        "reason": {
+            "type": "text",
+            "description": "Reason for the action (e.g., cancellation reason)"
+        },
+        "metadata": {
+            "type": "json",
+            "description": "Additional data related to the event"
+        },
+        "timestamp": {
+            "type": "datetime",
+            "required": true
+        }
+    }
+}

@@ -1,0 +1,1209 @@
+'use strict';
+
+/**
+ * Admin Marketplace Management Controller
+ */
+
+const { createCoreController } = require('@strapi/strapi').factories;
+
+module.exports = createCoreController('api::marketplace.marketplace', ({ strapi }) => ({
+
+  /**
+   * Get marketplace websites with pagination and filtering
+   */
+  async find(ctx) {
+    try {
+      const {
+        page = 1,
+        pageSize = 20,
+        search,
+        category,
+        status,
+        // Numerical range filters
+        minDA, maxDA, minDR, maxDR,
+        minAhrefsTraffic, maxAhrefsTraffic,
+        minPrice, maxPrice,
+        minSemrushTraffic, maxSemrushTraffic,
+        minSimilarwebTraffic, maxSimilarwebTraffic,
+        minSpamScore, maxSpamScore,
+        // Additional filters
+        sensitiveCategory, language, country,
+        allowedLinks, placementSpeed, sponsored, ugc, backlinkType,
+        websiteUrl, domainZone, contentType,
+        // Sorting
+        sortField, sortDirection
+      } = ctx.query;
+
+      // Build filters
+      const filters = {};
+
+      // Search filter
+      if (search) {
+        filters.$or = [
+          { url: { $containsi: search } },
+          { publisher_name: { $containsi: search } },
+          { publisher_email: { $containsi: search } }
+        ];
+      }
+
+      // Basic filters
+      if (category && category !== 'All categories') {
+        filters.category = category;
+      }
+
+      if (status && status !== 'All Status') {
+        filters.status = status;
+      }
+
+      // Numerical range filters
+      if (minDA || maxDA) {
+        filters.moz_da = {};
+        if (minDA) filters.moz_da.$gte = parseInt(minDA);
+        if (maxDA) filters.moz_da.$lte = parseInt(maxDA);
+      }
+
+      if (minDR || maxDR) {
+        filters.ahrefs_dr = {};
+        if (minDR) filters.ahrefs_dr.$gte = parseInt(minDR);
+        if (maxDR) filters.ahrefs_dr.$lte = parseInt(maxDR);
+      }
+
+      if (minAhrefsTraffic || maxAhrefsTraffic) {
+        filters.ahrefs_traffic = {};
+        if (minAhrefsTraffic) filters.ahrefs_traffic.$gte = parseInt(minAhrefsTraffic);
+        if (maxAhrefsTraffic) filters.ahrefs_traffic.$lte = parseInt(maxAhrefsTraffic);
+      }
+
+      if (minPrice || maxPrice) {
+        filters.price = {};
+        if (minPrice) filters.price.$gte = parseFloat(minPrice);
+        if (maxPrice) filters.price.$lte = parseFloat(maxPrice);
+      }
+
+      if (minSemrushTraffic || maxSemrushTraffic) {
+        filters.semrush_traffic = {};
+        if (minSemrushTraffic) filters.semrush_traffic.$gte = parseInt(minSemrushTraffic);
+        if (maxSemrushTraffic) filters.semrush_traffic.$lte = parseInt(maxSemrushTraffic);
+      }
+
+      if (minSimilarwebTraffic || maxSimilarwebTraffic) {
+        filters.similarweb_traffic = {};
+        if (minSimilarwebTraffic) filters.similarweb_traffic.$gte = parseInt(minSimilarwebTraffic);
+        if (maxSimilarwebTraffic) filters.similarweb_traffic.$lte = parseInt(maxSimilarwebTraffic);
+      }
+
+      if (minSpamScore || maxSpamScore) {
+        filters.spam_score = {};
+        if (minSpamScore) filters.spam_score.$gte = parseInt(minSpamScore);
+        if (maxSpamScore) filters.spam_score.$lte = parseInt(maxSpamScore);
+      }
+
+      // Additional filters
+      if (sensitiveCategory && sensitiveCategory !== 'Any sensitive category') {
+        filters.sensitive_category = sensitiveCategory;
+      }
+
+      if (language && language !== 'All languages') {
+        filters.language = language;
+      }
+
+      if (country && country !== 'All countries') {
+        filters.countries = country;
+      }
+
+      if (allowedLinks && allowedLinks !== 'Any') {
+        filters.allowed_links = allowedLinks;
+      }
+
+      if (placementSpeed && placementSpeed !== 'Any') {
+        filters.placement_speed = placementSpeed;
+      }
+
+      if (sponsored && sponsored !== 'Any') {
+        filters.sponsored = sponsored;
+      }
+
+      if (ugc && ugc !== 'Any') {
+        filters.ugc = ugc;
+      }
+
+      if (backlinkType && backlinkType !== 'Any') {
+        filters.backlink_type = backlinkType;
+      }
+
+      if (websiteUrl) {
+        filters.url = { $containsi: websiteUrl };
+      }
+
+      if (domainZone) {
+        filters.url = { $containsi: domainZone };
+      }
+
+      if (contentType && contentType !== 'All') {
+        filters.content_type = contentType;
+      }
+
+      // Calculate offset and limit for proper pagination
+      const pageNum = parseInt(page);
+      const pageSizeNum = parseInt(pageSize);
+      const offset = (pageNum - 1) * pageSizeNum;
+      const limit = pageSizeNum;
+
+      console.log('[MARKETPLACE FIND] Pagination params:', { page: pageNum, pageSize: pageSizeNum, offset, limit });
+
+      // Use Knex raw SQL for NULL-safe featured sorting.
+      // PostgreSQL puts NULLs FIRST in DESC order by default, which causes featured
+      // websites (is_featured=true) to be buried behind thousands of NULL records.
+      // COALESCE(is_featured, false) treats NULL as false, so true sorts first.
+      const knex = strapi.db.connection;
+      let query = knex('marketplaces');
+
+      // Apply filters to Knex query
+      if (filters.$or) {
+        // Search filter: url, publisher_name, publisher_email
+        query = query.where(function () {
+          filters.$or.forEach((condition) => {
+            Object.entries(condition).forEach(([field, value]) => {
+              if (typeof value === 'object' && value !== null && value.$containsi) {
+                this.orWhereRaw('LOWER(??) LIKE ?', [field, `%${String(value.$containsi).toLowerCase()}%`]);
+              }
+            });
+          });
+        });
+      }
+
+      // Apply simple equality and range filters
+      const rangeFilterMap = {
+        category: 'category',
+        status: 'status',
+        sensitive_category: 'sensitive_category',
+        language: 'language',
+        countries: 'countries',
+        allowed_links: 'allowed_links',
+        placement_speed: 'placement_speed',
+        sponsored: 'sponsored',
+        ugc: 'ugc',
+        backlink_type: 'backlink_type',
+        content_type: 'content_type',
+      };
+
+      // JSON array columns: stored as serialized arrays like ["News & Media"].
+      // Simple equality cannot match them, so we fall back to a quoted-substring
+      // LIKE so "News & Media" matches ["News & Media"] / ["A","News & Media"].
+      const JSON_ARRAY_FIELDS = new Set(['category', 'other_category', 'language', 'countries']);
+
+      Object.entries(filters).forEach(([key, value]) => {
+        if (key === '$or') return; // Already handled above
+
+        if (typeof value === 'object' && value !== null) {
+          // Range filters: $gte, $lte, $containsi
+          if (value.$gte !== undefined) query = query.where(key, '>=', value.$gte);
+          if (value.$lte !== undefined) query = query.where(key, '<=', value.$lte);
+          if (value.$containsi) {
+            query = query.whereRaw('LOWER(??) LIKE ?', [key, `%${String(value.$containsi).toLowerCase()}%`]);
+          }
+        } else if (JSON_ARRAY_FIELDS.has(key)) {
+          // ANY-OF semantics across one or more selected values. Accepts a
+          // single string, an array, or a comma-separated string.
+          const values = (Array.isArray(value) ? value : String(value).split(','))
+            .map((v) => String(v).trim())
+            .filter(Boolean);
+          if (values.length === 0) return;
+          query = query.where(function () {
+            values.forEach((v) => {
+              this.orWhereRaw('?? LIKE ?', [key, `%"${v}"%`]).orWhere(key, v);
+            });
+          });
+        } else {
+          // Simple equality
+          query = query.where(key, value);
+        }
+      });
+
+      // Sort: explicit sortField overrides the default (featured-first / newest)
+      // ordering. The frontend whitelists the field names, but we re-validate
+      // here against a server-side allowlist so callers can't sort by arbitrary
+      // columns.
+      const SORTABLE_FIELDS = {
+        domain: 'url',
+        url: 'url',
+        da: 'moz_da',
+        dr: 'ahrefs_dr',
+        traffic: 'ahrefs_traffic',
+        price: 'price',
+        spamScore: 'moz_spam_score',
+        createdAt: 'created_at',
+      };
+      const dbField = sortField ? SORTABLE_FIELDS[sortField] : null;
+      const dir = String(sortDirection || '').toLowerCase() === 'asc' ? 'asc' : 'desc';
+
+      if (dbField) {
+        query = query.orderBy(dbField, dir);
+      } else {
+        // NULL-safe default: featured first (COALESCE treats NULL as false), then newest.
+        // A website is "featured" in the admin listing if it's featured for EITHER GP or LI.
+        query = query
+          .orderByRaw('(COALESCE(is_featured_guest_post, false) OR COALESCE(is_featured_link_insertion, false)) DESC')
+          .orderBy('created_at', 'desc');
+      }
+
+      // Count query (without ORDER BY — PostgreSQL rejects ORDER BY on aggregates)
+      const countQuery = query.clone().clearOrder().count('* as count');
+
+      // Paginate
+      query = query.limit(limit).offset(offset);
+
+      // Execute both queries in parallel
+      const [websites, countResult] = await Promise.all([query, countQuery]);
+      const total = parseInt(countResult[0]?.count || 0);
+
+      console.log('[MARKETPLACE FIND] Fetched websites count:', websites.length);
+      console.log('[MARKETPLACE FIND] Total count:', total);
+
+      console.log('[MARKETPLACE FIND] Total count:', total);
+
+      // Batch-fetch order counts for all fetched websites in ONE query instead of N+1
+      const websiteIds = websites.map(w => w.id);
+      let orderCountMap = {};  // { websiteId: { total, lastMonth, completed, revenue } }
+      if (websiteIds.length > 0) {
+        try {
+          const lastMonth = new Date();
+          lastMonth.setMonth(lastMonth.getMonth() - 1);
+
+          // Use Strapi query API with $in filter - fetches all orders for these websites in 1 query
+          const allOrders = await strapi.db.query('api::order.order').findMany({
+            where: { website: { id: { $in: websiteIds } } },
+            select: ['id', 'orderStatus', 'totalAmount', 'createdAt'],
+            populate: { website: { select: ['id'] } }
+          });
+
+          // Group order stats by website ID in JavaScript
+          allOrders.forEach(order => {
+            const wId = order.website?.id;
+            if (!wId) return;
+            if (!orderCountMap[wId]) {
+              orderCountMap[wId] = { total: 0, completed: 0, lastMonth: 0, revenue: 0 };
+            }
+            orderCountMap[wId].total++;
+            if (order.orderStatus === 'completed') {
+              orderCountMap[wId].completed++;
+              orderCountMap[wId].revenue += parseFloat(order.totalAmount || 0);
+            }
+            if (new Date(order.createdAt) >= lastMonth) {
+              orderCountMap[wId].lastMonth++;
+            }
+          });
+        } catch (e) {
+          console.warn('[MARKETPLACE FIND] Batch order query failed, falling back to zero counts:', e.message);
+        }
+      }
+
+      // Batch-fetch publisher-website metrics for websites that need hydration
+      const urlsNeedingHydration = websites
+        .filter(w => !w.moz_da || !w.ahrefs_dr || !w.ahrefs_traffic)
+        .map(w => w.url);
+      let metricsMap = {};  // { url: publisherWebsite }
+      if (urlsNeedingHydration.length > 0) {
+        try {
+          const publisherWebsites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+            where: { url: { $in: urlsNeedingHydration } }
+          });
+          publisherWebsites.forEach(pw => {
+            metricsMap[pw.url] = pw;
+          });
+        } catch (e) {
+          console.warn('[MARKETPLACE FIND] Batch metrics hydration failed:', e.message);
+        }
+      }
+
+      // Transform data for admin panel using pre-fetched data (no more per-record queries)
+      const transformedWebsites = websites.map(website => {
+        // Hydrate metrics from publisher-website if needed
+        let metricsSource = { ...website };
+        const pw = metricsMap[website.url];
+        if (pw) {
+          metricsSource = {
+            ...metricsSource,
+            moz_da: metricsSource.moz_da ?? pw.moz_da ?? 0,
+            moz_spam_score: metricsSource.moz_spam_score ?? pw.moz_spam_score ?? 0,
+            ahrefs_dr: metricsSource.ahrefs_dr ?? pw.ahrefs_dr ?? 0,
+            ahrefs_traffic: metricsSource.ahrefs_traffic ?? pw.ahrefs_traffic ?? 0,
+            ahrefs_rank: metricsSource.ahrefs_rank ?? pw.ahrefs_rank ?? 0,
+            ahrefs_referring_domain: metricsSource.ahrefs_referring_domain ?? pw.ahrefs_referring_domain ?? 0,
+            ahrefs_keywords: metricsSource.ahrefs_keywords ?? pw.ahrefs_keywords ?? 0,
+            semrush_traffic: metricsSource.semrush_traffic ?? pw.semrush_traffic ?? 0,
+            semrush_authority_score: metricsSource.semrush_authority_score ?? pw.semrush_authority_score ?? 0,
+          };
+        }
+
+        // Use pre-fetched order counts
+        const orderData = orderCountMap[website.id] || { total: 0, completed: 0, lastMonth: 0, revenue: 0 };
+
+        return {
+          id: website.id,
+          domain: website.url,
+          title: website.publisher_name || website.url,
+          category: website.category,
+          subcategory: website.other_category,
+          language: website.language,
+          country: website.countries,
+          metrics: {
+            dr: metricsSource.ahrefs_dr,
+            ahrefsTraffic: metricsSource.ahrefs_traffic,
+            ahrefsRank: metricsSource.ahrefs_rank,
+            ahrefsRefDomains: metricsSource.ahrefs_referring_domain,
+            ahrefsKeywords: metricsSource.ahrefs_keywords,
+            da: metricsSource.moz_da,
+            mozSpamScore: metricsSource.moz_spam_score,
+            semrushTraffic: metricsSource.semrush_traffic,
+            semrushAuthorityScore: metricsSource.semrush_authority_score,
+            pageSpeed: website.placement_speed,
+            mobileFriendly: website.fast_placement_status,
+            ssl: true
+          },
+          content: {
+            language: website.language,
+            country: website.countries,
+            updateFrequency: website.placement_speed || 'Normal',
+            contentType: 'Blog Articles',
+            topics: []
+          },
+          financial: {
+            price: parseFloat(website.price || 0),
+            linkInsertionPrice: parseFloat(website.link_insertion_price || 0),
+            currency: 'USD',
+            commission: parseFloat(website.publisher_price || 0),
+            netAmount: parseFloat(website.price || 0) - parseFloat(website.publisher_price || 0)
+          },
+          publisher: {
+            name: website.publisher_name || 'Unknown Publisher',
+            email: website.publisher_email || 'N/A',
+            phone: '',
+            rating: 4.5,
+            completedOrders: orderData.total,
+            joinDate: website.createdAt || website.created_at,
+            specialization: 'General'
+          },
+          performance: {
+            lastMonthOrders: orderData.lastMonth,
+            totalOrders: orderData.total,
+            averageRating: 4.5,
+            completionRate: orderData.total > 0 ? Math.round((orderData.completed / orderData.total) * 100) : 0,
+            responseTime: website.tat ? `${website.tat}h` : 'Not specified',
+            revenue: orderData.revenue
+          },
+          isFeatured: website.isFeatured || website.is_featured || false,
+          isFeaturedGuestPost: website.isFeaturedGuestPost || website.is_featured_guest_post || false,
+          isFeaturedLinkInsertion: website.isFeaturedLinkInsertion || website.is_featured_link_insertion || false,
+          status: website.status || ((website.publishedAt || website.published_at) ? 'active' : 'inactive'),
+          approvalDate: website.publishedAt || website.published_at,
+          lastUpdated: website.updatedAt || website.updated_at,
+          createdAt: website.createdAt || website.created_at
+        };
+      });
+
+      // Return the transformed data in the expected format
+      return {
+        data: transformedWebsites,
+        meta: {
+          pagination: {
+            page: parseInt(page),
+            pageSize: parseInt(pageSize),
+            pageCount: Math.ceil(total / pageSize),
+            total
+          }
+        }
+      };
+
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE FIND ERROR]', error);
+      return ctx.internalServerError('Failed to fetch marketplace websites');
+    }
+  },
+
+  /**
+   * Get single marketplace website with full details
+   */
+  async findOne(ctx) {
+    try {
+      const { id } = ctx.params;
+
+      const website = await strapi.entityService.findOne('api::marketplace.marketplace', id);
+      console.log("websites", website)
+      if (!website) {
+        return ctx.notFound('Marketplace website not found');
+      }
+
+      // Get orders for this website
+      const orders = await strapi.db.query('api::order.order').findMany({
+        where: { website: website.id }
+      });
+
+      // Hydrate metrics/prices from publisher-website when missing on marketplace
+      let metricsSource = { ...website };
+      let pricingSource = { ...website };
+      try {
+        const publisherWebsite = await strapi.db.query('api::publisher-website.publisher-website').findOne({
+          where: { url: website.url }
+        });
+        if (publisherWebsite) {
+          // Prefer marketplace values; fallback to publisher-website
+          metricsSource = {
+            ...metricsSource,
+            moz_da: metricsSource.moz_da ?? publisherWebsite.moz_da ?? 0,
+            ahrefs_dr: metricsSource.ahrefs_dr ?? publisherWebsite.ahrefs_dr ?? 0,
+            ahrefs_traffic: metricsSource.ahrefs_traffic ?? publisherWebsite.ahrefs_traffic ?? 0,
+            ahrefs_rank: metricsSource.ahrefs_rank ?? publisherWebsite.ahrefs_rank ?? 0,
+            semrush_authority_score: metricsSource.semrush_authority_score ?? publisherWebsite.semrush_authority_score ?? 0,
+            semrush_traffic: metricsSource.semrush_traffic ?? publisherWebsite.semrush_traffic ?? 0,
+            moz_spam_score: metricsSource.moz_spam_score ?? publisherWebsite.moz_spam_score ?? 0,
+            ahrefs_referring_domain: metricsSource.ahrefs_referring_domain ?? publisherWebsite.ahrefs_referring_domain ?? 0,
+            ahrefs_keywords: metricsSource.ahrefs_keywords ?? publisherWebsite.ahrefs_keywords ?? 0,
+          };
+          // pricingSource = {
+          //   ...pricingSource,
+          //   generalLinkInsertionPrice: pricingSource.generalLinkInsertionPrice ?? publisherWebsite.generalLinkInsertionPrice ?? publisherWebsite.link_insertion_price ?? null,
+          //   casinoLinkInsertionPrice: pricingSource.casinoLinkInsertionPrice ?? publisherWebsite.casinoLinkInsertionPrice ?? publisherWebsite.adv_li_casino_pricing ?? null,
+          //   cryptoAccepted: pricingSource.cryptoAccepted ?? publisherWebsite.cryptoAccepted ?? false,
+          //   cryptoGuestPostPrice: pricingSource.cryptoGuestPostPrice ?? publisherWebsite.cryptoGuestPostPrice ?? publisherWebsite.adv_crypto_pricing ?? null,
+          //   cryptoLinkInsertionPrice: pricingSource.cryptoLinkInsertionPrice ?? publisherWebsite.cryptoLinkInsertionPrice ?? publisherWebsite.adv_li_crypto_pricing ?? null,
+          //   cbdAccepted: pricingSource.cbdAccepted ?? publisherWebsite.cbdAccepted ?? false,
+          //   cbdGuestPostPrice: pricingSource.cbdGuestPostPrice ?? publisherWebsite.cbdGuestPostPrice ?? publisherWebsite.adv_cbd_pricing ?? null,
+          //   cbdLinkInsertionPrice: pricingSource.cbdLinkInsertionPrice ?? publisherWebsite.cbdLinkInsertionPrice ?? publisherWebsite.adv_li_cbd_pricing ?? null,
+          //   datingLinkInsertionPrice: pricingSource.datingLinkInsertionPrice ?? publisherWebsite.datingLinkInsertionPrice ?? publisherWebsite.adv_li_dating_pricing ?? null,
+          // };
+        }
+      } catch (e) {
+        console.warn('[MARKETPLACE:findOne] Failed to hydrate from publisher-website for', website.url, e.message);
+      }
+
+      // Calculate order counts for this website
+      const totalOrders = orders.length;
+      const statusCounts = orders.reduce((acc, o) => {
+        const status = (o.orderStatus || o.status || 'unknown').toString().toLowerCase();
+        if (status.includes('pend')) acc.pending++;
+        else if (status.includes('progress') || status.includes('process')) acc.processing++;
+        else if (status.includes('complete') || status === 'done') acc.completed++;
+        else if (status.includes('cancel') || status.includes('reject') || status.includes('failed')) acc.cancelled++;
+        else acc.other++;
+        return acc;
+      }, { pending: 0, processing: 0, completed: 0, cancelled: 0, other: 0 });
+
+      // Calculate last month orders
+      const lastMonth = new Date();
+      lastMonth.setMonth(lastMonth.getMonth() - 1);
+      const lastMonthOrders = orders.filter(order => {
+        const orderDate = new Date(order.createdAt);
+        return orderDate >= lastMonth;
+      }).length;
+
+      console.log(`[DEBUG] Website ${website.id} (${website.url}): totalOrders=${totalOrders}, lastMonthOrders=${lastMonthOrders}`);
+      console.log("websitesssss", website)
+      const normalizeField = (value) => {
+        if (!value) return undefined;
+        if (Array.isArray(value)) return value;
+        if (typeof value === 'string') {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) return parsed;
+          } catch (err) {
+            // not JSON
+          }
+          return value.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        return value;
+      };
+
+      const category = normalizeField(website.category);
+      const subcategory = normalizeField(website.other_category);
+      const countries = normalizeField(website.country) || normalizeField(website.countries);
+      const languages = normalizeField(website.language) || normalizeField(website.languages);
+
+      // Transform data for admin panel
+      const transformedWebsite = {
+        id: website.id,
+        domain: website.url,
+        title: website.publisher_name || website.url,
+        description: website.description,
+        category,
+        subcategory,
+        metrics: {
+          // Ahrefs
+          dr: metricsSource.ahrefs_dr,
+          ahrefsTraffic: metricsSource.ahrefs_traffic,
+          ahrefsRank: metricsSource.ahrefs_rank,
+          ahrefsRefDomains: metricsSource.ahrefs_referring_domain,
+          ahrefsKeywords: metricsSource.ahrefs_keywords,
+          // Moz
+          da: metricsSource.moz_da,
+          mozSpamScore: metricsSource.moz_spam_score,
+          // Semrush
+          semrushTraffic: metricsSource.semrush_traffic,
+          semrushAuthorityScore: metricsSource.semrush_authority_score,
+          // UI helpers
+          pageSpeed: website.placement_speed,
+          mobileFriendly: website.fast_placement_status,
+          ssl: true, // Default to true since there's no SSL field in schema
+          socialMedia: {
+            twitter: website.twitterHandle,
+            linkedin: website.linkedinProfile,
+            facebook: website.facebookPage
+          }
+        },
+        content: {
+          language: languages,
+          country: countries,
+          updateFrequency: website.placement_speed || 'Normal',
+          contentType: 'Blog Articles', // Default since not in schema
+          topics: [], // Default since not in schema
+          targetAudience: 'General' // Default since not in schema
+        },
+        publisher: {
+          name: website.publisher_name || 'Unknown Publisher',
+          email: website.publisher_email || 'N/A',
+          phone: '', // Default since not in schema
+          rating: 4.5, // Default rating since not in schema
+          completedOrders: totalOrders, // Real order count
+          joinDate: website.createdAt,
+          specialization: 'General' // Default since not in schema
+        },
+        performance: {
+          lastMonthOrders: lastMonthOrders, // Real last month orders
+          totalOrders: totalOrders, // Real total orders
+          averageRating: 4.5, // Default since not in schema
+          completionRate: totalOrders > 0 ? Math.round((statusCounts.completed / totalOrders) * 100) : 0,
+          responseTime: website.tat ? `${website.tat}h` : 'Not specified',
+          revenue: orders.filter(o => o.orderStatus === 'completed').reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0),
+          byStatus: statusCounts
+        },
+        services: {
+          backlinkType: website.backlink_type || 'Do follow',
+          backlinkValidity: website.backlink_validity || 'lifetime',
+          minWordCount: website.min_word_count || 500,
+          dofollow: website.dofollow_link === 1 || website.dofollow_link === true,
+          fastPlacement: Boolean(website.fast_placement_status),
+          tat: website.tat || 0,
+          linkInsertionBase: parseFloat(website.link_insertion_price || 0) || 0
+        },
+        financial: {
+          price: parseFloat(website.price || 0),
+          currency: 'USD', // Default since not in schema
+          commission: parseFloat(website.publisher_price || 0),
+          netAmount: parseFloat(website.price || 0) - parseFloat(website.publisher_price || 0),
+          pricing: {
+            general: {
+              guestPost: parseFloat(website.price || 0) || 0,
+              linkInsertion: parseFloat(website.link_insertion_price || 0) || 0
+            },
+            casino: {
+              guestPost: parseFloat(website.adv_casino_pricing || 0) || 0,
+              linkInsertion: parseFloat(website.adv_li_casino_pricing || 0) || 0
+            },
+            crypto: {
+              accepted: Boolean(website.adv_crypto_pricing && website.adv_crypto_pricing > 0) || false,
+              guestPost: parseFloat(website.adv_crypto_pricing || 0) || 0,
+              linkInsertion: parseFloat(website.adv_li_crypto_pricing || 0) || 0
+            },
+            cbd: {
+              accepted: Boolean(website.adv_cbd_pricing && website.adv_cbd_pricing > 0) || false,
+              guestPost: parseFloat(website.adv_cbd_pricing || 0) || 0,
+              linkInsertion: parseFloat(website.adv_li_cbd_pricing || 0) || 0
+            },
+            dating: {
+              guestPost: parseFloat(website.adv_dating_pricing || 0) || 0,
+              linkInsertion: parseFloat(website.adv_li_dating_pricing || 0) || 0
+            }
+          }
+        },
+        contact: {
+          email: website.publisher_email,
+          phone: '', // Default since not in schema
+          website: website.url
+        },
+        status: website.status || (website.publishedAt ? 'active' : 'inactive'),
+        approvalDate: website.publishedAt,
+        lastUpdated: website.updatedAt,
+        createdAt: website.createdAt,
+        tat: website.tat || 'Not specified',
+        documents: [], // Default since not in schema
+        notes: [] // Default since not in schema
+      };
+
+      ctx.send({
+        data: transformedWebsite
+      });
+
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE FIND ONE ERROR]', error);
+      return ctx.internalServerError('Failed to fetch marketplace website details');
+    }
+  },
+
+  /**
+   * Get marketplace statistics for admin dashboard
+   */
+  async getStats(ctx) {
+    try {
+      const knex = strapi.db.connection;
+
+      // Single query for total/active/inactive counts
+      const [total, active, inactive] = await Promise.all([
+        strapi.db.query('api::marketplace.marketplace').count(),
+        strapi.db.query('api::marketplace.marketplace').count({
+          where: { publishedAt: { $notNull: true } }
+        }),
+        strapi.db.query('api::marketplace.marketplace').count({
+          where: { publishedAt: { $null: true } }
+        })
+      ]);
+
+      // Category breakdown via SQL aggregation instead of loading all 41K records
+      let categoryBreakdown = {};
+      try {
+        const categoryRows = await knex('marketplaces')
+          .select('category')
+          .count('* as count')
+          .groupBy('category');
+        categoryRows.forEach(row => {
+          categoryBreakdown[row.category || 'Uncategorized'] = parseInt(row.count) || 0;
+        });
+      } catch (e) {
+        console.warn('[MARKETPLACE STATS] Category breakdown query failed, using fallback:', e.message);
+      }
+
+      // Average metrics via SQL aggregation instead of loading all records
+      let avgDA = 0, avgDR = 0, avgPrice = 0;
+      try {
+        const [metricsRow] = await knex('marketplaces')
+          .avg('moz_da as avgDA')
+          .avg('ahrefs_dr as avgDR')
+          .avg('price as avgPrice');
+        avgDA = parseFloat(metricsRow?.avgDA) || 0;
+        avgDR = parseFloat(metricsRow?.avgDR) || 0;
+        avgPrice = parseFloat(metricsRow?.avgPrice) || 0;
+      } catch (e) {
+        console.warn('[MARKETPLACE STATS] Metrics aggregation failed:', e.message);
+      }
+
+      // Revenue and order stats using Strapi query API
+      let totalRevenue = 0, totalCompletedOrders = 0, totalOrders = 0;
+      try {
+        totalOrders = await strapi.db.query('api::order.order').count({
+          where: { website: { id: { $notNull: true } } }
+        });
+        const completedOrders = await strapi.db.query('api::order.order').findMany({
+          where: {
+            website: { id: { $notNull: true } },
+            orderStatus: 'completed'
+          },
+          select: ['totalAmount']
+        });
+        totalCompletedOrders = completedOrders.length;
+        totalRevenue = completedOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0);
+      } catch (e) {
+        console.warn('[MARKETPLACE STATS] Order stats query failed:', e.message);
+      }
+
+      const avgRating = totalOrders > 0
+        ? Math.min(5, Math.max(1, ((totalCompletedOrders / totalOrders) * 5)))
+        : 0;
+
+      ctx.send({
+        total,
+        active,
+        inactive,
+        categoryBreakdown,
+        averageMetrics: {
+          domainAuthority: Math.round(avgDA * 10) / 10,
+          domainRating: Math.round(avgDR * 10) / 10,
+          price: Math.round(avgPrice * 100) / 100
+        },
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        avgRating: Math.round(avgRating * 10) / 10
+      });
+
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE STATS ERROR]', error);
+      return ctx.internalServerError('Failed to fetch marketplace statistics');
+    }
+  },
+
+  /**
+   * Update marketplace website (admin action)
+   */
+  async update(ctx) {
+    try {
+      const { id } = ctx.params;
+      const updateData = ctx.request.body;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating marketplace website ${id}`);
+
+      // Transform admin panel data back to Strapi format
+      const strapiData = {};
+
+      if (updateData.title) strapiData.publisher_name = updateData.title;
+      if (updateData.description) strapiData.description = updateData.description;
+      if (updateData.category) strapiData.category = updateData.category;
+      if (updateData.subcategory) strapiData.subcategory = updateData.subcategory;
+
+      if (updateData.metrics) {
+        if (updateData.metrics.da) strapiData.moz_da = updateData.metrics.da;
+        if (updateData.metrics.dr) strapiData.ahrefs_dr = updateData.metrics.dr;
+        if (updateData.metrics.traffic) strapiData.ahrefs_traffic = updateData.metrics.traffic;
+        if (updateData.metrics.backlinks) strapiData.ahrefs_rank = updateData.metrics.backlinks;
+        if (updateData.metrics.organicKeywords) strapiData.semrush_authority_score = updateData.metrics.organicKeywords;
+        if (updateData.metrics.pageSpeed) strapiData.placement_speed = updateData.metrics.pageSpeed;
+        if (updateData.metrics.mobileFriendly !== undefined) strapiData.fast_placement_status = updateData.metrics.mobileFriendly;
+      }
+
+      if (updateData.content) {
+        if (updateData.content.updateFrequency) strapiData.placement_speed = updateData.content.updateFrequency;
+      }
+
+      if (updateData.financial) {
+        if (updateData.financial.price) strapiData.price = updateData.financial.price;
+        if (updateData.financial.commission) strapiData.publisher_price = updateData.financial.commission;
+      }
+
+      if (updateData.tat) strapiData.tat = updateData.tat;
+      if (updateData.isFeatured !== undefined) strapiData.isFeatured = updateData.isFeatured;
+      if (updateData.isFeaturedGuestPost !== undefined) strapiData.isFeaturedGuestPost = updateData.isFeaturedGuestPost;
+      if (updateData.isFeaturedLinkInsertion !== undefined) strapiData.isFeaturedLinkInsertion = updateData.isFeaturedLinkInsertion;
+
+      // Attach audit context so the marketplace lifecycle can attribute the
+      // resulting update-history row to this admin actor.
+      strapiData._audit = {
+        source: 'admin',
+        userId: ctx.state.user?.id || null,
+        changedBy:
+          ctx.state.user?.username || ctx.state.user?.email || null,
+      };
+
+      const updatedWebsite = await strapi.entityService.update('api::marketplace.marketplace', id, {
+        data: strapiData
+      });
+
+      ctx.send({
+        data: updatedWebsite
+      });
+
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE UPDATE ERROR]', error);
+      return ctx.internalServerError('Failed to update marketplace website');
+    }
+  },
+
+  /**
+   * Re-confirm that the current price on a marketplace listing is still
+   * valid — bumps lastPriceUpdateAt to now() without changing any price
+   * fields. Used when an admin manually verifies a listing and finds the
+   * price unchanged; gives them a way to push the row out of the "stale"
+   * bucket without faking a price edit.
+   *
+   * The marketplace lifecycle's diff logic won't stamp lastPriceUpdateAt
+   * here because no tracked field changed, and it won't write a history
+   * row either. We handle both explicitly: direct db.query update for the
+   * timestamp, manual history insert with source='admin-confirm' so the
+   * audit trail still records the action.
+   */
+  async confirmPrice(ctx) {
+    try {
+      const { id } = ctx.params;
+      const marketplaceId = parseInt(id, 10);
+      if (!Number.isFinite(marketplaceId)) {
+        return ctx.badRequest('Invalid marketplace id');
+      }
+
+      const existing = await strapi.db
+        .query('api::marketplace.marketplace')
+        .findOne({
+          where: { id: marketplaceId },
+          select: ['id', 'url', 'lastPriceUpdateAt'],
+        });
+      if (!existing) {
+        return ctx.notFound('Marketplace listing not found');
+      }
+
+      const now = new Date();
+      const updated = await strapi.db
+        .query('api::marketplace.marketplace')
+        .update({
+          where: { id: marketplaceId },
+          data: { lastPriceUpdateAt: now },
+        });
+
+      try {
+        await strapi.db
+          .query('api::marketplace-update-history.marketplace-update-history')
+          .create({
+            data: {
+              marketplace: marketplaceId,
+              changes: {},
+              changedFields: [],
+              source: 'admin-confirm',
+              changedBy:
+                ctx.state.user?.username || ctx.state.user?.email || null,
+              userId: ctx.state.user?.id || null,
+              changedAt: now,
+            },
+          });
+      } catch (err) {
+        console.error('[ADMIN CONFIRM PRICE] history write failed:', err.message);
+      }
+
+      console.log(
+        `[ADMIN ACTION] Admin ${ctx.state.user?.id} confirmed price freshness for marketplace ${marketplaceId} (${existing.url})`
+      );
+
+      ctx.send({
+        data: {
+          id: updated.id,
+          lastPriceUpdateAt: updated.lastPriceUpdateAt,
+        },
+      });
+    } catch (error) {
+      console.error('[ADMIN CONFIRM PRICE ERROR]', error);
+      return ctx.internalServerError('Failed to confirm price freshness');
+    }
+  },
+
+  /**
+   * Toggle website status (activate/deactivate)
+   */
+  async toggleStatus(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { active, reason } = ctx.request.body;
+
+      // Marketplace listings carry a real `status` enum (active / paused /
+      // delisted / rejected / draft). The earlier toggle wrote to
+      // publishedAt — a Strapi internal field — which had no effect on the
+      // listing's visibility. Now we set the enum directly: active=true →
+      // 'active', active=false → 'delisted' (with optional reason).
+      const newStatus = active ? 'active' : 'delisted';
+      console.log(
+        `[ADMIN ACTION] Admin ${ctx.state.user?.id} setting marketplace ${id} status → ${newStatus}`
+      );
+
+      const updateData = { status: newStatus };
+      if (active) {
+        updateData.delistedReason = null;
+      } else if (typeof reason === 'string' && reason.trim()) {
+        updateData.delistedReason = reason.trim();
+      }
+
+      const updatedWebsite = await strapi.entityService.update('api::marketplace.marketplace', id, {
+        data: updateData,
+      });
+
+      ctx.send({
+        data: updatedWebsite,
+      });
+
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE TOGGLE STATUS ERROR]', error);
+      return ctx.internalServerError('Failed to toggle website status');
+    }
+  },
+
+  /**
+   * Delete marketplace website (admin action)
+   */
+  async delete(ctx) {
+    try {
+      const { id } = ctx.params;
+
+      // Log admin action
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} deleting marketplace website ${id}`);
+
+      await strapi.entityService.delete('api::marketplace.marketplace', id);
+
+      ctx.send({
+        message: 'Marketplace website deleted successfully'
+      });
+
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE DELETE ERROR]', error);
+      return ctx.internalServerError('Failed to delete marketplace website');
+    }
+  },
+
+  /**
+   * Bulk import websites from CSV (admin action)
+   */
+  async bulkImport(ctx) {
+    try {
+      const { websites, duplicateCheck = true, replaceExisting = false } = ctx.request.body;
+
+      if (!Array.isArray(websites) || websites.length === 0) {
+        return ctx.badRequest('No websites data provided');
+      }
+
+      const results = {
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        linked: 0,      // Websites linked to existing users
+        orphaned: 0,    // Websites where no user was found (will be auto-claimed later)
+        errors: []
+      };
+
+      // Helper to extract validation messages from Strapi error
+      const extractErrorMessages = (err) => {
+        const messages = [];
+        if (!err) return ['Unknown error'];
+        if (err?.message) messages.push(err.message);
+        // Strapi v4 validation details
+        const details = err?.details || err?.error?.details;
+        if (details?.errors && Array.isArray(details.errors)) {
+          for (const e of details.errors) {
+            if (e?.message && e?.path) {
+              messages.push(`${e.path.join('.')}: ${e.message}`);
+            } else if (e?.message) {
+              messages.push(e.message);
+            }
+          }
+        }
+        // Unique constraint or DB errors
+        if (err?.code && err?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          messages.push('Duplicate URL (url must be unique)');
+        }
+        return messages.length > 0 ? messages : ['Unexpected error'];
+      };
+
+      for (const websiteData of websites) {
+        try {
+          const {
+            domain,
+            title,
+            category,
+            da,
+            traffic,
+            price,
+            status,
+            publisherName,
+            publisherEmail,
+            publisherPrice,
+            backlinkType,
+            backlinkValidity,
+            minWordCount,
+            linkInsertionPrice,
+            otherCategory,
+            guidelines,
+            dofollowLink,
+            samplePost,
+            ahrefsDr,
+            ahrefsTraffic,
+            ahrefsRank,
+            mozDa,
+            fastPlacementStatus,
+            tat,
+            language,
+            countries
+          } = websiteData;
+
+          if (!domain) {
+            results.errors.push({ domain: 'N/A', error: 'Domain is required' });
+            continue;
+          }
+
+          // Prepare data object with all available fields
+          // Normalize booleans and numbers
+          const toBoolean = (val) => {
+            if (typeof val === 'boolean') return val;
+            if (typeof val === 'number') return val === 1;
+            if (typeof val === 'string') {
+              const v = val.trim().toLowerCase();
+              return v === '1' || v === 'true' || v === 'yes' || v === 'y';
+            }
+            return false;
+          };
+
+          const toInteger = (val, fallback = 0) => {
+            const n = parseInt(val, 10);
+            return Number.isNaN(n) ? fallback : n;
+          };
+
+          const normalizedBacklinkType = backlinkType || (toBoolean(dofollowLink) ? 'Do follow' : 'No follow');
+          const normalizedDofollowLink = toBoolean(dofollowLink) ? 1 : 0;
+          const normalizedFastPlacement = toBoolean(fastPlacementStatus);
+          const normalizedTat = toInteger(tat, 0);
+
+          // Helper to parse multiple values from CSV fields
+          const parseMultipleValues = (value, defaultValue = []) => {
+            if (!value) return defaultValue;
+            if (Array.isArray(value)) return value;
+            if (typeof value === 'string') {
+              const trimmed = value.trim();
+              if (trimmed.length === 0) return defaultValue;
+
+              // Split by common delimiters: comma, semicolon, pipe, or newline
+              // Also handle cases where there might be spaces around delimiters
+              const values = trimmed.split(/[,;|\n]/)
+                .map(v => v.trim())
+                .filter(v => v.length > 0);
+
+              console.log(`[DEBUG] Parsing "${trimmed}" -> [${values.join(', ')}]`);
+              return values.length > 0 ? values : defaultValue;
+            }
+            return defaultValue;
+          };
+
+          // Use consistent parsing for all array fields
+          const normalizedCategory = parseMultipleValues(category, ['Uncategorized']);
+          const normalizedLanguage = parseMultipleValues(language, ['English']);
+          const normalizedOtherCategory = parseMultipleValues(otherCategory, null);
+          const normalizedCountries = parseMultipleValues(countries, ['United States']);
+
+          const websiteUpdateData = {
+            url: domain,
+            publisher_name: (publisherName || title || '').toString(),
+            publisher_email: (publisherEmail || '').toString(),
+            publisher_price: toInteger(publisherPrice, 0),
+            category: normalizedCategory,
+            language: normalizedLanguage,
+            countries: normalizedCountries,
+            moz_da: toInteger(mozDa ?? da, 0),
+            ahrefs_dr: toInteger(ahrefsDr, 0),
+            ahrefs_traffic: toInteger(ahrefsTraffic ?? traffic, 0),
+            ahrefs_rank: toInteger(ahrefsRank, 0),
+            price: toInteger(price, 0),
+            backlink_type: normalizedBacklinkType,
+            backlink_validity: (backlinkValidity || 'lifetime').toString(),
+            min_word_count: toInteger(minWordCount, 500),
+            link_insertion_price: toInteger(linkInsertionPrice, 0),
+            other_category: normalizedOtherCategory,
+            guidelines: guidelines || null,
+            dofollow_link: normalizedDofollowLink,
+            sample_post: samplePost || null,
+            fast_placement_status: normalizedFastPlacement,
+            tat: normalizedTat,
+            publishedAt: status === 'Active' ? new Date() : null
+          };
+
+          // Debug logging for multiple values
+          console.log(`[DEBUG] Processing ${domain}:`, {
+            originalCategory: category,
+            normalizedCategory,
+            originalLanguage: language,
+            normalizedLanguage,
+            originalCountries: countries,
+            normalizedCountries,
+            originalOtherCategory: otherCategory,
+            normalizedOtherCategory
+          });
+
+          // --- USER LOOKUP AND LINKING ---
+          let linkedPublisherId = null;
+          if (publisherEmail) {
+            const existingUser = await strapi.db.query('plugin::users-permissions.user').findOne({
+              where: { email: publisherEmail }
+            });
+            if (existingUser) {
+              linkedPublisherId = existingUser.id;
+              results.linked++;
+              console.log(`[BULK IMPORT] Linked ${domain} to user ID ${linkedPublisherId} (${publisherEmail})`);
+            } else {
+              results.orphaned++;
+              console.log(`[BULK IMPORT] No user found for ${publisherEmail}, website ${domain} will be orphaned (pending auto-claim)`);
+            }
+          } else {
+            results.orphaned++;
+            console.log(`[BULK IMPORT] No email provided for ${domain}, website will be orphaned`);
+          }
+
+          // Add publisher relation to the data if user was found
+          if (linkedPublisherId) {
+            websiteUpdateData.publisher = linkedPublisherId;
+          }
+
+          // Always check for existing records when updating or when duplicate check is enabled
+          if (duplicateCheck || replaceExisting) {
+            const existing = await strapi.db.query('api::marketplace.marketplace').findOne({
+              where: { url: domain }
+            });
+
+            if (existing) {
+              if (replaceExisting) {
+                // Full update - replace all data with CSV values
+                console.log(`[DEBUG] Full update for existing website ${domain} with ID ${existing.id}`);
+                await strapi.entityService.update('api::marketplace.marketplace', existing.id, {
+                  data: websiteUpdateData
+                });
+                results.updated++;
+                console.log(`[DEBUG] Successfully updated website ${domain} with full CSV data`);
+              } else {
+                results.skipped++;
+              }
+              continue;
+            } else {
+              // Record doesn't exist - this should create a new one
+              console.log(`[DEBUG] No existing record found for ${domain}, will create new website`);
+            }
+          }
+
+          // Create new website
+          await strapi.entityService.create('api::marketplace.marketplace', {
+            data: websiteUpdateData
+          });
+          results.imported++;
+
+        } catch (error) {
+          results.errors.push({
+            domain: websiteData.domain || 'N/A',
+            errors: extractErrorMessages(error)
+          });
+        }
+      }
+
+      console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} bulk imported ${results.imported} websites, updated ${results.updated} websites, skipped ${results.skipped} websites, linked ${results.linked}, orphaned ${results.orphaned}`);
+
+      ctx.send({
+        message: 'Bulk import completed',
+        results,
+        summary: `Imported: ${results.imported}, Updated: ${results.updated}, Skipped: ${results.skipped}, Linked to Users: ${results.linked}, Orphaned (pending claim): ${results.orphaned}, Errors: ${results.errors.length}`
+      });
+
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE BULK IMPORT ERROR]', error);
+      return ctx.internalServerError('Failed to perform bulk import');
+    }
+  }
+  ,
+  /**
+   * Bulk delete marketplace websites (admin action)
+   * POST /api/admin/marketplace/bulk-delete
+   * Body: { ids: number[] }
+   */
+  async bulkDelete(ctx) {
+    try {
+      const { ids } = ctx.request.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return ctx.badRequest('No ids provided');
+      }
+
+      const results = [];
+      const errors = [];
+
+      for (const id of ids) {
+        try {
+          await strapi.entityService.delete('api::marketplace.marketplace', id);
+          results.push({ id, status: 'deleted' });
+        } catch (e) {
+          errors.push({ id, error: e.message });
+        }
+      }
+
+      ctx.send({
+        message: 'Bulk delete processed',
+        results,
+        errors
+      });
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE BULK DELETE ERROR]', error);
+      return ctx.internalServerError('Failed to bulk delete marketplace websites');
+    }
+  }
+}));
+

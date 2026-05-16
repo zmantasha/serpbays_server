@@ -17,10 +17,7 @@ module.exports = createCoreController('api::invoice.invoice', ({ strapi }) => ({
       const { id } = ctx.params;
       const userId = ctx.state.user?.id;
 
-      console.log('Download request received for invoice:', id);
-      console.log('User ID:', userId);
-      console.log('Request headers:', ctx.request.headers);
-      console.log('Auth header:', ctx.request.header.authorization);
+    
 
       if (!userId) {
         console.log('No user ID found in request');
@@ -28,24 +25,23 @@ module.exports = createCoreController('api::invoice.invoice', ({ strapi }) => ({
       }
 
       // Find the invoice with related user
-      console.log('Finding invoice with ID:', id);
+      
       const invoice = await strapi.entityService.findOne('api::invoice.invoice', id, {
         populate: ['user']
       });
 
-      console.log('Found invoice:', invoice);
+  
       
       if (!invoice) {
-        console.log('Invoice not found:', id);
+       
         return ctx.notFound('Invoice not found');
       }
 
-      console.log('Invoice user ID:', invoice.user?.id);
-      console.log('Request user ID:', userId);
+    
 
       // Check if the user owns this invoice
       if (invoice.user?.id !== userId) {
-        console.log('User does not own this invoice');
+       
         return ctx.forbidden('You do not have permission to download this invoice');
       }
 
