@@ -1,4 +1,5 @@
 const { normalizeUrl } = require('../../../../utils/normalize-url');
+const { normalizeEmail } = require('../../../../utils/normalize-email');
 
 // Fields whose changes are recorded into marketplace-update-history.
 // Two groups so future reads can filter "price-only" or "metric-only" updates.
@@ -74,6 +75,7 @@ module.exports = {
     const { data } = event.params;
 
     if (data && data.url) data.url = normalizeUrl(data.url);
+    if (data && data.publisher_email) data.publisher_email = normalizeEmail(data.publisher_email);
 
     // Calculate placement speed if TAT is provided
     if (data.tat !== undefined) {
@@ -95,6 +97,7 @@ module.exports = {
     const { data, where } = event.params;
 
     if (data && data.url) data.url = normalizeUrl(data.url);
+    if (data && data.publisher_email) data.publisher_email = normalizeEmail(data.publisher_email);
 
     // Recalculate placement speed if TAT is being updated
     if (data.tat !== undefined) {

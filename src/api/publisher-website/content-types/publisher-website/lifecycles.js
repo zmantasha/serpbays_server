@@ -1,5 +1,6 @@
 const { getPublisherCommissionRate } = require('../../../../constants/commission');
 const { normalizeUrl } = require('../../../../utils/normalize-url');
+const { normalizeEmail } = require('../../../../utils/normalize-email');
 
 const buildCategorySearchValue = (categoryValue) => {
   if (!categoryValue) {
@@ -504,6 +505,7 @@ module.exports = {
     const { data } = event.params;
 
     if (data && data.url) data.url = normalizeUrl(data.url);
+    if (data && data.publisherEmail) data.publisherEmail = normalizeEmail(data.publisherEmail);
 
     console.log(`🆕 Creating new website entry for URL: ${data.url} by ${data.publisherEmail}`);
 
@@ -517,6 +519,7 @@ module.exports = {
   async beforeUpdate(event) {
     const { data } = event.params;
     if (data && data.url) data.url = normalizeUrl(data.url);
+    if (data && data.publisherEmail) data.publisherEmail = normalizeEmail(data.publisherEmail);
     if (data && Object.prototype.hasOwnProperty.call(data, 'category')) {
       data.category_search = buildCategorySearchValue(data.category);
     }
