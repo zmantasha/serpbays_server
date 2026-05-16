@@ -106,6 +106,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     try {
       console.log(`[EMAIL DEBUG] sendOrderRejectionEmail called for order ${order.id}`);
 
+      const advertiserName = order.advertiser?.username || order.advertiser?.email || 'there';
+
       // Email to advertiser using universal template
       const advertiserEmailData = {
         to: advertiserEmail,
@@ -127,10 +129,15 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           website_url: order.website?.url || '',
           website_name: order.website?.name || order.website?.url || 'Website',
 
-          // User details
-          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
-          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
-          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          // The AutoSend universal template greets with {{publisher_name}};
+          // for advertiser-bound mail we override it to the advertiser's name
+          // so the greeting reads correctly. Publisher's real name lives in
+          // real_publisher_name.
+          publisher_name: advertiserName,
+          real_publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
+          advertiser_name: advertiserName,
+          customer: advertiserName,
+          recipient_name: advertiserName,
 
           // Item details
           item_1_name: order.website?.name || 'Order Service',
@@ -170,6 +177,11 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     try {
       console.log(`[EMAIL DEBUG] sendOrderCancellationEmail called for order ${order.id}`);
 
+      const publisherName = order.publisher?.username || order.publisher?.email || 'Publisher';
+      const advertiserName = order.advertiser?.username || order.advertiser?.email || 'Advertiser';
+      const isAdvertiserRecipient = recipientEmail && order.advertiser?.email && recipientEmail.toLowerCase() === order.advertiser.email.toLowerCase();
+      const recipientName = isAdvertiserRecipient ? advertiserName : publisherName;
+
       const emailData = {
         to: recipientEmail,
         templateId: process.env.AUTOSEND_TEMPLATE_ORDER_UNIVERSAL || 'A-6b3a9831dc557c0df9ab',
@@ -190,10 +202,15 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           website_url: order.website?.url || '',
           website_name: order.website?.name || order.website?.url || 'Website',
 
-          // User details
-          publisher_name: order.publisher?.username || order.publisher?.email || 'Publisher',
-          advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
-          customer: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
+          // The AutoSend universal template greets with {{publisher_name}};
+          // override it to the recipient's actual name so the greeting reads
+          // correctly. The real publisher's name stays available as
+          // real_publisher_name for template references.
+          publisher_name: recipientName,
+          real_publisher_name: publisherName,
+          advertiser_name: advertiserName,
+          customer: recipientName,
+          recipient_name: recipientName,
 
           // Item details
           item_1_name: order.website?.name || 'Order Service',

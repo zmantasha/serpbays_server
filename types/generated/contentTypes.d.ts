@@ -661,6 +661,68 @@ export interface ApiBankTransferRequestBankTransferRequest
   };
 }
 
+export interface ApiBulkRefreshJobBulkRefreshJob
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'bulk_refresh_jobs';
+  info: {
+    description: "One row per bulk metric refresh operation (export of a domain list, upload of a tool's CSV output, revert of a prior upload). Joined to marketplace-update-history rows via bulkJobId.";
+    displayName: 'Bulk Refresh Job';
+    pluralName: 'bulk-refresh-jobs';
+    singularName: 'bulk-refresh-job';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    createdByEmail: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    createdByUserId: Schema.Attribute.Integer;
+    csvFileHash: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 128;
+      }>;
+    csvFilename: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 512;
+      }>;
+    errorMessage: Schema.Attribute.Text;
+    jobType: Schema.Attribute.Enumeration<['export', 'upload', 'revert']> &
+      Schema.Attribute.Required;
+    label: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::bulk-refresh-job.bulk-refresh-job'
+    > &
+      Schema.Attribute.Private;
+    outOfRangeCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
+    publishedAt: Schema.Attribute.DateTime;
+    revertedJobId: Schema.Attribute.Integer;
+    rowCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
+    status: Schema.Attribute.Enumeration<
+      ['pending', 'processing', 'complete', 'failed', 'reverted']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
+    tool: Schema.Attribute.Enumeration<['ahrefs', 'moz', 'semrush', 'price']> &
+      Schema.Attribute.Required;
+    unchangedCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
+    unmatchedUrlCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    updatedCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
+  };
+}
+
 export interface ApiCartCart extends Struct.CollectionTypeSchema {
   collectionName: 'carts';
   info: {
@@ -1106,6 +1168,7 @@ export interface ApiMarketplaceUpdateHistoryMarketplaceUpdateHistory
     draftAndPublish: false;
   };
   attributes: {
+    bulkJobId: Schema.Attribute.Integer;
     changedAt: Schema.Attribute.DateTime & Schema.Attribute.Required;
     changedBy: Schema.Attribute.String;
     changedFields: Schema.Attribute.JSON & Schema.Attribute.Required;
@@ -1125,7 +1188,19 @@ export interface ApiMarketplaceUpdateHistoryMarketplaceUpdateHistory
     >;
     publishedAt: Schema.Attribute.DateTime;
     source: Schema.Attribute.Enumeration<
-      ['admin', 'publisher', 'import', 'api', 'system']
+      [
+        'admin',
+        'admin-confirm',
+        'admin-revert',
+        'publisher',
+        'import',
+        'api',
+        'system',
+        'bulk-ahrefs',
+        'bulk-moz',
+        'bulk-semrush',
+        'bulk-price',
+      ]
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'api'>;
@@ -1255,6 +1330,7 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     backlink_validity: Schema.Attribute.String & Schema.Attribute.Required;
     blacklist_status: Schema.Attribute.Enumeration<['active', 'inactive']> &
       Schema.Attribute.DefaultTo<'active'>;
+    bulkRefreshSkipTools: Schema.Attribute.JSON;
     category: Schema.Attribute.JSON & Schema.Attribute.Required;
     countries: Schema.Attribute.JSON;
     createdAt: Schema.Attribute.DateTime;
@@ -1291,8 +1367,14 @@ export interface ApiMarketplaceMarketplace extends Struct.CollectionTypeSchema {
     isFeaturedLinkInsertion: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
     language: Schema.Attribute.JSON & Schema.Attribute.Required;
+    lastAhrefsExportAt: Schema.Attribute.DateTime;
+    lastAhrefsRefreshAt: Schema.Attribute.DateTime;
     lastMetricUpdateAt: Schema.Attribute.DateTime;
+    lastMozExportAt: Schema.Attribute.DateTime;
+    lastMozRefreshAt: Schema.Attribute.DateTime;
     lastPriceUpdateAt: Schema.Attribute.DateTime;
+    lastSemrushExportAt: Schema.Attribute.DateTime;
+    lastSemrushRefreshAt: Schema.Attribute.DateTime;
     link_insertion_price: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -4009,6 +4091,7 @@ declare module '@strapi/strapi' {
       'api::auth.auth': ApiAuthAuth;
       'api::author.author': ApiAuthorAuthor;
       'api::bank-transfer-request.bank-transfer-request': ApiBankTransferRequestBankTransferRequest;
+      'api::bulk-refresh-job.bulk-refresh-job': ApiBulkRefreshJobBulkRefreshJob;
       'api::cart.cart': ApiCartCart;
       'api::category.category': ApiCategoryCategory;
       'api::chatroom.chatroom': ApiChatroomChatroom;
