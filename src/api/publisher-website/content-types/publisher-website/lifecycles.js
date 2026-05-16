@@ -29,12 +29,38 @@ const buildCategorySearchValue = (categoryValue) => {
   return normalized.length > 0 ? `|${normalized.join('|')}|` : '';
 };
 
+const sendModerationEmailIfNeeded = async (result) => {
+  if (!result || result.submissionStatus !== 'approval_pending') return;
+  if (!result.publisherEmail) return;
+  try {
+    const emailService = strapi.service('api::global.email-operations');
+    await emailService.sendWebsiteStatusEmail({
+      publisherEmail: result.publisherEmail,
+      publisherName: result.publisherName || result.publisherEmail,
+      websiteName: result.url,
+      websiteUrl: result.url,
+      actionType: 'Submitted for Moderation',
+      is_added: true
+    });
+  } catch (emailError) {
+    console.error('[EMAIL] Failed to send moderation email:', emailError.message);
+  }
+};
+
 module.exports = {
   /**
    * After updating a website, handle marketplace creation/updates for approved websites
    */
   async afterUpdate(event) {
     const { result, params } = event;
+
+    // Fire the "Submitted for Moderation" email when the publisher's Submit
+    // for Review action transitions the status to approval_pending. Gating on
+    // params.data ensures we only send when this update is the one that set
+    // the status, not on every subsequent edit while it sits in that state.
+    if (params?.data?.submissionStatus === 'approval_pending') {
+      await sendModerationEmailIfNeeded(result);
+    }
 
     // PREVENT INFINITE LOOP: Only process if status JUST changed to 'approved' AND no marketplaceId exists yet
     // This means it's a new approval, not an update to existing approved website
@@ -505,6 +531,14 @@ module.exports = {
 
     const categorySearchValue = buildCategorySearchValue(data?.category);
     data.category_search = categorySearchValue;
+  },
+
+  /**
+   * After creating a website, fire the moderation email if the row was
+   * created directly in approval_pending (the ownership-claim flow does this).
+   */
+  async afterCreate(event) {
+    await sendModerationEmailIfNeeded(event.result);
   },
 
   /**

@@ -60,7 +60,7 @@ module.exports = {
             publisherName: updatedSubmission.publisherName || updatedSubmission.publisherEmail,
             websiteName: updatedSubmission.url,
             websiteUrl: updatedSubmission.url,
-            actionType: 'Approved & Live'
+            actionType: 'Approved and Live'
           });
         }
       } catch (emailError) {
