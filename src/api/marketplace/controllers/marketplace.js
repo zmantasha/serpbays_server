@@ -1145,9 +1145,10 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     try {
       const cleanDomain = normalizeUrl(domain);
 
-      // Check if domain exists in marketplace
+      // Skip delisted rows — duplicates we soft-removed during dedup share the
+      // same canonical url as their keeper; we want to return the keeper's id.
       const existingEntry = await strapi.db.query('api::marketplace.marketplace').findOne({
-        where: { url: cleanDomain },
+        where: { url: cleanDomain, status: { $ne: 'delisted' } },
         select: ['id', 'url']
       });
 
