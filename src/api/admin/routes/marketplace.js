@@ -12,7 +12,7 @@ module.exports = {
       path: '/admin/marketplace',
       handler: 'marketplace.find',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -21,7 +21,7 @@ module.exports = {
       path: '/admin/marketplace/stats',
       handler: 'marketplace.getStats',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -30,7 +30,7 @@ module.exports = {
       path: '/admin/marketplace/:id',
       handler: 'marketplace.findOne',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -39,7 +39,7 @@ module.exports = {
       path: '/admin/marketplace/:id',
       handler: 'marketplace.update',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -48,7 +48,7 @@ module.exports = {
       path: '/admin/marketplace/:id/status',
       handler: 'marketplace.toggleStatus',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -57,7 +57,7 @@ module.exports = {
       path: '/admin/marketplace/:id/confirm-price',
       handler: 'marketplace.confirmPrice',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -66,7 +66,7 @@ module.exports = {
       path: '/admin/marketplace/:id',
       handler: 'marketplace.delete',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -75,7 +75,7 @@ module.exports = {
       path: '/admin/marketplace/bulk-import',
       handler: 'marketplace.bulkImport',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -84,7 +84,7 @@ module.exports = {
       path: '/admin/marketplace/bulk-delete',
       handler: 'marketplace.bulkDelete',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     }

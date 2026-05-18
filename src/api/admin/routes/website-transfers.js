@@ -14,7 +14,7 @@ module.exports = {
       path: '/admin/websites/:id/transfer-ownership',
       handler: 'website-transfers.transferOwnership',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -23,7 +23,7 @@ module.exports = {
       path: '/admin/websites/bulk-transfer-ownership',
       handler: 'website-transfers.bulkTransferOwnership',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: ['global::admin-logger']
       }
     }

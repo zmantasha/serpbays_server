@@ -23,7 +23,7 @@ module.exports = (policyContext, config, { strapi }) => {
   }
 
   // Define allowed admin role types (strict checking)
-  const allowedAdminTypes = ['super_admin', 'admin', 'moderator'];
+  const allowedAdminTypes = ['super_admin', 'admin'];
   const isAdmin = allowedAdminTypes.includes(userRole.type);
 
   // Log admin access for security auditing

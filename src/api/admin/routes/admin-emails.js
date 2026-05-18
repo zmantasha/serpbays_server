@@ -15,7 +15,7 @@ module.exports = {
       path: '/admin/emails/send',
       handler: 'admin-emails.send',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'communications' } }],
         middlewares: ['global::admin-logger'],
       },
     },
@@ -24,7 +24,7 @@ module.exports = {
       path: '/admin/emails',
       handler: 'admin-emails.find',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'communications' } }],
         middlewares: ['global::admin-logger'],
       },
     },
@@ -33,7 +33,7 @@ module.exports = {
       path: '/admin/emails/:id',
       handler: 'admin-emails.findOne',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'communications' } }],
         middlewares: ['global::admin-logger'],
       },
     },

@@ -12,7 +12,7 @@ module.exports = {
       path: '/admin/wallets',
       handler: 'wallets.getAllWallets',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'wallets' } }],
         middlewares: []
       }
     },
@@ -23,7 +23,7 @@ module.exports = {
       path: '/admin/wallets/stats',
       handler: 'wallets.getWalletStats',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'wallets' } }],
         middlewares: []
       }
     },
@@ -34,7 +34,7 @@ module.exports = {
       path: '/admin/wallets/:userId',
       handler: 'wallets.getUserWallet',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'wallets' } }],
         middlewares: []
       }
     },
@@ -45,7 +45,7 @@ module.exports = {
       path: '/admin/wallets/:userId/transactions',
       handler: 'wallets.getUserTransactions',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'wallets' } }],
         middlewares: []
       }
     },
@@ -56,7 +56,7 @@ module.exports = {
       path: '/admin/wallets/:userId/balance',
       handler: 'wallets.updateWalletBalance',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'wallets' } }],
         middlewares: []
       }
     },
@@ -67,7 +67,7 @@ module.exports = {
       path: '/admin/wallets/:userId/transactions',
       handler: 'wallets.createTransaction',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'wallets' } }],
         middlewares: []
       }
     },
@@ -78,7 +78,7 @@ module.exports = {
       path: '/admin/wallets/:walletId/operations',
       handler: 'wallets.walletOperation',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'wallets' } }],
         middlewares: []
       }
     }

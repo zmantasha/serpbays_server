@@ -16,7 +16,7 @@ module.exports = {
       handler: 'audit-logs.find',
       config: {
         auth: false,
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'audit-logs' } }],
         middlewares: ['global::admin-logger', 'global::admin-jwt-auth']
       }
     }

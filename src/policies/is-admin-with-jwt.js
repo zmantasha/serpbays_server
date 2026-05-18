@@ -13,7 +13,7 @@
  * users-permissions permission check.
  */
 
-const ALLOWED_ROLE_TYPES = ['super_admin', 'admin', 'moderator'];
+const ALLOWED_ROLE_TYPES = ['super_admin', 'admin'];
 
 module.exports = async (policyContext, config, { strapi }) => {
   const { request, state } = policyContext;

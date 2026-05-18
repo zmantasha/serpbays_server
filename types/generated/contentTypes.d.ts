@@ -4018,6 +4018,7 @@ export interface PluginUsersPermissionsUser
           skipped: false;
         };
       }>;
+    pagePermissions: Schema.Attribute.JSON;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{

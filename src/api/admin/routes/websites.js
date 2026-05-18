@@ -12,7 +12,7 @@ module.exports = {
       path: '/admin/websites',
       handler: 'websites.find',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -23,7 +23,7 @@ module.exports = {
       path: '/admin/websites',
       handler: 'websites.create',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -34,7 +34,7 @@ module.exports = {
       path: '/admin/websites/stats',
       handler: 'websites.getStats',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -45,7 +45,7 @@ module.exports = {
       path: '/admin/websites/bulk-update-metrics',
       handler: 'websites.bulkUpdateMetrics',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -56,7 +56,7 @@ module.exports = {
       path: '/admin/websites/export',
       handler: 'websites.exportFiltered',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -67,7 +67,7 @@ module.exports = {
       path: '/admin/websites/check-conflict',
       handler: 'websites.checkConflict',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -78,7 +78,7 @@ module.exports = {
       path: '/admin/websites/bulk-import',
       handler: 'websites.bulkImport',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -89,7 +89,7 @@ module.exports = {
       path: '/admin/websites/bulk-import-progress',
       handler: 'websites.getBulkImportProgress',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -100,7 +100,7 @@ module.exports = {
       path: '/admin/websites/:id',
       handler: 'websites.findOne',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -111,7 +111,7 @@ module.exports = {
       path: '/admin/websites/:id/approve',
       handler: 'websites.approve',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -122,7 +122,7 @@ module.exports = {
       path: '/admin/websites/:id/reject',
       handler: 'websites.reject',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -133,7 +133,7 @@ module.exports = {
       path: '/admin/websites/:id',
       handler: 'websites.delete',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -144,7 +144,7 @@ module.exports = {
       path: '/admin/websites/bulk-approve',
       handler: 'websites.bulkApprove',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -155,7 +155,7 @@ module.exports = {
       path: '/admin/websites/bulk-reject',
       handler: 'websites.bulkReject',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -166,7 +166,7 @@ module.exports = {
       path: '/admin/websites/bulk-delete',
       handler: 'websites.bulkDelete',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -177,7 +177,7 @@ module.exports = {
       path: '/admin/websites/:id/metrics',
       handler: 'websites.updateMetrics',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -188,7 +188,7 @@ module.exports = {
       path: '/admin/websites/:id/replace',
       handler: 'websites.replaceWebsite',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -199,7 +199,7 @@ module.exports = {
       path: '/admin/websites/:id',
       handler: 'websites.update',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     }
