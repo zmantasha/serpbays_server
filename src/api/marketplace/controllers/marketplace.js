@@ -534,13 +534,16 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // Deposit-gate: advertisers and anonymous users only see the first
     // MARKETPLACE_UNLOCK_MIN_USD-worth of listings (capped at 10 rows) until
     // they've deposited the minimum. Publishers see only their own and are
-    // never gated.
+    // never gated. Super admins can manually unlock a specific user via
+    // marketplaceUnlocked on the user record (see admin users page).
     const minDepositRequired = getMarketplaceUnlockMin();
     const isPublisherUser =
       user && user.Advertiser === false && user.Publisher === true;
     const lifetimeDeposits =
       !isPublisherUser && user ? await getLifetimeDeposits(strapi, user.id) : 0;
-    const gated = !isPublisherUser && lifetimeDeposits < minDepositRequired;
+    const manuallyUnlocked = !!(user && user.marketplaceUnlocked);
+    const gated =
+      !isPublisherUser && !manuallyUnlocked && lifetimeDeposits < minDepositRequired;
 
     if (gated) {
       if (!ctx.query.pagination) ctx.query.pagination = {};

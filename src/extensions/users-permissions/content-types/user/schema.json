@@ -254,6 +254,20 @@
     "aiGenerationCount": {
       "type": "integer",
       "default": 0
+    },
+    "marketplaceUnlocked": {
+      "type": "boolean",
+      "default": false
+    },
+    "marketplaceUnlockedAt": {
+      "type": "datetime"
+    },
+    "marketplaceUnlockedBy": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "marketplaceUnlockReason": {
+      "type": "text"
     }
   }
 }

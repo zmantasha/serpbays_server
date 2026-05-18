@@ -94,6 +94,37 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       // Get total count for pagination
       const total = await strapi.db.query('plugin::users-permissions.user').count({ where: filters });
 
+      // Batch-compute lifetime deposits for the current page in one go, so
+      // the admin UI can tell whether each user has crossed the deposit gate
+      // without manual unlock. One SUM-grouped query — not N round trips.
+      const minDepositRequired = (() => {
+        const v = parseFloat(process.env.MARKETPLACE_UNLOCK_MIN_USD || '10');
+        return Number.isFinite(v) && v > 0 ? v : 10;
+      })();
+      const userIds = users.map((u) => u.id);
+      const depositsByUser = new Map();
+      if (userIds.length > 0) {
+        const depositRows = await strapi.db
+          .query('api::transaction.transaction')
+          .findMany({
+            where: {
+              users_permissions_user: { $in: userIds },
+              type: 'deposit',
+              transactionStatus: { $in: ['success', 'paid'] },
+            },
+            populate: { users_permissions_user: { fields: ['id'] } },
+            select: ['amount'],
+          });
+        for (const row of depositRows) {
+          const uid = row.users_permissions_user?.id;
+          if (!uid) continue;
+          depositsByUser.set(
+            uid,
+            (depositsByUser.get(uid) || 0) + parseFloat(row.amount || 0)
+          );
+        }
+      }
+
       // Transform user data for admin panel
       const transformedUsers = users.map(user => ({
         id: user.id,
@@ -121,6 +152,10 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           balance: parseFloat(user.user_wallet.balance || 0),
           currency: user.user_wallet.currency || 'USD'
         } : null,
+        marketplaceUnlocked: !!user.marketplaceUnlocked,
+        marketplaceUnlockReason: user.marketplaceUnlockReason || null,
+        lifetimeDeposits: depositsByUser.get(user.id) || 0,
+        minDepositRequired,
         statistics: {
           // Populate uses { count: true }, so Strapi returns { count: N } here
           // — handle the array shape too in case the populate ever changes.
@@ -173,6 +208,28 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
 
       console.log('[USER DETAILS] Successfully fetched user');
 
+      // Marketplace gate context: sum of settled deposit transactions vs. the
+      // env-configured threshold. The admin UI uses this to tell whether the
+      // user has already crossed the gate via real deposits even when no
+      // manual unlock has been applied. Keep these expressions in sync with
+      // marketplace.js (getLifetimeDeposits + getMarketplaceUnlockMin).
+      const minDepositRequired = (() => {
+        const v = parseFloat(process.env.MARKETPLACE_UNLOCK_MIN_USD || '10');
+        return Number.isFinite(v) && v > 0 ? v : 10;
+      })();
+      const depositRows = await strapi.db.query('api::transaction.transaction').findMany({
+        where: {
+          users_permissions_user: id,
+          type: 'deposit',
+          transactionStatus: { $in: ['success', 'paid'] },
+        },
+        select: ['amount'],
+      });
+      const lifetimeDeposits = depositRows.reduce(
+        (s, r) => s + parseFloat(r.amount || 0),
+        0
+      );
+
       const transformedUser = {
         id: user.id,
         username: user.username,
@@ -209,6 +266,12 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           pendingWithdrawalBalance: parseFloat(user.user_wallet.pendingWithdrawalBalance || 0),
           currency: user.user_wallet.currency || 'USD'
         } : null,
+        marketplaceUnlocked: !!user.marketplaceUnlocked,
+        marketplaceUnlockedAt: user.marketplaceUnlockedAt || null,
+        marketplaceUnlockedBy: user.marketplaceUnlockedBy || null,
+        marketplaceUnlockReason: user.marketplaceUnlockReason || null,
+        lifetimeDeposits,
+        minDepositRequired,
         statistics: {
           totalOrders: 0,
           totalSpent: 0,
@@ -329,6 +392,60 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
     } catch (error) {
       console.error('[ADMIN USER TOGGLE BLOCK ERROR]', error);
       return ctx.internalServerError('Failed to update user status');
+    }
+  },
+
+  /**
+   * Manually toggle marketplace gate for a user (super admin only).
+   * Body: { unlocked: boolean, reason?: string }
+   *  - unlocked=true → requires reason, sets the 4 audit fields with the
+   *    acting admin's email and current timestamp captured server-side so
+   *    the client can't spoof them.
+   *  - unlocked=false → clears the 4 audit fields; the user falls back to
+   *    the natural lifetime-deposits gate.
+   */
+  async marketplaceUnlock(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { unlocked, reason } = ctx.request.body || {};
+      const adminEmail = ctx.state.user?.email || 'unknown';
+
+      if (typeof unlocked !== 'boolean') {
+        return ctx.badRequest('Field `unlocked` (boolean) is required.');
+      }
+      if (unlocked && (!reason || !String(reason).trim())) {
+        return ctx.badRequest('Field `reason` is required when unlocking.');
+      }
+
+      const data = unlocked
+        ? {
+            marketplaceUnlocked: true,
+            marketplaceUnlockedAt: new Date(),
+            marketplaceUnlockedBy: adminEmail,
+            marketplaceUnlockReason: String(reason).trim(),
+          }
+        : {
+            marketplaceUnlocked: false,
+            marketplaceUnlockedAt: null,
+            marketplaceUnlockedBy: null,
+            marketplaceUnlockReason: null,
+          };
+
+      console.log(
+        `[ADMIN ACTION] ${adminEmail} ${unlocked ? 'unlocked' : 're-locked'} marketplace for user ${id}` +
+          (unlocked ? ` — reason: ${data.marketplaceUnlockReason}` : '')
+      );
+
+      const updatedUser = await strapi.entityService.update(
+        'plugin::users-permissions.user',
+        id,
+        { data, populate: ['role'] }
+      );
+
+      ctx.send({ data: updatedUser });
+    } catch (error) {
+      console.error('[ADMIN USER MARKETPLACE UNLOCK ERROR]', error);
+      return ctx.internalServerError('Failed to update marketplace access');
     }
   },
 

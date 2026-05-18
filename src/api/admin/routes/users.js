@@ -62,6 +62,15 @@ module.exports = {
       }
     },
     {
+      method: 'PUT',
+      path: '/admin/users/:id/marketplace-unlock',
+      handler: 'users.marketplaceUnlock',
+      config: {
+        policies: ['global::is-super-admin'],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
       method: 'DELETE',
       path: '/admin/users/:id',
       handler: 'users.delete',
