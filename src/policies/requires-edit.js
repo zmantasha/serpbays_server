@@ -10,9 +10,10 @@
  * Allow rules:
  *   - user is super_admin   (always allowed; pagePermissions ignored)
  *   - pagePermissions[pageKey].edit === true
+ *   - pagePermissions[pageKey].delete === true   (delete implies edit)
  *
  * Note: edit does NOT degrade to view here — a route guarded by requires-edit
- * is a mutation and must require the edit flag explicitly.
+ * is a mutation and must require at least the edit flag.
  *
  * Must be used in combination with `is-admin` (or another auth-gate policy)
  * to ensure state.user is populated.
@@ -35,7 +36,7 @@ module.exports = async (policyContext, config, { strapi }) => {
 
   const perms = state.user.pagePermissions || {};
   const entry = perms[pageKey];
-  const allowed = !!entry && !!entry.edit;
+  const allowed = !!entry && (!!entry.edit || !!entry.delete);
   if (!allowed) {
     strapi.log.info(
       `[ACCESS DENIED] edit ${pageKey} - user ${state.user.id} (${state.user.email}) lacks edit permission`,

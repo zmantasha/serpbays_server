@@ -20,10 +20,19 @@ const writeConfig = {
   middlewares: ['global::admin-logger'],
 };
 
+const deleteConfig = {
+  auth: false,
+  policies: [
+    'global::is-admin-with-jwt',
+    { name: 'global::requires-delete', config: { pageKey: PAGE_KEY } },
+  ],
+  middlewares: ['global::admin-logger'],
+};
+
 module.exports = {
   routes: [
     { method: 'GET',    path: '/admin/shared-list-templates',     handler: 'shared-list-templates.find',   config: readConfig  },
     { method: 'POST',   path: '/admin/shared-list-templates',     handler: 'shared-list-templates.create', config: writeConfig },
-    { method: 'DELETE', path: '/admin/shared-list-templates/:id', handler: 'shared-list-templates.delete', config: writeConfig },
+    { method: 'DELETE', path: '/admin/shared-list-templates/:id', handler: 'shared-list-templates.delete', config: deleteConfig },
   ],
 };

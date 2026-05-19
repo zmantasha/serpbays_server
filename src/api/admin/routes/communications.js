@@ -75,7 +75,7 @@ module.exports = {
       path: '/admin/communications/:id',
       handler: 'communications.delete',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'communications' } }],
+        policies: ['global::is-admin', { name: 'global::requires-delete', config: { pageKey: 'communications' } }],
         middlewares: ['global::admin-logger']
       }
     }

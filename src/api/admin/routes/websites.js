@@ -133,7 +133,7 @@ module.exports = {
       path: '/admin/websites/:id',
       handler: 'websites.delete',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
+        policies: ['global::is-admin', { name: 'global::requires-delete', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },
@@ -166,7 +166,7 @@ module.exports = {
       path: '/admin/websites/bulk-delete',
       handler: 'websites.bulkDelete',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
+        policies: ['global::is-admin', { name: 'global::requires-delete', config: { pageKey: 'websites' } }],
         middlewares: []
       }
     },

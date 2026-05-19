@@ -9,7 +9,8 @@
  * Allow rules (any one is sufficient):
  *   - user is super_admin   (always allowed; pagePermissions ignored)
  *   - pagePermissions[pageKey].view === true
- *   - pagePermissions[pageKey].edit === true   (edit implies view)
+ *   - pagePermissions[pageKey].edit === true     (edit implies view)
+ *   - pagePermissions[pageKey].delete === true   (delete implies view)
  *
  * Deny rules:
  *   - no authenticated user
@@ -46,7 +47,7 @@ module.exports = async (policyContext, config, { strapi }) => {
     return false;
   }
 
-  const allowed = !!entry.view || !!entry.edit;
+  const allowed = !!entry.view || !!entry.edit || !!entry.delete;
   if (!allowed) {
     strapi.log.info(
       `[ACCESS DENIED] view ${pageKey} - user ${state.user.id} (${state.user.email}) lacks view permission`,

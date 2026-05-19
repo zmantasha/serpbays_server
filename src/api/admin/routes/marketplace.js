@@ -66,7 +66,7 @@ module.exports = {
       path: '/admin/marketplace/:id',
       handler: 'marketplace.delete',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
+        policies: ['global::is-admin', { name: 'global::requires-delete', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -84,7 +84,7 @@ module.exports = {
       path: '/admin/marketplace/bulk-delete',
       handler: 'marketplace.bulkDelete',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
+        policies: ['global::is-admin', { name: 'global::requires-delete', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     }

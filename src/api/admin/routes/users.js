@@ -75,7 +75,7 @@ module.exports = {
       path: '/admin/users/:id',
       handler: 'users.delete',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'users' } }],
+        policies: ['global::is-admin', { name: 'global::requires-delete', config: { pageKey: 'users' } }],
         middlewares: ['global::admin-logger']
       }
     },
