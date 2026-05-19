@@ -102,7 +102,7 @@ module.exports = {
       path: '/admin/orders/create-on-behalf',
       handler: 'orders.createOnBehalf',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'orders' } }],
+        policies: ['global::is-admin', { name: 'global::requires-create', config: { pageKey: 'orders' } }],
         middlewares: ['global::admin-logger']
       }
     }

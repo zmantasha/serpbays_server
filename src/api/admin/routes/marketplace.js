@@ -75,7 +75,7 @@ module.exports = {
       path: '/admin/marketplace/bulk-import',
       handler: 'marketplace.bulkImport',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
+        policies: ['global::is-admin', { name: 'global::requires-create', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     },
