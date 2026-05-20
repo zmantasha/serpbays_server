@@ -27,10 +27,14 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       // Build filters
       const filters = {};
 
-      // Search filter
+      // Search filter — matches transaction id, gateway txn id, description,
+      // and the related user's username / email.
       if (search) {
         filters.$or = [
-          { transactionId: { $containsi: search } },
+          { gatewayTransactionId: { $containsi: search } },
+          { description: { $containsi: search } },
+          { users_permissions_user: { username: { $containsi: search } } },
+          { users_permissions_user: { email: { $containsi: search } } },
           { id: { $eq: parseInt(search) || 0 } }
         ];
       }
