@@ -587,10 +587,14 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
       // The template's "View Transaction" button binds to {{transaction_url}};
       // view_transaction_url is kept as an alias for any other consumer.
-      transaction_url: `${clientUrl}/wallet/transactions`,
-      view_transaction_url: `${clientUrl}/wallet/transactions`,
+      // The client app shows transactions inside the /wallet page (there is
+      // no separate /wallet/transactions route), so link there.
+      transaction_url: `${clientUrl}/wallet`,
+      view_transaction_url: `${clientUrl}/wallet`,
       view_wallet_url: `${clientUrl}/wallet`,
-      support_url: `${clientUrl}/support`,
+      // There is no in-app /support page; use a mailto so the link works in
+      // every mail client. SUPPORT_EMAIL overrides the default.
+      support_url: `mailto:${process.env.SUPPORT_EMAIL || 'support@serpbays.com'}`,
 
       ...extra,
     };
