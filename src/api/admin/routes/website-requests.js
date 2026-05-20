@@ -11,7 +11,7 @@ module.exports = {
       path: '/admin/website-requests',
       handler: 'website-requests.getWebsiteRequests',
       config: {
-        policies: ['global::is-admin']
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'website-requests' } }]
       }
     },
     {
@@ -19,7 +19,7 @@ module.exports = {
       path: '/admin/website-requests/stats',
       handler: 'website-requests.getWebsiteRequestStats',
       config: {
-        policies: ['global::is-admin']
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'website-requests' } }]
       }
     },
     {
@@ -27,7 +27,7 @@ module.exports = {
       path: '/admin/website-requests/:id',
       handler: 'website-requests.getWebsiteRequestById',
       config: {
-        policies: ['global::is-admin']
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'website-requests' } }]
       }
     },
     {
@@ -35,7 +35,7 @@ module.exports = {
       path: '/admin/website-requests/:id/approve',
       handler: 'website-requests.approveWebsiteRequest',
       config: {
-        policies: ['global::is-admin']
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'website-requests' } }]
       }
     },
     {
@@ -43,7 +43,7 @@ module.exports = {
       path: '/admin/website-requests/:id/reject',
       handler: 'website-requests.rejectWebsiteRequest',
       config: {
-        policies: ['global::is-admin']
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'website-requests' } }]
       }
     },
     {
@@ -51,7 +51,7 @@ module.exports = {
       path: '/admin/website-requests/bulk-process',
       handler: 'website-requests.bulkProcessWebsiteRequests',
       config: {
-        policies: ['global::is-admin']
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'website-requests' } }]
       }
     }
   ]

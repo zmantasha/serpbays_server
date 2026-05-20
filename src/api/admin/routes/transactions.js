@@ -12,7 +12,7 @@ module.exports = {
       path: '/admin/transactions',
       handler: 'transactions.find',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'transactions' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -21,7 +21,7 @@ module.exports = {
       path: '/admin/transactions/stats',
       handler: 'transactions.getStats',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'transactions' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -30,7 +30,7 @@ module.exports = {
       path: '/admin/transactions/report',
       handler: 'transactions.generateReport',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'transactions' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -39,7 +39,7 @@ module.exports = {
       path: '/admin/transactions/:id',
       handler: 'transactions.findOne',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'transactions' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -48,7 +48,7 @@ module.exports = {
       path: '/admin/transactions/:id/status',
       handler: 'transactions.updateStatus',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'transactions' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -57,7 +57,7 @@ module.exports = {
       path: '/admin/transactions/:id',
       handler: 'transactions.update',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'transactions' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -66,7 +66,7 @@ module.exports = {
       path: '/admin/transactions/:id/approve',
       handler: 'transactions.approve',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'transactions' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -75,7 +75,7 @@ module.exports = {
       path: '/admin/transactions/:id/reject',
       handler: 'transactions.reject',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'transactions' } }],
         middlewares: ['global::admin-logger']
       }
     }

@@ -5,6 +5,7 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
+const { resolvePermissions } = require('../../../lib/admin-pages');
 
 module.exports = createCoreController('plugin::users-permissions.user', ({ strapi }) => ({
 
@@ -74,11 +75,11 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       const userWithRole = await strapi.entityService.findOne(
         'plugin::users-permissions.user',
         user.id,
-        { populate: ['role'] }
+        { populate: ['role'], fields: ['id', 'username', 'email', 'confirmed', 'blocked', 'createdAt', 'updatedAt', 'pagePermissions'] }
       );
 
       // Check if user has proper admin role
-      const allowedAdminTypes = ['super_admin', 'admin', 'moderator'];
+      const allowedAdminTypes = ['super_admin', 'admin'];
       const isAdmin = userWithRole.role?.type && allowedAdminTypes.includes(userWithRole.role.type);
 
       if (!isAdmin) {
@@ -100,7 +101,8 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
           confirmed: userWithRole.confirmed,
           blocked: userWithRole.blocked,
           createdAt: userWithRole.createdAt,
-          updatedAt: userWithRole.updatedAt
+          updatedAt: userWithRole.updatedAt,
+          pagePermissions: resolvePermissions(userWithRole)
         }
       });
 
@@ -121,7 +123,8 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         'plugin::users-permissions.user',
         userId,
         {
-          populate: ['role', 'user_wallet']
+          populate: ['role', 'user_wallet'],
+          fields: ['id', 'username', 'email', 'confirmed', 'blocked', 'createdAt', 'updatedAt', 'pagePermissions']
         }
       );
 
@@ -134,7 +137,8 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         blocked: user.blocked,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
-        wallet: user.user_wallet
+        wallet: user.user_wallet,
+        pagePermissions: resolvePermissions(user)
       });
 
     } catch (error) {

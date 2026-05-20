@@ -3984,6 +3984,14 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.DefaultTo<{
         showSensitive: false;
       }>;
+    marketplaceUnlocked: Schema.Attribute.Boolean &
+      Schema.Attribute.DefaultTo<false>;
+    marketplaceUnlockedAt: Schema.Attribute.DateTime;
+    marketplaceUnlockedBy: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    marketplaceUnlockReason: Schema.Attribute.Text;
     notificationPreferences: Schema.Attribute.JSON &
       Schema.Attribute.Configurable &
       Schema.Attribute.DefaultTo<{
@@ -4010,6 +4018,7 @@ export interface PluginUsersPermissionsUser
           skipped: false;
         };
       }>;
+    pagePermissions: Schema.Attribute.JSON;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{

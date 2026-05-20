@@ -12,7 +12,7 @@ module.exports = {
       path: '/admin/withdrawals',
       handler: 'withdrawals.find',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'withdrawals' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -21,7 +21,7 @@ module.exports = {
       path: '/admin/withdrawals/stats',
       handler: 'withdrawals.getStats',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'withdrawals' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -30,7 +30,7 @@ module.exports = {
       path: '/admin/withdrawals/:id',
       handler: 'withdrawals.findOne',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'withdrawals' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -39,7 +39,7 @@ module.exports = {
       path: '/admin/withdrawals/:id/approve',
       handler: 'withdrawals.approve',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'withdrawals' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -48,7 +48,7 @@ module.exports = {
       path: '/admin/withdrawals/:id/reject',
       handler: 'withdrawals.reject',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'withdrawals' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -57,7 +57,7 @@ module.exports = {
       path: '/admin/withdrawals/:id/mark-as-paid',
       handler: 'withdrawals.markAsPaid',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'withdrawals' } }],
         middlewares: ['global::admin-logger']
       }
     },
@@ -66,7 +66,7 @@ module.exports = {
       path: '/admin/withdrawals/bulk-process',
       handler: 'withdrawals.bulkProcess',
       config: {
-        policies: ['global::is-admin'],
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'withdrawals' } }],
         middlewares: ['global::admin-logger']
       }
     }

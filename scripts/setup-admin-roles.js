@@ -27,28 +27,22 @@ async function main() {
 
     console.log('🚀 Strapi loaded successfully');
 
-    // Define admin roles with proper hierarchy
+    // Admin role types. Permissions live per-user on `pagePermissions`,
+    // managed via /role-management UI (POST/PUT /api/admin/admins).
     const adminRoles = [
       {
         name: 'Super Admin',
-        description: 'Full system access with all permissions',
+        description: 'Full system access — hardcoded all-permissions',
         type: 'super_admin',
         isAdmin: true,
         level: 1
       },
       {
         name: 'Admin',
-        description: 'Administrative access to manage users and content',
+        description: 'Administrative access (per-user pagePermissions assigned by super admin)',
         type: 'admin',
         isAdmin: true,
         level: 2
-      },
-      {
-        name: 'Moderator',
-        description: 'Limited admin access for content moderation',
-        type: 'moderator',
-        isAdmin: true,
-        level: 3
       }
     ];
 

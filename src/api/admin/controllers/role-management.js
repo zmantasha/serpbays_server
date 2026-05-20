@@ -23,7 +23,7 @@ module.exports = createCoreController('plugin::users-permissions.role', ({ strap
       }
 
       // Validate role type
-      const validTypes = ['super_admin', 'admin', 'moderator', 'custom'];
+      const validTypes = ['super_admin', 'admin', 'custom'];
       if (!validTypes.includes(type)) {
         return ctx.badRequest(`Invalid role type. Must be one of: ${validTypes.join(', ')}`);
       }
@@ -93,7 +93,7 @@ module.exports = createCoreController('plugin::users-permissions.role', ({ strap
       }
 
       // Prevent updating system roles
-      const systemRoles = ['super_admin', 'admin', 'moderator'];
+      const systemRoles = ['super_admin', 'admin'];
       if (systemRoles.includes(existingRole.type)) {
         return ctx.badRequest('Cannot update system roles');
       }
@@ -147,7 +147,7 @@ module.exports = createCoreController('plugin::users-permissions.role', ({ strap
       }
 
       // Prevent deleting system roles
-      const systemRoles = ['super_admin', 'admin', 'moderator'];
+      const systemRoles = ['super_admin', 'admin'];
       if (systemRoles.includes(existingRole.type)) {
         return ctx.badRequest('Cannot delete system roles');
       }
