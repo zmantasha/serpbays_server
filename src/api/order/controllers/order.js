@@ -1903,6 +1903,36 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                   order.totalAmount
                 );
                 console.log(`Order completion email sent for order ${order.id}`);
+
+                // Earnings transaction email (separate from the order-completion
+                // notification above). completeOrder() credits the publisher
+                // via addMainFunds, which creates a transaction tagged with
+                // description "Earnings from order #X" and linked to the order.
+                // sendPaymentConfirmationEmail uses transaction.order to flip
+                // the universal template into earning mode.
+                try {
+                  const earningTransaction = await strapi.db.query('api::transaction.transaction').findOne({
+                    where: {
+                      users_permissions_user: publisherId,
+                      order: order.id,
+                      description: { $contains: 'Earnings from order' },
+                    },
+                    populate: { order: { populate: ['website'] } },
+                    orderBy: { createdAt: 'desc' },
+                  });
+
+                  if (earningTransaction) {
+                    await emailService.sendPaymentConfirmationEmail(
+                      earningTransaction,
+                      publisherUser.email
+                    );
+                    console.log(`Earnings transaction email sent for order ${order.id} (tx ${earningTransaction.id})`);
+                  } else {
+                    console.warn(`No earnings transaction found for order ${order.id}; earnings email not sent`);
+                  }
+                } catch (earningEmailError) {
+                  console.error('Failed to send earnings transaction email:', earningEmailError);
+                }
               }
             } catch (emailError) {
               console.error('Failed to send order completion email:', emailError);

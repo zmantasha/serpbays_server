@@ -550,6 +550,15 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     }
 
     const clientUrl = process.env.CLIENT_URL || '';
+    // Explicit booleans (not undefined) so the AutoSend template's {{#if}}
+    // checks can actually hide non-applicable sections — leaving these unset
+    // caused the Earnings block to render on withdrawal emails.
+    const isEarning = flags.is_earning === true;
+    const isWithdrawal = flags.is_withdrawal === true;
+    const isWalletCredit = flags.is_wallet_credit === true;
+    const isPaymentFailed = flags.is_payment_failed === true;
+    const isBonus = flags.is_bonus === true;
+
     const dynamicData = {
       transaction_id: transaction.id,
       transaction_status: statusLabel,
@@ -560,12 +569,25 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       notes: notes || transaction.description || '',
       status_message: statusMessage || '',
 
-      is_earning: flags.is_earning || undefined,
-      is_withdrawal: flags.is_withdrawal || undefined,
-      is_wallet_credit: flags.is_wallet_credit || undefined,
-      is_payment_failed: flags.is_payment_failed || undefined,
-      is_bonus: flags.is_bonus || undefined,
+      is_earning: isEarning,
+      is_withdrawal: isWithdrawal,
+      is_wallet_credit: isWalletCredit,
+      is_payment_failed: isPaymentFailed,
+      is_bonus: isBonus,
 
+      // Section-specific defaults so the universal template never renders
+      // empty labels (e.g. "Order ID:" with nothing after it for a withdrawal).
+      order_id: '',
+      publisher_website: '',
+      withdrawal_status: isWithdrawal ? statusLabel : '',
+      // The template references {{timeline}}; estimated_timeline kept as an
+      // alias in case the template (or a future revision) reads either.
+      timeline: '',
+      estimated_timeline: '',
+
+      // The template's "View Transaction" button binds to {{transaction_url}};
+      // view_transaction_url is kept as an alias for any other consumer.
+      transaction_url: `${clientUrl}/wallet/transactions`,
       view_transaction_url: `${clientUrl}/wallet/transactions`,
       view_wallet_url: `${clientUrl}/wallet`,
       support_url: `${clientUrl}/support`,
@@ -573,9 +595,35 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       ...extra,
     };
 
+    // Back-compat: callers historically passed `withdrawal_timeline` in `extra`.
+    // The template's "Estimated Timeline" field reads {{timeline}}, so mirror
+    // the legacy key onto both timeline aliases when only the legacy value
+    // was supplied.
+    const legacyTimeline = dynamicData.withdrawal_timeline;
+    if (legacyTimeline) {
+      if (!extra.timeline) dynamicData.timeline = legacyTimeline;
+      if (!extra.estimated_timeline) dynamicData.estimated_timeline = legacyTimeline;
+    }
+
+    // Route to a purpose-specific template when one is configured. AutoSend
+    // templates don't support conditional sections, so the "universal"
+    // template renders every block (Earnings, Withdrawal, Wallet, ...) on
+    // every email. To avoid an Earnings card appearing on a withdrawal mail
+    // (and vice versa), each scenario should point at a template that only
+    // contains its own blocks. Falls back to the universal template when a
+    // scenario-specific one isn't configured.
+    const universalTemplateId = process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af';
+    const templateId =
+      (isEarning && process.env.AUTOSEND_TEMPLATE_TRANSACTION_EARNING) ||
+      (isWithdrawal && process.env.AUTOSEND_TEMPLATE_TRANSACTION_WITHDRAWAL) ||
+      (isWalletCredit && process.env.AUTOSEND_TEMPLATE_TRANSACTION_WALLET) ||
+      (isPaymentFailed && process.env.AUTOSEND_TEMPLATE_TRANSACTION_FAILED) ||
+      (isBonus && process.env.AUTOSEND_TEMPLATE_TRANSACTION_BONUS) ||
+      universalTemplateId;
+
     await strapi.service('api::global.autosend-service').send({
       to: userEmail,
-      templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+      templateId,
       dynamicData,
       tags: tags || ['transaction', statusLabel],
     });
