@@ -559,14 +559,27 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     const isPaymentFailed = flags.is_payment_failed === true;
     const isBonus = flags.is_bonus === true;
 
+    // For withdrawal emails, show the user's net payout (what they actually
+    // receive) — never the gross amount that includes the internal platform
+    // fee. The "amount" field on the transaction stores the gross deduction;
+    // "netAmount" stores the payout. Falling back to amount only when
+    // netAmount is unavailable keeps non-withdrawal flows untouched.
+    const displayAmount = isWithdrawal
+      ? (transaction.netAmount != null ? transaction.netAmount : transaction.amount || 0)
+      : (transaction.amount || 0);
+
     const dynamicData = {
       transaction_id: transaction.id,
       transaction_status: statusLabel,
       transaction_type: transaction.type || 'payment',
-      amount: transaction.amount || 0,
+      amount: displayAmount,
       payment_gateway: transaction.gateway || 'system',
       gateway_transaction_id: transaction.gatewayTransactionId || '',
-      notes: notes || transaction.description || '',
+      // For withdrawals, never fall back to transaction.description — it
+      // contains internal accounting ("$X payout + $Y platform fee") that
+      // shouldn't be exposed to the user. Other transaction types may safely
+      // use the description as a notes default.
+      notes: notes || (isWithdrawal ? '' : transaction.description || ''),
       status_message: statusMessage || '',
 
       is_earning: isEarning,
@@ -656,7 +669,10 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       userEmail,
       statusLabel: 'approved',
       statusMessage: 'Your withdrawal request has been approved and will be processed soon.',
-      notes: transaction.description || transaction.notes || '',
+      // Intentionally do NOT use transaction.description — it includes the
+      // internal platform-fee breakdown ("$X payout + $Y platform fee") which
+      // shouldn't be surfaced to the user.
+      notes: transaction.notes || '',
       flags: { is_withdrawal: true },
       extra: { withdrawal_timeline: this.getWithdrawalTimeline(transaction.gateway) },
       tags: ['transaction', 'withdrawal', 'approved'],
