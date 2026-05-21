@@ -48,7 +48,7 @@ module.exports = {
       path: '/admin/users/:id/block',
       handler: 'users.toggleBlock',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'users' } }],
+        policies: ['global::is-admin', { name: 'global::requires-suspend', config: { pageKey: 'users' } }],
         middlewares: ['global::admin-logger']
       }
     },
