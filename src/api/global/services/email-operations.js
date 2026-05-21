@@ -4,7 +4,7 @@
  * Email Operations Service
  * Handles all project operations via email including:
  * - Accepting payments
- * - Creating orders  
+ * - Creating orders
  * - Delivering orders
  * - Completing orders
  * - Making transactions
@@ -13,6 +13,17 @@
  */
 
 const { createCoreService } = require('@strapi/strapi').factories;
+
+// Format an order status value for display in subject lines and the status
+// chip in transactional emails: title-cases each underscore-separated word
+// (e.g. "revision_requested" -> "Revision Requested", "accepted" -> "Accepted").
+const formatOrderStatus = (status) => {
+  if (!status || typeof status !== 'string') return status;
+  return status
+    .split('_')
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w))
+    .join(' ');
+};
 
 module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
@@ -53,7 +64,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Order details - using snake_case to match AutoSend template
           order_id: order.id,
-          order_status: 'created',
+          order_status: formatOrderStatus('created'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -122,7 +133,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'rejected',
+          order_status: formatOrderStatus('rejected'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -195,7 +206,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'cancelled',
+          order_status: formatOrderStatus('cancelled'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -267,7 +278,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'accepted',
+          order_status: formatOrderStatus('accepted'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -335,7 +346,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'revision_requested',
+          order_status: formatOrderStatus('revision_requested'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -401,7 +412,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'delivered',
+          order_status: formatOrderStatus('delivered'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -470,7 +481,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'completed',
+          order_status: formatOrderStatus('completed'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -2290,7 +2301,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             minute: '2-digit'
           }) : '',
           order_id: order?.id ? String(order.id) : '',
-          order_status: order?.orderStatus || 'Active',
+          order_status: formatOrderStatus(order?.orderStatus) || 'Active',
           order_date: order?.createdAt ? new Date(order.createdAt).toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'short',
@@ -2328,7 +2339,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Order details
           order_id: order.id,
-          order_status: 'delivery_overdue',
+          order_status: formatOrderStatus('delivery_overdue'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -2427,7 +2438,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           is_order_confirmation: true,
           advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
           order_id: order.id,
-          order_status: 'Pending',
+          order_status: formatOrderStatus('Pending'),
           order_date: new Date(order.orderDate || order.createdAt).toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'long',
