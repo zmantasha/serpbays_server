@@ -86,8 +86,42 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.notFound('Withdrawal request not found');
       }
 
+      // Surface platform fee details. The withdrawal-request row stores only the
+      // user's net payout in `amount`; the linked transaction stores the actual
+      // fee/gross. Use the transaction when present, otherwise recompute with
+      // the same 20% formula used at request time.
+      const PLATFORM_FEE_RATE = 0.20;
+      const netAmount = parseFloat(withdrawal.amount) || 0;
+      let platformFee = Math.round((netAmount / (1 - PLATFORM_FEE_RATE)) * PLATFORM_FEE_RATE * 100) / 100;
+      let grossAmount = Math.round((netAmount + platformFee) * 100) / 100;
+      let feeSource = 'computed';
+
+      try {
+        const linkedTxn = await strapi.db.query('api::transaction.transaction').findOne({
+          where: {
+            type: 'withdrawal',
+            description: { $contains: `Withdrawal request #${id}` }
+          },
+          orderBy: { id: 'desc' }
+        });
+        if (linkedTxn) {
+          if (linkedTxn.fee != null) platformFee = parseFloat(linkedTxn.fee);
+          if (linkedTxn.amount != null) grossAmount = parseFloat(linkedTxn.amount);
+          feeSource = 'transaction';
+        }
+      } catch (e) {
+        console.warn('[ADMIN WITHDRAWAL FIND ONE] Could not load linked transaction for fee:', e.message);
+      }
+
       ctx.send({
-        data: withdrawal
+        data: {
+          ...withdrawal,
+          net_amount: netAmount,
+          platform_fee: platformFee,
+          gross_amount: grossAmount,
+          platform_fee_rate: PLATFORM_FEE_RATE,
+          fee_source: feeSource
+        }
       });
 
     } catch (error) {
