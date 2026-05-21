@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Serpbays Order Update</title>
+  <style>
+    /* Most clients ignore <style>; rules below are progressive
+       enhancements for clients that do support media queries
+       (Apple Mail, Gmail webmail, iOS Mail). All critical styles
+       are also inlined on each element. */
+    @media only screen and (max-width: 600px) {
+      .sb-card { width: 100% !important; border-radius: 0 !important; }
+      .sb-pad { padding-left: 16px !important; padding-right: 16px !important; }
+      .sb-h1 { font-size: 22px !important; }
+      .sb-cta a { display: block !important; width: 100% !important; text-align: center !important; }
+      .sb-row-label, .sb-row-value { display: block !important; width: 100% !important; padding: 6px 14px !important; }
+      .sb-row-label { padding-top: 12px !important; padding-bottom: 0 !important; }
+      .sb-row-value { padding-top: 4px !important; padding-bottom: 12px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0; padding:0; background:#f6f7f9; -webkit-font-smoothing:antialiased;">
+
+  <!-- Preheader (hidden in the body, shown as preview text in inboxes) -->
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#f6f7f9;">
+    {{#if is_new_order_for_publisher}}
+      You have a new order to review. Accept it now from your New Orders page.
+    {{else}}{{#if is_order_confirmation}}
+      Your order has been placed successfully. Here are the details.
+    {{else}}
+      Here are the latest details on your order.
+    {{/if}}{{/if}}
+  </div>
+
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f6f7f9;">
+    <tbody><tr>
+      <td align="center" style="padding:24px 12px;">
+
+        <!-- Card -->
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="620" class="sb-card" style="width:620px; max-width:620px; background:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 8px 24px rgba(17,24,39,0.08);">
+
+          <!-- Brand strip -->
+          <tbody><tr>
+            <td style="background:#ff5c48; height:6px; line-height:6px; font-size:0;">&nbsp;</td>
+          </tr>
+
+          <!-- Header: logo on dark bg -->
+          <tr>
+            <td align="center" style="background:#0b0b0c; padding:22px 22px;">
+              <img src="https://app.serpbays.com/logo.png" alt="Serpbays" width="170" style="display:block; width:170px; max-width:170px; height:auto;">
+            </td>
+          </tr>
+
+          <!-- Title -->
+          <tr>
+            <td align="center" class="sb-pad" style="padding:24px 28px 6px 28px; background:#ffffff;">
+              <div class="sb-h1" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:24px; font-weight:700; color:#111827; letter-spacing:-0.2px;">
+                {{#if is_new_order_for_publisher}}
+                  🎁 New Order Available
+                {{else}}{{#if is_order_confirmation}}
+                  Order Confirmation
+                {{else}}
+                  Order Update
+                {{/if}}{{/if}}
+              </div>
+              <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; color:#6b7280; margin-top:8px; line-height:1.5;">
+                {{#if is_new_order_for_publisher}}
+                  Here are the order details
+                {{else}}{{#if is_order_confirmation}}
+                  Your order has been successfully placed.
+                {{else}}
+                  Here are the order details
+                {{/if}}{{/if}}
+              </div>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td class="sb-pad" style="padding:18px 28px 8px 28px;">
+
+              <!-- Greeting -->
+              <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; color:#111827; line-height:1.6;">
+                Hi <strong>{{#if is_order_confirmation}}{{advertiser_name}}{{else}}{{publisher_name}}{{/if}}</strong>,
+                <br><br>
+                {{#if is_new_order_for_publisher}}
+                  You've received a new order on Serpbays. Review the details below and accept it to get started.
+                {{else}}{{#if is_order_confirmation}}
+                  Your order has been successfully placed. Details are below:
+                {{else}}
+                  Your order status has been updated. Details are below:
+                {{/if}}{{/if}}
+              </div>
+
+              <!-- Publisher new-order CTA (appears only on the first email) -->
+              {{#if is_new_order_for_publisher}}
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:18px; background:#fff7f6; border:1px solid rgba(255,92,72,0.25); border-radius:12px;">
+                <tbody><tr>
+                  <td style="padding:18px 18px;">
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; font-weight:700; color:#111827;">
+                      Ready to accept this order?
+                    </div>
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#374151; line-height:1.6; margin-top:6px;">
+                      Head to your New Orders page to review the brief and accept the order. Once accepted, you can start work right away.
+                    </div>
+                    <div class="sb-cta" style="margin-top:14px;">
+                      <a href="{{publisher_new_orders_url}}" style="display:inline-block; background:#ff5c48; color:#ffffff; text-decoration:none; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; font-weight:700; padding:12px 20px; border-radius:10px; box-shadow:0 4px 10px rgba(255,92,72,0.25);">
+                        Accept Order → Go to New Orders
+                      </a>
+                    </div>
+                  </td>
+                </tr></tbody>
+              </table>
+              {{/if}}
+
+              <!-- Details table -->
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:18px; border:1px solid #eef0f3; border-radius:12px; overflow:hidden;">
+                <tbody>
+                  <tr>
+                    <td class="sb-row-label" style="width:34%; padding:14px 16px; background:#fafafa; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px;">Order ID</td>
+                    <td class="sb-row-value" style="padding:14px 16px; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; color:#111827;"><strong>#{{order_id}}</strong></td>
+                  </tr>
+                  <tr>
+                    <td class="sb-row-label" style="width:34%; padding:14px 16px; background:#fafafa; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px;">Status</td>
+                    <td class="sb-row-value" style="padding:14px 16px;">
+                      {{#if is_new_order_for_publisher}}
+                        <span style="display:inline-block; padding:6px 12px; border-radius:999px; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; font-weight:700; color:#ff5c48; background:#fff1ef; border:1px solid rgba(255,92,72,0.35);">New Order</span>
+                      {{else}}{{#if is_order_confirmation}}
+                        <span style="display:inline-block; padding:6px 12px; border-radius:999px; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; font-weight:700; color:#b45309; background:#fef3c7; border:1px solid rgba(245,158,11,0.35);">Pending</span>
+                      {{else}}
+                        <span style="display:inline-block; padding:6px 12px; border-radius:999px; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; font-weight:700; color:#ff5c48; background:#fff1ef; border:1px solid rgba(255,92,72,0.35);">{{order_status}}</span>
+                      {{/if}}{{/if}}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="sb-row-label" style="width:34%; padding:14px 16px; background:#fafafa; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px;">Order Date</td>
+                    <td class="sb-row-value" style="padding:14px 16px; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; color:#111827;">{{order_date}}</td>
+                  </tr>
+                  <tr>
+                    <td class="sb-row-label" style="width:34%; padding:14px 16px; background:#fafafa; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px;">Website</td>
+                    <td class="sb-row-value" style="padding:14px 16px; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px;">
+                      <a href="{{website_url}}" style="color:#ff5c48; text-decoration:none; font-weight:700; word-break:break-all;">{{website_url}}</a>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <!-- Cancel / Reject -->
+              {{#if order_cancel_reason}}
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:14px; border:1px solid rgba(255,92,72,0.25); background:#fff7f6; border-radius:12px;">
+                <tbody><tr>
+                  <td style="padding:16px 18px;">
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; font-weight:700; color:#111827;">Cancellation / Rejection Reason</div>
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#374151; line-height:1.6; margin-top:6px;">{{order_cancel_reason}}</div>
+                    {{#if amount_refunded}}
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#111827; margin-top:12px;">
+                      <strong>Amount Refunded:</strong> <span style="color:#ff5c48; font-weight:800;">{{amount_refunded}}</span>
+                    </div>
+                    {{/if}}
+                  </td>
+                </tr></tbody>
+              </table>
+              {{/if}}
+
+              <!-- Revision Request -->
+              {{#if revision_request_description}}
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:14px; border:1px solid #eef0f3; background:#ffffff; border-radius:12px;">
+                <tbody><tr>
+                  <td style="padding:16px 18px;">
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; font-weight:700; color:#111827;">Revision Requested</div>
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#374151; line-height:1.6; margin-top:6px;">{{revision_request_description}}</div>
+                  </td>
+                </tr></tbody>
+              </table>
+              {{/if}}
+
+              <!-- Delivery -->
+              {{#if delivery_proof_url}}
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:14px; border:1px solid #eef0f3; background:#ffffff; border-radius:12px;">
+                <tbody><tr>
+                  <td style="padding:16px 18px;">
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; font-weight:700; color:#111827;">Delivery Details</div>
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#374151; line-height:1.6; margin-top:6px;">
+                      <strong>Proof URL:</strong>
+                      <a href="{{delivery_proof_url}}" style="color:#ff5c48; text-decoration:none; font-weight:700; word-break:break-all;">{{delivery_proof_url}}</a>
+                    </div>
+                    {{#if delivery_message}}
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#374151; line-height:1.6; margin-top:10px;">
+                      <strong>Message:</strong><br>
+                      {{delivery_message}}
+                    </div>
+                    {{/if}}
+                  </td>
+                </tr></tbody>
+              </table>
+              {{/if}}
+
+              <!-- Primary CTA: View Order Details -->
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 4px 0;" class="sb-cta">
+                <tbody><tr>
+                  <td>
+                    <a href="{{order_link}}" style="display:inline-block; background:#111827; color:#ffffff; text-decoration:none; font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; font-weight:700; padding:12px 22px; border-radius:10px;">
+                      View Order Details
+                    </a>
+                  </td>
+                </tr></tbody>
+              </table>
+
+              <!-- Support -->
+              <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; color:#6b7280; line-height:1.6; margin-top:18px;">
+                Need help? Reply to this email and our team will assist you.
+              </div>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td class="sb-pad" style="padding:18px 28px; background:#f9fafb; border-top:1px solid #eef0f3;">
+              <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; color:#9ca3af; text-align:center; line-height:1.6;">
+                © {{year}} Serpbays. All rights reserved.<br>
+                <a href="mailto:support@serpbays.com" style="color:#9ca3af; text-decoration:underline;">support@serpbays.com</a>
+              </div>
+            </td>
+          </tr>
+
+        </tbody></table>
+        <!-- /Card -->
+
+      </td>
+    </tr></tbody>
+  </table>
+
+</body>
+</html>

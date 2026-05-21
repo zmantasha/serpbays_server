@@ -77,6 +77,13 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/publisher/available-orders`,
           dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          publisher_new_orders_url: `${process.env.CLIENT_URL}/publisher/available-orders`,
+
+          // Lets the AutoSend template render the publisher-only
+          // "Accept Order" CTA. Intentionally set only here so the block
+          // appears on the first email a publisher receives for an order
+          // and not on later status updates (cancellation, revision, etc.).
+          is_new_order_for_publisher: true,
 
           // Timestamp
           order_date: new Date(order.createdAt).toLocaleDateString('en-US', {
