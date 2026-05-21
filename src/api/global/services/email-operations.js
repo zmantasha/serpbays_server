@@ -669,14 +669,28 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       userEmail,
       statusLabel: 'approved',
       statusMessage: 'Your withdrawal request has been approved and will be processed soon.',
-      // Intentionally do NOT use transaction.description — it includes the
-      // internal platform-fee breakdown ("$X payout + $Y platform fee") which
-      // shouldn't be surfaced to the user.
-      notes: transaction.notes || '',
+      // Sanitize the internal description before showing it as Details — strip
+      // the "$X payout + $Y platform fee (Z%)" accounting fragment so users
+      // never see the platform fee.
+      notes: transaction.notes || this.sanitizeWithdrawalDescription(transaction.description) || '',
       flags: { is_withdrawal: true },
       extra: { withdrawal_timeline: this.getWithdrawalTimeline(transaction.gateway) },
       tags: ['transaction', 'withdrawal', 'approved'],
     });
+  },
+
+  /**
+   * Strip the internal platform-fee fragment from a withdrawal transaction
+   * description so user-facing copy doesn't leak the fee. Removes patterns
+   * like "— $1 payout + $0.25 platform fee (20%)" and collapses leftover
+   * separators/whitespace.
+   */
+  sanitizeWithdrawalDescription(description) {
+    if (!description || typeof description !== 'string') return '';
+    return description
+      .replace(/\s*[—\-–]\s*\$?[\d.]+\s*payout\s*\+\s*\$?[\d.]+\s*platform\s*fee\s*\(\d+%\)/i, '')
+      .replace(/\s+-\s+/g, ' - ')
+      .trim();
   },
 
   /**
