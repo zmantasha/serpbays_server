@@ -87,7 +87,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/publisher/available-orders`,
-          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/my-orders`,
           publisher_new_orders_url: `${process.env.CLIENT_URL}/publisher/available-orders`,
 
           // Lets the AutoSend template render the publisher-only
@@ -166,7 +166,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/orders`,
 
           // Rejection-specific conditional fields (shown in template)
           order_cancel_reason: order.rejectionReason || 'No reason provided',
@@ -312,7 +312,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/orders`,
 
           // Conditional fields - not shown for acceptance
           // order_cancel_reason: undefined
@@ -373,8 +373,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           taxes: 0,
 
           // Action URLs
-          order_link: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          order_link: `${process.env.CLIENT_URL}/publisher/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/my-orders`,
 
           // Revision-specific conditional field (shown in template)
           revision_request_description: order.revisionMessage || 'No revision details provided',
@@ -445,7 +445,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/orders`,
 
           // Delivery-specific conditional fields (shown in template)
           delivery_proof_url: order.deliveryProof || '',
@@ -508,8 +508,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           taxes: 0,
 
           // Action URLs
-          order_link: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          order_link: `${process.env.CLIENT_URL}/publisher/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/my-orders`,
 
           // Payment info
           payment_amount: amount || order.totalAmount || 0,
@@ -2359,7 +2359,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/publisher/order-detail/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/my-orders`,
 
           // Timestamp
           accepted_date: order.acceptedDate
