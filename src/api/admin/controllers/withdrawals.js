@@ -97,20 +97,33 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       let feeSource = 'computed';
 
       try {
-        const linkedTxn = await strapi.db.query('api::transaction.transaction').findOne({
+        // The transaction's description always starts with
+        //   "Withdrawal request #<id> via <method> — ..."
+        // (see api/withdrawal-request/controllers/withdrawal-request.js).
+        // Querying with `#<id> via ` instead of just `#<id>` avoids substring
+        // collisions where, e.g., request #5 would also match #50, #51, #500.
+        // We still verify after the fact in JS as a belt-and-braces check.
+        const candidates = await strapi.db.query('api::transaction.transaction').findMany({
           where: {
             type: 'withdrawal',
-            description: { $contains: `Withdrawal request #${id}` }
+            description: { $contains: `Withdrawal request #${id} via ` }
           },
-          orderBy: { id: 'desc' }
+          orderBy: { id: 'desc' },
+          limit: 5
         });
+        const exactPattern = new RegExp(`Withdrawal request #${id}\\b`);
+        const linkedTxn = (candidates || []).find((t) =>
+          exactPattern.test(t.description || '')
+        );
         if (linkedTxn) {
           if (linkedTxn.fee != null) platformFee = parseFloat(linkedTxn.fee);
           if (linkedTxn.amount != null) grossAmount = parseFloat(linkedTxn.amount);
           feeSource = 'transaction';
         }
       } catch (e) {
-        console.warn('[ADMIN WITHDRAWAL FIND ONE] Could not load linked transaction for fee:', e.message);
+        strapi.log.warn(
+          `[ADMIN WITHDRAWAL FIND ONE] Could not load linked transaction for fee: ${e.message}`
+        );
       }
 
       ctx.send({

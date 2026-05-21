@@ -1749,7 +1749,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                   <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button primary">
                     🔄 Start Revision
                   </a>
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/orders" class="button">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/my-orders" class="button">
                     📋 View All Orders
                   </a>
                 </div>
@@ -2307,7 +2307,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             month: 'short',
             day: 'numeric'
           }) : '',
-          reply_url: replyUrl || `${process.env.CLIENT_URL}/orders/${order?.id}`,
+          reply_url: replyUrl || `${process.env.CLIENT_URL}/orders/order-detail/${order?.id}`,
           logo_url: `${process.env.CLIENT_URL}/logo.png`,
           year: new Date().getFullYear().toString()
         },

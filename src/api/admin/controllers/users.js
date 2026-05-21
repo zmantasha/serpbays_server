@@ -377,6 +377,14 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       const { id } = ctx.params;
       const { blocked } = ctx.request.body;
 
+      // Self-suspend guard: an admin must never be able to lock themselves
+      // out of their own account — even one with the suspend permission.
+      // Self-unblock is equally pointless (would only run from a session
+      // that's already authenticated) and is blocked symmetrically.
+      if (Number(id) === ctx.state.user.id) {
+        return ctx.badRequest('You cannot change your own account status.');
+      }
+
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} ${blocked ? 'blocking' : 'unblocking'} user ${id}`);
 
@@ -480,6 +488,13 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
   async delete(ctx) {
     try {
       const { id } = ctx.params;
+
+      // Self-delete guard: deleting your own admin account would log you out
+      // immediately and leave no way to undo the action. Refuse even when
+      // the caller has the users.delete permission.
+      if (Number(id) === ctx.state.user.id) {
+        return ctx.badRequest('You cannot delete your own account.');
+      }
 
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} deleting user ${id}`);
