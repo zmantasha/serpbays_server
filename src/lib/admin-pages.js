@@ -8,12 +8,15 @@
  * must mirror this list — keep them in sync.
  *
  * Per-page capability flags control which permission columns are meaningful:
- *   - hasCreate: page has at least one create-style action (originating
- *                new records). The permission grid shows a Create checkbox
- *                for these and the route's create handler is gated by
- *                requires-create.
- *   - hasDelete: page has at least one delete-style action. Shows a Delete
- *                checkbox and gates with requires-delete.
+ *   - hasCreate:  page has at least one create-style action. Grid shows a
+ *                 Create checkbox, route gated by requires-create.
+ *   - hasDelete:  page has at least one delete-style action. Grid shows a
+ *                 Delete checkbox, route gated by requires-delete.
+ *   - hasSuspend: page has a suspend/activate (account state toggle) action.
+ *                 Grid shows a Suspend checkbox, route gated by
+ *                 requires-suspend. Held separately from edit so super
+ *                 admin can grant "edit user details" without granting
+ *                 "lock the account."
  *
  * Pages excluded from this registry:
  *   - "dashboard"        always granted to any admin (landing page)
@@ -22,21 +25,21 @@
  */
 
 const ADMIN_PAGES = [
-  { key: 'users',            label: 'Users',            hasCreate: false, hasDelete: true  },
-  { key: 'orders',           label: 'Orders',           hasCreate: true,  hasDelete: false },
-  { key: 'websites',         label: 'Websites',         hasCreate: false, hasDelete: true  },
-  { key: 'marketplace',      label: 'Marketplace',      hasCreate: true,  hasDelete: true  },
-  { key: 'website-requests', label: 'Website Requests', hasCreate: false, hasDelete: false },
-  { key: 'shared-lists',     label: 'Shared Lists',     hasCreate: false, hasDelete: true  },
-  { key: 'communications',   label: 'Communications',   hasCreate: false, hasDelete: true  },
-  { key: 'transactions',     label: 'Transactions',     hasCreate: false, hasDelete: false },
-  { key: 'wallets',          label: 'Wallets',          hasCreate: false, hasDelete: false },
-  { key: 'withdrawals',      label: 'Withdrawals',      hasCreate: false, hasDelete: false },
-  { key: 'codes',            label: 'Codes',            hasCreate: true,  hasDelete: true  },
-  { key: 'offers',           label: 'Offers',           hasCreate: true,  hasDelete: true  },
-  { key: 'analytics',        label: 'Analytics',        hasCreate: false, hasDelete: false },
-  { key: 'settings',         label: 'Settings',         hasCreate: false, hasDelete: false },
-  { key: 'audit-logs',       label: 'Audit Logs',       hasCreate: false, hasDelete: false },
+  { key: 'users',            label: 'Users',            hasCreate: false, hasDelete: true,  hasSuspend: true  },
+  { key: 'orders',           label: 'Orders',           hasCreate: true,  hasDelete: false, hasSuspend: false },
+  { key: 'websites',         label: 'Websites',         hasCreate: false, hasDelete: true,  hasSuspend: false },
+  { key: 'marketplace',      label: 'Marketplace',      hasCreate: true,  hasDelete: true,  hasSuspend: false },
+  { key: 'website-requests', label: 'Website Requests', hasCreate: false, hasDelete: false, hasSuspend: false },
+  { key: 'shared-lists',     label: 'Shared Lists',     hasCreate: false, hasDelete: true,  hasSuspend: false },
+  { key: 'communications',   label: 'Communications',   hasCreate: false, hasDelete: true,  hasSuspend: false },
+  { key: 'transactions',     label: 'Transactions',     hasCreate: false, hasDelete: false, hasSuspend: false },
+  { key: 'wallets',          label: 'Wallets',          hasCreate: false, hasDelete: false, hasSuspend: false },
+  { key: 'withdrawals',      label: 'Withdrawals',      hasCreate: false, hasDelete: false, hasSuspend: false },
+  { key: 'codes',            label: 'Codes',            hasCreate: true,  hasDelete: true,  hasSuspend: false },
+  { key: 'offers',           label: 'Offers',           hasCreate: true,  hasDelete: true,  hasSuspend: false },
+  { key: 'analytics',        label: 'Analytics',        hasCreate: false, hasDelete: false, hasSuspend: false },
+  { key: 'settings',         label: 'Settings',         hasCreate: false, hasDelete: false, hasSuspend: false },
+  { key: 'audit-logs',       label: 'Audit Logs',       hasCreate: false, hasDelete: false, hasSuspend: false },
 ];
 
 const ADMIN_PAGE_KEYS = ADMIN_PAGES.map((p) => p.key);
@@ -46,11 +49,14 @@ const PAGES_WITH_CREATE = new Set(
 const PAGES_WITH_DELETE = new Set(
   ADMIN_PAGES.filter((p) => p.hasDelete).map((p) => p.key),
 );
+const PAGES_WITH_SUSPEND = new Set(
+  ADMIN_PAGES.filter((p) => p.hasSuspend).map((p) => p.key),
+);
 
 function emptyPermissions() {
   const out = {};
   for (const key of ADMIN_PAGE_KEYS) {
-    out[key] = { view: false, edit: false, create: false, delete: false };
+    out[key] = { view: false, edit: false, create: false, delete: false, suspend: false };
   }
   return out;
 }
@@ -61,10 +67,12 @@ function allPermissions() {
     out[key] = {
       view: true,
       edit: true,
-      // create/delete synth true only on pages that actually expose them,
-      // so super_admin's resolved map mirrors what the backend can grant.
+      // create/delete/suspend synth true only on pages that actually
+      // expose them, so super_admin's resolved map mirrors what the
+      // backend can grant.
       create: PAGES_WITH_CREATE.has(key),
       delete: PAGES_WITH_DELETE.has(key),
+      suspend: PAGES_WITH_SUSPEND.has(key),
     };
   }
   return out;
@@ -87,6 +95,7 @@ function normalizePermissions(stored) {
         edit: Boolean(entry.edit),
         create: PAGES_WITH_CREATE.has(key) && Boolean(entry.create),
         delete: PAGES_WITH_DELETE.has(key) && Boolean(entry.delete),
+        suspend: PAGES_WITH_SUSPEND.has(key) && Boolean(entry.suspend),
       };
     }
   }
@@ -108,6 +117,7 @@ module.exports = {
   ADMIN_PAGE_KEYS,
   PAGES_WITH_CREATE,
   PAGES_WITH_DELETE,
+  PAGES_WITH_SUSPEND,
   emptyPermissions,
   allPermissions,
   normalizePermissions,

@@ -4,7 +4,7 @@
  * Email Operations Service
  * Handles all project operations via email including:
  * - Accepting payments
- * - Creating orders  
+ * - Creating orders
  * - Delivering orders
  * - Completing orders
  * - Making transactions
@@ -13,6 +13,17 @@
  */
 
 const { createCoreService } = require('@strapi/strapi').factories;
+
+// Format an order status value for display in subject lines and the status
+// chip in transactional emails: title-cases each underscore-separated word
+// (e.g. "revision_requested" -> "Revision Requested", "accepted" -> "Accepted").
+const formatOrderStatus = (status) => {
+  if (!status || typeof status !== 'string') return status;
+  return status
+    .split('_')
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w))
+    .join(' ');
+};
 
 module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
@@ -53,7 +64,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Order details - using snake_case to match AutoSend template
           order_id: order.id,
-          order_status: 'created',
+          order_status: formatOrderStatus('created'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -76,7 +87,14 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/publisher/available-orders`,
-          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/my-orders`,
+          publisher_new_orders_url: `${process.env.CLIENT_URL}/publisher/available-orders`,
+
+          // Lets the AutoSend template render the publisher-only
+          // "Accept Order" CTA. Intentionally set only here so the block
+          // appears on the first email a publisher receives for an order
+          // and not on later status updates (cancellation, revision, etc.).
+          is_new_order_for_publisher: true,
 
           // Timestamp
           order_date: new Date(order.createdAt).toLocaleDateString('en-US', {
@@ -115,7 +133,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'rejected',
+          order_status: formatOrderStatus('rejected'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -148,7 +166,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/orders`,
 
           // Rejection-specific conditional fields (shown in template)
           order_cancel_reason: order.rejectionReason || 'No reason provided',
@@ -188,7 +206,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'cancelled',
+          order_status: formatOrderStatus('cancelled'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -260,7 +278,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'accepted',
+          order_status: formatOrderStatus('accepted'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -294,7 +312,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/orders`,
 
           // Conditional fields - not shown for acceptance
           // order_cancel_reason: undefined
@@ -328,7 +346,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'revision_requested',
+          order_status: formatOrderStatus('revision_requested'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -355,8 +373,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           taxes: 0,
 
           // Action URLs
-          order_link: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          order_link: `${process.env.CLIENT_URL}/publisher/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/my-orders`,
 
           // Revision-specific conditional field (shown in template)
           revision_request_description: order.revisionMessage || 'No revision details provided',
@@ -394,7 +412,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'delivered',
+          order_status: formatOrderStatus('delivered'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -427,7 +445,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/advertiser/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/orders`,
 
           // Delivery-specific conditional fields (shown in template)
           delivery_proof_url: order.deliveryProof || '',
@@ -463,7 +481,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Core order details
           order_id: order.id,
-          order_status: 'completed',
+          order_status: formatOrderStatus('completed'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -490,8 +508,8 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           taxes: 0,
 
           // Action URLs
-          order_link: `${process.env.CLIENT_URL}/publisher/orders/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          order_link: `${process.env.CLIENT_URL}/publisher/order-detail/${order.id}`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/my-orders`,
 
           // Payment info
           payment_amount: amount || order.totalAmount || 0,
@@ -550,32 +568,97 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
     }
 
     const clientUrl = process.env.CLIENT_URL || '';
+    // Explicit booleans (not undefined) so the AutoSend template's {{#if}}
+    // checks can actually hide non-applicable sections — leaving these unset
+    // caused the Earnings block to render on withdrawal emails.
+    const isEarning = flags.is_earning === true;
+    const isWithdrawal = flags.is_withdrawal === true;
+    const isWalletCredit = flags.is_wallet_credit === true;
+    const isPaymentFailed = flags.is_payment_failed === true;
+    const isBonus = flags.is_bonus === true;
+
+    // For withdrawal emails, show the user's net payout (what they actually
+    // receive) — never the gross amount that includes the internal platform
+    // fee. The "amount" field on the transaction stores the gross deduction;
+    // "netAmount" stores the payout. Falling back to amount only when
+    // netAmount is unavailable keeps non-withdrawal flows untouched.
+    const displayAmount = isWithdrawal
+      ? (transaction.netAmount != null ? transaction.netAmount : transaction.amount || 0)
+      : (transaction.amount || 0);
+
     const dynamicData = {
       transaction_id: transaction.id,
       transaction_status: statusLabel,
       transaction_type: transaction.type || 'payment',
-      amount: transaction.amount || 0,
+      amount: displayAmount,
       payment_gateway: transaction.gateway || 'system',
       gateway_transaction_id: transaction.gatewayTransactionId || '',
-      notes: notes || transaction.description || '',
+      // For withdrawals, never fall back to transaction.description — it
+      // contains internal accounting ("$X payout + $Y platform fee") that
+      // shouldn't be exposed to the user. Other transaction types may safely
+      // use the description as a notes default.
+      notes: notes || (isWithdrawal ? '' : transaction.description || ''),
       status_message: statusMessage || '',
 
-      is_earning: flags.is_earning || undefined,
-      is_withdrawal: flags.is_withdrawal || undefined,
-      is_wallet_credit: flags.is_wallet_credit || undefined,
-      is_payment_failed: flags.is_payment_failed || undefined,
-      is_bonus: flags.is_bonus || undefined,
+      is_earning: isEarning,
+      is_withdrawal: isWithdrawal,
+      is_wallet_credit: isWalletCredit,
+      is_payment_failed: isPaymentFailed,
+      is_bonus: isBonus,
 
-      view_transaction_url: `${clientUrl}/wallet/transactions`,
+      // Section-specific defaults so the universal template never renders
+      // empty labels (e.g. "Order ID:" with nothing after it for a withdrawal).
+      order_id: '',
+      publisher_website: '',
+      withdrawal_status: isWithdrawal ? statusLabel : '',
+      // The template references {{timeline}}; estimated_timeline kept as an
+      // alias in case the template (or a future revision) reads either.
+      timeline: '',
+      estimated_timeline: '',
+
+      // The template's "View Transaction" button binds to {{transaction_url}};
+      // view_transaction_url is kept as an alias for any other consumer.
+      // The client app shows transactions inside the /wallet page (there is
+      // no separate /wallet/transactions route), so link there.
+      transaction_url: `${clientUrl}/wallet`,
+      view_transaction_url: `${clientUrl}/wallet`,
       view_wallet_url: `${clientUrl}/wallet`,
-      support_url: `${clientUrl}/support`,
+      // There is no in-app /support page; use a mailto so the link works in
+      // every mail client. SUPPORT_EMAIL overrides the default.
+      support_url: `mailto:${process.env.SUPPORT_EMAIL || 'support@serpbays.com'}`,
 
       ...extra,
     };
 
+    // Back-compat: callers historically passed `withdrawal_timeline` in `extra`.
+    // The template's "Estimated Timeline" field reads {{timeline}}, so mirror
+    // the legacy key onto both timeline aliases when only the legacy value
+    // was supplied.
+    const legacyTimeline = dynamicData.withdrawal_timeline;
+    if (legacyTimeline) {
+      if (!extra.timeline) dynamicData.timeline = legacyTimeline;
+      if (!extra.estimated_timeline) dynamicData.estimated_timeline = legacyTimeline;
+    }
+
+    // Route to a purpose-specific template when one is configured. AutoSend
+    // templates don't support conditional sections, so the "universal"
+    // template renders every block (Earnings, Withdrawal, Wallet, ...) on
+    // every email. To avoid an Earnings card appearing on a withdrawal mail
+    // (and vice versa), each scenario should point at a template that only
+    // contains its own blocks. Falls back to the universal template when a
+    // scenario-specific one isn't configured.
+    const universalTemplateId = process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af';
+    const templateId =
+      (isEarning && process.env.AUTOSEND_TEMPLATE_TRANSACTION_EARNING) ||
+      (isWithdrawal && process.env.AUTOSEND_TEMPLATE_TRANSACTION_WITHDRAWAL) ||
+      (isWalletCredit && process.env.AUTOSEND_TEMPLATE_TRANSACTION_WALLET) ||
+      (isPaymentFailed && process.env.AUTOSEND_TEMPLATE_TRANSACTION_FAILED) ||
+      (isBonus && process.env.AUTOSEND_TEMPLATE_TRANSACTION_BONUS) ||
+      universalTemplateId;
+
     await strapi.service('api::global.autosend-service').send({
       to: userEmail,
-      templateId: process.env.AUTOSEND_TEMPLATE_TRANSACTION_UNIVERSAL || 'A-fec3e40871b864b733af',
+      templateId,
       dynamicData,
       tags: tags || ['transaction', statusLabel],
     });
@@ -604,7 +687,11 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       userEmail,
       statusLabel: 'approved',
       statusMessage: 'Your withdrawal request has been approved and will be processed soon.',
-      notes: transaction.description || transaction.notes || '',
+      // Intentionally do NOT use transaction.description — it includes the
+      // internal platform-fee breakdown ("$X payout + $Y platform fee") which
+      // shouldn't be surfaced to the user. Leaving notes blank lets the
+      // template's {{#if notes}} guard hide the Details section entirely.
+      notes: transaction.notes || '',
       flags: { is_withdrawal: true },
       extra: { withdrawal_timeline: this.getWithdrawalTimeline(transaction.gateway) },
       tags: ['transaction', 'withdrawal', 'approved'],
@@ -1084,1100 +1171,6 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
   },
 
   /**
-   * Generate order creation email template
-   */
-  generateOrderCreationTemplate(order, recipient) {
-    const isPublisher = recipient === 'publisher';
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #007bff; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
-          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #007bff; }
-          .button { 
-            display: inline-block; 
-            padding: 12px 24px; 
-            background: #007bff; 
-            color: white !important; 
-            text-decoration: none; 
-            border-radius: 6px; 
-            margin: 10px 5px; 
-            font-weight: bold;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: background-color 0.3s;
-          }
-          .button:hover { background: #0056b3; }
-          .button.success { background: #28a745; }
-          .button.success:hover { background: #1e7e34; }
-          .button.reject { background: #dc3545; }
-          .button.reject:hover { background: #c82333; }
-          .alert { background: #d1ecf1; border: 2px solid #007bff; padding: 20px; margin: 15px 0; border-radius: 8px; }
-          .email-commands { background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
-          code { background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>${isPublisher ? 'New Order Received' : 'Order Created'}</h1>
-          </div>
-          <div class="content">
-            <h2>Order #${order.id}</h2>
-            
-            <div class="order-details">
-              <h3>Order Details:</h3>
-              <p><strong>Description:</strong> ${order.description}</p>
-              <p><strong>Amount:</strong> $${order.totalAmount}</p>
-              <p><strong>Service Type:</strong> ${order.serviceType || 'Guest Post'}</p>
-              <p><strong>Website:</strong> ${order.websiteUrl || 'N/A'}</p>
-              <p><strong>Order Date:</strong> ${new Date(order.orderDate).toLocaleDateString()}</p>
-            </div>
-            
-            ${isPublisher ? `
-              <div class="alert">
-                <strong>🎯 Action Required:</strong><br>
-                <p style="margin: 15px 0;">Please review and respond to this order:</p>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/available-orders" class="button" style="background: #007bff; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
-                    📋 View Available Orders
-                  </a>
-                </div>
-              </div>
-            ` : `
-              <div class="alert">
-                <strong>Order Status:</strong> Pending Publisher Acceptance<br>
-                You will be notified when the publisher responds to your order.
-              </div>
-            `}
-            
-            <p>Thank you for using SerpBays!</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate order delivery email template
-   */
-  generateOrderDeliveryTemplate(order, recipient) {
-    const isAdvertiser = recipient === 'advertiser';
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
-          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #28a745; }
-          .button { 
-            display: inline-block; 
-            padding: 12px 24px; 
-            background: #28a745; 
-            color: white !important; 
-            text-decoration: none; 
-            border-radius: 6px; 
-            margin: 10px 5px; 
-            font-weight: bold;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: background-color 0.3s;
-          }
-          .button:hover { background: #1e7e34; }
-          .alert { background: #fff3cd; border: 2px solid #28a745; padding: 20px; margin: 15px 0; border-radius: 8px; }
-          .email-commands { background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
-          code { background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Order ${isAdvertiser ? 'Delivered' : 'Delivery Confirmed'}</h1>
-          </div>
-          <div class="content">
-            <h2>Order #${order.id}</h2>
-            
-            <div class="order-details">
-              <h3>Delivery Information:</h3>
-              <p><strong>Delivered Date:</strong> ${new Date(order.deliveredDate).toLocaleDateString()}</p>
-              <p><strong>Delivery Proof:</strong> ${order.deliveryProof || 'Confirmed via email'}</p>
-            </div>
-            
-            ${isAdvertiser ? `
-              <div class="alert">
-                <strong>🎯 Review Required:</strong><br>
-                <p style="margin: 15px 0;">Please review the delivered order:</p>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders/order-detail/${order.id}" class="button" style="background: #28a745; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
-                    📋 View Order Details
-                  </a>
-                </div>
-                
-                <p style="margin-top: 15px; color: #666;">⏰ You have 5 business days to review the delivery.</p>
-              </div>
-            ` : `
-              <div class="alert">
-                <strong>✅ Delivery Confirmed!</strong><br>
-                <p style="margin: 15px 0;">Your order has been delivered and sent to the client for review.</p>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button" style="background: #007bff; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
-                    📋 View Order Status
-                  </a>
-                </div>
-                
-                <p style="color: #666;">You will be notified when the client responds.</p>
-              </div>
-            `}
-            
-            <p>Thank you for using SerpBays!</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate order completion email template
-   */
-  generateOrderCompletionTemplate(order, amount) {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
-          .payment-info { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #28a745; }
-          .button { 
-            display: inline-block; 
-            padding: 12px 24px; 
-            background: #28a745; 
-            color: white !important; 
-            text-decoration: none; 
-            border-radius: 6px; 
-            margin: 10px 5px; 
-            font-weight: bold;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: background-color 0.3s;
-          }
-          .button:hover { background: #1e7e34; }
-          .alert { background: #d4edda; border: 2px solid #28a745; padding: 20px; margin: 15px 0; border-radius: 8px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🎉 Payment Released!</h1>
-          </div>
-          <div class="content">
-            <h2>Order #${order.id} Completed</h2>
-            
-            <div class="payment-info">
-              <h3>💰 Payment Details:</h3>
-              <p><strong>Amount Released:</strong> $${amount}</p>
-              <p><strong>Release Date:</strong> ${new Date().toLocaleDateString()}</p>
-              <p><strong>Status:</strong> Available for withdrawal</p>
-            </div>
-            
-            <div class="alert">
-              <strong>🎉 Great Job!</strong><br>
-              <p style="margin: 15px 0;">The client has approved your work and payment has been released to your account!</p>
-              
-              <div style="text-align: center; margin: 20px 0;">
-                <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/earnings" class="button" style="background: #28a745; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block; font-weight: bold; margin: 10px;">
-                  💰 View Earnings & Withdraw
-                </a>
-              </div>
-              
-              <p style="color: #666;">You can now withdraw these funds from your wallet or use them for future orders.</p>
-            </div>
-            
-            <p style="text-align: center; margin-top: 20px; color: #666;">
-              Thank you for your excellent work and for using SerpBays!<br>
-              <small>Keep up the great work! 🚀</small>
-            </p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate order rejection email template
-   */
-  generateOrderRejectionTemplate(order, recipient) {
-    const isAdvertiser = recipient === 'advertiser';
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #dc3545; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
-          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #dc3545; }
-          .rejection-reason { background: #f8d7da; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #dc3545; }
-          .refund-info { background: #d4edda; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }
-          .confirmation-info { background: #fff3cd; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #ffc107; }
-          .button { 
-            display: inline-block; 
-            padding: 12px 24px; 
-            background: #007bff; 
-            color: white !important; 
-            text-decoration: none; 
-            border-radius: 6px; 
-            margin: 10px 5px; 
-            font-weight: bold;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: background-color 0.3s;
-          }
-          .button:hover { background: #0056b3; }
-          .button.primary { background: #007bff; }
-          .button.primary:hover { background: #0056b3; }
-          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
-          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
-          .detail-label { font-weight: bold; color: #495057; }
-          .detail-value { color: #dc3545; font-weight: 500; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>${isAdvertiser ? '❌ Order Rejected' : '✅ Order Rejection Confirmed'}</h1>
-          </div>
-          <div class="content">
-            <h2>Order #${order.id}</h2>
-            
-            <div class="order-details">
-              <h3>📋 Order Details</h3>
-              <div class="details-grid">
-                <div class="detail-item">
-                  <div class="detail-label">Description:</div>
-                  <div class="detail-value">${order.description}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Amount:</div>
-                  <div class="detail-value">$${order.totalAmount}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Website:</div>
-                  <div class="detail-value">${order.website?.url || order.websiteUrl || 'N/A'}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Rejection Date:</div>
-                  <div class="detail-value">${new Date(order.rejectedDate || Date.now()).toLocaleDateString()}</div>
-                </div>
-              </div>
-              
-              <div class="rejection-reason">
-                <h4>🚫 Rejection Reason</h4>
-                <p style="font-style: italic; margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.7); border-radius: 4px;">
-                  "${order.rejectionReason || 'No specific reason provided'}"
-                </p>
-              </div>
-            </div>
-            
-            ${isAdvertiser ? `
-              <div class="refund-info">
-                <h4>💰 Automatic Refund Processed</h4>
-                <p><strong>✅ Refund Status:</strong> Completed automatically</p>
-                <p><strong>💳 Refunded Amount:</strong> $${order.totalAmount}</p>
-                <p><strong>📅 Refund Date:</strong> ${new Date().toLocaleDateString()}</p>
-                <p><strong>💼 Wallet Status:</strong> Funds available for new orders</p>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders" class="button primary">
-                    🔍 Find Other Websites
-                  </a>
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders/order-detail/${order.id}" class="button">
-                    📋 View Order Details
-                  </a>
-                </div>
-                
-                <p style="margin-top: 10px; font-weight: bold; color: #155724;">
-                  The full order amount has been automatically refunded to your wallet and is available for placing new orders.
-                </p>
-              </div>
-            ` : `
-              <div class="confirmation-info">
-                <h4>✅ Rejection Confirmed</h4>
-                <p><strong>Status:</strong> Order rejection processed successfully</p>
-                <p><strong>Advertiser Notified:</strong> Yes, via email and notification</p>
-                <p><strong>Refund Processed:</strong> Automatic refund completed</p>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/available-orders" class="button primary">
-                    📋 View Available Orders
-                  </a>
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button">
-                    📋 View Order Details
-                  </a>
-                </div>
-                
-                <p style="color: #666;">Thank you for your honest evaluation. This helps maintain quality on our platform.</p>
-              </div>
-            `}
-            
-            <p style="text-align: center; margin-top: 20px; color: #666;">
-              ${isAdvertiser ?
-        'Thank you for using SerpBays! We hope to serve you better next time.<br><small>Need help finding the right publisher? Contact support@serpbays.com</small>' :
-        'Thank you for maintaining quality standards on SerpBays!<br><small>For any questions: support@serpbays.com</small>'
-      }
-            </p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate order acceptance email template
-   */
-  generateOrderAcceptanceTemplate(order, recipient) {
-    const isAdvertiser = recipient === 'advertiser';
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
-          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #28a745; }
-          .acceptance-info { background: #d4edda; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }
-          .confirmation-info { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }
-          .button { 
-            display: inline-block; 
-            padding: 12px 24px; 
-            background: #28a745; 
-            color: white !important; 
-            text-decoration: none; 
-            border-radius: 6px; 
-            margin: 10px 5px; 
-            font-weight: bold;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: background-color 0.3s;
-          }
-          .button:hover { background: #1e7e34; }
-          .button.primary { background: #007bff; }
-          .button.primary:hover { background: #0056b3; }
-          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
-          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
-          .detail-label { font-weight: bold; color: #495057; }
-          .detail-value { color: #28a745; font-weight: 500; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>${isAdvertiser ? '✅ Order Accepted!' : '✅ Order Acceptance Confirmed'}</h1>
-          </div>
-          <div class="content">
-            <h2>Order #${order.id}</h2>
-            
-            <div class="order-details">
-              <h3>📋 Order Details</h3>
-              <div class="details-grid">
-                <div class="detail-item">
-                  <div class="detail-label">Description:</div>
-                  <div class="detail-value">${order.description}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Amount:</div>
-                  <div class="detail-value">$${order.totalAmount}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Website:</div>
-                  <div class="detail-value">${order.website?.url || order.websiteUrl || 'N/A'}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Acceptance Date:</div>
-                  <div class="detail-value">${new Date(order.acceptedDate || Date.now()).toLocaleDateString()}</div>
-                </div>
-              </div>
-            </div>
-            
-            ${isAdvertiser ? `
-              <div class="acceptance-info">
-                <h4>🎉 Great News!</h4>
-                <p><strong>✅ Order Status:</strong> Accepted and in progress</p>
-                <p><strong>👨‍💼 Publisher:</strong> Working on your order</p>
-                <p><strong>⏰ Next Step:</strong> You'll be notified when the work is delivered</p>
-                <p><strong>💰 Payment:</strong> Secured in escrow, will be released upon completion</p>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders/order-detail/${order.id}" class="button">
-                    📋 View Order Details
-                  </a>
-                </div>
-                
-                <p style="margin-top: 10px; font-weight: bold; color: #155724;">
-                  The publisher has started working on your order and will deliver it soon!
-                </p>
-              </div>
-            ` : `
-              <div class="confirmation-info">
-                <h4>✅ Acceptance Confirmed</h4>
-                <p><strong>Status:</strong> Order acceptance processed successfully</p>
-                <p><strong>Advertiser Notified:</strong> Yes, via email and notification</p>
-                <p><strong>Payment:</strong> Secured in escrow, awaiting delivery</p>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button primary">
-                    📋 View Order Details
-                  </a>
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/my-orders" class="button">
-                    📋 My Orders
-                  </a>
-                </div>
-                
-                <p style="color: #666;">Remember to deliver the work on time to maintain your publisher rating!</p>
-              </div>
-            `}
-            
-            <p style="text-align: center; margin-top: 20px; color: #666;">
-              ${isAdvertiser ?
-        'Thank you for using SerpBays! You\'ll receive an update when the order is delivered.<br><small>Questions? Contact support@serpbays.com</small>' :
-        'Thank you for accepting this order! Keep up the great work!<br><small>For any questions: support@serpbays.com</small>'
-      }
-            </p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate revision request email template
-   */
-  generateRevisionRequestTemplate(order, recipient) {
-    const isPublisher = recipient === 'publisher';
-    const revisionDeadline = order.revisionDeadline ? new Date(order.revisionDeadline) : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #ffc107; color: #212529; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-          .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }
-          .order-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #ffc107; }
-          .revision-request { background: #fff3cd; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #ffc107; }
-          .timeline-info { background: #e2e3e5; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #6c757d; }
-          .action-info { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }
-          .button { 
-            display: inline-block; 
-            padding: 12px 24px; 
-            background: #ffc107; 
-            color: #212529 !important; 
-            text-decoration: none; 
-            border-radius: 6px; 
-            margin: 10px 5px; 
-            font-weight: bold;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: background-color 0.3s;
-          }
-          .button:hover { background: #e0a800; }
-          .button.primary { background: #007bff; color: white !important; }
-          .button.primary:hover { background: #0056b3; }
-          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
-          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
-          .detail-label { font-weight: bold; color: #495057; }
-          .detail-value { color: #ffc107; font-weight: 500; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>${isPublisher ? '🔄 Revision Requested' : '✅ Revision Request Submitted'}</h1>
-          </div>
-          <div class="content">
-            <h2>Order #${order.id}</h2>
-            
-            <div class="order-details">
-              <h3>📋 Order Details</h3>
-              <div class="details-grid">
-                <div class="detail-item">
-                  <div class="detail-label">Description:</div>
-                  <div class="detail-value">${order.description}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Amount:</div>
-                  <div class="detail-value">$${order.totalAmount}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Website:</div>
-                  <div class="detail-value">${order.website?.url || order.websiteUrl || 'N/A'}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Request Date:</div>
-                  <div class="detail-value">${new Date(order.revisionRequestedAt || Date.now()).toLocaleDateString()}</div>
-                </div>
-              </div>
-              
-              <div class="revision-request">
-                <h4>📝 Revision Request Details</h4>
-                <p style="font-style: italic; margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.7); border-radius: 4px;">
-                  "${order.revisionMessage || 'Revision requested by advertiser'}"
-                </p>
-                <p><strong>⏰ Deadline:</strong> ${revisionDeadline.toLocaleDateString()} (5 days from request)</p>
-              </div>
-            </div>
-            
-            ${isPublisher ? `
-              <div class="action-info">
-                <h4>🎯 Action Required</h4>
-                <p><strong>What to do next:</strong></p>
-                <ul style="margin: 10px 0; padding-left: 20px;">
-                  <li>Review the revision request details above</li>
-                  <li>Make the necessary changes to the delivered content</li>
-                  <li>Complete the revision within 5 days</li>
-                  <li>Submit the revised work for review</li>
-                </ul>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/order-detail/${order.id}" class="button primary">
-                    🔄 Start Revision
-                  </a>
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/publisher/orders" class="button">
-                    📋 View All Orders
-                  </a>
-                </div>
-                
-                <div class="timeline-info">
-                  <h4>⏰ Important Timeline</h4>
-                  <p><strong>Revision Deadline:</strong> ${revisionDeadline.toLocaleDateString()}</p>
-                  <p><strong>Days Remaining:</strong> ${Math.ceil((revisionDeadline - new Date()) / (1000 * 60 * 60 * 24))} days</p>
-                  <p style="color: #dc3545; font-weight: bold;">⚠️ Failure to complete within 5 days may affect your publisher rating.</p>
-                </div>
-              </div>
-            ` : `
-              <div class="action-info">
-                <h4>✅ Request Submitted Successfully</h4>
-                <p><strong>What happens next:</strong></p>
-                <ul style="margin: 10px 0; padding-left: 20px;">
-                  <li>The publisher has been notified of your revision request</li>
-                  <li>They will work on the revision within 5 days</li>
-                  <li>You'll receive an email when the revision is completed</li>
-                  <li>You can track progress in your order dashboard</li>
-                </ul>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders/order-detail/${order.id}" class="button primary">
-                    📋 Track Order Progress
-                  </a>
-                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/orders" class="button">
-                    📊 View All Orders
-                  </a>
-                </div>
-                
-                <div class="timeline-info">
-                  <h4>⏰ Expected Timeline</h4>
-                  <p><strong>Revision Deadline:</strong> ${revisionDeadline.toLocaleDateString()}</p>
-                  <p><strong>Expected Completion:</strong> Within 5 business days</p>
-                  <p style="color: #28a745; font-weight: bold;">✅ You'll be notified as soon as the revision is ready for review.</p>
-                </div>
-              </div>
-            `}
-            
-            <p style="text-align: center; margin-top: 20px; color: #666;">
-              ${isPublisher ?
-        'Thank you for maintaining quality standards on SerpBays!<br><small>For technical support: support@serpbays.com</small>' :
-        'Thank you for using SerpBays! We appreciate your feedback.<br><small>Need help? Contact support@serpbays.com</small>'
-      }
-            </p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate transaction approval email template
-   */
-  generateTransactionApprovalTemplate(transaction) {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #28a745; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .transaction-details { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>✅ Transaction Approved</h1>
-          </div>
-          <div class="content">
-            <h2>Transaction #${transaction.id}</h2>
-            
-            <div class="transaction-details">
-              <h3>Transaction Details:</h3>
-              <p><strong>Type:</strong> ${transaction.type}</p>
-              <p><strong>Amount:</strong> $${transaction.amount}</p>
-              <p><strong>Status:</strong> Approved</p>
-              <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
-            </div>
-            
-            <p>Your transaction has been approved and processed successfully.</p>
-            <p>Thank you for using SerpBays!</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate transaction denial email template
-   */
-  generateTransactionDenialTemplate(transaction, reason) {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #dc3545; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .transaction-details { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .alert { background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; margin: 10px 0; border-radius: 5px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>❌ Transaction Denied</h1>
-          </div>
-          <div class="content">
-            <h2>Transaction #${transaction.id}</h2>
-            
-            <div class="transaction-details">
-              <h3>Transaction Details:</h3>
-              <p><strong>Type:</strong> ${transaction.type}</p>
-              <p><strong>Amount:</strong> $${transaction.amount}</p>
-              <p><strong>Status:</strong> Denied</p>
-              <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
-            </div>
-            
-            <div class="alert">
-              <strong>Reason for Denial:</strong><br>
-              ${reason}
-            </div>
-            
-            <p>If you have questions about this decision, please contact our support team.</p>
-            <p>Thank you for using SerpBays!</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate payment confirmation email template
-   */
-  generatePaymentConfirmationTemplate(transaction) {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #007bff; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .payment-details { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; border: 2px solid #007bff; }
-          .alert { background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; margin: 10px 0; border-radius: 5px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>💳 Payment Confirmed</h1>
-          </div>
-          <div class="content">
-            <h2>Transaction #${transaction.id}</h2>
-            
-            <div class="payment-details">
-              <h3>Payment Details:</h3>
-              <p><strong>Amount:</strong> $${transaction.amount}</p>
-              <p><strong>Payment Date:</strong> ${new Date().toLocaleDateString()}</p>
-              <p><strong>Status:</strong> Confirmed & Processed</p>
-              <p><strong>Transaction ID:</strong> ${transaction.gatewayTransactionId}</p>
-            </div>
-            
-            <div class="alert">
-              <strong>Payment Successful!</strong><br>
-              Your payment has been confirmed and processed. Any related orders will now proceed.
-            </div>
-            
-            <p>Thank you for your payment and for using SerpBays!</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate withdrawal approved email template
-   */
-  generateWithdrawalApprovedTemplate(withdrawalRequest) {
-    const currentDate = new Date();
-    const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
-    const expectedPaymentDate = new Date(currentDate.getTime() + 3 * 24 * 60 * 60 * 1000);
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #28a745; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .withdrawal-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #28a745; }
-          .processing-info { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }
-          .timeline { background: #e8f5e8; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .alert { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
-          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
-          .detail-label { font-weight: bold; color: #495057; }
-          .detail-value { color: #28a745; font-weight: 500; }
-          .next-steps { background: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>✅ Withdrawal Approved!</h1>
-          </div>
-          <div class="content">
-            <h2>Withdrawal Request #${withdrawalRequest.id}</h2>
-            
-            <div class="withdrawal-details">
-              <h3>📋 Approved Withdrawal Details</h3>
-              <div class="details-grid">
-                <div class="detail-item">
-                  <div class="detail-label">Amount:</div>
-                  <div class="detail-value">$${withdrawalRequest.amount}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Payment Method:</div>
-                  <div class="detail-value">${withdrawalRequest.method?.toUpperCase() || 'N/A'}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Request Date:</div>
-                  <div class="detail-value">${requestDate.toLocaleDateString()}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Approval Date:</div>
-                  <div class="detail-value">${currentDate.toLocaleDateString()}</div>
-                </div>
-              </div>
-              
-              <div class="processing-info">
-                <h4>🔄 Processing Information</h4>
-                <p><strong>Reference Number:</strong> SB-WD-${withdrawalRequest.id}-${currentDate.getFullYear()}</p>
-                <p><strong>Processing Status:</strong> Approved - Ready for payment</p>
-                <p><strong>Estimated Processing Time:</strong> 1-3 business days</p>
-              </div>
-              
-              ${withdrawalRequest.details && withdrawalRequest.details.email ? `
-              <div class="processing-info">
-                <h4>📧 Payment Destination</h4>
-                <p><strong>Will be sent to:</strong> ${withdrawalRequest.details.email}</p>
-                <p><strong>Payment Method:</strong> ${withdrawalRequest.method?.toUpperCase() || 'Selected method'}</p>
-              </div>
-              ` : ''}
-              
-              <div class="timeline">
-                <h4>📅 Payment Timeline</h4>
-                <p><strong>✅ Request Submitted:</strong> ${requestDate.toLocaleDateString()}</p>
-                <p><strong>✅ Approved:</strong> ${currentDate.toLocaleDateString()}</p>
-                <p><strong>🔄 Payment Processing:</strong> Next 1-3 business days</p>
-                <p><strong>💰 Expected Payment:</strong> By ${expectedPaymentDate.toLocaleDateString()}</p>
-              </div>
-            </div>
-            
-            <div class="alert">
-              <strong>🎉 Great News!</strong><br>
-              Your withdrawal request has been approved and is now in the payment queue. 
-              Our finance team will process the payment within 1-3 business days.
-              You will receive a confirmation email once the payment has been sent.
-            </div>
-            
-            <div class="next-steps">
-              <h4>📋 What Happens Next?</h4>
-              <ul style="margin: 10px 0; padding-left: 20px;">
-                <li>Your withdrawal is queued for payment processing</li>
-                <li>Payment will be sent within 1-3 business days</li>
-                <li>You'll receive a payment confirmation email</li>
-                <li>Funds will appear in your account within 1-3 days after payment</li>
-                <li>Keep this email for your records</li>
-              </ul>
-            </div>
-            
-            <p style="text-align: center; margin-top: 20px; color: #666;">
-              Thank you for using SerpBays!<br>
-              <small>For questions: support@serpbays.com</small>
-            </p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate withdrawal paid email template
-   */
-  generateWithdrawalPaidTemplate(withdrawalRequest) {
-    const currentDate = new Date();
-    const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
-    const processingTime = Math.ceil((currentDate - requestDate) / (1000 * 60 * 60 * 24)); // Days
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #007bff; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .payment-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #007bff; }
-          .transaction-info { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #007bff; }
-          .timeline { background: #e3f2fd; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .alert { background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
-          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
-          .detail-label { font-weight: bold; color: #495057; }
-          .detail-value { color: #007bff; font-weight: 500; }
-          .highlight { background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>💰 Payment Completed!</h1>
-          </div>
-          <div class="content">
-            <h2>Withdrawal #${withdrawalRequest.id}</h2>
-            
-            <div class="payment-details">
-              <h3>💳 Payment Summary</h3>
-              <div class="details-grid">
-                <div class="detail-item">
-                  <div class="detail-label">Amount Paid:</div>
-                  <div class="detail-value">$${withdrawalRequest.amount}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Payment Method:</div>
-                  <div class="detail-value">${withdrawalRequest.method?.toUpperCase() || 'N/A'}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Payment Date:</div>
-                  <div class="detail-value">${currentDate.toLocaleDateString()}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Processing Time:</div>
-                  <div class="detail-value">${processingTime} day${processingTime !== 1 ? 's' : ''}</div>
-                </div>
-              </div>
-              
-              ${withdrawalRequest.external_transaction_id ? `
-              <div class="transaction-info">
-                <h4>🔗 Transaction Information</h4>
-                <p><strong>External Transaction ID:</strong> ${withdrawalRequest.external_transaction_id}</p>
-                <p><strong>Reference Number:</strong> SB-WD-${withdrawalRequest.id}-${currentDate.getFullYear()}</p>
-              </div>
-              ` : ''}
-              
-              <div class="timeline">
-                <h4>📅 Payment Timeline</h4>
-                <p><strong>Request Submitted:</strong> ${requestDate.toLocaleDateString()}</p>
-                <p><strong>Payment Processed:</strong> ${currentDate.toLocaleDateString()}</p>
-                <p><strong>Expected in Account:</strong> ${new Date(currentDate.getTime() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
-              </div>
-            </div>
-            
-            <div class="alert">
-              <strong>🎉 Payment Successfully Sent!</strong><br>
-              Your withdrawal has been processed and the payment has been sent to your ${withdrawalRequest.method || 'selected'} account.
-              The funds should appear in your account within 1-3 business days.
-            </div>
-            
-            ${withdrawalRequest.details && withdrawalRequest.details.email ? `
-            <div class="highlight">
-              <strong>📧 Payment Destination:</strong><br>
-              Sent to: ${withdrawalRequest.details.email}
-            </div>
-            ` : ''}
-            
-            <div class="transaction-info">
-              <h4>📋 What's Next?</h4>
-              <ul style="margin: 10px 0; padding-left: 20px;">
-                <li>Check your ${withdrawalRequest.method || 'payment'} account in 1-3 business days</li>
-                <li>Keep this email as your payment confirmation</li>
-                <li>Contact support if funds don't appear within 5 business days</li>
-                <li>Your SerpBays wallet has been updated automatically</li>
-              </ul>
-            </div>
-            
-            <p style="text-align: center; margin-top: 20px; color: #666;">
-              Thank you for using SerpBays!<br>
-              <small>For support: support@serpbays.com</small>
-            </p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
-   * Generate withdrawal denied email template
-   */
-  generateWithdrawalDeniedTemplate(withdrawalRequest, reason) {
-    const currentDate = new Date();
-    const requestDate = withdrawalRequest.createdAt ? new Date(withdrawalRequest.createdAt) : currentDate;
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #dc3545; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .withdrawal-details { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border: 2px solid #dc3545; }
-          .denial-reason { background: #f8d7da; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #dc3545; }
-          .refund-info { background: #d4edda; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }
-          .support-info { background: #e2e3e5; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #6c757d; }
-          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
-          .detail-item { padding: 8px; background: #f8f9fa; border-radius: 4px; }
-          .detail-label { font-weight: bold; color: #495057; }
-          .detail-value { color: #dc3545; font-weight: 500; }
-          .next-steps { background: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 10px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>❌ Withdrawal Denied</h1>
-          </div>
-          <div class="content">
-            <h2>Withdrawal Request #${withdrawalRequest.id}</h2>
-            
-            <div class="withdrawal-details">
-              <h3>📋 Withdrawal Request Details</h3>
-              <div class="details-grid">
-                <div class="detail-item">
-                  <div class="detail-label">Amount:</div>
-                  <div class="detail-value">$${withdrawalRequest.amount}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Payment Method:</div>
-                  <div class="detail-value">${withdrawalRequest.method?.toUpperCase() || 'N/A'}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Request Date:</div>
-                  <div class="detail-value">${requestDate.toLocaleDateString()}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">Decision Date:</div>
-                  <div class="detail-value">${currentDate.toLocaleDateString()}</div>
-                </div>
-              </div>
-              
-              <div class="denial-reason">
-                <h4>🚫 Reason for Denial</h4>
-                <p><strong>Admin Decision:</strong></p>
-                <p style="font-style: italic; margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.7); border-radius: 4px;">
-                  "${reason || 'No specific reason provided'}"
-                </p>
-                <p><strong>Reference Number:</strong> SB-WD-${withdrawalRequest.id}-DENIED-${currentDate.getFullYear()}</p>
-              </div>
-            </div>
-
-            <div class="refund-info">
-              <h4>💰 Automatic Refund Processed</h4>
-              <p><strong>✅ Refund Status:</strong> Completed automatically</p>
-              <p><strong>💳 Refund Amount:</strong> $${withdrawalRequest.amount}</p>
-              <p><strong>📅 Refund Date:</strong> ${currentDate.toLocaleDateString()}</p>
-              <p><strong>💼 Wallet Status:</strong> Funds available for immediate use</p>
-              <p style="margin-top: 10px; font-weight: bold; color: #155724;">
-                The full withdrawal amount has been automatically refunded to your SerpBays wallet and is available for immediate use.
-              </p>
-            </div>
-            
-            <div class="next-steps">
-              <h4>📋 What You Can Do Next</h4>
-              <ul style="margin: 10px 0; padding-left: 20px;">
-                <li>Review the denial reason above</li>
-                <li>Address any issues mentioned in the denial reason</li>
-                <li>Submit a new withdrawal request if appropriate</li>
-                <li>Contact support if you need clarification</li>
-                <li>Your wallet balance is now updated with the refunded amount</li>
-              </ul>
-            </div>
-
-            <div class="support-info">
-              <h4>📞 Need Help?</h4>
-              <p><strong>Contact Support:</strong></p>
-              <p>📧 Email: support@serpbays.com</p>
-              <p>📋 Reference Number: SB-WD-${withdrawalRequest.id}-DENIED</p>
-              <p>🕐 Support Hours: Monday - Friday, 9 AM - 6 PM</p>
-              <p style="margin-top: 10px; font-style: italic;">
-                Our support team can help clarify the denial reason and guide you on how to submit a successful withdrawal request.
-              </p>
-            </div>
-            
-            <p style="text-align: center; margin-top: 20px; color: #666;">
-              Thank you for using SerpBays!<br>
-              <small>We're here to help: support@serpbays.com</small>
-            </p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  },
-
-  /**
    * Send new message notification email
    * Triggered when an advertiser or publisher sends a message
    * @param {Object} params
@@ -2214,13 +1207,13 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             minute: '2-digit'
           }) : '',
           order_id: order?.id ? String(order.id) : '',
-          order_status: order?.orderStatus || 'Active',
+          order_status: formatOrderStatus(order?.orderStatus) || 'Active',
           order_date: order?.createdAt ? new Date(order.createdAt).toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'short',
             day: 'numeric'
           }) : '',
-          reply_url: replyUrl || `${process.env.CLIENT_URL}/orders/${order?.id}`,
+          reply_url: replyUrl || `${process.env.CLIENT_URL}/orders/order-detail/${order?.id}`,
           logo_url: `${process.env.CLIENT_URL}/logo.png`,
           year: new Date().getFullYear().toString()
         },
@@ -2252,7 +1245,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
         dynamicData: {
           // Order details
           order_id: order.id,
-          order_status: 'delivery_overdue',
+          order_status: formatOrderStatus('delivery_overdue'),
           total_amount: order.totalAmount || 0,
           currency: 'USD',
           order_description: order.description || '',
@@ -2272,7 +1265,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Action URLs
           order_link: `${process.env.CLIENT_URL}/publisher/order-detail/${order.id}`,
-          dashboard_url: `${process.env.CLIENT_URL}/publisher/orders`,
+          dashboard_url: `${process.env.CLIENT_URL}/publisher/my-orders`,
 
           // Timestamp
           accepted_date: order.acceptedDate
@@ -2351,7 +1344,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
           is_order_confirmation: true,
           advertiser_name: order.advertiser?.username || order.advertiser?.email || 'Advertiser',
           order_id: order.id,
-          order_status: 'Pending',
+          order_status: formatOrderStatus('Pending'),
           order_date: new Date(order.orderDate || order.createdAt).toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'long',

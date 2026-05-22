@@ -48,12 +48,17 @@ module.exports = {
       path: '/admin/users/:id/block',
       handler: 'users.toggleBlock',
       config: {
-        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'users' } }],
+        policies: ['global::is-admin', { name: 'global::requires-suspend', config: { pageKey: 'users' } }],
         middlewares: ['global::admin-logger']
       }
     },
     {
       method: 'PUT',
+      // `confirm` flips a user from unverified -> verified (i.e. an admin
+      // vouching for their email). Held under `requires-edit` deliberately:
+      // it's a positive state change, not a punitive lockout, so it
+      // travels with the same trust required to edit user fields. Only the
+      // punitive flip (suspend/activate) is split out into requires-suspend.
       path: '/admin/users/:id/confirm',
       handler: 'users.confirmUser',
       config: {
