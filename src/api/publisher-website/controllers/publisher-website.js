@@ -7,6 +7,37 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 const { getPublisherCommissionRate } = require('../../../constants/commission');
 
+// Fields the user is allowed to set on POST /api/publisher-websites.
+// SECURITY: Anything not in this set is dropped server-side. Verification
+// state, ownership, and audit fields can ONLY be mutated by their dedicated
+// flows (GSC OAuth callback, admin approval, reseller-code path, etc.) —
+// never by user input on create. Without this whitelist, a logged-in user
+// could POST {gscVerified:true, submissionStatus:'approved',
+// currentPublisherId: 255} and self-promote their claim past the
+// verification pipeline.
+const ALLOWED_CREATE_FIELDS = new Set([
+  // Listing identity (user supplies)
+  'url', 'protocol',
+  // Listing metadata users describe themselves
+  'category', 'description', 'language', 'countries',
+  'guidelines', 'sample_post', 'sample_links',
+  // Pricing
+  'price', 'link_insertion_price',
+  'adv_crypto_pricing', 'adv_casino_pricing', 'adv_cbd_pricing', 'adv_dating_pricing',
+  'adv_li_crypto_pricing', 'adv_li_casino_pricing', 'adv_li_cbd_pricing', 'adv_li_dating_pricing',
+  // Listing characteristics
+  'tat', 'min_word_count', 'backlink_type', 'backlink_validity',
+  'dofollow_link', 'sponsored', 'ugc', 'digital_pr',
+  'placement_speed', 'publication_location',
+  // Reseller code is read by this controller before the whitelist anyway,
+  // but we keep it allowed so the spread-through still works.
+  'resellerCode',
+  // GSC-flow step tracking — user signals "I've started GSC verification".
+  // The actual gscVerified=true assignment happens in the GSC OAuth callback
+  // controller, NOT here.
+  'verificationStarted',
+]);
+
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
   // Create new publisher website submission
   async create(ctx) {
@@ -19,19 +50,35 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to submit a website.');
       }
 
+      // Fail-closed whitelist on caller-supplied fields. Anything outside
+      // ALLOWED_CREATE_FIELDS is silently dropped (with a log).
+      const raw = data || {};
+      const filteredData = {};
+      const droppedKeys = [];
+      for (const k of Object.keys(raw)) {
+        if (ALLOWED_CREATE_FIELDS.has(k)) {
+          filteredData[k] = raw[k];
+        } else {
+          droppedKeys.push(k);
+        }
+      }
+      if (droppedKeys.length > 0) {
+        strapi.log.warn(`[publisher-website.create] User ${user.id} (${user.email}) tried to set restricted fields, dropped: ${droppedKeys.join(', ')}`);
+      }
+
       // Handle reseller code if provided
       let resellerCodeData = null;
-      if (data.resellerCode) {
+      if (filteredData.resellerCode) {
         try {
           // Validate and use the reseller code
-          const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(data.resellerCode);
+          const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(filteredData.resellerCode);
 
           if (!codeValidation.valid) {
             return ctx.badRequest(`Invalid reseller code: ${codeValidation.reason}`);
           }
 
           // Use the code (increment counter)
-          await strapi.service('api::reseller-code.reseller-code').useCode(data.resellerCode, user.id);
+          await strapi.service('api::reseller-code.reseller-code').useCode(filteredData.resellerCode, user.id);
           resellerCodeData = codeValidation.codeData;
 
         } catch (error) {
@@ -41,39 +88,53 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // Normalize URL to lowercase to prevent case-sensitive duplicates
-      data.url = data.url ? data.url.toLowerCase() : data.url;
+      filteredData.url = filteredData.url ? filteredData.url.toLowerCase() : filteredData.url;
 
       // Check if this URL already exists for this publisher using ID relation
       const existingSubmission = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
         filters: {
-          url: data.url,
+          url: filteredData.url,
           currentPublisherId: user.id
         }
       });
 
-      // Prepare submission data
+      // Prepare submission data — server-controlled fields override anything
+      // the caller might have supplied (the whitelist already filtered most,
+      // but explicit assignments here are belt-and-suspenders).
       const submissionData = {
-        ...data,
+        ...filteredData,
         publisherEmail: user.email,
         publisherName: user.username || user.email,
-        publishedAt: new Date()
+        publishedAt: new Date(),
+        // Verification fields — never trust caller input here:
+        gscVerified: false,
+        gscVerifiedAt: null,
+        gscRefreshToken: null,
+        gscPermissionLevel: null,
+        verificationMethod: null,
+        // Ownership/relation fields — bound to the JWT user only:
+        originalPublisherId: user.id,
+        currentPublisherId: user.id,
       };
 
       // Add reseller code data if provided
       if (resellerCodeData) {
         submissionData.addedByReseller = true;
-        submissionData.resellerCode = data.resellerCode;
-        submissionData.originalPublisherId = user.id;
-        submissionData.currentPublisherId = user.id;
-        // Reseller code bypasses verification
+        submissionData.resellerCode = filteredData.resellerCode;
+        // Reseller code bypasses GSC verification (this is the legitimate
+        // ahead-of-time-vetted path; the reseller-code use counter was
+        // already incremented above).
         submissionData.submissionStatus = 'pending_final_submission';
         submissionData.stepCompleted = 2;
         submissionData.verificationMethod = 'reseller-code';
         submissionData.gscVerified = false; // Not GSC verified, but reseller verified
       } else {
         submissionData.addedByReseller = false;
-        submissionData.currentPublisherId = user.id;
-        submissionData.submissionStatus = data.gscVerified ? 'verified_pending_review' : 'pending_verification';
+        // Always start in pending_verification. Promotion to a verified
+        // status is the GSC OAuth callback's responsibility, NOT this
+        // controller. (The old code branched on data.gscVerified here,
+        // which was a self-elevation backdoor.)
+        submissionData.submissionStatus = 'pending_verification';
       }
 
       let result;
