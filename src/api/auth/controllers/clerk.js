@@ -8,7 +8,43 @@
  * The `register` method delegates to `sync` to guarantee a single code path.
  * An in-memory mutex prevents race conditions when multiple requests
  * arrive concurrently for the same user (webhook + client-side sync).
+ *
+ * SECURITY: The `sync` endpoint MUST receive a Clerk-signed session JWT
+ * (clerkSessionToken in the request body) and verify it before trusting
+ * the claimed clerkId. Without this check, anyone on the internet can
+ * POST {clerkId,email} and create a confirmed Strapi user.
  */
+
+const { jwtVerify, createRemoteJWKSet } = require('jose');
+
+// Cached JWKS — built lazily on first request, refreshed automatically by
+// jose's createRemoteJWKSet (default cache: 10 min, 5s tolerance for clock skew).
+let _jwksCache = null;
+let _jwksUrlCache = null;
+function getJWKS() {
+    const url = process.env.CLERK_JWKS_URL;
+    if (!url) throw new Error('CLERK_JWKS_URL env var is not set');
+    if (_jwksCache && _jwksUrlCache === url) return _jwksCache;
+    _jwksCache = createRemoteJWKSet(new URL(url));
+    _jwksUrlCache = url;
+    return _jwksCache;
+}
+
+/**
+ * Verify a Clerk session JWT and return its payload.
+ * Throws if missing/invalid/expired/issuer-mismatch.
+ */
+async function verifyClerkSessionToken(token) {
+    if (!token || typeof token !== 'string') {
+        throw new Error('Missing or non-string Clerk session token');
+    }
+    const issuer = process.env.CLERK_JWT_ISSUER;
+    const { payload } = await jwtVerify(token, getJWKS(), {
+        issuer: issuer || undefined,
+        clockTolerance: '5s',
+    });
+    return payload;
+}
 
 // In-memory mutex to prevent concurrent user creation for the same clerkId/email.
 // Maps a lock key (clerkId or email) to a Promise that resolves when the lock is released.
@@ -45,39 +81,63 @@ module.exports = {
      * via an in-memory mutex and the DB unique constraint is a safety net.
      */
     async sync(ctx) {
-        const { clerkId, email, username, firstName, lastName, advertiser, publisher } = ctx.request.body;
+        const { clerkId, email, username, firstName, lastName, advertiser, publisher, clerkSessionToken } = ctx.request.body;
 
         if (!clerkId || !email) {
             return ctx.badRequest('Missing required fields: clerkId and email');
         }
 
-        // Acquire a lock keyed by clerkId to serialize concurrent requests for the same user.
-        // This prevents the race condition where two requests both see "user not found"
-        // and both proceed to create, resulting in duplicates.
-        const releaseLock = await acquireLock(`clerk_sync:${clerkId}`);
+        // ── SECURITY: verify the caller actually owns the Clerk identity ──
+        // Without this, anyone on the internet can POST {clerkId, email} and
+        // create a confirmed Strapi user with a valid JWT.
+        let verifiedClerkId;
+        try {
+            const payload = await verifyClerkSessionToken(clerkSessionToken);
+            verifiedClerkId = payload.sub;
+            if (!verifiedClerkId) throw new Error('Clerk JWT has no sub claim');
+        } catch (err) {
+            strapi.log.warn(`[CLERK SYNC] Rejected sync from IP ${ctx.request.ip}: ${err.message}`);
+            return ctx.unauthorized('Invalid or missing Clerk session token');
+        }
+        if (verifiedClerkId !== clerkId) {
+            strapi.log.warn(`[CLERK SYNC] clerkId mismatch: request=${clerkId} verified=${verifiedClerkId} ip=${ctx.request.ip}`);
+            return ctx.unauthorized('clerkId mismatch with verified session token');
+        }
+
+        // Acquire a lock keyed by verified clerkId. From here on we trust the
+        // verifiedClerkId, NOT the request-supplied clerkId.
+        const releaseLock = await acquireLock(`clerk_sync:${verifiedClerkId}`);
 
         try {
-            strapi.log.info(`[CLERK SYNC] Sync request for user: ${email} (${clerkId})`);
+            strapi.log.info(`[CLERK SYNC] Sync request for user: ${email} (${verifiedClerkId})`);
 
-            // Find existing user by clerkId or email (parallel for speed)
-            const [userByClerkId, userByEmail] = await Promise.all([
-                strapi.query('plugin::users-permissions.user').findOne({
-                    where: { clerkId },
-                }),
-                strapi.query('plugin::users-permissions.user').findOne({
+            // Look up by VERIFIED clerkId only. Do NOT fall back to email lookup —
+            // that allowed account takeover: attacker with valid Clerk session for
+            // their own clerkId could claim victim's email, get matched on email,
+            // and overwrite the victim's clerkId.
+            let user = await strapi.query('plugin::users-permissions.user').findOne({
+                where: { clerkId: verifiedClerkId },
+            });
+
+            // For new-account creation, also check email uniqueness. If a
+            // different Strapi user already has this email (legacy account
+            // without clerkId, or another user), refuse to silently link them.
+            if (!user) {
+                const userByEmail = await strapi.query('plugin::users-permissions.user').findOne({
                     where: { email },
-                }),
-            ]);
-
-            // Prefer clerkId match (authoritative), fallback to email match
-            let user = userByClerkId || userByEmail;
+                });
+                if (userByEmail) {
+                    strapi.log.warn(`[CLERK SYNC] Email ${email} already in use by user ${userByEmail.id}, refusing to auto-link to clerkId ${verifiedClerkId}`);
+                    return ctx.conflict('Email already in use by another account. Contact support to link accounts.');
+                }
+            }
 
             if (user) {
                 // ── UPDATE existing user ──
                 strapi.log.info(`[CLERK SYNC] Found existing user ${user.id}, updating`);
 
                 const updateData = {
-                    clerkId,
+                    clerkId: verifiedClerkId,
                     email,
                     confirmed: true,
                 };
@@ -132,7 +192,7 @@ module.exports = {
                 }
             } else {
                 // ── CREATE new user ──
-                strapi.log.info(`[CLERK SYNC] No existing user found, creating new user for Clerk ID: ${clerkId}`);
+                strapi.log.info(`[CLERK SYNC] No existing user found, creating new user for Clerk ID: ${verifiedClerkId}`);
 
                 const defaultRole = await strapi.query('plugin::users-permissions.role').findOne({
                     where: { type: 'authenticated' },
@@ -145,7 +205,7 @@ module.exports = {
                 try {
                     user = await strapi.query('plugin::users-permissions.user').create({
                         data: {
-                            clerkId,
+                            clerkId: verifiedClerkId,
                             email,
                             username: username || email.split('@')[0],
                             firstName: firstName || '',
@@ -165,7 +225,7 @@ module.exports = {
                     strapi.log.warn(`[CLERK SYNC] User creation failed (likely unique constraint). Recovering. Error: ${err.message}`);
 
                     user = await strapi.query('plugin::users-permissions.user').findOne({
-                        where: { $or: [{ clerkId }, { email }] },
+                        where: { $or: [{ clerkId: verifiedClerkId }, { email }] },
                     });
 
                     if (!user) {
@@ -232,13 +292,14 @@ module.exports = {
      * client-side calls /sync, with each using different logic.
      */
     async register(ctx) {
-        const { email, username, firstName, lastName, clerkId, advertiser, publisher } = ctx.request.body;
+        const { email, username, firstName, lastName, clerkId, advertiser, publisher, clerkSessionToken } = ctx.request.body;
 
         if (!email) {
             return ctx.badRequest('Missing required field: email');
         }
 
         // Normalize the request body to match sync's expected format, then delegate.
+        // clerkSessionToken is forwarded so sync()'s verification step still runs.
         ctx.request.body = {
             clerkId: clerkId || null,
             email,
@@ -247,6 +308,7 @@ module.exports = {
             lastName: lastName || '',
             advertiser: advertiser ?? true,
             publisher: publisher ?? false,
+            clerkSessionToken,
         };
 
         // If no clerkId provided, we can't use the mutex effectively,
