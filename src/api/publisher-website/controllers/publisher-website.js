@@ -7,15 +7,16 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 const { getPublisherCommissionRate } = require('../../../constants/commission');
 
-// Fields the user is allowed to set on POST /api/publisher-websites.
+// Fields the user is allowed to set on POST/PUT /api/publisher-websites.
 // SECURITY: Anything not in this set is dropped server-side. Verification
 // state, ownership, and audit fields can ONLY be mutated by their dedicated
 // flows (GSC OAuth callback, admin approval, reseller-code path, etc.) —
-// never by user input on create. Without this whitelist, a logged-in user
-// could POST {gscVerified:true, submissionStatus:'approved',
-// currentPublisherId: 255} and self-promote their claim past the
-// verification pipeline.
-const ALLOWED_CREATE_FIELDS = new Set([
+// never by user input. Without this whitelist, a logged-in user can:
+//   - POST {gscVerified:true, submissionStatus:'approved'} on create, OR
+//   - PUT  {gscVerified:true, submissionStatus:'approved', gscRefreshToken:'x'}
+//     on update of their own listing
+// and self-promote past the verification pipeline.
+const ALLOWED_USER_FIELDS = new Set([
   // Listing identity (user supplies)
   'url', 'protocol',
   // Listing metadata users describe themselves
@@ -51,12 +52,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       // Fail-closed whitelist on caller-supplied fields. Anything outside
-      // ALLOWED_CREATE_FIELDS is silently dropped (with a log).
+      // ALLOWED_USER_FIELDS is silently dropped (with a log).
       const raw = data || {};
       const filteredData = {};
       const droppedKeys = [];
       for (const k of Object.keys(raw)) {
-        if (ALLOWED_CREATE_FIELDS.has(k)) {
+        if (ALLOWED_USER_FIELDS.has(k)) {
           filteredData[k] = raw[k];
         } else {
           droppedKeys.push(k);
@@ -404,17 +405,35 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.forbidden('You can only update your own website submissions.');
       }
 
+      // SECURITY: fail-closed whitelist on update input. The legacy code
+      // only blacklisted a few relation fields, leaving gscVerified,
+      // submissionStatus, verificationMethod, gscRefreshToken, etc. wide
+      // open for user self-promotion past the verification pipeline.
+      const rawUpdate = data || {};
+      const filteredUpdate = {};
+      const droppedKeys = [];
+      for (const k of Object.keys(rawUpdate)) {
+        if (ALLOWED_USER_FIELDS.has(k)) {
+          filteredUpdate[k] = rawUpdate[k];
+        } else {
+          droppedKeys.push(k);
+        }
+      }
+      if (droppedKeys.length > 0) {
+        strapi.log.warn(`[publisher-website.update] User ${user.id} (${user.email}) tried to set restricted fields on website ${id}, dropped: ${droppedKeys.join(', ')}`);
+      }
+
       // Handle reseller code if provided in update data
-      if (data.resellerCode) {
+      if (filteredUpdate.resellerCode) {
 
         // Only process if this is a NEW code (not already used for this website)
         // This prevents double-counting if user updates the website multiple times
-        if (!existing.resellerCode || existing.resellerCode !== data.resellerCode) {
+        if (!existing.resellerCode || existing.resellerCode !== filteredUpdate.resellerCode) {
 
           try {
             // Validate the code
 
-            const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(data.resellerCode);
+            const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(filteredUpdate.resellerCode);
 
             if (!codeValidation.valid) {
               return ctx.badRequest(`Invalid reseller code: ${codeValidation.reason}`);
@@ -422,7 +441,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
             // Use the code (increment counter)
 
-            const useResult = await strapi.service('api::reseller-code.reseller-code').useCode(data.resellerCode, user.id);
+            const useResult = await strapi.service('api::reseller-code.reseller-code').useCode(filteredUpdate.resellerCode, user.id);
 
           } catch (error) {
             return ctx.badRequest('Failed to validate reseller code');
@@ -430,20 +449,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // Filter out relation fields that shouldn't be updated directly
-      const {
-        originalPublisherId,
-        currentPublisherId,
-        claimedBy,
-        originalWebsiteId,
-        ...updateData
-      } = data;
-
+      // submissionStatus stays at whatever the verification pipeline last
+      // set it to. User cannot influence it via this endpoint.
       const updated = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
-          ...updateData,
-          // Don't override submissionStatus if it's explicitly provided
-          submissionStatus: data.submissionStatus || existing.submissionStatus,
+          ...filteredUpdate,
+          submissionStatus: existing.submissionStatus,
         }
       });
 
