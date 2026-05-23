@@ -144,6 +144,38 @@ module.exports = (plugin) => {
     }
   };
 
+  // Fields a regular authenticated user is allowed to update on their own
+  // profile via PUT /api/users/me. This is a fail-closed whitelist:
+  // any field NOT listed here is silently stripped, regardless of whether
+  // the user supplied it. This prevents mass-assignment escalations like:
+  //   - marketplaceUnlocked: bypassing the deposit gate
+  //   - clerkId: hijacking another user's Clerk identity
+  //   - confirmed / blocked / role / Advertiser / Publisher: privilege escalation
+  //   - email / password / provider: account takeover
+  // Adding a new user-settable field requires explicitly extending this set.
+  const ALLOWED_SELF_UPDATE = new Set([
+    'username',
+    'firstName',
+    'lastName',
+    'displayName',
+    'phoneNumber',
+    'businessName',
+    'registrationNumber',
+    'billingAddress',
+    'city',
+    'country',
+    'billingCountry',
+    'pincode',
+    'vatGstNumber',
+    'paypalEmail',
+    'payoneerEmail',
+    'notificationPreferences',
+    'marketplacePreferences',
+    'website',
+    'identity',
+    'onboardingState',
+  ]);
+
   // Extend the users controller
   plugin.controllers.user.updateMe = async (ctx) => {
     try {
@@ -153,23 +185,26 @@ module.exports = (plugin) => {
       }
 
       const userId = ctx.state.user.id;
-      const updateData = ctx.request.body.data || ctx.request.body;
+      const rawUpdateData = ctx.request.body.data || ctx.request.body || {};
+
+      // Whitelist-filter the incoming payload. Drop anything outside
+      // ALLOWED_SELF_UPDATE (Strapi blacklist was easy to bypass — any
+      // schema field added in the future would be private-by-default-fail).
+      const updateData = {};
+      const droppedKeys = [];
+      for (const key of Object.keys(rawUpdateData)) {
+        if (ALLOWED_SELF_UPDATE.has(key)) {
+          updateData[key] = rawUpdateData[key];
+        } else {
+          droppedKeys.push(key);
+        }
+      }
 
       console.log('[UPDATE ME] User ID:', userId);
-      console.log('[UPDATE ME] Update data:', updateData);
-
-      // Ensure we can't update critical fields
-      delete updateData.email;
-      delete updateData.password;
-      delete updateData.provider;
-      delete updateData.confirmed;
-      delete updateData.blocked;
-      delete updateData.role;
-      // Role flags must only be changed via the dedicated /users/switch-role endpoint.
-      // Stripping them here prevents PUT /api/users/me from flipping a user's role
-      // (which silently broke marketplace visibility for users whose role drifted).
-      delete updateData.Advertiser;
-      delete updateData.Publisher;
+      console.log('[UPDATE ME] Allowed update data:', updateData);
+      if (droppedKeys.length > 0) {
+        console.warn(`[UPDATE ME] User ${userId} attempted to update disallowed fields, ignoring:`, droppedKeys);
+      }
 
       // Update the user
       const updatedUser = await strapi.entityService.update(
