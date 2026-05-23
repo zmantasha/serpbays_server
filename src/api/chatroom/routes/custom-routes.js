@@ -65,7 +65,9 @@ module.exports = {
       path: '/chatrooms/:id/admin-view',
       handler: 'chatroom.adminChatView',
       config: {
-        auth: false,  // Make accessible for quick admin access
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth'],
       },
     },
     {
@@ -73,15 +75,9 @@ module.exports = {
       path: '/chatrooms/admin',
       handler: 'chatroom.adminDashboard',
       config: {
-        auth: false,  // Make accessible for quick admin access
-      },
-    },
-    {
-      method: 'GET',
-      path: '/chatrooms/debug/websocket',
-      handler: 'chatroom.debugWebSocket',
-      config: {
-        auth: false,  // Debug endpoint
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth'],
       },
     },
   ],

@@ -14,8 +14,8 @@ module.exports = {
             handler: 'offers.find',
             config: {
                 auth: false,
-                policies: [],
-                middlewares: []
+                policies: ['global::is-admin'],
+                middlewares: ['global::admin-jwt-auth']
             }
         },
 
@@ -26,8 +26,8 @@ module.exports = {
             handler: 'offers.getStats',
             config: {
                 auth: false,
-                policies: [],
-                middlewares: []
+                policies: ['global::is-admin'],
+                middlewares: ['global::admin-jwt-auth']
             }
         },
 
@@ -38,8 +38,8 @@ module.exports = {
             handler: 'offers.create',
             config: {
                 auth: false,
-                policies: [],
-                middlewares: []
+                policies: ['global::is-admin'],
+                middlewares: ['global::admin-jwt-auth']
             }
         },
 
@@ -50,8 +50,8 @@ module.exports = {
             handler: 'offers.update',
             config: {
                 auth: false,
-                policies: [],
-                middlewares: []
+                policies: ['global::is-admin'],
+                middlewares: ['global::admin-jwt-auth']
             }
         },
 
@@ -62,8 +62,8 @@ module.exports = {
             handler: 'offers.delete',
             config: {
                 auth: false,
-                policies: [],
-                middlewares: []
+                policies: ['global::is-admin'],
+                middlewares: ['global::admin-jwt-auth']
             }
         }
     ]

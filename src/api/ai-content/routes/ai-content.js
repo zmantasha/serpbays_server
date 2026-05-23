@@ -13,7 +13,7 @@ module.exports = {
             config: {
                 auth: false,
                 policies: [],
-                middlewares: [],
+                middlewares: ['global::admin-jwt-auth'],
             },
         },
         {
@@ -23,7 +23,7 @@ module.exports = {
             config: {
                 auth: false,
                 policies: [],
-                middlewares: [],
+                middlewares: ['global::admin-jwt-auth'],
             },
         },
         {
@@ -33,7 +33,7 @@ module.exports = {
             config: {
                 auth: false,
                 policies: [],
-                middlewares: [],
+                middlewares: ['global::admin-jwt-auth'],
             },
         },
     ],

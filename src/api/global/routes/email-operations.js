@@ -64,16 +64,6 @@ module.exports = {
           scope: [] // Require authentication, admin check is done in controller
         }
       }
-    },
-    
-    // Test email operations (development only)
-    {
-      method: 'POST',
-      path: '/api/email/test',
-      handler: 'email-operations.testEmailOperation',
-      config: {
-        auth: false // No auth for testing in development
-      }
     }
   ]
 };

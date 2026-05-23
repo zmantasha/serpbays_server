@@ -13,9 +13,9 @@ module.exports = {
       path: '/admin/codes',
       handler: 'codes.find',
       config: {
-        auth: false, // Temporarily disable auth for testing
-        policies: [],
-        middlewares: []
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth']
       }
     },
     
@@ -25,9 +25,9 @@ module.exports = {
       path: '/admin/codes/stats',
       handler: 'codes.getStats',
       config: {
-        auth: false, // Temporarily disable auth for testing
-        policies: [],
-        middlewares: []
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth']
       }
     },
     
@@ -37,9 +37,9 @@ module.exports = {
       path: '/admin/codes/generate',
       handler: 'codes.generateCode',
       config: {
-        auth: false, // Temporarily disable auth for testing
-        policies: [],
-        middlewares: []
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth']
       }
     },
     
@@ -49,9 +49,9 @@ module.exports = {
       path: '/admin/codes/bulk-generate',
       handler: 'codes.bulkGenerateCodes',
       config: {
-        auth: false, // Temporarily disable auth for testing
-        policies: [],
-        middlewares: []
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth']
       }
     },
     
@@ -61,9 +61,9 @@ module.exports = {
       path: '/admin/codes/:id/status',
       handler: 'codes.updateStatus',
       config: {
-        auth: false, // Temporarily disable auth for testing
-        policies: [],
-        middlewares: []
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth']
       }
     },
     
@@ -73,9 +73,9 @@ module.exports = {
       path: '/admin/codes/:id',
       handler: 'codes.deleteCode',
       config: {
-        auth: false, // Temporarily disable auth for testing
-        policies: [],
-        middlewares: []
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth']
       }
     }
   ]

@@ -136,18 +136,6 @@ module.exports = {
     },
     {
       method: 'POST',
-      path: '/wallet/test-post',
-      handler: async (ctx) => {
-        ctx.body = { message: 'POST route works' };
-      },
-      config: {
-        auth: false,
-        policies: [],
-        middlewares: []
-      }
-    },
-    {
-      method: 'POST',
       path: '/wallet/redeem-promo',
       handler: 'user-wallet.redeemPromo',
       config: {

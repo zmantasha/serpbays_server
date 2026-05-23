@@ -8,8 +8,8 @@ module.exports = {
       handler: 'marketplace.uploadCSV',
       config: {
         auth: false,
-        policies: [],
-        middlewares: [],
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth'],
       },
     },
     {
@@ -18,8 +18,8 @@ module.exports = {
       handler: 'export-csv.exportSelected',
       config: {
         auth: false,
-        policies: [],
-        middlewares: [],
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth'],
       },
     },
     {
@@ -28,8 +28,8 @@ module.exports = {
       handler: 'export-csv.exportSelected',
       config: {
         auth: false,
-        policies: [],
-        middlewares: [],
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth'],
       },
     },
     {
@@ -38,8 +38,8 @@ module.exports = {
       handler: 'export-csv.adminList',
       config: {
         auth: false,
-        policies: [],
-        middlewares: [],
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth'],
       },
     },
     {
@@ -48,8 +48,8 @@ module.exports = {
       handler: 'export-csv.exportFiltered',
       config: {
         auth: false,
-        policies: [],
-        middlewares: [],
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth'],
       },
     },
   ],
