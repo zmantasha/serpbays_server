@@ -540,6 +540,35 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     if (!ctx.query) ctx.query = {};
     if (!ctx.query.filters) ctx.query.filters = {};
 
+    // Strip caller-supplied filters on private fields. Non-admin users
+    // could otherwise enumerate publisher_email existence via the
+    // meta.pagination.total count, e.g. ?filters[publisher_email][$eq]=...
+    // confirms whether an email has any listings on the platform.
+    // Admins keep filter access (panel20 needs it for moderation views).
+    // The publisher self-listing filter (publisher_email: user.email) is
+    // added by this controller *after* this sanitization runs, so it
+    // continues to work.
+    const isAdmin = user && user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
+    if (!isAdmin) {
+      const PRIVATE_FILTER_KEYS = new Set([
+        'publisher_email',
+        'publisher_name',
+        'gsc_refresh_token',
+        'gsc_permission_level',
+      ]);
+      const stripPrivateFilters = (node) => {
+        if (!node || typeof node !== 'object') return node;
+        if (Array.isArray(node)) return node.map(stripPrivateFilters);
+        const cleaned = {};
+        for (const [key, value] of Object.entries(node)) {
+          if (PRIVATE_FILTER_KEYS.has(key)) continue;
+          cleaned[key] = stripPrivateFilters(value);
+        }
+        return cleaned;
+      };
+      ctx.query.filters = stripPrivateFilters(ctx.query.filters);
+    }
+
     // Deposit-gate: advertisers and anonymous users only see the first
     // MARKETPLACE_UNLOCK_MIN_USD-worth of listings (capped at 10 rows) until
     // they've deposited the minimum. Publishers see only their own and are
