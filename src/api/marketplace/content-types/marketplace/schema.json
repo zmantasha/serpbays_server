@@ -312,6 +312,7 @@
         "siteUnverifiedUser",
         "siteRestrictedUser"
       ],
+      "private": true,
       "description": "Permission level in Google Search Console"
     },
     "gsc_refresh_token": {

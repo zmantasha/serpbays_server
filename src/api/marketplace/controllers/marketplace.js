@@ -299,6 +299,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       const sanitized = { ...entry };
 
+      // Always strip server-side secrets, regardless of ownership.
+      // gsc_refresh_token is a Google OAuth refresh token used server-side for
+      // Search Console API access — it must never appear in any API response.
+      delete sanitized.gsc_refresh_token;
+
       // Check if this is the user's own website
       // Check by userId (publisher relation) or email for legacy records
       // Handle both cases: publisher might be just ID (number) or populated object
@@ -325,6 +330,10 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           delete sanitized[key];
         }
       });
+
+      // Non-owners must not see GSC permission level either (reveals publisher
+      // posture toward Google Search Console).
+      delete sanitized.gsc_permission_level;
 
       return sanitized;
     };
