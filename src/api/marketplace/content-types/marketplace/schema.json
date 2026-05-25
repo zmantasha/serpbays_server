@@ -131,7 +131,8 @@
       "type": "relation",
       "relation": "manyToOne",
       "target": "plugin::users-permissions.user",
-      "description": "Publisher who owns this marketplace listing"
+      "required": true,
+      "description": "Publisher who owns this marketplace listing. Required FK (DB-level ON DELETE RESTRICT). publisher_email is a denormalized cache, kept in sync via lifecycle hook."
     },
     "publisher_price": {
       "type": "integer",

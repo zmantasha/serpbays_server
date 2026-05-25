@@ -10,6 +10,38 @@ module.exports = (plugin) => {
     return sanitizedUser;
   };
 
+  // Helper: refuse to delete a user who still owns marketplaces.
+  // Resolves the delete query's `where` clause to concrete user IDs, counts
+  // marketplaces per user via the junction table, and throws a clean error
+  // if any are blocking. No-op if the where clause matches no users or none
+  // of the resolved users own marketplaces.
+  const blockUserDeleteIfOwnsMarketplaces = async (where) => {
+    const users = await strapi.db.query('plugin::users-permissions.user').findMany({
+      where,
+      select: ['id', 'email'],
+    });
+    if (users.length === 0) return;
+
+    const userIds = users.map((u) => u.id);
+    const owned = await strapi.db.connection('marketplaces_publisher_lnk')
+      .whereIn('user_id', userIds)
+      .select('user_id');
+    if (owned.length === 0) return;
+
+    const countByUser = {};
+    for (const row of owned) countByUser[row.user_id] = (countByUser[row.user_id] || 0) + 1;
+
+    const blocking = users
+      .filter((u) => countByUser[u.id])
+      .map((u) => `${u.email} (${countByUser[u.id]} marketplace${countByUser[u.id] === 1 ? '' : 's'})`)
+      .join('; ');
+
+    throw new Error(
+      `Cannot delete user — they own marketplaces: ${blocking}. ` +
+      `Reassign or archive these marketplaces before deleting the user.`
+    );
+  };
+
   // Helper function to ensure wallet exists for advertiser role
   const ensureAdvertiserWallet = async (userId) => {
     try {
@@ -141,7 +173,57 @@ module.exports = (plugin) => {
       } catch (error) {
         console.error('Error in user lifecycle hook:', error);
       }
-    }
+    },
+
+    // ──────────────────────────────────────────────────────────────────────
+    // afterUpdate: keep marketplaces.publisher_email in sync as a
+    // denormalized cache of the user's current email. The publisher FK
+    // is the source of truth for OWNERSHIP; this column is just a fast
+    // display copy that some legacy code paths still read. Without this
+    // sync, the cache drifts when a user changes their email (via admin
+    // panel, /api/users/me, or Clerk's user.updated webhook).
+    // ──────────────────────────────────────────────────────────────────────
+    async afterUpdate(event) {
+      const { result, params } = event;
+      // Only act if email was in the update payload — most user updates
+      // (country, phone, etc.) don't need this cascade.
+      if (!params?.data?.email || !result?.id) return;
+
+      try {
+        const updatedCount = await strapi.db.connection('marketplaces')
+          .whereIn(
+            'id',
+            strapi.db.connection('marketplaces_publisher_lnk')
+              .select('marketplace_id')
+              .where({ user_id: result.id })
+          )
+          .update({ publisher_email: result.email });
+
+        if (updatedCount > 0) {
+          strapi.log.info(
+            `[LIFECYCLE afterUpdate] Cascaded email change to ${updatedCount} marketplace(s) for user ${result.id} (${result.email})`
+          );
+        }
+      } catch (err) {
+        strapi.log.error(
+          `[LIFECYCLE afterUpdate] Failed to cascade email to marketplaces: ${err.message}`
+        );
+      }
+    },
+
+    // ──────────────────────────────────────────────────────────────────────
+    // beforeDelete / beforeDeleteMany: refuse to delete a user who still
+    // owns marketplaces. Surfaces a friendly error in the admin panel and
+    // via the API. The DB also enforces this via ON DELETE RESTRICT on
+    // marketplaces_publisher_lnk.user_id (set in src/index.js bootstrap) —
+    // these hooks just provide a cleaner message before the DB rejects.
+    // ──────────────────────────────────────────────────────────────────────
+    async beforeDelete(event) {
+      await blockUserDeleteIfOwnsMarketplaces(event.params.where);
+    },
+    async beforeDeleteMany(event) {
+      await blockUserDeleteIfOwnsMarketplaces(event.params.where);
+    },
   };
 
   // Fields a regular authenticated user is allowed to update on their own

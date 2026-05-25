@@ -82,6 +82,36 @@ module.exports = {
       strapi.log.warn(`[BOOTSTRAP] Could not verify/create unique indexes: ${err.message}`);
     }
 
+    // Ensure marketplaces_publisher_lnk.user_id FK uses ON DELETE RESTRICT.
+    // Strapi's content-type schema doesn't expose ON DELETE behavior, so we
+    // enforce it here. RESTRICT prevents accidental orphaning of marketplaces
+    // when a publisher is deleted — the delete fails until marketplaces are
+    // explicitly reassigned or archived. Idempotent: only alters if needed.
+    // Postgres-only (information_schema.referential_constraints is standard SQL).
+    if ((process.env.DATABASE_CLIENT || '').toLowerCase().includes('postgres')) {
+      try {
+        const knex = strapi.db.connection;
+        const result = await knex.raw(
+          `SELECT delete_rule FROM information_schema.referential_constraints
+             WHERE constraint_name = 'marketplaces_publisher_lnk_ifk'`
+        );
+        const currentRule = result.rows?.[0]?.delete_rule;
+        if (currentRule && currentRule !== 'RESTRICT') {
+          await knex.raw('ALTER TABLE marketplaces_publisher_lnk DROP CONSTRAINT marketplaces_publisher_lnk_ifk');
+          await knex.raw(
+            `ALTER TABLE marketplaces_publisher_lnk
+               ADD CONSTRAINT marketplaces_publisher_lnk_ifk
+               FOREIGN KEY (user_id) REFERENCES up_users(id) ON DELETE RESTRICT`
+          );
+          strapi.log.info(`[BOOTSTRAP] Changed marketplaces_publisher_lnk_ifk delete rule: ${currentRule} → RESTRICT`);
+        } else {
+          strapi.log.info('[BOOTSTRAP] marketplaces_publisher_lnk_ifk already ON DELETE RESTRICT');
+        }
+      } catch (err) {
+        strapi.log.warn(`[BOOTSTRAP] Could not enforce RESTRICT on marketplaces_publisher_lnk_ifk: ${err.message}`);
+      }
+    }
+
     // Initialize WebSocket after Strapi is ready
     await websocketBootstrap({ strapi });
 
