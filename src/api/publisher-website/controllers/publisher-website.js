@@ -517,11 +517,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         data: {
           ...filteredUpdate,
           ...workflow,
+          // Publisher edits must NEVER live-sync to the marketplace. The
+          // afterUpdate lifecycle auto-syncs an approved site's pricing/metrics
+          // to the marketplace unless this flag is set (beforeUpdate stashes it
+          // to event.state, then strips it before persisting). Without it, a
+          // publisher edit would both push changes live AND create the pending
+          // request below — defeating admin approval. Admins set the same flag
+          // in their own controller and do their own immediate sync.
+          _skipMarketplaceSync: true,
         }
       });
-
-      console.log("updated", updated)
-      console.log("existing", existing)
 
       // If this is an approved website being updated, queue a marketplace update request instead of updating live data
       if (existing.submissionStatus === 'approved' && existing.marketplaceId) {
