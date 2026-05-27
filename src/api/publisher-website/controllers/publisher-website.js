@@ -266,6 +266,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         populate: ['currentPublisherId', 'originalPublisherId']
       });
 
+      // Attach the latest open/decided update-request per website so the
+      // publisher UI can show "Update pending review" / "Update rejected: <reason>"
+      // SEPARATELY from the website's own (live/approved) status. The website's
+      // submissionStatus stays 'approved'; this only reflects a requested change
+      // to the live listing.
+      const submissionIds = submissions.map((w) => w.id);
+      const latestUpdateByWebsite = new Map();
+      if (submissionIds.length > 0) {
+        const updateReqs = await strapi.db.query('api::website-update-request.website-update-request').findMany({
+          where: {
+            publisherWebsite: { $in: submissionIds },
+            status: { $in: ['pending', 'rejected'] },
+          },
+          orderBy: { createdAt: 'desc' },
+          populate: ['publisherWebsite'],
+        });
+        for (const r of updateReqs) {
+          const wid = r.publisherWebsite?.id;
+          // First (most recent) wins per website.
+          if (wid && !latestUpdateByWebsite.has(wid)) {
+            latestUpdateByWebsite.set(wid, {
+              status: r.status,        // 'pending' | 'rejected'
+              notes: r.notes || null,  // rejection reason when rejected
+              submittedAt: r.submittedAt || null,
+              reviewedAt: r.reviewedAt || null,
+            });
+          }
+        }
+      }
+
       // Optimize order count queries - batch fetch all marketplaces at once
       const websiteUrls = submissions.map(w => w.url);
       const marketplaces = await strapi.db.query('api::marketplace.marketplace').findMany({
@@ -361,11 +391,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       });
 
+      // Attach the latest update-request (pending/rejected) to each website so
+      // the publisher sees their requested-change status separately from the
+      // live/approved listing status.
+      const submissionsWithMeta = submissionsWithOrders.map((w) => ({
+        ...w,
+        updateRequest: latestUpdateByWebsite.get(w.id) || null,
+      }));
+
       // Calculate pagination metadata
       const pageCount = Math.ceil(total / pageSize);
 
       return {
-        data: submissionsWithOrders,
+        data: submissionsWithMeta,
         meta: {
           pagination: {
             page: page,
@@ -506,7 +544,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       if (rawUpdate.submissionStatus !== undefined &&
           rawUpdate.submissionStatus !== existing.submissionStatus) {
-        if (PUBLISHER_SETTABLE_STATUSES.has(rawUpdate.submissionStatus)) {
+        if (existing.submissionStatus === 'approved') {
+          // Editing a LIVE (approved) listing must NOT change its status. The
+          // website stays approved/live in the marketplace; the edit is captured
+          // as a pending website-update-request (created below) and only goes
+          // live when an admin approves that request. This keeps the publisher's
+          // own listing showing as "Live" rather than flipping to "under review".
+          strapi.log.info(`[publisher-website.update] Website ${id} is approved; ignoring status change to '${rawUpdate.submissionStatus}' — edit tracked as a pending update request.`);
+        } else if (PUBLISHER_SETTABLE_STATUSES.has(rawUpdate.submissionStatus)) {
           workflow.submissionStatus = rawUpdate.submissionStatus;
         } else {
           strapi.log.warn(`[publisher-website.update] User ${user.id} attempted disallowed status transition '${existing.submissionStatus}' → '${rawUpdate.submissionStatus}' on website ${id}; ignored.`);
