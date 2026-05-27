@@ -16,27 +16,43 @@ const { getPublisherCommissionRate } = require('../../../constants/commission');
 //   - PUT  {gscVerified:true, submissionStatus:'approved', gscRefreshToken:'x'}
 //     on update of their own listing
 // and self-promote past the verification pipeline.
+// Fields the publisher is allowed to set on POST/PUT /api/publisher-websites.
+// Field names match the actual schema (camelCase). SECURITY: anything not in
+// this set is dropped server-side. Verification state, ownership, audit fields,
+// metrics, and admin-only fields can ONLY be mutated by their dedicated flows
+// (GSC OAuth callback, admin approval, reseller-code path, metrics fetcher) —
+// never by user input. Without this whitelist, a logged-in user could:
+//   - POST { gscVerified: true, submissionStatus: 'approved' } on create, OR
+//   - PUT  { gscVerified: true, gscRefreshToken: 'x', reviewedBy: 1 } on update
+// and self-promote past the verification pipeline.
 const ALLOWED_USER_FIELDS = new Set([
-  // Listing identity (user supplies)
+  // Listing identity
   'url', 'protocol',
-  // Listing metadata users describe themselves
-  'category', 'description', 'language', 'countries',
-  'guidelines', 'sample_post', 'sample_links',
-  // Pricing
-  'price', 'link_insertion_price',
-  'adv_crypto_pricing', 'adv_casino_pricing', 'adv_cbd_pricing', 'adv_dating_pricing',
-  'adv_li_crypto_pricing', 'adv_li_casino_pricing', 'adv_li_cbd_pricing', 'adv_li_dating_pricing',
-  // Listing characteristics
-  'tat', 'min_word_count', 'backlink_type', 'backlink_validity',
-  'dofollow_link', 'sponsored', 'ugc', 'digital_pr',
-  'placement_speed', 'publication_location',
-  // Reseller code is read by this controller before the whitelist anyway,
-  // but we keep it allowed so the spread-through still works.
-  'resellerCode',
-  // GSC-flow step tracking — user signals "I've started GSC verification".
+  // Verification flow — publisher chooses how they want to verify ownership.
   // The actual gscVerified=true assignment happens in the GSC OAuth callback
   // controller, NOT here.
-  'verificationStarted',
+  'verificationMethod',
+  // Listing description (publisher writes)
+  'description', 'guidelines', 'publicationLocation',
+  // Listing metadata
+  'category', 'language', 'countries', 'samplePosts',
+  // Pricing — general (guest post + link insertion)
+  'generalGuestPostPrice', 'generalLinkInsertionPrice',
+  // Pricing — niche-specific (each niche has an Accepted flag + 2 prices)
+  'casinoAccepted', 'casinoGuestPostPrice', 'casinoLinkInsertionPrice',
+  'cryptoAccepted', 'cryptoGuestPostPrice', 'cryptoLinkInsertionPrice',
+  'cbdAccepted', 'cbdGuestPostPrice', 'cbdLinkInsertionPrice',
+  'datingAccepted', 'datingGuestPostPrice', 'datingLinkInsertionPrice',
+  // Link / content characteristics
+  'backlinkType', 'allowedLinks', 'backlinkValidity', 'minWordCount',
+  'sponsored', 'ugc', 'isPRSite',
+  // Copywriting (publisher offers an add-on)
+  'doCopywriting', 'copywritingPrice',
+  // Turnaround
+  'expectedTATHours',
+  // Reseller code is read out before the whitelist anyway, but allowed so the
+  // spread-through still works.
+  'resellerCode',
 ]);
 
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
@@ -622,6 +638,34 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       if (!publisherId) {
         return ctx.badRequest(`Cannot approve website: No valid publisher account found for ${submission.url}. Publisher must register first.`);
+      }
+
+      // CRITICAL: Refuse to approve a website with no pricing set.
+      // createMarketplaceListing will happily create a listing with all NULL
+      // prices (line ~906 — "If price is not provided, keep as null"). A
+      // null-price listing is filtered out of the marketplace, so the website
+      // would be "approved" but invisible to advertisers — a useless half-state.
+      // Require the publisher to set at least one price before approval.
+      const priceFields = [
+        ['generalGuestPostPrice', submission.generalGuestPostPrice],
+        ['generalLinkInsertionPrice', submission.generalLinkInsertionPrice],
+        ['casinoGuestPostPrice', submission.casinoGuestPostPrice],
+        ['casinoLinkInsertionPrice', submission.casinoLinkInsertionPrice],
+        ['cryptoGuestPostPrice', submission.cryptoGuestPostPrice],
+        ['cryptoLinkInsertionPrice', submission.cryptoLinkInsertionPrice],
+        ['cbdGuestPostPrice', submission.cbdGuestPostPrice],
+        ['cbdLinkInsertionPrice', submission.cbdLinkInsertionPrice],
+        ['datingGuestPostPrice', submission.datingGuestPostPrice],
+        ['datingLinkInsertionPrice', submission.datingLinkInsertionPrice],
+      ];
+      const presentPrices = priceFields.filter(([_, v]) => Number(v) > 0);
+      if (presentPrices.length === 0) {
+        strapi.log.warn(
+          `[approve] Refused to approve website ${id} (${submission.url}) — no pricing set. Admin: ${user?.email}.`
+        );
+        return ctx.badRequest(
+          `Cannot approve website: at least one price must be set (general / casino / crypto / cbd / dating — guest post or link insertion). Ask the publisher to fill in pricing before approving.`
+        );
       }
 
       // Update submission status to approved
