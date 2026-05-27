@@ -943,6 +943,35 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} approving website ${id}`);
 
+      // CRITICAL: refuse to approve a website with no pricing set. The
+      // marketplace-listing helper happily creates listings with all-NULL
+      // prices (which then get filtered out of the marketplace), leaving
+      // the website in a useless "approved-but-invisible" half-state.
+      // Require at least one price to be set before admin can approve.
+      const existing = await strapi.entityService.findOne(
+        'api::publisher-website.publisher-website',
+        id
+      );
+      if (!existing) {
+        return ctx.notFound(`Website ${id} not found`);
+      }
+      const priceFields = [
+        existing.generalGuestPostPrice,
+        existing.generalLinkInsertionPrice,
+        existing.casinoGuestPostPrice, existing.casinoLinkInsertionPrice,
+        existing.cryptoGuestPostPrice, existing.cryptoLinkInsertionPrice,
+        existing.cbdGuestPostPrice, existing.cbdLinkInsertionPrice,
+        existing.datingGuestPostPrice, existing.datingLinkInsertionPrice,
+      ];
+      if (!priceFields.some((p) => Number(p) > 0)) {
+        strapi.log.warn(
+          `[admin/websites.approve] Refused to approve website ${id} (${existing.url}) — no pricing set. Admin: ${ctx.state.user?.email}.`
+        );
+        return ctx.badRequest(
+          `Cannot approve website: at least one price must be set (general / casino / crypto / cbd / dating — guest post or link insertion). Ask the publisher to fill in pricing before approving.`
+        );
+      }
+
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           submissionStatus: 'approved',
@@ -3613,6 +3642,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             errors.push({
               id,
               error: `Website "${website.url}" does not have required metrics (DA/DR). Please update metrics first.`
+            });
+            continue;
+          }
+
+          // Policy validation: at least one price must be set. Without this,
+          // approval creates a marketplace listing with all-NULL prices that
+          // gets filtered out — website ends up approved-but-invisible.
+          const bulkPriceFields = [
+            website.generalGuestPostPrice, website.generalLinkInsertionPrice,
+            website.casinoGuestPostPrice, website.casinoLinkInsertionPrice,
+            website.cryptoGuestPostPrice, website.cryptoLinkInsertionPrice,
+            website.cbdGuestPostPrice, website.cbdLinkInsertionPrice,
+            website.datingGuestPostPrice, website.datingLinkInsertionPrice,
+          ];
+          if (!bulkPriceFields.some((p) => Number(p) > 0)) {
+            errors.push({
+              id,
+              error: `Website "${website.url}" has no pricing set. Publisher must fill in at least one price before approval.`,
             });
             continue;
           }
