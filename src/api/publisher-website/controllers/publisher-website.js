@@ -846,6 +846,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Submission not found');
       }
 
+      // GUARD: don't reject an already-approved (LIVE) website — that creates a
+      // "rejected-but-live" divergence. Reject a publisher's EDIT via the
+      // Pending Updates queue (update-request reject); pause/delist to take a
+      // live site down.
+      if (submission.submissionStatus === 'approved') {
+        return ctx.badRequest(
+          'This website is already live (approved). To reject a publisher’s pending edit, use Pending Updates. To take the live listing down, pause or delist it instead.'
+        );
+      }
+
       const rejected = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           submissionStatus: 'rejected',

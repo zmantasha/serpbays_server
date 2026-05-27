@@ -1283,6 +1283,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const wasPreviouslyApproved = websiteBeforeUpdate.submissionStatus === 'approved';
       const websiteUrl = websiteBeforeUpdate.url;
 
+      // GUARD: "Reject" is for un-approved submissions only. Rejecting an
+      // already-approved (LIVE) website here set submissionStatus='rejected'
+      // while the marketplace stayed active, producing a "rejected-but-live"
+      // divergence. To reject a publisher's EDIT to a live site, use the
+      // Pending Updates queue (rejects only the update-request, keeps the site
+      // live). To take a live site down, pause/delist it instead.
+      if (wasPreviouslyApproved) {
+        return ctx.badRequest(
+          'This website is already live (approved). To reject a publisher’s pending edit, use Pending Updates. To take the live listing down, pause or delist it instead.'
+        );
+      }
+
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           submissionStatus: 'rejected',
