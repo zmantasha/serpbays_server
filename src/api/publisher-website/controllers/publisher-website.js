@@ -55,6 +55,25 @@ const ALLOWED_USER_FIELDS = new Set([
   'resellerCode',
 ]);
 
+// Workflow-progression fields the multi-step "add website" flow must advance,
+// but which are too sensitive for the blanket whitelist (they gate the
+// verification/approval pipeline). They are handled by a controlled transition
+// in update() — NOT passed through raw — so a user still can't jump to an
+// approved/verified state. Listed here so update() doesn't log them as
+// "dropped restricted fields" noise.
+const WORKFLOW_FIELDS = new Set(['stepCompleted', 'submissionStatus']);
+
+// submissionStatus values a publisher may move their OWN listing into. These
+// are all PRE-approval states the publisher legitimately drives through the
+// submission UI. Everything else — 'approved', 'verified_pending_review',
+// 'rejected', 'delisted', etc. — is reserved for the admin / GSC pipeline and
+// must never be settable by user input.
+const PUBLISHER_SETTABLE_STATUSES = new Set([
+  'pending_verification',
+  'pending_final_submission',
+  'approval_pending',
+]);
+
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
   // Create new publisher website submission
   async create(ctx) {
@@ -431,7 +450,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       for (const k of Object.keys(rawUpdate)) {
         if (ALLOWED_USER_FIELDS.has(k)) {
           filteredUpdate[k] = rawUpdate[k];
-        } else {
+        } else if (!WORKFLOW_FIELDS.has(k)) {
+          // Workflow fields (stepCompleted, submissionStatus) are handled by a
+          // controlled transition below — not "dropped", so don't log them.
           droppedKeys.push(k);
         }
       }
@@ -465,12 +486,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      // submissionStatus stays at whatever the verification pipeline last
-      // set it to. User cannot influence it via this endpoint.
+      // Controlled workflow progression. The multi-step submission flow needs
+      // to advance stepCompleted and move submissionStatus through pre-approval
+      // states, but these can't be blanket-whitelisted (they gate verification
+      // /approval). Apply them here under tight rules:
+      //   - stepCompleted: forward-only, clamped to [1, 4] (UI progress marker)
+      //   - submissionStatus: only PUBLISHER_SETTABLE_STATUSES (pre-approval);
+      //     any other requested value (e.g. 'approved') is ignored + logged.
+      const workflow = {};
+
+      if (rawUpdate.stepCompleted !== undefined) {
+        const requested = parseInt(rawUpdate.stepCompleted, 10);
+        if (Number.isFinite(requested)) {
+          const current = parseInt(existing.stepCompleted, 10) || 1;
+          // never go backwards, never exceed the 4-step flow
+          workflow.stepCompleted = Math.max(current, Math.min(4, Math.max(1, requested)));
+        }
+      }
+
+      if (rawUpdate.submissionStatus !== undefined &&
+          rawUpdate.submissionStatus !== existing.submissionStatus) {
+        if (PUBLISHER_SETTABLE_STATUSES.has(rawUpdate.submissionStatus)) {
+          workflow.submissionStatus = rawUpdate.submissionStatus;
+        } else {
+          strapi.log.warn(`[publisher-website.update] User ${user.id} attempted disallowed status transition '${existing.submissionStatus}' → '${rawUpdate.submissionStatus}' on website ${id}; ignored.`);
+        }
+      }
+
       const updated = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           ...filteredUpdate,
-          submissionStatus: existing.submissionStatus,
+          ...workflow,
         }
       });
 
