@@ -21,7 +21,7 @@ module.exports = async (policyContext, config, { strapi }) => {
   const match = /^Bearer (.+)$/.exec(header);
 
   if (!match) {
-    console.log('[ACCESS DENIED] Missing or malformed authorization header');
+    strapi.log.warn('[ACCESS DENIED] Missing or malformed authorization header');
     return false;
   }
 
@@ -29,7 +29,7 @@ module.exports = async (policyContext, config, { strapi }) => {
     const jwtService = strapi.plugin('users-permissions').service('jwt');
     const payload = await jwtService.verify(match[1]);
     if (!payload?.id) {
-      console.log('[ACCESS DENIED] Invalid JWT payload');
+      strapi.log.warn('[ACCESS DENIED] Invalid JWT payload');
       return false;
     }
 
@@ -38,26 +38,26 @@ module.exports = async (policyContext, config, { strapi }) => {
     });
 
     if (!user) {
-      console.log('[ACCESS DENIED] User no longer exists');
+      strapi.log.warn('[ACCESS DENIED] User no longer exists');
       return false;
     }
     if (user.blocked) {
-      console.log(`[ACCESS DENIED] User ${user.id} is blocked`);
+      strapi.log.warn(`[ACCESS DENIED] User ${user.id} is blocked`);
       return false;
     }
 
     const roleType = user.role?.type;
     if (!ALLOWED_ROLE_TYPES.includes(roleType)) {
-      console.log(`[ACCESS DENIED] User ${user.id} (${user.email}) role '${roleType}' is not an admin role`);
+      strapi.log.warn(`[ACCESS DENIED] User ${user.id} (${user.email}) role '${roleType}' is not an admin role`);
       return false;
     }
 
     state.user = user;
     state.auth = { credentials: user, strategy: { name: 'is-admin-with-jwt' } };
-    console.log(`[ADMIN ACCESS] User ${user.id} (${user.email}) with role '${roleType}' accessed admin endpoint`);
+    strapi.log.warn(`[ADMIN ACCESS] User ${user.id} (${user.email}) with role '${roleType}' accessed admin endpoint`);
     return true;
   } catch (err) {
-    console.log(`[ACCESS DENIED] JWT verification failed: ${err.message}`);
+    strapi.log.warn(`[ACCESS DENIED] JWT verification failed: ${err.message}`);
     return false;
   }
 };

@@ -14,8 +14,8 @@ module.exports = {
       handler: 'codes.find',
       config: {
         auth: false,
-        policies: ['global::is-admin'],
-        middlewares: ['global::admin-jwt-auth']
+        policies: ['global::is-admin-with-jwt'],
+        middlewares: []
       }
     },
     
@@ -26,8 +26,8 @@ module.exports = {
       handler: 'codes.getStats',
       config: {
         auth: false,
-        policies: ['global::is-admin'],
-        middlewares: ['global::admin-jwt-auth']
+        policies: ['global::is-admin-with-jwt'],
+        middlewares: []
       }
     },
     
@@ -38,8 +38,8 @@ module.exports = {
       handler: 'codes.generateCode',
       config: {
         auth: false,
-        policies: ['global::is-admin'],
-        middlewares: ['global::admin-jwt-auth']
+        policies: ['global::is-admin-with-jwt'],
+        middlewares: []
       }
     },
     
@@ -50,8 +50,8 @@ module.exports = {
       handler: 'codes.bulkGenerateCodes',
       config: {
         auth: false,
-        policies: ['global::is-admin'],
-        middlewares: ['global::admin-jwt-auth']
+        policies: ['global::is-admin-with-jwt'],
+        middlewares: []
       }
     },
     
@@ -62,8 +62,8 @@ module.exports = {
       handler: 'codes.updateStatus',
       config: {
         auth: false,
-        policies: ['global::is-admin'],
-        middlewares: ['global::admin-jwt-auth']
+        policies: ['global::is-admin-with-jwt'],
+        middlewares: []
       }
     },
     
@@ -74,8 +74,8 @@ module.exports = {
       handler: 'codes.deleteCode',
       config: {
         auth: false,
-        policies: ['global::is-admin'],
-        middlewares: ['global::admin-jwt-auth']
+        policies: ['global::is-admin-with-jwt'],
+        middlewares: []
       }
     }
   ]

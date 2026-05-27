@@ -11,14 +11,14 @@ module.exports = (policyContext, config, { strapi }) => {
 
   // Check if user is authenticated
   if (!state.user) {
-    console.log('[ACCESS DENIED] No authenticated user');
+    strapi.log.warn('[ACCESS DENIED] No authenticated user');
     return false;
   }
 
   // Check if user has admin role
   const userRole = state.user.role;
   if (!userRole) {
-    console.log(`[ACCESS DENIED] User ${state.user.id} (${state.user.email}) has no role assigned`);
+    strapi.log.warn(`[ACCESS DENIED] User ${state.user.id} (${state.user.email}) has no role assigned`);
     return false;
   }
 
@@ -28,9 +28,9 @@ module.exports = (policyContext, config, { strapi }) => {
 
   // Log admin access for security auditing
   if (isAdmin) {
-    console.log(`[ADMIN ACCESS] User ${state.user.id} (${state.user.email}) with role '${userRole.type}' accessed admin endpoint`);
+    strapi.log.warn(`[ADMIN ACCESS] User ${state.user.id} (${state.user.email}) with role '${userRole.type}' accessed admin endpoint`);
   } else {
-    console.log(`[ACCESS DENIED] User ${state.user.id} (${state.user.email}) denied admin access - Role: '${userRole.type}' (${userRole.name})`);
+    strapi.log.warn(`[ACCESS DENIED] User ${state.user.id} (${state.user.email}) denied admin access - Role: '${userRole.type}' (${userRole.name})`);
   }
 
   return isAdmin;
