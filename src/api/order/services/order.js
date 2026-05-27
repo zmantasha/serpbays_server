@@ -720,11 +720,20 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
     const refundAmount = parseFloat(order.totalAmount);
     const currentEscrow = parseFloat(advertiserWallet.escrowBalance) || 0;
 
-    // Validate sufficient escrow before refunding
+    // The escrow bucket can drift from reality (historical resets by read
+    // paths, legacy orders created before escrow tracking, partial failures).
+    // The authoritative record of what the advertiser paid is the order's
+    // totalAmount + spendingBreakdown + the original payment transaction —
+    // NOT this bucket. So we DON'T block the refund when escrow looks short:
+    // we log the drift, refund the advertiser exactly what they paid, and
+    // clamp the escrow bucket at 0 (below) so it never goes negative.
+    //
+    // Double-refunds are already prevented upstream: validateCancellation only
+    // permits cancelling an 'accepted' order, and cancelOrder flips the status
+    // to 'cancelled' immediately after this refund — a second cancel attempt
+    // fails the status check before reaching here.
     if (currentEscrow < refundAmount) {
-      console.error(`[ESCROW ERROR] Cannot refund $${refundAmount}, only $${currentEscrow} in escrow!`);
-      console.error(`[ESCROW ERROR] Order ID: ${order.id}, Advertiser ID: ${order.advertiser.id}`);
-      throw new Error(`Insufficient escrow balance: have $${currentEscrow}, need $${refundAmount}`);
+      console.warn(`[ESCROW DRIFT] Order ${order.id}: escrow bucket $${currentEscrow} < refund $${refundAmount} for advertiser ${order.advertiser.id}. Refunding per payment record; clamping escrow at 0.`);
     }
 
     // Check if order has spending breakdown metadata
@@ -748,7 +757,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           mainBalance: currentMainBalance + mainRefund,
           promoBalance: currentPromoBalance + promoRefund,
           balance: currentTotalBalance + refundAmount, // Update total balance
-          escrowBalance: currentEscrow - refundAmount
+          escrowBalance: Math.max(0, currentEscrow - refundAmount) // never negative on drift
         }
       });
 
@@ -804,7 +813,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         data: {
           mainBalance: currentMainBalance + refundAmount,
           balance: currentTotalBalance + refundAmount, // Update total balance
-          escrowBalance: currentEscrow - refundAmount
+          escrowBalance: Math.max(0, currentEscrow - refundAmount) // never negative on drift
         }
       });
 
