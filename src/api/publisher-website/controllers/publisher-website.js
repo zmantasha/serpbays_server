@@ -652,18 +652,26 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 }
               });
 
-              // Supersede any older pending requests from the same publisher
-              await strapi.db.query('api::website-update-request.website-update-request').updateMany({
+              // Supersede any older pending requests for the same marketplace.
+              // updateMany can't filter on a relation directly, so resolve the
+              // older pending IDs first, then update them by primary key.
+              const olderPending = await strapi.db.query('api::website-update-request.website-update-request').findMany({
                 where: {
-                  marketplace: marketplaceListing.id,
+                  marketplace: { id: marketplaceListing.id },
                   status: 'pending',
                   id: { $ne: pendingRequest.id }
                 },
-                data: {
-                  status: 'superseded',
-                  notes: 'Superseded by newer publisher update'
-                }
+                select: ['id']
               });
+              if (olderPending.length > 0) {
+                await strapi.db.query('api::website-update-request.website-update-request').updateMany({
+                  where: { id: { $in: olderPending.map((r) => r.id) } },
+                  data: {
+                    status: 'superseded',
+                    notes: 'Superseded by newer publisher update'
+                  }
+                });
+              }
             } else {
               console.log('No tracked marketplace fields were changed by publisher update.');
             }
