@@ -129,3 +129,5 @@ dist
 build
 .strapi-updater.json
 .strapi-cloud.json
+# Partner API key reference — contains live secrets
+API_KEYS_ISSUED.md

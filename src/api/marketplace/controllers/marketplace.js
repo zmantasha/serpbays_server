@@ -1093,6 +1093,76 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     }
   },
 
+  // ============================================================
+  // EXTERNAL API (selected partners, /api/external/v1/sites)
+  // Thin wrappers over find/findOne. Auth + deposit-gate bypass are
+  // handled by the api-key-auth middleware (it sets ctx.state.user with
+  // marketplaceUnlocked=true). These delegate so the public advertiser
+  // path runs unchanged: active listings, advertiser prices, publisher
+  // data stripped by sanitizePublisherData. Kept as a separate seam so the
+  // external response shape can be trimmed later without touching find().
+  // ============================================================
+  // Curated, client-facing field whitelist for the external API. Anything
+  // not listed here (internal flags, audit columns, gsc_*, ownership ids,
+  // moderation/business-logic fields) is stripped before the response.
+  externalFieldWhitelist() {
+    return [
+      'id',
+      'url', 'category', 'other_category', 'language', 'countries', 'description',
+      // Guest-post + link-insertion pricing
+      'price', 'link_insertion_price',
+      // Sensitive-category pricing (guest post + link insertion)
+      'adv_casino_pricing', 'adv_crypto_pricing', 'adv_cbd_pricing', 'adv_dating_pricing',
+      'adv_li_casino_pricing', 'adv_li_crypto_pricing', 'adv_li_cbd_pricing', 'adv_li_dating_pricing',
+      // SEO metrics
+      'ahrefs_dr', 'ahrefs_traffic', 'ahrefs_rank', 'ahrefs_keywords', 'ahrefs_referring_domain',
+      'moz_da', 'semrush_authority_score', 'semrush_traffic', 'similarweb_traffic', 'spam_score',
+      // Link + content attributes
+      'backlink_type', 'dofollow_link', 'backlink_validity', 'min_word_count',
+      'sponsored', 'ugc', 'guidelines', 'sample_post', 'sample_links',
+      // Turnaround
+      'tat', 'placement_speed',
+      // Data freshness
+      'last_metric_update_at',
+    ];
+  },
+
+  pickExternalFields(rec) {
+    if (!rec || typeof rec !== 'object') return rec;
+    // These columns are stored as JSON-encoded array strings; emit real arrays.
+    const arrayFields = new Set(['category', 'language', 'countries', 'sample_links']);
+    const out = {};
+    for (const f of this.externalFieldWhitelist()) {
+      if (!(f in rec)) continue;
+      let v = rec[f];
+      if (arrayFields.has(f) && typeof v === 'string' && v.trim().startsWith('[')) {
+        try { v = JSON.parse(v); } catch (e) { /* leave as-is if not valid JSON */ }
+      }
+      out[f] = v;
+    }
+    return out;
+  },
+
+  async externalFind(ctx) {
+    const result = await this.find(ctx);
+    if (result && Array.isArray(result.data)) {
+      result.data = result.data.map((r) => this.pickExternalFields(r));
+    }
+    // Keep only pagination in meta; drop internal gate fields.
+    if (result && result.meta) {
+      result.meta = { pagination: result.meta.pagination };
+    }
+    return result;
+  },
+
+  async externalFindOne(ctx) {
+    const result = await this.findOne(ctx);
+    if (result && result.data) {
+      result.data = this.pickExternalFields(result.data);
+    }
+    return result;
+  },
+
   async findOne(ctx) {
     try {
       // Get authenticated user from context

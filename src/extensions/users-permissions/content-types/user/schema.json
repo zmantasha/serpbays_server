@@ -269,6 +269,20 @@
     "marketplaceUnlockReason": {
       "type": "text"
     },
+    "apiAccess": {
+      "type": "boolean",
+      "default": false
+    },
+    "apiKey": {
+      "type": "string",
+      "maxLength": 255,
+      "unique": true,
+      "private": true,
+      "configurable": false
+    },
+    "apiAccessAt": {
+      "type": "datetime"
+    },
     "pagePermissions": {
       "type": "json",
       "configurable": false,
