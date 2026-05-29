@@ -231,7 +231,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           type: tx.type,
           amount: parseFloat(tx.amount || 0),
           description: tx.description,
-          status: tx.status,
+          status: tx.transaction_status,
           createdAt: tx.createdAt,
           updatedAt: tx.updatedAt
         }))
@@ -277,7 +277,10 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       // Build transaction filters
       const filters = { user_wallet: wallet.id };
       if (type) filters.type = type;
-      if (status) filters.status = status;
+      // DB column is `transaction_status` (there is no `status` column), so a
+      // `status` filter/select silently returned undefined -> UI showed every
+      // transaction as "Pending". Use the real column name.
+      if (status) filters.transaction_status = status;
 
       // Get transactions
       const transactions = await strapi.db.query('api::transaction.transaction').findMany({
@@ -300,7 +303,7 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           type: tx.type,
           amount: parseFloat(tx.amount || 0),
           description: tx.description,
-          status: tx.status,
+          status: tx.transaction_status,
           createdAt: tx.createdAt,
           updatedAt: tx.updatedAt
         })),
