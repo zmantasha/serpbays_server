@@ -1144,6 +1144,23 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   },
 
   async externalFind(ctx) {
+    // Exact-domain lookup — EXTERNAL API ONLY. Does NOT touch find()/applyFilters
+    // or the in-app marketplace. `?domain=example.com` normalizes the input the
+    // same way the catalog stores urls (host-only, lowercased) and matches
+    // exactly via $eq, avoiding the substring bleed of filters[url][$containsi]
+    // (e.g. "thegame.com" also returning "aroundthegame.com"). Fuzzy search via
+    // filters[url][$containsi] stays available for partial/keyword terms.
+    if (ctx.query && ctx.query.domain != null && String(ctx.query.domain).trim() !== '') {
+      const cleanDomain = normalizeUrl(ctx.query.domain);
+      if (!ctx.query.filters || typeof ctx.query.filters !== 'object' || Array.isArray(ctx.query.filters)) {
+        ctx.query.filters = {};
+      }
+      // Exact match on the canonical url; takes precedence over any url
+      // operator the caller may also have sent.
+      ctx.query.filters.url = { $eq: cleanDomain };
+      delete ctx.query.domain;
+    }
+
     const result = await this.find(ctx);
     if (result && Array.isArray(result.data)) {
       result.data = result.data.map((r) => this.pickExternalFields(r));
