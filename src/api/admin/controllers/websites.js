@@ -944,12 +944,22 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         if (website.url) {
           const marketplaceRow = await strapi.db
             .query('api::marketplace.marketplace')
-            .findOne({ where: { url: website.url }, select: ['id'] });
+            .findOne({ where: { url: website.url }, select: ['id', 'status', 'delistedReason', 'delistedNotes', 'delistedAt'] });
           transformedWebsite.marketplaceId = marketplaceRow?.id ?? null;
+          // marketplaceStatus drives the Delist/Relist button on the detail
+          // page — 'active' shows Delist, 'delisted' shows Relist. Null when
+          // no marketplace row exists (pre-approval).
+          transformedWebsite.marketplaceStatus = marketplaceRow?.status ?? null;
+          // delistedReason is the enum category; delistedNotes is the admin's
+          // free-text justification captured at delist time.
+          transformedWebsite.marketplaceDelistedReason = marketplaceRow?.delistedReason ?? null;
+          transformedWebsite.marketplaceDelistedNotes = marketplaceRow?.delistedNotes ?? null;
+          transformedWebsite.marketplaceDelistedAt = marketplaceRow?.delistedAt ?? null;
         }
       } catch (lookupErr) {
         console.warn('[ADMIN WEBSITE FIND ONE] marketplace lookup failed:', lookupErr.message);
         transformedWebsite.marketplaceId = null;
+        transformedWebsite.marketplaceStatus = null;
       }
 
       // Attach the latest pending website-update-request, if any, so the
@@ -1468,6 +1478,130 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     } catch (error) {
       console.error('[ADMIN WEBSITE REJECT ERROR]', error);
       return ctx.internalServerError('Failed to reject website');
+    }
+  },
+
+  /**
+   * Delist a LIVE website from the marketplace.
+   *
+   * Separates "take this listing down from advertisers" from "reject the
+   * publisher's submission":
+   *  - reject() now refuses live sites — submissionStatus stays 'approved'.
+   *  - delist() flips marketplace.status to 'delisted' so it disappears
+   *    from /api/marketplaces while leaving the publisher_website intact.
+   *  - relist() reverses it.
+   *
+   * publisher_websites.submissionStatus is NOT touched — the publisher
+   * still owns an approved listing; only the marketplace presentation is
+   * suspended. Hard-deleting the marketplace row would orphan FK refs from
+   * past orders, so we soft-delete with status + delistedReason + delistedAt.
+   */
+  async delist(ctx) {
+    try {
+      const { id } = ctx.params;
+      const { reason } = ctx.request.body || {};
+      if (!reason || !String(reason).trim()) {
+        return ctx.badRequest('A reason is required when delisting a website.');
+      }
+
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      if (!website) return ctx.notFound('Website not found');
+
+      if (website.submissionStatus !== 'approved') {
+        return ctx.badRequest('Only approved (live) websites can be delisted.');
+      }
+
+      // Resolve the marketplace row — prefer stored marketplaceId, fall back
+      // to URL lookup (defends against stale FK pointers after past hard-deletes).
+      let marketplaceId = website.marketplaceId;
+      if (marketplaceId) {
+        const mp = await strapi.entityService.findOne('api::marketplace.marketplace', marketplaceId);
+        if (!mp || mp.url !== website.url) marketplaceId = null;
+      }
+      if (!marketplaceId && website.url) {
+        const rows = await strapi.entityService.findMany('api::marketplace.marketplace', { filters: { url: website.url }, limit: 1 });
+        if (rows?.length) marketplaceId = rows[0].id;
+      }
+      if (!marketplaceId) {
+        return ctx.badRequest('Marketplace listing not found for this website.');
+      }
+
+      const current = await strapi.db.query('api::marketplace.marketplace').findOne({ where: { id: marketplaceId } });
+      if (current?.status === 'delisted') {
+        return ctx.badRequest('This website is already delisted.');
+      }
+
+      // delistedReason is an enum (ownership_transferred|admin_action|violation|other);
+      // map an optional `category` from the request, else fall back to admin_action.
+      // The operator's free-text reason lives in delistedNotes.
+      const validCategories = ['ownership_transferred', 'admin_action', 'violation', 'other'];
+      const requestedCategory = ctx.request.body?.category;
+      const category = validCategories.includes(requestedCategory) ? requestedCategory : 'admin_action';
+
+      const updated = await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+        data: {
+          status: 'delisted',
+          delistedReason: category,
+          delistedNotes: String(reason).trim(),
+          delistedAt: new Date(),
+        }
+      });
+      console.log(`[ADMIN ACTION] Website ${website.url} (pw ${id}, mkt ${marketplaceId}) delisted by admin ${ctx.state.user.id}. Category: ${category}. Notes: ${reason}`);
+
+      return ctx.send({
+        data: { id: updated.id, status: updated.status, delistedReason: updated.delistedReason, delistedAt: updated.delistedAt }
+      });
+    } catch (error) {
+      console.error('[ADMIN WEBSITE DELIST ERROR]', error);
+      return ctx.internalServerError('Failed to delist website');
+    }
+  },
+
+  /**
+   * Relist a delisted website on the marketplace. Reverses delist().
+   */
+  async relist(ctx) {
+    try {
+      const { id } = ctx.params;
+
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      if (!website) return ctx.notFound('Website not found');
+      if (website.submissionStatus !== 'approved') {
+        return ctx.badRequest('Only approved websites can be relisted. Re-approve the website first.');
+      }
+
+      let marketplaceId = website.marketplaceId;
+      if (marketplaceId) {
+        const mp = await strapi.entityService.findOne('api::marketplace.marketplace', marketplaceId);
+        if (!mp || mp.url !== website.url) marketplaceId = null;
+      }
+      if (!marketplaceId && website.url) {
+        const rows = await strapi.entityService.findMany('api::marketplace.marketplace', { filters: { url: website.url }, limit: 1 });
+        if (rows?.length) marketplaceId = rows[0].id;
+      }
+      if (!marketplaceId) return ctx.badRequest('Marketplace listing not found for this website.');
+
+      const current = await strapi.db.query('api::marketplace.marketplace').findOne({ where: { id: marketplaceId } });
+      if (current?.status === 'active') {
+        return ctx.badRequest('This website is already active on the marketplace.');
+      }
+
+      const updated = await strapi.entityService.update('api::marketplace.marketplace', marketplaceId, {
+        data: {
+          status: 'active',
+          delistedReason: null,
+          delistedNotes: null,
+          delistedAt: null,
+        }
+      });
+      console.log(`[ADMIN ACTION] Website ${website.url} (pw ${id}, mkt ${marketplaceId}) relisted by admin ${ctx.state.user.id}`);
+
+      return ctx.send({
+        data: { id: updated.id, status: updated.status }
+      });
+    } catch (error) {
+      console.error('[ADMIN WEBSITE RELIST ERROR]', error);
+      return ctx.internalServerError('Failed to relist website');
     }
   },
 

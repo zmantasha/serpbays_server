@@ -138,6 +138,28 @@ module.exports = {
       }
     },
 
+    // Delist a live website from the marketplace (soft hide, reversible)
+    {
+      method: 'PUT',
+      path: '/admin/websites/:id/delist',
+      handler: 'websites.delist',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
+        middlewares: []
+      }
+    },
+
+    // Relist a previously-delisted website back onto the marketplace
+    {
+      method: 'PUT',
+      path: '/admin/websites/:id/relist',
+      handler: 'websites.relist',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'websites' } }],
+        middlewares: []
+      }
+    },
+
     // Bulk approve websites
     {
       method: 'POST',

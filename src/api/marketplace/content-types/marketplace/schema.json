@@ -347,6 +347,10 @@
       "type": "datetime",
       "description": "When the listing was delisted"
     },
+    "delistedNotes": {
+      "type": "text",
+      "description": "Free-text reason captured from the admin at delist time, complementing the delistedReason enum"
+    },
     "approvalStatus": {
       "type": "enumeration",
       "enum": [
