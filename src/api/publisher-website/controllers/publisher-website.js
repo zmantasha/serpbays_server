@@ -1050,14 +1050,19 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         ? publisherUser.username
         : (submission.publisherName || submission.publisherEmail?.split('@')[0]);
 
-      // Map publisher-website fields to marketplace fields
-      // IMPORTANT: Price should be null if not provided, never default to 0
+      // Map publisher-website fields to marketplace fields.
+      // marketplace.price + publisher_price are schema-required (min:0). Storing
+      // null on those fails create-validation silently — that's why listings
+      // with GP=0 + LI>0 never got a marketplace row. Default required price
+      // fields to 0 (visibility filter uses $gt:0, so the row still won't
+      // show as a GP option, but LI > 0 still surfaces it via the OR).
+      // Optional price columns (link_insertion_price, sensitive categories)
+      // remain nullable.
       const marketplaceData = {
         url: submission.url,
 
         // ADVERTISER PRICING (what publisher entered - this is what advertisers pay)
-        // If price is not provided (null/undefined/0), keep as null
-        price: submission.generalGuestPostPrice > 0 ? submission.generalGuestPostPrice : null,
+        price: submission.generalGuestPostPrice > 0 ? submission.generalGuestPostPrice : 0,
         link_insertion_price: submission.generalLinkInsertionPrice > 0 ? submission.generalLinkInsertionPrice : null,
         adv_casino_pricing: submission.casinoGuestPostPrice > 0 ? submission.casinoGuestPostPrice : null,
         adv_li_casino_pricing: submission.casinoLinkInsertionPrice > 0 ? submission.casinoLinkInsertionPrice : null,
@@ -1068,14 +1073,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         adv_dating_pricing: submission.datingGuestPostPrice > 0 ? submission.datingGuestPostPrice : null,
         adv_li_dating_pricing: submission.datingLinkInsertionPrice > 0 ? submission.datingLinkInsertionPrice : null,
 
-        // PUBLISHER EARNINGS = advertiser price × PUBLISHER_COMMISSION_RATE
-        // Only calculate if price is provided, otherwise null
+        // PUBLISHER EARNINGS = advertiser price × PUBLISHER_COMMISSION_RATE.
+        // publisher_price is schema-required (min:0); default to 0 when neither
+        // GP nor LI is positive (rather than null, which would fail validation
+        // and abort the marketplace create).
         publisher_price: (submission.generalGuestPostPrice > 0 || submission.generalLinkInsertionPrice > 0)
           ? Math.floor(Math.max(
             (submission.generalGuestPostPrice || 0) * COMMISSION_RATE,
             (submission.generalLinkInsertionPrice || 0) * COMMISSION_RATE
           )) || 1
-          : null,
+          : 0,
         publisher_link_insertion_price: submission.generalLinkInsertionPrice > 0
           ? Math.floor(submission.generalLinkInsertionPrice * COMMISSION_RATE)
           : null,

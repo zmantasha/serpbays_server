@@ -351,9 +351,13 @@ module.exports = {
             ),
             fast_placement_status: Boolean(dataUpdated.fast_placement_status ?? result.fast_placement_status),
 
-            // PRICING: Sync pricing changes to marketplace
-            // Advertiser pricing (what advertisers pay)
-            price: dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice ?? null,
+            // PRICING: Sync pricing changes to marketplace.
+            // marketplace.price + publisher_price are schema-required (min:0);
+            // default to 0 rather than null when GP is unset, otherwise the
+            // update fails validation. Visibility filter uses $gt:0, so a 0
+            // here still hides the row as a GP option but lets LI > 0
+            // surface it.
+            price: dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice ?? 0,
             link_insertion_price: dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? null,
             adv_casino_pricing: dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice ?? null,
             adv_li_casino_pricing: dataUpdated.casinoLinkInsertionPrice ?? result.casinoLinkInsertionPrice ?? null,
@@ -364,14 +368,14 @@ module.exports = {
             adv_dating_pricing: dataUpdated.datingGuestPostPrice ?? result.datingGuestPostPrice ?? null,
             adv_li_dating_pricing: dataUpdated.datingLinkInsertionPrice ?? result.datingLinkInsertionPrice ?? null,
 
-            // Publisher earnings (80% of advertiser price) - return null if no base price set
+            // Publisher earnings — schema-required (min:0); default 0 (not null).
             publisher_price: ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) > 0 ||
               (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) > 0)
               ? Math.floor(Math.max(
                 ((dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice) || 0) * COMMISSION_RATE,
                 ((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) || 0) * COMMISSION_RATE
               )) || 1
-              : null,
+              : 0,
             publisher_link_insertion_price: (dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) > 0
               ? Math.floor((dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice) * COMMISSION_RATE)
               : null,
