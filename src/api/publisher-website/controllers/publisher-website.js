@@ -274,24 +274,31 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const submissionIds = submissions.map((w) => w.id);
       const latestUpdateByWebsite = new Map();
       if (submissionIds.length > 0) {
+        // Find the absolute latest request per website (any status). We only
+        // surface a banner when that latest is 'pending' or 'rejected' — once
+        // a newer request is 'approved' or 'superseded', any earlier rejection
+        // is no longer the current state and must not stay visible.
         const updateReqs = await strapi.db.query('api::website-update-request.website-update-request').findMany({
-          where: {
-            publisherWebsite: { $in: submissionIds },
-            status: { $in: ['pending', 'rejected'] },
-          },
+          where: { publisherWebsite: { $in: submissionIds } },
           orderBy: { createdAt: 'desc' },
           populate: ['publisherWebsite'],
         });
         for (const r of updateReqs) {
           const wid = r.publisherWebsite?.id;
-          // First (most recent) wins per website.
+          // First record per website wins (DESC order → most recent).
           if (wid && !latestUpdateByWebsite.has(wid)) {
-            latestUpdateByWebsite.set(wid, {
-              status: r.status,        // 'pending' | 'rejected'
-              notes: r.notes || null,  // rejection reason when rejected
-              submittedAt: r.submittedAt || null,
-              reviewedAt: r.reviewedAt || null,
-            });
+            if (r.status === 'pending' || r.status === 'rejected') {
+              latestUpdateByWebsite.set(wid, {
+                status: r.status,        // 'pending' | 'rejected'
+                notes: r.notes || null,  // rejection reason when rejected
+                submittedAt: r.submittedAt || null,
+                reviewedAt: r.reviewedAt || null,
+              });
+            } else {
+              // Latest is 'approved' or 'superseded' — record a null sentinel
+              // so older pending/rejected records for this website are skipped.
+              latestUpdateByWebsite.set(wid, null);
+            }
           }
         }
       }
