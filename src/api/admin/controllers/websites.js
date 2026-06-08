@@ -620,6 +620,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const isActivePublisherRow = (w) =>
         (w.submissionStatus || '').toLowerCase() === 'approved';
 
+      // Batched lookup: which of these websites have a pending update-request?
+      // Approved listings stay 'approved' while a publisher edit is in flight,
+      // so the list view needs an explicit "pending update" signal — otherwise
+      // an admin can't tell which approved rows have queued changes awaiting
+      // review. Keyed by publisher-website id, value = number of pending reqs
+      // (almost always 0 or 1; the publisher-controller supersedes older
+      // pendings on each new edit).
+      const websiteIds = websites.map((w) => w.id).filter((v) => v != null);
+      const pendingByWebsiteId = new Map();
+      if (websiteIds.length > 0) {
+        const pendingRows = await strapi.db
+          .query('api::website-update-request.website-update-request')
+          .findMany({
+            where: { publisherWebsite: { id: { $in: websiteIds } }, status: 'pending' },
+            populate: { publisherWebsite: { fields: ['id'] } },
+            orderBy: { submittedAt: 'desc' },
+          });
+        for (const r of pendingRows) {
+          const wid = r.publisherWebsite?.id;
+          if (!wid) continue;
+          const existing = pendingByWebsiteId.get(wid) || { count: 0, latestSubmittedAt: null, latestRequestId: null };
+          existing.count += 1;
+          if (!existing.latestSubmittedAt && r.submittedAt) {
+            // findMany is ordered DESC, so the first hit per website is latest.
+            existing.latestSubmittedAt = r.submittedAt;
+            existing.latestRequestId = r.id;
+          }
+          pendingByWebsiteId.set(wid, existing);
+        }
+      }
+
       // Transform data to match frontend expectations with comprehensive fields
       const transformedWebsites = websites.map(website => ({
         id: website.id,
@@ -629,6 +660,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         status: website.submissionStatus || 'pending',
         traffic: website.moz_da || 'N/A',
         addedDate: website.createdAt,
+        // Pending update flag — admins use this on the websites list to spot
+        // approved sites that have publisher edits queued for review. Stays
+        // 0/false when there is no open request.
+        hasPendingUpdate: (pendingByWebsiteId.get(website.id)?.count || 0) > 0,
+        pendingUpdateCount: pendingByWebsiteId.get(website.id)?.count || 0,
+        pendingUpdateSubmittedAt: pendingByWebsiteId.get(website.id)?.latestSubmittedAt || null,
         owner: {
           id: website.currentPublisherId?.id || website.originalPublisherId?.id || website.publisherId || 0,
           username: website.currentPublisherId?.username || website.originalPublisherId?.username || website.publisherName || 'Unknown',
