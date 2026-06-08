@@ -2245,7 +2245,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // notification: sites submitted within the last 72 hours that haven't
       // been approved/rejected/finished yet. After 72h they fall out of the
       // badge but remain in the DB.
-      const [total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h] = await Promise.all([
+      const [total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h, livePendingUpdates] = await Promise.all([
         strapi.db.query('api::publisher-website.publisher-website').count(),
         strapi.db.query('api::publisher-website.publisher-website').count({
           where: { submissionStatus: 'approval_pending' }
@@ -2282,6 +2282,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             createdAt: { $gte: seventyTwoHoursAgo },
           },
         }),
+        // Live sites with at least one publisher edit awaiting admin review.
+        // Counts distinct approved publisher_websites that have ≥1 pending
+        // website-update-request — not the raw pending-request count, since
+        // (theoretically) a single site can have multiple stacked pendings
+        // and we want to count sites needing attention, not requests.
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: 'approved',
+            updateRequests: { status: 'pending' },
+          },
+        }),
       ]);
 
       console.log('[ADMIN WEBSITE STATS] Counts:', { total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h });
@@ -2308,6 +2319,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         readyWebsites: ready,
         newlySubmittedLast72h,
         incompleteLast72h,
+        livePendingUpdates,
         newThisMonth,
       };
 
