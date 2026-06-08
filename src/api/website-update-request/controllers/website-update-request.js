@@ -309,18 +309,26 @@ module.exports = createCoreController('api::website-update-request.website-updat
         }
       });
 
-      // Supersede other pending requests for the same marketplace listing
-      await strapi.db.query('api::website-update-request.website-update-request').updateMany({
+      // Supersede other pending requests for the same marketplace listing.
+      // updateMany can't filter on a relation directly in Strapi 5, so resolve
+      // the older pending IDs first, then update them by primary key.
+      const olderPending = await strapi.db.query('api::website-update-request.website-update-request').findMany({
         where: {
           id: { $ne: request.id },
           status: 'pending',
-          marketplace: marketplaceId
+          marketplace: { id: marketplaceId },
         },
-        data: {
-          status: 'superseded',
-          notes: 'Superseded because a newer request was approved'
-        }
+        select: ['id'],
       });
+      if (olderPending.length > 0) {
+        await strapi.db.query('api::website-update-request.website-update-request').updateMany({
+          where: { id: { $in: olderPending.map((r) => r.id) } },
+          data: {
+            status: 'superseded',
+            notes: 'Superseded because a newer request was approved'
+          }
+        });
+      }
 
       return ctx.send({
         message: 'Marketplace listing updated successfully',
