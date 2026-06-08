@@ -915,6 +915,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         transformedWebsite.marketplaceId = null;
       }
 
+      // Attach the latest pending website-update-request, if any, so the
+      // admin detail page can render a "Pending Update" banner. An approved
+      // website with a pending request reads as "Approved" on its own —
+      // without this, the admin has no signal that changes are awaiting
+      // review.
+      try {
+        const pending = await strapi.db
+          .query('api::website-update-request.website-update-request')
+          .findOne({
+            where: { publisherWebsite: { id: website.id }, status: 'pending' },
+            orderBy: { submittedAt: 'desc' },
+          });
+        if (pending) {
+          const changedFields = pending.changes && typeof pending.changes === 'object'
+            ? Object.keys(pending.changes) : [];
+          transformedWebsite.pendingUpdate = {
+            id: pending.id,
+            submittedAt: pending.submittedAt,
+            submittedBy: pending.submittedBy,
+            changedFields,
+            changesCount: changedFields.length,
+          };
+        } else {
+          transformedWebsite.pendingUpdate = null;
+        }
+      } catch (pendingErr) {
+        console.warn('[ADMIN WEBSITE FIND ONE] pending-update lookup failed:', pendingErr.message);
+        transformedWebsite.pendingUpdate = null;
+      }
+
       console.log('[ADMIN WEBSITE FIND ONE]', {
         websiteId: id,
         originalWebsite: website,
