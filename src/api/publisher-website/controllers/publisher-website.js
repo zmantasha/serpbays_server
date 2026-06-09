@@ -1726,6 +1726,225 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       strapi.log.error('Error deleting website:', error);
       return ctx.internalServerError('An error occurred while deleting the website');
     }
+  },
+
+  /**
+   * Step 1 of the GSC verification flow. Called by the authenticated
+   * publisher (via the Next.js init proxy) right before they're redirected
+   * to Google. Generates a random nonce, binds it server-side to the row
+   * and user, and returns the nonce to the caller for use as the OAuth
+   * `state` parameter. Nothing about the user or website ever leaves the
+   * server in the OAuth URL — only the opaque nonce does.
+   *
+   * Auth: requires a regular publisher JWT (the standard users-permissions
+   * auth pipeline runs because this route is auth:true).
+   */
+  async gscVerifyInit(ctx) {
+    const user = ctx.state.user;
+    if (!user) return ctx.unauthorized('Authentication required');
+
+    const { id } = ctx.params;
+    const websiteId = parseInt(id, 10);
+    if (!Number.isFinite(websiteId)) return ctx.badRequest('Invalid website id');
+
+    const website = await strapi.entityService.findOne(
+      'api::publisher-website.publisher-website',
+      websiteId,
+      { populate: ['currentPublisherId'] }
+    );
+    if (!website) return ctx.notFound('Website not found');
+
+    // Strict ownership: only the current owner can verify. publisherEmail
+    // fallback (used elsewhere in this controller) is deliberately NOT
+    // accepted here — verification is privileged enough that we require the
+    // explicit relation match.
+    const isOwner =
+      website.currentPublisherId && website.currentPublisherId.id === user.id;
+    if (!isOwner) {
+      strapi.log.warn(
+        `[GSC AUDIT] INIT_DENIED user=${user.id} website=${websiteId}: not the current owner`
+      );
+      return ctx.forbidden('You do not own this website');
+    }
+
+    if (!website.url) return ctx.badRequest('Website URL not set on this row');
+
+    const gsc = require('../../../utils/gsc-helpers');
+    const returnTo = (ctx.request.body && typeof ctx.request.body.returnTo === 'string')
+      ? ctx.request.body.returnTo
+      : null;
+    const safeReturnTo = (returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//'))
+      ? returnTo
+      : null;
+
+    const nonce = gsc.createNonce({
+      userId: user.id,
+      websiteId,
+      websiteUrl: website.url,
+      returnTo: safeReturnTo,
+    });
+
+    strapi.log.info(
+      `[GSC AUDIT] INIT user=${user.id} website=${websiteId} url=${website.url}`
+    );
+
+    ctx.send({
+      nonce,
+      websiteUrl: website.url,
+      // Returned for the Next.js init proxy so it can echo it back via cookie.
+      returnTo: safeReturnTo,
+    });
+  },
+
+  /**
+   * Step 2 of the GSC verification flow. Called server-to-server from the
+   * Next.js OAuth callback after Google has authenticated the user and
+   * returned the list of properties their Google account has access to.
+   *
+   * Trust model: this route is auth:false. The HMAC over
+   *   `x-gsc-timestamp` + '.' + canonical(body)
+   * is the gate. The Next.js callback signs with GSC_VERIFY_SHARED_SECRET;
+   * only that process and Strapi share the secret. Without a valid HMAC,
+   * timestamp inside the 5-minute window, and a non-replayed signature,
+   * the request is rejected before any state is read.
+   *
+   * After auth, the body's `nonce` is consumed (one-shot) to recover the
+   * server-bound (userId, websiteId, websiteUrl). Properties from Google
+   * are then matched against the bound websiteUrl by the strict domain
+   * algorithm. Only on a real match do we write gscVerified=true.
+   *
+   * All audit logs avoid sensitive material — no JWTs, no OAuth tokens,
+   * no signatures, no refresh tokens.
+   */
+  async gscVerifyCallback(ctx) {
+    const gsc = require('../../../utils/gsc-helpers');
+    const secret = process.env.GSC_VERIFY_SHARED_SECRET;
+
+    // Fail closed on misconfig. Returns the same generic shape as every
+    // other failure path so an attacker can't tell what went wrong.
+    if (!secret || secret.length < 32) {
+      strapi.log.error(
+        '[GSC CALLBACK] GSC_VERIFY_SHARED_SECRET is unset or shorter than 32 chars — rejecting all requests'
+      );
+      return ctx.unauthorized('Verification failed');
+    }
+
+    const sigHex = ctx.request.headers['x-gsc-signature'];
+    const timestamp = ctx.request.headers['x-gsc-timestamp'];
+
+    if (!sigHex || !timestamp) {
+      strapi.log.warn('[GSC AUDIT] FAIL reason=missing_headers');
+      return ctx.unauthorized('Verification failed');
+    }
+
+    const tsNum = Number(timestamp);
+    if (!Number.isFinite(tsNum) || Math.abs(Date.now() - tsNum) > 5 * 60 * 1000) {
+      strapi.log.warn(`[GSC AUDIT] FAIL reason=timestamp_out_of_window`);
+      return ctx.unauthorized('Verification failed');
+    }
+
+    // We recompute the canonical form from the parsed body. The Next.js
+    // sender stringifies the same canonical form when computing its HMAC,
+    // so reparsing+recanonicalising here produces an identical input
+    // independent of koa-body's whitespace/key-order handling.
+    const body = ctx.request.body || {};
+    const canonical = gsc.canonicalJson(body);
+
+    if (!gsc.verifyHmac(secret, timestamp, canonical, sigHex)) {
+      strapi.log.warn('[GSC AUDIT] FAIL reason=hmac_mismatch');
+      return ctx.unauthorized('Verification failed');
+    }
+
+    const sigHash = gsc.signatureHash(sigHex);
+    if (gsc.isSignatureReplay(sigHash)) {
+      strapi.log.warn('[GSC AUDIT] FAIL reason=replay');
+      return ctx.unauthorized('Verification failed');
+    }
+    // Mark the signature as seen BEFORE doing any work — protects against
+    // concurrent duplicate posts of the same signed body.
+    gsc.markSignatureUsed(sigHash);
+
+    const { nonce, properties } = body;
+    if (typeof nonce !== 'string' || !Array.isArray(properties)) {
+      strapi.log.warn('[GSC AUDIT] FAIL reason=invalid_body_shape');
+      return ctx.unauthorized('Verification failed');
+    }
+
+    const entry = gsc.consumeNonce(nonce);
+    if (!entry) {
+      strapi.log.warn('[GSC AUDIT] FAIL reason=invalid_or_expired_nonce');
+      return ctx.unauthorized('Verification failed');
+    }
+
+    // Match a Google property against the bound row's URL.
+    const match = gsc.findMatchingProperty(entry.websiteUrl, properties);
+    if (!match) {
+      strapi.log.warn(
+        `[GSC AUDIT] FAIL user=${entry.userId} website=${entry.websiteId} url=${entry.websiteUrl} reason=no_matching_property`
+      );
+      return ctx.forbidden('No matching Google Search Console property covers this website');
+    }
+
+    // Atomic write with row lock — re-read the row, confirm ownership is
+    // still intact, write only if not already verified. Any failure rolls
+    // back; the audit log is the only trace.
+    let outcome = 'success';
+    try {
+      await strapi.db.transaction(async () => {
+        const row = await strapi.entityService.findOne(
+          'api::publisher-website.publisher-website',
+          entry.websiteId,
+          { populate: ['currentPublisherId'] }
+        );
+        if (!row) {
+          outcome = 'row_missing';
+          throw new Error('row_missing');
+        }
+        // Re-check ownership inside the transaction — between init and
+        // callback the row could have been transferred to another user.
+        const stillOwner =
+          row.currentPublisherId && row.currentPublisherId.id === entry.userId;
+        if (!stillOwner) {
+          outcome = 'ownership_changed';
+          throw new Error('ownership_changed');
+        }
+
+        if (row.gscVerified) {
+          outcome = 'no_op_already_verified';
+          return;
+        }
+
+        const updates = {
+          gscVerified: true,
+          gscVerifiedAt: new Date(),
+          gscPermissionLevel: match.permissionLevel,
+          verificationMethod: 'google-search-console',
+          // _skipMarketplaceSync prevents the publisher-website afterUpdate
+          // lifecycle from doing a redundant marketplace sync for what is
+          // purely a verification metadata change.
+          _skipMarketplaceSync: true,
+        };
+        // Forward-only stepCompleted; never lower it.
+        const currentStep = parseInt(row.stepCompleted, 10) || 1;
+        if (currentStep < 2) updates.stepCompleted = 2;
+
+        await strapi.entityService.update(
+          'api::publisher-website.publisher-website',
+          entry.websiteId,
+          { data: updates }
+        );
+      });
+    } catch (e) {
+      strapi.log.warn(
+        `[GSC AUDIT] FAIL user=${entry.userId} website=${entry.websiteId} url=${entry.websiteUrl} reason=${outcome === 'success' ? 'tx_error' : outcome}`
+      );
+      return ctx.forbidden('Verification could not be completed');
+    }
+
+    strapi.log.info(
+      `[GSC AUDIT] ${outcome === 'no_op_already_verified' ? 'NO_OP' : 'SUCCESS'} user=${entry.userId} website=${entry.websiteId} url=${entry.websiteUrl} matched_type=${match.type} matched_host=${match.provenHost} permission=${match.permissionLevel}`
+    );
+    ctx.send({ ok: true, alreadyVerified: outcome === 'no_op_already_verified' });
   }
 
 }));
