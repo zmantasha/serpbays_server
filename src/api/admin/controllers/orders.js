@@ -162,47 +162,93 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating order ${id} status to ${orderStatus}`);
 
-      // Stamp the lifecycle timestamp that matches the target status so the
-      // email templates show the right date (acceptedDate, deliveredDate,
-      // completedDate).
-      const lifecycleStamp = {};
       const now = new Date();
-      if (orderStatus === 'accepted') lifecycleStamp.acceptedDate = now;
-      else if (orderStatus === 'delivered') lifecycleStamp.deliveredDate = now;
-      else if (orderStatus === 'completed') lifecycleStamp.completedDate = now;
 
-      // Delivery fields are only meaningful when transitioning to 'delivered'.
-      // Anything sent alongside a different status is ignored to avoid leaking
-      // values into the wrong lifecycle phase.
-      const deliveryFields = {};
-      if (orderStatus === 'delivered') {
-        if (typeof deliveryMessage === 'string') deliveryFields.deliveryMessage = deliveryMessage;
-        if (typeof deliveryProof === 'string') deliveryFields.deliveryProof = deliveryProof;
+      // CRITICAL: completing an order has wallet/escrow side effects (release
+      // escrow → publisher main, audit transactions, etc.) that the service's
+      // completeOrder() handles atomically. A plain entityService.update here
+      // would only flip the status and leave the money stuck in advertiser
+      // escrow — which is exactly the order-#16 incident. Route through the
+      // service for status='completed'.
+      //
+      // TODO (separate ticket): apply the same delegation for
+      //   - 'rejected' → strapi.service('api::order.order').rejectOrder()
+      //     (refunds advertiser escrow)
+      //   - 'cancelled' → equivalent service path (escrow refund)
+      // Today these statuses also bypass the money flow when admin-set.
+      const existing = await strapi.entityService.findOne('api::order.order', id, { populate: ['advertiser', 'publisher'] });
+      if (!existing) {
+        return ctx.notFound(`Order ${id} not found`);
       }
 
-      // Re-delivery during an active revision: mirror the publisher's deliver
-      // flow (api::order.order#deliverOrder) and close out the revision so the
-      // "Revision requested" banner disappears.
-      const existing = await strapi.entityService.findOne('api::order.order', id);
-      const revisionClose = {};
-      if (
-        orderStatus === 'delivered' &&
-        (existing?.revisionStatus === 'requested' || existing?.revisionStatus === 'in_progress')
-      ) {
-        revisionClose.revisionStatus = 'completed';
-      }
+      if (orderStatus === 'completed') {
+        if (existing.orderStatus === 'completed') {
+          // already-complete idempotency — the service handles it too, but
+          // returning early keeps the admin response snappy and skips an
+          // unnecessary DB transaction.
+          ctx.send({ data: existing });
+          return;
+        }
+        if (existing.orderStatus !== 'delivered') {
+          return ctx.badRequest(
+            `Order ${id} must be in 'delivered' status to be completed (current: '${existing.orderStatus}'). Set it to delivered first.`
+          );
+        }
 
-      const updatedOrder = await strapi.entityService.update('api::order.order', id, {
-        data: {
-          orderStatus,
-          adminNotes,
-          lastStatusUpdate: now,
-          ...lifecycleStamp,
-          ...deliveryFields,
-          ...revisionClose
-        },
-        populate: ['advertiser', 'publisher']
-      });
+        // Run the full atomic completion. Throws on inconsistency → admin
+        // sees a real 500 rather than a silent half-completed state.
+        const completed = await strapi.service('api::order.order').completeOrder(id, ctx.state.user);
+
+        // adminNotes was historically set in the same update; preserve that
+        // behaviour without re-doing the money flow.
+        if (typeof adminNotes === 'string' && adminNotes.length > 0) {
+          await strapi.entityService.update('api::order.order', id, {
+            data: { adminNotes, lastStatusUpdate: now },
+          });
+        }
+
+        // Communication log + email side-effects are handled by the original
+        // tail of this method below — fall through with `updatedOrder` set.
+        var updatedOrder = completed;
+      } else {
+        // Stamp the lifecycle timestamp that matches the target status so the
+        // email templates show the right date (acceptedDate, deliveredDate).
+        const lifecycleStamp = {};
+        if (orderStatus === 'accepted') lifecycleStamp.acceptedDate = now;
+        else if (orderStatus === 'delivered') lifecycleStamp.deliveredDate = now;
+
+        // Delivery fields are only meaningful when transitioning to 'delivered'.
+        // Anything sent alongside a different status is ignored to avoid leaking
+        // values into the wrong lifecycle phase.
+        const deliveryFields = {};
+        if (orderStatus === 'delivered') {
+          if (typeof deliveryMessage === 'string') deliveryFields.deliveryMessage = deliveryMessage;
+          if (typeof deliveryProof === 'string') deliveryFields.deliveryProof = deliveryProof;
+        }
+
+        // Re-delivery during an active revision: mirror the publisher's deliver
+        // flow (api::order.order#deliverOrder) and close out the revision so the
+        // "Revision requested" banner disappears.
+        const revisionClose = {};
+        if (
+          orderStatus === 'delivered' &&
+          (existing?.revisionStatus === 'requested' || existing?.revisionStatus === 'in_progress')
+        ) {
+          revisionClose.revisionStatus = 'completed';
+        }
+
+        var updatedOrder = await strapi.entityService.update('api::order.order', id, {
+          data: {
+            orderStatus,
+            adminNotes,
+            lastStatusUpdate: now,
+            ...lifecycleStamp,
+            ...deliveryFields,
+            ...revisionClose
+          },
+          populate: ['advertiser', 'publisher']
+        });
+      }
 
       // Create communication log for status update
       if (orderStatus) {
