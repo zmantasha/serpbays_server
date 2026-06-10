@@ -189,19 +189,59 @@ process.env.GSC_VERIFY_SHARED_SECRET = 'test-secret-' + 'x'.repeat(32);
     await cleanup(fx);
   }
 
-  // ----- 5. Wrong owner — init by user A, row belongs to user B -----------
-  out('\n=== 5) UNAUTHORIZED — init by non-owner ===');
+  // ----- 5. Cross-account verification — init allowed; callback succeeds
+  //          on real GSC proof; ownership fields stay untouched. -----------
+  out('\n=== 5) CROSS-ACCOUNT — non-owner inits, proves Google ownership ===');
   {
     const fx = await mkUserAndWebsite('verify-test-5.example.com');
     const otherStamp = `other-${Date.now()}`;
     const otherUser = await Q('plugin::users-permissions.user').create({
       data: { username: otherStamp, email: `${otherStamp}@example.test`, provider: 'local', confirmed: true },
     });
+
+    // Snapshot ownership BEFORE so we can assert it's preserved AFTER.
+    const beforeRow = await Q('api::publisher-website.publisher-website').findOne({
+      where: { id: fx.website.id }, populate: ['currentPublisherId', 'originalPublisherId'],
+    });
+    const beforeOwnerId = beforeRow.currentPublisherId?.id ?? null;
+    const beforeOriginalId = beforeRow.originalPublisherId?.id ?? null;
+    const beforeEmail = beforeRow.publisherEmail;
+
+    // 5a) Non-owner can init now (previously was 403).
     const initCtx = mkInitCtx(otherUser, fx.website.id);
     await ctrl.gscVerifyInit(initCtx);
-    assert(initCtx._err?.code === 403, 'init by non-owner is forbidden');
+    assert(typeof initCtx._body?.nonce === 'string', 'non-owner init returns a nonce (no 403)');
+
+    // 5b) Non-owner completes callback with valid Google proof. Row gets
+    //     gscVerified=true. Ownership fields stay pointed at the original
+    //     publisher — verification did NOT transfer.
+    const cbOk = await signAndCall(initCtx._body.nonce, [
+      { siteUrl: 'sc-domain:verify-test-5.example.com', permissionLevel: 'siteOwner' },
+    ]);
+    assert(cbOk._body?.ok === true, 'cross-account callback verifies the row');
+
+    const afterRow = await Q('api::publisher-website.publisher-website').findOne({
+      where: { id: fx.website.id }, populate: ['currentPublisherId', 'originalPublisherId'],
+    });
+    assert(afterRow.gscVerified === true, 'row.gscVerified == true');
+    assert((afterRow.currentPublisherId?.id ?? null) === beforeOwnerId, 'currentPublisherId UNCHANGED (no transfer)');
+    assert((afterRow.originalPublisherId?.id ?? null) === beforeOriginalId, 'originalPublisherId UNCHANGED');
+    assert(afterRow.publisherEmail === beforeEmail, 'publisherEmail UNCHANGED');
+
+    // 5c) Non-owner without matching Google ownership still gets rejected.
+    const fx2 = await mkUserAndWebsite('verify-test-5b.example.com');
+    const initCtx2 = mkInitCtx(otherUser, fx2.website.id);
+    await ctrl.gscVerifyInit(initCtx2);
+    const cbDeny = await signAndCall(initCtx2._body.nonce, [
+      { siteUrl: 'sc-domain:totally-different.com', permissionLevel: 'siteOwner' },
+    ]);
+    assert(cbDeny._err?.code === 403, 'callback still rejects when Google proof does not cover the URL');
+    const denyRow = await Q('api::publisher-website.publisher-website').findOne({ where: { id: fx2.website.id } });
+    assert(!denyRow.gscVerified, 'row stays unverified when Google proof is absent');
+
     await Q('plugin::users-permissions.user').delete({ where: { id: otherUser.id } });
     await cleanup(fx);
+    await cleanup(fx2);
   }
 
   // ----- 6. Replay — same signature twice ----------------------------------

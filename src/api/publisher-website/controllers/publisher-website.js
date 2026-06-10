@@ -1470,9 +1470,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.badRequest('You already own this website');
       }
 
-      // Check if it was added by reseller (required for claiming)
-      if (!existingWebsite.addedByReseller) {
-        return ctx.badRequest('This website cannot be claimed as it was not added by a reseller');
+      // We no longer require addedByReseller=true here. The claim flow is
+      // gated by GSC verification (the claimant must have stamped
+      // gscVerified=true via the HMAC channel before submitting) and by
+      // admin review on the new row. addedByReseller was historically used
+      // to scope claims to reseller-pre-filled rows; that's too narrow for
+      // the real product intent (any GSC-proven owner can submit a claim,
+      // admin decides). Verification ≠ ownership change; the admin
+      // approval below is what actually transfers ownership.
+      if (!existingWebsite.gscVerified) {
+        return ctx.badRequest(
+          'Claim ownership requires Google Search Console verification first. Please complete verification before submitting a claim.'
+        );
       }
 
       console.log('🏴 Processing ownership claim for website:', existingWebsite.url);
@@ -1753,21 +1762,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       { populate: ['currentPublisherId'] }
     );
     if (!website) return ctx.notFound('Website not found');
-
-    // Strict ownership: only the current owner can verify. publisherEmail
-    // fallback (used elsewhere in this controller) is deliberately NOT
-    // accepted here — verification is privileged enough that we require the
-    // explicit relation match.
-    const isOwner =
-      website.currentPublisherId && website.currentPublisherId.id === user.id;
-    if (!isOwner) {
-      strapi.log.warn(
-        `[GSC AUDIT] INIT_DENIED user=${user.id} website=${websiteId}: not the current owner`
-      );
-      return ctx.forbidden('You do not own this website');
-    }
-
     if (!website.url) return ctx.badRequest('Website URL not set on this row');
+
+    // GSC verification proves the OAuth'd Google account has ownership of the
+    // *domain*, not that the requesting user owns the *row*. We intentionally
+    // allow any authenticated user to initiate verification against any row.
+    // The URL→record binding and Google permission check at the callback
+    // step are the real gates. Verification by itself never changes
+    // currentPublisherId / publisherEmail — a separate claim + admin
+    // approval is required to actually transfer ownership.
+    const rowOwnerId = website.currentPublisherId?.id ?? null;
+    const isOwner = rowOwnerId === user.id;
 
     const gsc = require('../../../utils/gsc-helpers');
     const returnTo = (ctx.request.body && typeof ctx.request.body.returnTo === 'string')
@@ -1784,8 +1789,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       returnTo: safeReturnTo,
     });
 
+    // Audit line records BOTH the initiator and the row's current owner so
+    // cross-account verification attempts are visible in the trail.
     strapi.log.info(
-      `[GSC AUDIT] INIT user=${user.id} website=${websiteId} url=${website.url}`
+      `[GSC AUDIT] INIT initiator=${user.id} row_owner=${rowOwnerId ?? 'none'} same_user=${isOwner} website=${websiteId} url=${website.url}`
     );
 
     ctx.send({
@@ -1885,10 +1892,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       return ctx.forbidden('No matching Google Search Console property covers this website');
     }
 
-    // Atomic write with row lock — re-read the row, confirm ownership is
-    // still intact, write only if not already verified. Any failure rolls
-    // back; the audit log is the only trace.
+    // Atomic write — re-read the row, write only if not already verified.
+    // Ownership is NOT re-checked here: verification doesn't transfer
+    // ownership, and a third-party verifier (e.g. a future claimant) is
+    // explicitly allowed by design. Any failure rolls back; the audit log
+    // captures both the initiator and the row's current owner.
     let outcome = 'success';
+    let rowOwnerIdAtCallback = null;
     try {
       await strapi.db.transaction(async () => {
         const row = await strapi.entityService.findOne(
@@ -1900,14 +1910,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           outcome = 'row_missing';
           throw new Error('row_missing');
         }
-        // Re-check ownership inside the transaction — between init and
-        // callback the row could have been transferred to another user.
-        const stillOwner =
-          row.currentPublisherId && row.currentPublisherId.id === entry.userId;
-        if (!stillOwner) {
-          outcome = 'ownership_changed';
-          throw new Error('ownership_changed');
-        }
+        // No ownership re-check here. Verification is a proof-of-Google-
+        // ownership stamp on the row, NOT an ownership change. Whoever
+        // currently owns the row continues to own it; the verifier's
+        // identity is recorded only in the audit log. Actual ownership
+        // changes go through the claim + admin-approval workflow.
+        rowOwnerIdAtCallback = row.currentPublisherId?.id ?? null;
 
         if (row.gscVerified) {
           outcome = 'no_op_already_verified';
@@ -1936,13 +1944,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       });
     } catch (e) {
       strapi.log.warn(
-        `[GSC AUDIT] FAIL user=${entry.userId} website=${entry.websiteId} url=${entry.websiteUrl} reason=${outcome === 'success' ? 'tx_error' : outcome}`
+        `[GSC AUDIT] FAIL initiator=${entry.userId} website=${entry.websiteId} url=${entry.websiteUrl} reason=${outcome === 'success' ? 'tx_error' : outcome}`
       );
       return ctx.forbidden('Verification could not be completed');
     }
 
+    // Audit logs both the initiator (who proved Google ownership) AND the
+    // row's current owner — so a cross-account verification (e.g. claimant
+    // verifying an existing publisher's row) is explicit in the trail.
     strapi.log.info(
-      `[GSC AUDIT] ${outcome === 'no_op_already_verified' ? 'NO_OP' : 'SUCCESS'} user=${entry.userId} website=${entry.websiteId} url=${entry.websiteUrl} matched_type=${match.type} matched_host=${match.provenHost} permission=${match.permissionLevel}`
+      `[GSC AUDIT] ${outcome === 'no_op_already_verified' ? 'NO_OP' : 'SUCCESS'} initiator=${entry.userId} row_owner=${rowOwnerIdAtCallback ?? 'none'} same_user=${rowOwnerIdAtCallback === entry.userId} website=${entry.websiteId} url=${entry.websiteUrl} matched_type=${match.type} matched_host=${match.provenHost} permission=${match.permissionLevel}`
     );
     ctx.send({ ok: true, alreadyVerified: outcome === 'no_op_already_verified' });
   }
