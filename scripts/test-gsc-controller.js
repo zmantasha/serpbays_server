@@ -189,46 +189,59 @@ process.env.GSC_VERIFY_SHARED_SECRET = 'test-secret-' + 'x'.repeat(32);
     await cleanup(fx);
   }
 
-  // ----- 5. Cross-account verification — init allowed; callback succeeds
-  //          on real GSC proof; ownership fields stay untouched. -----------
-  out('\n=== 5) CROSS-ACCOUNT — non-owner inits, proves Google ownership ===');
+  // ----- 5. Cross-account verification — init allowed; callback records
+  //          a separate proof and does NOT touch the row. ------------------
+  out('\n=== 5) CROSS-ACCOUNT — proof recorded, original row untouched ===');
   {
     const fx = await mkUserAndWebsite('verify-test-5.example.com');
+    // Mark the original row as reseller-verified so we can assert it's
+    // preserved across a cross-account GSC verification.
+    await Q('api::publisher-website.publisher-website').update({
+      where: { id: fx.website.id },
+      data: { verificationMethod: 'reseller-code', gscVerified: false },
+    });
     const otherStamp = `other-${Date.now()}`;
     const otherUser = await Q('plugin::users-permissions.user').create({
       data: { username: otherStamp, email: `${otherStamp}@example.test`, provider: 'local', confirmed: true },
     });
 
-    // Snapshot ownership BEFORE so we can assert it's preserved AFTER.
     const beforeRow = await Q('api::publisher-website.publisher-website').findOne({
       where: { id: fx.website.id }, populate: ['currentPublisherId', 'originalPublisherId'],
     });
     const beforeOwnerId = beforeRow.currentPublisherId?.id ?? null;
     const beforeOriginalId = beforeRow.originalPublisherId?.id ?? null;
     const beforeEmail = beforeRow.publisherEmail;
+    const beforeMethod = beforeRow.verificationMethod;
 
-    // 5a) Non-owner can init now (previously was 403).
+    // 5a) Non-owner can init.
     const initCtx = mkInitCtx(otherUser, fx.website.id);
     await ctrl.gscVerifyInit(initCtx);
     assert(typeof initCtx._body?.nonce === 'string', 'non-owner init returns a nonce (no 403)');
 
-    // 5b) Non-owner completes callback with valid Google proof. Row gets
-    //     gscVerified=true. Ownership fields stay pointed at the original
-    //     publisher — verification did NOT transfer.
+    // 5b) Callback succeeds with valid Google proof. Crucially the row is
+    //     NOT updated — the proof lives in the cross-account store.
     const cbOk = await signAndCall(initCtx._body.nonce, [
       { siteUrl: 'sc-domain:verify-test-5.example.com', permissionLevel: 'siteOwner' },
     ]);
-    assert(cbOk._body?.ok === true, 'cross-account callback verifies the row');
+    assert(cbOk._body?.ok === true, 'cross-account callback returns ok');
+    assert(cbOk._body?.crossAccountProofRecorded === true, 'response signals cross-account proof recorded');
 
     const afterRow = await Q('api::publisher-website.publisher-website').findOne({
       where: { id: fx.website.id }, populate: ['currentPublisherId', 'originalPublisherId'],
     });
-    assert(afterRow.gscVerified === true, 'row.gscVerified == true');
-    assert((afterRow.currentPublisherId?.id ?? null) === beforeOwnerId, 'currentPublisherId UNCHANGED (no transfer)');
+    assert(afterRow.gscVerified === false, 'row.gscVerified UNCHANGED (false)');
+    assert(afterRow.verificationMethod === beforeMethod, `row.verificationMethod UNCHANGED ('${beforeMethod}')`);
+    assert(afterRow.gscVerifiedAt == null, 'row.gscVerifiedAt UNCHANGED (null)');
+    assert(afterRow.gscPermissionLevel == null, 'row.gscPermissionLevel UNCHANGED (null)');
+    assert((afterRow.currentPublisherId?.id ?? null) === beforeOwnerId, 'currentPublisherId UNCHANGED');
     assert((afterRow.originalPublisherId?.id ?? null) === beforeOriginalId, 'originalPublisherId UNCHANGED');
     assert(afterRow.publisherEmail === beforeEmail, 'publisherEmail UNCHANGED');
 
-    // 5c) Non-owner without matching Google ownership still gets rejected.
+    // 5c) The proof IS in the in-memory store, keyed by claimant + URL.
+    const proof = gsc.findCrossAccountProof(otherUser.id, 'verify-test-5.example.com');
+    assert(proof && proof.gscPermissionLevel === 'siteOwner', 'proof recorded in cross-account store');
+
+    // 5d) Wrong Google proof still rejected.
     const fx2 = await mkUserAndWebsite('verify-test-5b.example.com');
     const initCtx2 = mkInitCtx(otherUser, fx2.website.id);
     await ctrl.gscVerifyInit(initCtx2);
@@ -238,6 +251,7 @@ process.env.GSC_VERIFY_SHARED_SECRET = 'test-secret-' + 'x'.repeat(32);
     assert(cbDeny._err?.code === 403, 'callback still rejects when Google proof does not cover the URL');
     const denyRow = await Q('api::publisher-website.publisher-website').findOne({ where: { id: fx2.website.id } });
     assert(!denyRow.gscVerified, 'row stays unverified when Google proof is absent');
+    assert(gsc.findCrossAccountProof(otherUser.id, 'verify-test-5b.example.com') === null, 'no proof recorded on rejected verification');
 
     await Q('plugin::users-permissions.user').delete({ where: { id: otherUser.id } });
     await cleanup(fx);
@@ -337,6 +351,138 @@ process.env.GSC_VERIFY_SHARED_SECRET = 'test-secret-' + 'x'.repeat(32);
     );
     assert(cb._err?.code === 401, 'wrong-secret signature → 401');
     await cleanup(fx);
+  }
+
+  // ----- 12. CROSS-ACCOUNT VERIFY → CLAIM (end-to-end) ---------------------
+  // Models the spec scenario verbatim:
+  //   A added a website via the reseller flow.
+  //   B is the actual domain owner, completes GSC verification.
+  //   B then submits a claim.
+  // Expected: A's row's reseller-code metadata is preserved across both
+  // the verification AND the claim. B's NEW row has GSC metadata.
+  out('\n=== 12) FULL FLOW: cross-account verify → claim → row A preserved ===');
+  {
+    // A: original publisher, reseller-added.
+    const fxA = await mkUserAndWebsite('verify-test-12.example.com');
+    await Q('api::publisher-website.publisher-website').update({
+      where: { id: fxA.website.id },
+      data: {
+        verificationMethod: 'reseller-code',
+        addedByReseller: true,
+        gscVerified: false,
+        submissionStatus: 'approved',
+      },
+    });
+
+    // B: separate user — the claimant.
+    const userB = await Q('plugin::users-permissions.user').create({
+      data: {
+        username: `b-${Date.now()}`,
+        email: `b-${Date.now()}@example.test`,
+        provider: 'local',
+        confirmed: true,
+      },
+    });
+
+    // (a) B verifies. Cross-account proof recorded; A's row untouched.
+    const initB = mkInitCtx(userB, fxA.website.id);
+    await ctrl.gscVerifyInit(initB);
+    const cbVerify = await signAndCall(initB._body.nonce, [
+      { siteUrl: 'sc-domain:verify-test-12.example.com', permissionLevel: 'siteOwner' },
+    ]);
+    assert(cbVerify._body?.crossAccountProofRecorded === true, 'verify recorded a cross-account proof');
+
+    const rowAAfterVerify = await Q('api::publisher-website.publisher-website').findOne({ where: { id: fxA.website.id } });
+    assert(rowAAfterVerify.verificationMethod === 'reseller-code', "A's verificationMethod still 'reseller-code'");
+    assert(rowAAfterVerify.gscVerified === false, "A's gscVerified still false");
+    assert(rowAAfterVerify.gscVerifiedAt == null, "A's gscVerifiedAt still null");
+    assert(rowAAfterVerify.gscPermissionLevel == null, "A's gscPermissionLevel still null");
+
+    // (b) B submits the claim. Proof is consumed; new row exists for B
+    //     with GSC metadata. Note `this` inside arrow functions in an
+    //     object literal doesn't bind to the object — use a closure ref.
+    const claimCtx = (() => {
+      const c = {
+        params: { id: String(fxA.website.id) },
+        state: { user: userB },
+        request: { body: { data: { description: 'test claim', samplePosts: [] } } },
+        _body: null,
+        _err: null,
+        send: (b) => { c._body = b; return b; },
+        unauthorized: m => { c._err = { code: 401, msg: m }; },
+        forbidden:    m => { c._err = { code: 403, msg: m }; },
+        badRequest:   m => { c._err = { code: 400, msg: m }; },
+        notFound:     m => { c._err = { code: 404, msg: m }; },
+        internalServerError: m => { c._err = { code: 500, msg: m }; },
+      };
+      return c;
+    })();
+    await ctrl.claimOwnership(claimCtx);
+    const newWebsiteId = claimCtx._body?.data?.newWebsiteId;
+    assert(typeof newWebsiteId === 'number', 'claim returned a newWebsiteId');
+
+    // (c) Re-read A's row: still reseller-code, but now marked ownership_claimed.
+    const rowAAfterClaim = await Q('api::publisher-website.publisher-website').findOne({ where: { id: fxA.website.id } });
+    assert(rowAAfterClaim.verificationMethod === 'reseller-code', "A still 'reseller-code' AFTER claim");
+    assert(rowAAfterClaim.gscVerified === false, "A's gscVerified still false AFTER claim");
+    assert(rowAAfterClaim.submissionStatus === 'ownership_claimed', "A's status flipped to ownership_claimed");
+
+    // (d) B's new row: gscVerified=true, verificationMethod=google-search-console,
+    //     permission level carried from the cross-account proof.
+    const rowB = await Q('api::publisher-website.publisher-website').findOne({ where: { id: newWebsiteId } });
+    assert(rowB.gscVerified === true, "B's row gscVerified=true");
+    assert(rowB.verificationMethod === 'google-search-console', "B's row verificationMethod=google-search-console");
+    assert(rowB.gscPermissionLevel === 'siteOwner', "B's row gscPermissionLevel=siteOwner");
+    assert(rowB.submissionStatus === 'approval_pending', "B's row in approval_pending");
+
+    // (e) Double-click safety: a second claim by B returns the existing
+    //     approval_pending row WITHOUT needing a fresh proof (idempotency).
+    const claimCtx2 = (() => {
+      const c = {
+        params: { id: String(fxA.website.id) },
+        state: { user: userB },
+        request: { body: { data: { description: 'test claim 2nd' } } },
+        _body: null, _err: null,
+        send: (b) => { c._body = b; return b; },
+        unauthorized: m => { c._err = { code: 401, msg: m }; },
+        forbidden:    m => { c._err = { code: 403, msg: m }; },
+        badRequest:   m => { c._err = { code: 400, msg: m }; },
+        notFound:     m => { c._err = { code: 404, msg: m }; },
+        internalServerError: m => { c._err = { code: 500, msg: m }; },
+      };
+      return c;
+    })();
+    await ctrl.claimOwnership(claimCtx2);
+    assert(claimCtx2._body?.data?.alreadySubmitted === true, 'second claim returns existing claim (idempotent)');
+    assert(claimCtx2._body?.data?.newWebsiteId === newWebsiteId, 'second claim references same new row');
+
+    // (f) An unrelated user C with no proof cannot claim.
+    const userC = await Q('plugin::users-permissions.user').create({
+      data: { username: `c-${Date.now()}`, email: `c-${Date.now()}@example.test`, provider: 'local', confirmed: true },
+    });
+    const claimCtxC = (() => {
+      const c = {
+        params: { id: String(fxA.website.id) },
+        state: { user: userC },
+        request: { body: { data: {} } },
+        _body: null, _err: null,
+        send: (b) => { c._body = b; return b; },
+        unauthorized: m => { c._err = { code: 401, msg: m }; },
+        forbidden:    m => { c._err = { code: 403, msg: m }; },
+        badRequest:   m => { c._err = { code: 400, msg: m }; },
+        notFound:     m => { c._err = { code: 404, msg: m }; },
+        internalServerError: m => { c._err = { code: 500, msg: m }; },
+      };
+      return c;
+    })();
+    await ctrl.claimOwnership(claimCtxC);
+    assert(claimCtxC._err?.code === 400 && /verification first/i.test(claimCtxC._err.msg), 'unrelated user C without proof → 400 verification required');
+
+    // Cleanup
+    await Q('api::publisher-website.publisher-website').delete({ where: { id: newWebsiteId } });
+    await Q('plugin::users-permissions.user').delete({ where: { id: userB.id } });
+    await Q('plugin::users-permissions.user').delete({ where: { id: userC.id } });
+    await cleanup(fxA);
   }
 
   out(`\n=== SUMMARY: ${pass} passed, ${fail} failed ===`);

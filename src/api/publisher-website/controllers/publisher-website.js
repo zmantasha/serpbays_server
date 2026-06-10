@@ -1453,9 +1453,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to claim ownership.');
       }
 
-      // Find the existing website
+      // Find the existing website. claimedBy is a manyToOne relation, so it
+      // must be populated for the idempotency check below to resolve it
+      // (otherwise existingWebsite.claimedBy is undefined and a double-
+      // click submits two claims back-to-back).
       const existingWebsite = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: ['currentPublisherId', 'originalPublisherId']
+        populate: ['currentPublisherId', 'originalPublisherId', 'claimedBy']
       });
 
       if (!existingWebsite) {
@@ -1470,27 +1473,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.badRequest('You already own this website');
       }
 
-      // We no longer require addedByReseller=true here. The claim flow is
-      // gated by GSC verification (the claimant must have stamped
-      // gscVerified=true via the HMAC channel before submitting) and by
-      // admin review on the new row. addedByReseller was historically used
-      // to scope claims to reseller-pre-filled rows; that's too narrow for
-      // the real product intent (any GSC-proven owner can submit a claim,
-      // admin decides). Verification ≠ ownership change; the admin
-      // approval below is what actually transfers ownership.
-      if (!existingWebsite.gscVerified) {
-        return ctx.badRequest(
-          'Claim ownership requires Google Search Console verification first. Please complete verification before submitting a claim.'
-        );
-      }
-
-      // Idempotency: if this user already has an open claim against this
-      // exact row, return the existing claim instead of creating a duplicate.
-      // The submit-for-review button isn't always disabled-on-submit (a
-      // double-click previously produced two new approval_pending rows for
-      // the same domain). Look up by claimedBy on the original row — set
-      // below in the same transaction the first time around.
-      if (existingWebsite.claimedBy === user.id && existingWebsite.newOwnerWebsiteId) {
+      // Idempotency check FIRST — before we consume any proof. If this
+      // user already has an open claim against this row (double-click on
+      // submit, retry after a slow network round-trip, etc.), return the
+      // existing claim so the second call doesn't consume the proof and
+      // then fail with a "must verify first" message.
+      const existingClaimerId = existingWebsite.claimedBy?.id ?? existingWebsite.claimedBy ?? null;
+      if (existingClaimerId === user.id && existingWebsite.newOwnerWebsiteId) {
         const existingClaim = await strapi.entityService.findOne(
           'api::publisher-website.publisher-website',
           existingWebsite.newOwnerWebsiteId
@@ -1511,6 +1500,33 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           });
         }
       }
+
+      // GSC verification gate. The claim flow no longer reads
+      // existingWebsite.gscVerified (which would only be true if the
+      // claimant or someone else had verified directly on the original
+      // row — which we now deliberately avoid for cross-account verifies).
+      // Instead, the claimant must hold a fresh cross-account proof in
+      // the in-memory proofs store, recorded earlier by the GSC callback
+      // when they completed Google OAuth. The proof is consumed here so
+      // it can't be reused for a different row.
+      //
+      // Same-user verifies (where the claimant is already the row's owner
+      // — unusual in a claim scenario, but harmless) still pass via the
+      // sameUserAlreadyVerified branch, reading the row's existing flag.
+      const gscHelpers = require('../../../utils/gsc-helpers');
+      const sameUserAlreadyVerified =
+        existingWebsite.gscVerified === true &&
+        existingWebsite.currentPublisherId &&
+        existingWebsite.currentPublisherId.id === user.id;
+      const proof = gscHelpers.consumeCrossAccountProof(user.id, existingWebsite.url);
+      if (!proof && !sameUserAlreadyVerified) {
+        return ctx.badRequest(
+          'Claim ownership requires Google Search Console verification first. Please complete verification before submitting a claim.'
+        );
+      }
+      const claimPermissionLevel = proof?.gscPermissionLevel
+        || existingWebsite.gscPermissionLevel
+        || 'siteOwner';
 
       console.log('🏴 Processing ownership claim for website:', existingWebsite.url);
       console.log('🏴 Original owner:', existingWebsite.publisherEmail);
@@ -1534,10 +1550,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         originalPublisherId: existingWebsite.currentPublisherId || null,
         currentPublisherId: user.id,
 
-        // Verification details - must be GSC for claims
+        // Verification details — the claimant proved this themselves via
+        // the GSC HMAC channel (either a same-user verification on their
+        // own pre-existing row, or a cross-account proof consumed above).
+        // The permission level reflects what their Google account actually
+        // has on the domain.
         verificationMethod: 'google-search-console',
         gscVerified: true,
         gscVerifiedAt: new Date().toISOString(),
+        gscPermissionLevel: claimPermissionLevel,
 
         // Status - submit for admin review (NOT approved yet)
         submissionStatus: 'approval_pending',
@@ -1920,13 +1941,28 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       return ctx.forbidden('No matching Google Search Console property covers this website');
     }
 
-    // Atomic write — re-read the row, write only if not already verified.
-    // Ownership is NOT re-checked here: verification doesn't transfer
-    // ownership, and a third-party verifier (e.g. a future claimant) is
-    // explicitly allowed by design. Any failure rolls back; the audit log
-    // captures both the initiator and the row's current owner.
+    // Two outcomes depending on whether the initiator owns the row:
+    //
+    //   SAME USER (initiator IS the row's currentPublisherId):
+    //     The verifier is the publisher of the row. Stamp the row's
+    //     gscVerified / gscVerifiedAt / gscPermissionLevel / verificationMethod
+    //     directly. This is the ordinary publisher-verifying-own-site path.
+    //
+    //   CROSS-ACCOUNT (initiator is NOT the row's current owner):
+    //     The verifier is a *third party* — typically a claimant about to
+    //     submit an ownership claim. They've genuinely proven Google
+    //     ownership of the URL, but writing the proof to the original
+    //     publisher's row would overwrite that publisher's history (e.g.
+    //     verificationMethod='reseller-code'). Instead we record an
+    //     in-memory proof keyed by (initiator userId, websiteUrl) with a
+    //     30-min TTL. The claim controller consumes that proof when the
+    //     claim is submitted; the original row is NEVER touched.
+    //
+    // Either way the URL→record binding and Google permission check have
+    // already passed; the only difference is WHERE the proof lands.
     let outcome = 'success';
     let rowOwnerIdAtCallback = null;
+    let isSameUser = false;
     try {
       await strapi.db.transaction(async () => {
         const row = await strapi.entityService.findOne(
@@ -1938,18 +1974,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           outcome = 'row_missing';
           throw new Error('row_missing');
         }
-        // No ownership re-check here. Verification is a proof-of-Google-
-        // ownership stamp on the row, NOT an ownership change. Whoever
-        // currently owns the row continues to own it; the verifier's
-        // identity is recorded only in the audit log. Actual ownership
-        // changes go through the claim + admin-approval workflow.
         rowOwnerIdAtCallback = row.currentPublisherId?.id ?? null;
+        isSameUser = rowOwnerIdAtCallback === entry.userId;
 
+        if (!isSameUser) {
+          // Cross-account: record the proof, do NOT touch the row.
+          gsc.recordCrossAccountProof({
+            userId: entry.userId,
+            websiteUrl: entry.websiteUrl,
+            gscPermissionLevel: match.permissionLevel,
+          });
+          outcome = 'cross_account_proof_recorded';
+          return;
+        }
+
+        // Same-user path: the verifier IS the row owner — stamp the row.
         if (row.gscVerified) {
           outcome = 'no_op_already_verified';
           return;
         }
-
         const updates = {
           gscVerified: true,
           gscVerifiedAt: new Date(),
@@ -1977,13 +2020,21 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       return ctx.forbidden('Verification could not be completed');
     }
 
-    // Audit logs both the initiator (who proved Google ownership) AND the
-    // row's current owner — so a cross-account verification (e.g. claimant
-    // verifying an existing publisher's row) is explicit in the trail.
+    // One audit line per outcome. Cross-account proofs are explicit so the
+    // trail makes the same-user vs claim-prep distinction unambiguous.
+    const auditLabel = (() => {
+      if (outcome === 'cross_account_proof_recorded') return 'PROOF_RECORDED';
+      if (outcome === 'no_op_already_verified') return 'NO_OP';
+      return 'SUCCESS';
+    })();
     strapi.log.info(
-      `[GSC AUDIT] ${outcome === 'no_op_already_verified' ? 'NO_OP' : 'SUCCESS'} initiator=${entry.userId} row_owner=${rowOwnerIdAtCallback ?? 'none'} same_user=${rowOwnerIdAtCallback === entry.userId} website=${entry.websiteId} url=${entry.websiteUrl} matched_type=${match.type} matched_host=${match.provenHost} permission=${match.permissionLevel}`
+      `[GSC AUDIT] ${auditLabel} initiator=${entry.userId} row_owner=${rowOwnerIdAtCallback ?? 'none'} same_user=${isSameUser} website=${entry.websiteId} url=${entry.websiteUrl} matched_type=${match.type} matched_host=${match.provenHost} permission=${match.permissionLevel}`
     );
-    ctx.send({ ok: true, alreadyVerified: outcome === 'no_op_already_verified' });
+    ctx.send({
+      ok: true,
+      alreadyVerified: outcome === 'no_op_already_verified',
+      crossAccountProofRecorded: outcome === 'cross_account_proof_recorded',
+    });
   }
 
 }));

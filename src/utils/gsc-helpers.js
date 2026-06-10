@@ -76,6 +76,64 @@ function isSignatureReplay(sigHash) {
   return true;
 }
 
+// ---- Cross-account verification proofs ---------------------------------
+//
+// When the OAuth'd Google account proves ownership of a domain but the
+// verifier is NOT the current owner of the row (i.e. a claim-in-progress
+// scenario), we MUST NOT stamp the row's verification metadata — that
+// would overwrite the original owner's reseller-code / etc. record.
+// Instead we persist a short-lived proof keyed by (userId, websiteUrl).
+// The claim controller looks up + consumes this proof when the claimant
+// submits.
+//
+// Storage is process-local (in-memory). Restart loses pending proofs;
+// claimant has to re-verify. TTL is short (30 min) so the blast radius
+// of a leaked proof entry is tightly bounded.
+
+const PROOF_TTL_MS = 30 * 60 * 1000;
+const proofs = new Map(); // `${userId}::${normalizedUrl}` -> { gscPermissionLevel, verifiedAt, expiresAt }
+
+function proofKey(userId, websiteUrl) {
+  const host = normalizeHost(websiteUrl);
+  return host ? `${userId}::${host}` : null;
+}
+
+function recordCrossAccountProof({ userId, websiteUrl, gscPermissionLevel }) {
+  const key = proofKey(userId, websiteUrl);
+  if (!key) return null;
+  const entry = {
+    gscPermissionLevel,
+    verifiedAt: new Date(),
+    expiresAt: Date.now() + PROOF_TTL_MS,
+  };
+  proofs.set(key, entry);
+  return entry;
+}
+
+// Look up without consuming. Used by audits / re-display paths.
+function findCrossAccountProof(userId, websiteUrl) {
+  const key = proofKey(userId, websiteUrl);
+  if (!key) return null;
+  const entry = proofs.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    proofs.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+// One-shot consume: returns the proof if it exists+valid, then removes it.
+function consumeCrossAccountProof(userId, websiteUrl) {
+  const key = proofKey(userId, websiteUrl);
+  if (!key) return null;
+  const entry = proofs.get(key);
+  if (!entry) return null;
+  proofs.delete(key);
+  if (entry.expiresAt < Date.now()) return null;
+  return entry;
+}
+
 // Periodic cleanup so the maps don't grow unbounded under sustained traffic.
 // Survives setInterval being called multiple times (Strapi reload-safe).
 if (!global.__gscHelperGcStarted) {
@@ -84,6 +142,7 @@ if (!global.__gscHelperGcStarted) {
     const now = Date.now();
     for (const [k, v] of nonces) if (v.expiresAt < now) nonces.delete(k);
     for (const [k, v] of replays) if (v < now) replays.delete(k);
+    for (const [k, v] of proofs) if (v.expiresAt < now) proofs.delete(k);
   }, 60 * 1000).unref();
 }
 
@@ -233,6 +292,9 @@ module.exports = {
   signatureHash,
   normalizeHost,
   findMatchingProperty,
+  recordCrossAccountProof,
+  findCrossAccountProof,
+  consumeCrossAccountProof,
   // exposed for tests
-  _internal: { nonces, replays, NONCE_TTL_MS, REPLAY_TTL_MS },
+  _internal: { nonces, replays, proofs, NONCE_TTL_MS, REPLAY_TTL_MS, PROOF_TTL_MS },
 };
