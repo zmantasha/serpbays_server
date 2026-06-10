@@ -1484,6 +1484,34 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         );
       }
 
+      // Idempotency: if this user already has an open claim against this
+      // exact row, return the existing claim instead of creating a duplicate.
+      // The submit-for-review button isn't always disabled-on-submit (a
+      // double-click previously produced two new approval_pending rows for
+      // the same domain). Look up by claimedBy on the original row — set
+      // below in the same transaction the first time around.
+      if (existingWebsite.claimedBy === user.id && existingWebsite.newOwnerWebsiteId) {
+        const existingClaim = await strapi.entityService.findOne(
+          'api::publisher-website.publisher-website',
+          existingWebsite.newOwnerWebsiteId
+        );
+        if (existingClaim && existingClaim.submissionStatus === 'approval_pending') {
+          console.log(
+            `[CLAIM IDEMPOTENT] User ${user.id} already has an open claim (#${existingClaim.id}) against website ${id} — returning existing claim instead of creating a duplicate.`
+          );
+          return ctx.send({
+            success: true,
+            message: 'Your claim is already submitted and under review.',
+            data: {
+              newWebsiteId: existingClaim.id,
+              originalWebsiteId: existingWebsite.id,
+              claimedWebsite: existingClaim,
+              alreadySubmitted: true,
+            },
+          });
+        }
+      }
+
       console.log('🏴 Processing ownership claim for website:', existingWebsite.url);
       console.log('🏴 Original owner:', existingWebsite.publisherEmail);
       console.log('🏴 New claiming owner:', user.email);
