@@ -730,33 +730,23 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.log(`[DenyWithdrawal] No matching withdrawal request transaction found for withdrawal #${id}`);
       }
 
-      // Return the funds to the publisher's MAIN balance (since withdrawals only come from main balance)
-      const refundAmount = parseFloat(withdrawalRequest.amount);
-      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) + refundAmount;
-      const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
-
-      await strapi.db.query('api::user-wallet.user-wallet').update({
-        where: { id: publisherWallet.id },
-        data: {
-          mainBalance: newMainBalance,
-          balance: newTotalBalance,
-          pendingWithdrawalBalance: Math.max(0, (parseFloat(publisherWallet.pendingWithdrawalBalance) || 0) - refundAmount)
-        }
-      });
-
-      // Create a transaction record for the refund
-      await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          type: 'refund',
-          amount: withdrawalRequest.amount,
-          netAmount: withdrawalRequest.amount,
-          fee: 0,
-          transactionStatus: 'denied',
-          gateway: 'internal',
-          description: `Withdrawal request denied: ${reason || 'No reason provided'}`,
-          user_wallet: publisherWallet.id
-        }
-      });
+      // Audit Wave-4 R47/R51/R107 — inline refund removed.
+      //
+      // Previously this block credited `withdrawalRequest.amount` (the NET
+      // withdrawal) to mainBalance and decremented pendingWithdrawalBalance.
+      // The entityService.update above flips withdrawal_status='denied' which
+      // triggers `lifecycles.handleDeniedWithdrawal` via afterUpdate — that
+      // lifecycle ALREADY credits the GROSS refund (net + 20% platform fee,
+      // matching what was originally debited at create-time) and decrements
+      // pendingWithdrawalBalance. Running both produced a ~1.8× over-credit
+      // on every deny (e.g. $80 net withdrawal → wallet got $180 back instead
+      // of the correct $100).
+      //
+      // Lifecycle path is the source of truth — its math is correct (totalRefund
+      // = amount + platformFee). Inline refund-tx record was redundant; the
+      // withdrawal transaction is already updated to denied above (lines
+      // 712-731) and the lifecycle's own transaction-status updater handles
+      // any audit-trail follow-up.
 
       // Create notification for publisher about denial
       try {
