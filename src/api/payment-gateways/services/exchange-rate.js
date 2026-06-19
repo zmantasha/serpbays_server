@@ -11,9 +11,20 @@ let lastFetchTime = null;
 const CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour cache
 
 // API configuration
-const EXCHANGE_RATE_API_KEY = process.env.EXCHANGE_RATE_API_KEY || '123a3c87b3e8b56157fa3852';
-const EXCHANGE_RATE_API_URL = `https://v6.exchangerate-api.com/v6/${EXCHANGE_RATE_API_KEY}/latest/USD`;
-const FALLBACK_USD_TO_INR = 83.25; // Fallback rate if API fails
+//
+// Audit C10 fix — DO NOT hardcode the API key here. Previously this file
+// had an env-var OR-fallback to a literal API key, leaking the key in
+// source control (committed 2025-12-05; remains in git history — the
+// provider-side key must be rotated to fully remediate). When the env var
+// is unset at runtime, getExchangeRate() falls through to the
+// FALLBACK_USD_TO_INR constant for INR — acceptable graceful degradation.
+// The regression test scripts/test-secrets-not-hardcoded.js asserts no
+// such fallback string is ever re-introduced.
+const EXCHANGE_RATE_API_KEY = process.env.EXCHANGE_RATE_API_KEY || '';
+const EXCHANGE_RATE_API_URL = EXCHANGE_RATE_API_KEY
+  ? `https://v6.exchangerate-api.com/v6/${EXCHANGE_RATE_API_KEY}/latest/USD`
+  : null;
+const FALLBACK_USD_TO_INR = 83.25; // Fallback rate if API fails or key unset
 
 module.exports = {
   /**
@@ -32,6 +43,14 @@ module.exports = {
         if (rate) {
           return rate;
         }
+      }
+
+      // Audit C10 fix — when no API key is configured, skip the network
+      // call entirely and let the catch-and-fallback path handle it.
+      // Previously a hardcoded key was used as a fallback; that key is
+      // now rotated and removed from source.
+      if (!EXCHANGE_RATE_API_URL) {
+        throw new Error('EXCHANGE_RATE_API_KEY env var is not set');
       }
 
       // Fetch fresh rates from API

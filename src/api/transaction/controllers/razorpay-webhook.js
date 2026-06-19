@@ -130,6 +130,51 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
         console.log(`[RAZORPAY WEBHOOK] Using stored transaction amount: ${amountToCredit} ${creditCurrency} (Razorpay charged: ${razorpayAmountINR} ${currency})`);
 
+        // ─────────────────────────────────────────────────────────────
+        // Audit M11 — amount-mismatch cross-check.
+        // Compare Razorpay's actual charge (paise) against the
+        // server-computed expectedChargeCents (also paise, derived in
+        // createPayment via computeFees and stored in tx.metadata).
+        // If they diverge, refuse the credit and mark the tx failed.
+        // Tolerance: ±1 paise (~$0.0001) for floating-point cents math.
+        // ─────────────────────────────────────────────────────────────
+        {
+          const expectedChargeCents = Number(transaction.metadata?.expectedChargeCents);
+          const actualChargeCents = Number(payment.amount); // paise
+          const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+          if (Number.isFinite(expectedChargeCents) && expectedChargeCents > 0) {
+            if (Math.abs(actualChargeCents - expectedChargeCents) > 1) {
+              strapi.log.error(
+                `[RAZORPAY WEBHOOK] amount mismatch — REFUSING wallet credit. ` +
+                `payment.amount=${actualChargeCents}p expected=${expectedChargeCents}p ` +
+                `tx=${transaction.id} order=${orderId}`
+              );
+              await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+                data: {
+                  transactionStatus: 'failed',
+                  external_transaction_id: paymentId,
+                  metadata: {
+                    ...transaction.metadata,
+                    error: 'amount_mismatch',
+                    actualChargeCents,
+                    expectedChargeCents,
+                    processedAt: new Date().toISOString(),
+                  },
+                },
+              });
+              return;
+            }
+          } else if (new Date() > GRACE_PERIOD_END) {
+            strapi.log.error(`[RAZORPAY WEBHOOK] missing expectedChargeCents post-grace-period — REFUSING. tx=${transaction.id}`);
+            await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+              data: { transactionStatus: 'failed', metadata: { ...transaction.metadata, error: 'missing_expected_amount' } },
+            });
+            return;
+          } else {
+            strapi.log.warn(`[RAZORPAY WEBHOOK] legacy pending tx missing expectedChargeCents (grace period); tx=${transaction.id}`);
+          }
+        }
+
         // ✅ ATOMIC OPERATION 1: Update transaction status
         await strapi.entityService.update('api::transaction.transaction', transaction.id, {
           data: {
@@ -254,6 +299,34 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         const creditCurrency = transaction.currency || 'USD';
 
         console.log(`[RAZORPAY WEBHOOK] Using stored transaction amount: ${amountToCredit} ${creditCurrency} (Razorpay charged: ${razorpayAmountINR} ${currency})`);
+
+        // Audit M11 — amount-mismatch cross-check on order.paid path.
+        {
+          const expectedChargeCents = Number(transaction.metadata?.expectedChargeCents);
+          const actualChargeCents = Number(order.amount); // paise
+          const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+          if (Number.isFinite(expectedChargeCents) && expectedChargeCents > 0) {
+            if (Math.abs(actualChargeCents - expectedChargeCents) > 1) {
+              strapi.log.error(
+                `[RAZORPAY WEBHOOK order.paid] amount mismatch — REFUSING wallet credit. ` +
+                `order.amount=${actualChargeCents}p expected=${expectedChargeCents}p tx=${transaction.id}`
+              );
+              await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+                data: {
+                  transactionStatus: 'failed',
+                  metadata: { ...transaction.metadata, error: 'amount_mismatch', actualChargeCents, expectedChargeCents },
+                },
+              });
+              return;
+            }
+          } else if (new Date() > GRACE_PERIOD_END) {
+            strapi.log.error(`[RAZORPAY WEBHOOK order.paid] missing expectedChargeCents post-grace — REFUSING. tx=${transaction.id}`);
+            await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+              data: { transactionStatus: 'failed', metadata: { ...transaction.metadata, error: 'missing_expected_amount' } },
+            });
+            return;
+          }
+        }
 
         // ✅ ATOMIC OPERATION 1: Update transaction status
         // Try to get payment ID from order.paid event (if available in payments array)

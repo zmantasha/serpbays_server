@@ -722,113 +722,16 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     }
   },
 
-  // Migration method to fix existing completed orders
-  async fixCompletedOrderEarnings(ctx) {
-    try {
-      console.log('Starting migration to fix completed order earnings...');
-
-      // Get all completed orders
-      const completedOrders = await strapi.db.query('api::order.order').findMany({
-        where: {
-          orderStatus: { $in: ['approved', 'completed'] }
-        },
-        populate: ['publisher', 'advertiser']
-      });
-
-      console.log(`Found ${completedOrders.length} completed orders to process`);
-
-      let processedCount = 0;
-      let errorCount = 0;
-
-      for (const order of completedOrders) {
-        try {
-          if (!order.publisher?.id) {
-            console.log(`Skipping order ${order.id} - no publisher`);
-            continue;
-          }
-
-          // Use centralized wallet creation for publisher
-          let publisherWallet = await this.getOrCreateWallet(order.publisher.id);
-
-          // Check if earnings already credited for this order
-          const existingTransaction = await strapi.entityService.findMany('api::transaction.transaction', {
-            filters: {
-              user_wallet: { id: publisherWallet.id },
-              type: 'escrow_release',
-              order: { id: order.id },
-              publishedAt: { $notNull: true }
-            }
-          });
-
-          if (existingTransaction.length > 0) {
-            console.log(`Order ${order.id} already has credited earnings, checking wallet balance...`);
-
-            // Calculate total earnings that should be in wallet from this order
-            const totalEarnings = existingTransaction.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
-
-            // Add to wallet if not already there (idempotent)
-            await strapi.db.query('api::user-wallet.user-wallet').update({
-              where: { id: publisherWallet.id },
-              data: {
-                balance: publisherWallet.balance + totalEarnings
-              }
-            });
-
-            console.log(`Added ${totalEarnings} to publisher ${order.publisher.id} wallet for order ${order.id}`);
-            processedCount++;
-            continue;
-          }
-
-          // Credit the earnings
-          const paymentAmount = order.totalAmount || 0;
-
-          if (paymentAmount > 0) {
-            // Add to wallet balance
-            await strapi.db.query('api::user-wallet.user-wallet').update({
-              where: { id: publisherWallet.id },
-              data: {
-                balance: publisherWallet.balance + paymentAmount
-              }
-            });
-
-            // Create transaction record
-            await strapi.entityService.create('api::transaction.transaction', {
-              data: {
-                type: 'escrow_release',
-                amount: paymentAmount,
-                netAmount: paymentAmount,
-                transactionStatus: 'success',
-                gateway: 'system',
-                gatewayTransactionId: `migration_${order.id}_${Date.now()}`,
-                description: `Migration: Payment for order #${order.id}`,
-                user_wallet: publisherWallet.id,
-                users_permissions_user: order.publisher.id,
-                order: order.id,
-                publishedAt: new Date()
-              }
-            });
-
-            console.log(`Credited ${paymentAmount} to publisher ${order.publisher.id} for order ${order.id}`);
-            processedCount++;
-          }
-        } catch (error) {
-          console.error(`Error processing order ${order.id}:`, error);
-          errorCount++;
-        }
-      }
-
-      return ctx.send({
-        success: true,
-        message: `Migration completed. Processed: ${processedCount}, Errors: ${errorCount}`,
-        processed: processedCount,
-        errors: errorCount
-      });
-
-    } catch (error) {
-      console.error('Migration error:', error);
-      return ctx.badRequest('Migration failed');
-    }
-  },
+  // Audit C5 — `fixCompletedOrderEarnings` handler removed.
+  // The handler iterated ALL system-wide completed orders and credited
+  // `order.totalAmount` to publishers without idempotency (the existing-tx
+  // branch double-credited the same earnings on every call). It was reachable
+  // by any authenticated user via `POST /api/wallet/fix-earnings`, allowing
+  // any user to inflate publisher wallets by N× total order volume.
+  // The route is deleted in `src/api/user-wallet/routes/user-wallet.js` and
+  // the up_permissions rows are purged by the security migration
+  // `2026.06.17T00.00.00.security-remove-fix-earnings-route.js`.
+  // Regression test: `scripts/test-fix-earnings-removed.js`.
 
   // Add funds to main balance (from direct payments)
   async addMainFunds(userId, amount, transactionData = {}) {

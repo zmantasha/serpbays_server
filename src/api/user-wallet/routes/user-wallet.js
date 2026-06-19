@@ -154,15 +154,15 @@ module.exports = {
         middlewares: []
       }
     },
-    {
-      method: 'POST',
-      path: '/api/wallet/fix-earnings',
-      handler: 'user-wallet.fixCompletedOrderEarnings',
-      config: {
-        auth: {},
-        policies: [],
-        middlewares: []
-      }
-    }
+    // Audit C5 — Route `POST /api/wallet/fix-earnings` removed.
+    // The previous handler (`fixCompletedOrderEarnings`) iterated ALL completed
+    // orders system-wide and double-credited publisher wallets on every call
+    // (claimed-idempotent comment notwithstanding). The route was open to any
+    // authenticated user (`auth: {}`), so any user could fire it repeatedly to
+    // inflate any publisher's wallet by N× the sum of all approved orders.
+    // The handler is also gone; the up_permissions rows are purged by
+    // `database/migrations/2026.06.17T00.00.00.security-remove-fix-earnings-route.js`.
+    // There is no replacement: live wallet credits flow through
+    // `releaseEscrowToPublisher()` invoked by the order-completion path.
   ]
 };

@@ -14,7 +14,105 @@ const razorpay = new Razorpay({
 
 // PayPal service is now imported from separate file
 
+// Audit M11 fix — server-authoritative fee + charge computation.
+// Single source of truth for what the gateway is told to charge given the
+// wallet-credit amount the user wants. Replaces the previous design where
+// the client computed `baseAmount` (wallet credit) AND `totalAmount`
+// (gateway charge) and the server trusted both — letting an attacker send
+// {amount: 1, baseAmount: 1000} via DevTools and have the wallet credit
+// $1000 while only paying $1. With this helper, the controller passes the
+// user's `amount` (intent) and the server derives BOTH the gateway charge
+// AND the wallet credit deterministically. Any divergence is impossible
+// because both values come from the same input via pure math.
+const COMPUTE_FEES_GST_RATE = 0.18;        // Razorpay GST on USD base amount
+
+async function computeFees(strapi, gateway, currency, amountUSD) {
+  if (typeof amountUSD !== 'number' || !isFinite(amountUSD) || amountUSD <= 0) {
+    throw new Error('computeFees: amountUSD must be a positive finite number');
+  }
+  const upperCurrency = (currency || 'USD').toUpperCase();
+  const lowerGateway = (gateway || '').toLowerCase();
+
+  switch (lowerGateway) {
+    case 'stripe': {
+      // Stripe: no extra processing fee added to user — we absorb it.
+      const chargeUSD = amountUSD;
+      return {
+        gateway: 'stripe',
+        walletCreditUSD: amountUSD,           // what wallet gets
+        chargeUSD,                            // server-side total in USD
+        chargeCurrency: upperCurrency,        // Stripe charges in `currency` directly
+        chargeNative: chargeUSD,              // since chargeCurrency == USD
+        expectedChargeCents: Math.round(chargeUSD * 100),
+        feesApplied: { stripeProcessing: 0 },
+        exchangeRate: 1,
+      };
+    }
+    case 'razorpay': {
+      // Razorpay: 18% GST on USD base, converted to INR for the actual charge.
+      const gstUSD = amountUSD * COMPUTE_FEES_GST_RATE;
+      const chargeUSD = amountUSD + gstUSD;
+      // Convert to INR using same path as legacy code (so behaviour matches).
+      const exchangeRateService = require('../../payment-gateways/services/exchange-rate');
+      let inrRate;
+      try {
+        inrRate = await exchangeRateService.getExchangeRate('USD', 'INR');
+      } catch (err) {
+        // Same fallback the controller used pre-fix.
+        inrRate = parseFloat(process.env.USD_TO_INR_RATE || '83.25');
+        strapi.log.warn(`[computeFees] live FX failed, using fallback rate ${inrRate}: ${err.message}`);
+      }
+      const chargeNative = chargeUSD * inrRate;
+      return {
+        gateway: 'razorpay',
+        walletCreditUSD: amountUSD,
+        chargeUSD,
+        chargeCurrency: 'INR',
+        chargeNative,
+        // Razorpay reports amount in paise (₹*100) on webhook.
+        expectedChargeCents: Math.round(chargeNative * 100),
+        feesApplied: { gstUSD, gstRate: COMPUTE_FEES_GST_RATE },
+        exchangeRate: inrRate,
+      };
+    }
+    case 'paypal': {
+      const chargeUSD = amountUSD;
+      return {
+        gateway: 'paypal',
+        walletCreditUSD: amountUSD,
+        chargeUSD,
+        chargeCurrency: upperCurrency,
+        chargeNative: chargeUSD,
+        expectedChargeCents: Math.round(chargeUSD * 100),
+        feesApplied: { paypalProcessing: 0 },
+        exchangeRate: 1,
+      };
+    }
+    case 'phonepe': {
+      const chargeUSD = amountUSD;
+      return {
+        gateway: 'phonepe',
+        walletCreditUSD: amountUSD,
+        chargeUSD,
+        chargeCurrency: upperCurrency,
+        chargeNative: chargeUSD,
+        // PhonePe reports paise too; native is USD here, kept for parity.
+        expectedChargeCents: Math.round(chargeUSD * 100),
+        feesApplied: { phonepeProcessing: 0 },
+        exchangeRate: 1,
+      };
+    }
+    default:
+      throw new Error(`computeFees: unknown gateway '${gateway}'`);
+  }
+}
+
 module.exports = {
+  // Audit M11 — server-authoritative fee derivation. Exported so the
+  // transaction controller and any future fee-preview endpoint can share
+  // ONE math path.
+  computeFees: (gateway, currency, amountUSD) => computeFees(strapi, gateway, currency, amountUSD),
+
   // Create payment intent for Stripe
   async createStripePaymentIntent(amount, currency = 'usd', metadata = {}) {
     try {

@@ -59,6 +59,55 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         transactionStatus = 'failed';
       }
 
+      // ─────────────────────────────────────────────────────────────────
+      // Audit Wave-3 Vector C — M11 amount-mismatch cross-check.
+      // Compare PhonePe-reported amount to the server-computed
+      // expectedChargeCents stashed at create time. Refuse credit on
+      // mismatch (and demote the tx to failed). This guards against
+      // PhonePe-side adjustments, partial captures, or replay against a
+      // pending row with a different expected amount. Grace-period
+      // boundary matches the other gateway webhooks (2026-07-16).
+      // ─────────────────────────────────────────────────────────────────
+      if (state === 'COMPLETED') {
+        const expectedChargeCents = transaction.metadata?.expectedChargeCents;
+        const actualChargeCents = Math.round((Number(amount) || 0) * 100);
+        const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+        if (Number.isFinite(Number(expectedChargeCents)) && Number(expectedChargeCents) > 0) {
+          if (actualChargeCents !== Number(expectedChargeCents)) {
+            strapi.log.error(
+              `[PHONEPE CALLBACK] amount mismatch — REFUSING wallet credit. ` +
+              `actual=${actualChargeCents} expected=${expectedChargeCents} ` +
+              `tx=${transaction.id} transactionId=${transactionId}`
+            );
+            await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+              data: {
+                transactionStatus: 'failed',
+                payment_notes: `PhonePe amount mismatch: expected=${expectedChargeCents}c actual=${actualChargeCents}c`,
+                metadata: {
+                  ...(transaction.metadata || {}),
+                  m11Error: 'amount_mismatch',
+                  actualChargeCents,
+                  expectedChargeCents: Number(expectedChargeCents),
+                  refusedAt: new Date().toISOString(),
+                },
+                updatedAt: new Date(),
+              },
+            });
+            return ctx.send({ success: true, refused: true, reason: 'amount_mismatch' });
+          }
+        } else if (new Date() > GRACE_PERIOD_END) {
+          strapi.log.error(
+            `[PHONEPE CALLBACK] missing expectedChargeCents post-grace-period — REFUSING. tx=${transaction.id}`
+          );
+          await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+            data: { transactionStatus: 'failed', payment_notes: 'PhonePe missing expectedChargeCents post-grace' },
+          });
+          return ctx.send({ success: true, refused: true, reason: 'missing_expected_charge_cents' });
+        } else {
+          strapi.log.warn(`[PHONEPE CALLBACK] legacy tx missing expectedChargeCents (grace period). tx=${transaction.id}`);
+        }
+      }
+
       // Update transaction
       await strapi.entityService.update('api::transaction.transaction', transaction.id, {
         data: {
@@ -118,8 +167,54 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Update transaction if needed
       let transactionStatus = transaction.transactionStatus;
-      
+
       if (statusResult.state === 'COMPLETED' && transactionStatus !== 'success') {
+        // ─────────────────────────────────────────────────────────────
+        // Audit Wave-3 Vector C — same M11 amount-mismatch check as the
+        // callback path. checkStatus is also a wallet-credit primitive
+        // (auth:false, body-supplied transactionId — see follow-up T12)
+        // so it must apply the same defense.
+        // ─────────────────────────────────────────────────────────────
+        {
+          const expectedChargeCents = transaction.metadata?.expectedChargeCents;
+          const actualChargeCents = Math.round((Number(statusResult.amount) || 0) * 100);
+          const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+          if (Number.isFinite(Number(expectedChargeCents)) && Number(expectedChargeCents) > 0) {
+            if (actualChargeCents !== Number(expectedChargeCents)) {
+              strapi.log.error(
+                `[PHONEPE STATUS] amount mismatch — REFUSING wallet credit. ` +
+                `actual=${actualChargeCents} expected=${expectedChargeCents} ` +
+                `tx=${transaction.id} transactionId=${transactionId}`
+              );
+              await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+                data: {
+                  transactionStatus: 'failed',
+                  payment_notes: `PhonePe amount mismatch: expected=${expectedChargeCents}c actual=${actualChargeCents}c`,
+                  metadata: {
+                    ...(transaction.metadata || {}),
+                    m11Error: 'amount_mismatch',
+                    actualChargeCents,
+                    expectedChargeCents: Number(expectedChargeCents),
+                    refusedAt: new Date().toISOString(),
+                  },
+                  updatedAt: new Date(),
+                },
+              });
+              return ctx.send({ success: true, refused: true, reason: 'amount_mismatch' });
+            }
+          } else if (new Date() > GRACE_PERIOD_END) {
+            strapi.log.error(
+              `[PHONEPE STATUS] missing expectedChargeCents post-grace-period — REFUSING. tx=${transaction.id}`
+            );
+            await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+              data: { transactionStatus: 'failed', payment_notes: 'PhonePe missing expectedChargeCents post-grace' },
+            });
+            return ctx.send({ success: true, refused: true, reason: 'missing_expected_charge_cents' });
+          } else {
+            strapi.log.warn(`[PHONEPE STATUS] legacy tx missing expectedChargeCents (grace period). tx=${transaction.id}`);
+          }
+        }
+
         // Update to success
         await strapi.entityService.update('api::transaction.transaction', transaction.id, {
           data: {
@@ -131,7 +226,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
         // Update wallet
         await this.updateWalletBalance(transaction.user_wallet.id, statusResult.amount, transaction.currency);
-        
+
         transactionStatus = 'success';
         console.log(`[PHONEPE STATUS] ✅ Updated transaction ${transaction.id} to success`);
       } else if (statusResult.state === 'FAILED' && transactionStatus !== 'failed') {

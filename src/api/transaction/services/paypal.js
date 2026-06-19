@@ -47,12 +47,21 @@ module.exports = {
       const request = new paypal.orders.OrdersCreateRequest();
       request.prefer("return=representation");
 
-      // Store walletId and baseAmount in custom_id as JSON for webhook retrieval
+      // Store walletId and baseAmount in custom_id as JSON for webhook retrieval.
+      // Audit Wave-3 Vector B — `expectedChargeCents` was previously dropped at this
+      // boundary, so the M11 amount-mismatch check in `paypal-webhook.handlePaymentCompleted`
+      // and `transaction.verifyPayPalPayment` always fell into the grace-period
+      // warn-and-credit branch (effective M11 no-op for all PayPal traffic). Now
+      // persisted so the webhook + verify path can hard-reject on mismatch.
       const customIdData = {
         walletId: metadata.walletId || null,
         baseAmount: metadata.baseAmount ? parseFloat(metadata.baseAmount) : null,
         totalAmount: amount,
-        userId: metadata.userId || null
+        userId: metadata.userId || null,
+        expectedChargeCents:
+          metadata.expectedChargeCents != null ? Number(metadata.expectedChargeCents) : null,
+        expectedChargeUSD:
+          metadata.expectedChargeUSD != null ? parseFloat(metadata.expectedChargeUSD) : null,
       };
 
       // CRITICAL: PayPal requires exactly 2 decimal places for currency amounts

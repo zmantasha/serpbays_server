@@ -5,7 +5,7 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
-const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues } = require('../../../constants/website-options');
+const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues, normalizeCountries } = require('../../../constants/website-options');
 const { getPublisherCommissionRate } = require('../../../constants/commission');
 
 // In-memory storage for bulk import progress (since cache might not be available)
@@ -3142,12 +3142,21 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return valid.length > 0 ? valid : ['General'];
       })(),
       countries: (() => {
-        if (!websiteData.countries) return ['United States'];
+        // Use the centralized normalizeCountries which accepts ISO 3166-1
+        // alpha-2 / alpha-3 codes (IN, US, UK, UAE, CZ, DE, ...) and common
+        // aliases (UK, UAE, Czechia, Burma, etc.) in addition to canonical
+        // names. Bulk-import CSVs that previously failed validation with
+        // ISO codes are now normalized to the canonical name automatically.
+        if (!websiteData.countries) return ['United States of America'];
         const parsed = Array.isArray(websiteData.countries)
-          ? websiteData.countries.map(c => c.trim())
-          : websiteData.countries.split(',').map(c => c.trim());
-        const { valid } = validateValues(parsed, COUNTRIES_MAP);
-        return valid.length > 0 ? valid : ['United States'];
+          ? websiteData.countries
+          : String(websiteData.countries).split(',');
+        const { valid, invalid } = normalizeCountries(parsed);
+        if (invalid.length > 0) {
+          // eslint-disable-next-line no-console
+          console.warn(`[BULK IMPORT] dropped invalid country values: ${invalid.join(', ')}`);
+        }
+        return valid.length > 0 ? valid : ['United States of America'];
       })(),
       language: (() => {
         if (!websiteData.language) return ['English'];

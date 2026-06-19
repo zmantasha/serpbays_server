@@ -126,32 +126,30 @@ module.exports = {
         }
       }
     },
-    {
-      method: 'POST',
-      path: '/api/transactions/webhook/:gateway',
-      handler: 'transaction.handleWebhook',
-      config: {
-        auth: false // Webhooks must be public
-      }
-    },
-    {
-      method: 'POST',
-      path: '/api/api/transactions/webhook/:gateway',
-      handler: 'transaction.handleWebhook',
-      config: {
-        auth: false // Webhooks must be public
-      }
-    },
-    {
-      method: 'POST',
-      path: '/api/transactions/pending',
-      handler: 'transaction.createPendingTransaction',
-      config: {
-        auth: {
-          scope: ['api::transaction.transaction.create']
-        }
-      }
-    },
+    // Audit C9 — generic `POST /api/transactions/webhook/:gateway` and its
+    // typo-duplicate `/api/api/transactions/webhook/:gateway` removed. Both
+    // dispatched to `transaction.handleWebhook` (now also deleted), which:
+    //  - PayPal branch: captured a body-supplied orderID with NO signature
+    //    verification of any kind (free PayPal-pending capture for any caller).
+    //  - Stripe branch: verified signature, but credited wallet by
+    //    `existingTransaction.amount` with NO `expectedChargeCents` cross-check
+    //    — re-opening the M11 baseAmount-tampering vector that the dedicated
+    //    `src/api/transaction/controllers/stripe-webhook.js` had closed.
+    //  - Razorpay branch: used checkout-HMAC (`verifyRazorpayPayment`) instead
+    //    of the webhook-secret path; same M11 bypass as Stripe.
+    // Gateway-specific routes remain (`paypal-webhook.handleWebhook` etc.).
+    // Regression: `scripts/test-generic-webhook-removed.js`.
+    // Audit Wave-3 Vector D — `POST /api/transactions/pending` removed.
+    // The handler accepted {amount, gateway, gatewayTransactionId, walletId}
+    // from the request body and created a pending tx with those values
+    // verbatim. Combined with the M11 webhook grace-period (legacy rows
+    // missing expectedChargeCents are warn-credit until 2026-07-16), an
+    // attacker could plant a $1000 pending row matching their real $1
+    // gateway payment and have the webhook credit the planted amount.
+    // Cross-tree grep found ZERO frontend callers and ZERO successful
+    // production hits in the 7-day backend log. Handler `createPendingTransaction`
+    // is also deleted (see `controllers/transaction.js`).
+    // Regression: `scripts/test-pending-tx-route-removed.js`.
     // PayPal payment verification (fallback)
     {
       method: 'POST',
@@ -248,15 +246,21 @@ module.exports = {
         }
       }
     },
-    // Manual Razorpay transaction update (for admin use)
+    // Audit C4 — Manual Razorpay transaction update. Admin-only.
+    // Pre-fix: `auth: { strategies: ['jwt'] }` was a JWT-presence check with
+    // NO scope/role enforcement — any authenticated user could POST
+    // `{order_id, status: 'success'}` to flip their pending Razorpay tx and
+    // self-credit a wallet without paying. Now gated by the same
+    // `is-admin` policy + `admin-jwt-auth` middleware used by the sibling
+    // `cleanup-pending-razorpay` route below.
     {
       method: 'POST',
       path: '/api/transactions/manual-update-razorpay',
       handler: 'razorpay-webhook.manualUpdate',
       config: {
-        auth: {
-          strategies: ['jwt']
-        }
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth']
       }
     },
     // Cleanup old pending Razorpay transactions

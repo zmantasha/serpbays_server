@@ -372,6 +372,59 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
 
         // Calculate new balance
+        // ─────────────────────────────────────────────────────────────────
+        // Audit M11 — amount-mismatch cross-check.
+        // Before any wallet write, validate that Stripe actually charged
+        // the amount we asked it to charge. If they diverge, refuse the
+        // credit and mark the tx failed.
+        //
+        // expectedChargeCents lives in transaction.metadata (set in
+        // createPayment via computeFees). Legacy pending rows from before
+        // the fix may lack it — we grace-period those for 30 days.
+        // ─────────────────────────────────────────────────────────────────
+        {
+          const expectedChargeCents = Number(transaction.metadata?.expectedChargeCents);
+          const actualChargeCents = Number(paymentIntent.amount);
+          const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+
+          if (Number.isFinite(expectedChargeCents) && expectedChargeCents > 0) {
+            if (actualChargeCents !== expectedChargeCents) {
+              strapi.log.error(
+                `[STRIPE WEBHOOK] amount mismatch — REFUSING wallet credit. ` +
+                `paymentIntent.amount=${actualChargeCents}c expected=${expectedChargeCents}c ` +
+                `tx=${transaction.id} pi=${paymentIntent.id}`
+              );
+              await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+                data: {
+                  transactionStatus: 'failed',
+                  metadata: {
+                    ...transaction.metadata,
+                    error: 'amount_mismatch',
+                    actualChargeCents,
+                    expectedChargeCents,
+                    processedAt: new Date().toISOString(),
+                  },
+                },
+              });
+              return; // no wallet credit
+            }
+          } else if (new Date() > GRACE_PERIOD_END) {
+            strapi.log.error(
+              `[STRIPE WEBHOOK] missing expectedChargeCents post-grace-period — REFUSING. tx=${transaction.id}`
+            );
+            await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+              data: { transactionStatus: 'failed', metadata: { ...transaction.metadata, error: 'missing_expected_amount' } },
+            });
+            return;
+          } else {
+            strapi.log.warn(
+              `[STRIPE WEBHOOK] legacy pending tx missing expectedChargeCents (grace period); ` +
+              `tx=${transaction.id} pi=${paymentIntent.id} actualCents=${actualChargeCents}`
+            );
+          }
+        }
+
+        // Calculate new balance
         const currentMainBalance = parseFloat(wallet.mainBalance || 0);
         const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
         const transactionAmount = parseFloat(transaction.amount);
