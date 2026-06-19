@@ -6,6 +6,93 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// Audit M2 fix — fail-closed allowlist for the `...orderData` remainder of
+// the create() body destructure. The destructure explicitly pulls out
+// content/links/anchorText/etc., but everything else previously landed in
+// `orderData` and was spread into entityService.create — letting an
+// advertiser stamp lifecycle dates, cancellation metadata, admin-on-behalf
+// fields (createdByAdminId/adminReason/userConsent*), pre-stamped delivery
+// fields, etc. This allowlist is the set of fields an advertiser may
+// legitimately supply at create time. Everything else is server-derived
+// (escrowHeld, orderStatus, orderDate, advertiser, publisher, all websiteXxx
+// snapshot fields) or admin-only and must be ignored when present in the
+// body. Drop with a warn-level log so we can spot tampering attempts.
+const ALLOWED_ORDER_CREATE_FIELDS = new Set([
+  'totalAmount',
+  'description',
+  'website',
+  'specialCategory',
+]);
+
+// ─────────────────────────────────────────────────────────────────────────
+// Order/marketplace privacy boundary.
+//
+// `getMyOrders` previously populated `website: true` which returned the
+// ENTIRE marketplace row — including publisher_email, publisher_name, the
+// publisher_*_pricing intake-price fields, gsc_refresh_token, gsc_permission_
+// level, and internal admin/operational state (approvalStatus, blacklist_
+// status, dataVersion, bulkRefreshSkipTools, last*RefreshAt/last*ExportAt).
+// The marketplace content-type's `privateAttributes` config is bypassed
+// when the entity is loaded as a populated relation through
+// strapi.entityService.findMany.
+//
+// Allow-list (not deny-list) by design: new fields added to the marketplace
+// schema are NOT exposed automatically — they must be explicitly added here
+// before they appear in API responses. Guarantees gsc_refresh_token (and
+// any future private field) can never leak via this endpoint.
+// ─────────────────────────────────────────────────────────────────────────
+const WEBSITE_PUBLIC_FIELDS = [
+  // Identity
+  'id', 'documentId', 'url',
+  // Pricing (the advertiser-facing values — NOT publisher intake/forbidden)
+  'price', 'link_insertion_price',
+  'adv_casino_pricing', 'adv_cbd_pricing', 'adv_crypto_pricing', 'adv_dating_pricing',
+  'adv_li_casino_pricing', 'adv_li_cbd_pricing', 'adv_li_crypto_pricing', 'adv_li_dating_pricing',
+  // Site spec / content requirements
+  'tat', 'placement_speed', 'min_word_count',
+  'backlink_type', 'backlink_validity', 'dofollow_link',
+  'category', 'other_category', 'language', 'countries',
+  'guidelines', 'sample_post', 'sample_links',
+  'description', 'publication_location', 'domain_zone',
+  // Public SEO metrics
+  'ahrefs_dr', 'ahrefs_traffic', 'ahrefs_rank', 'ahrefs_referring_domain', 'ahrefs_keywords',
+  'moz_da', 'semrush_authority_score', 'semrush_traffic', 'spam_score', 'similarweb_traffic',
+  // Trust + feature flags
+  'gsc_verified',
+  'sponsored', 'ugc', 'digital_pr', 'only_with_us', 'fast_placement_status',
+  'isFeatured', 'isFeaturedGuestPost', 'isFeaturedLinkInsertion',
+  'website_status',
+  // Timestamps
+  'createdAt', 'updatedAt', 'publishedAt',
+];
+
+// Snapshot fields captured on the order row at create-time. These mirror
+// the publisher's data and are stripped when the caller is NOT the
+// publisher of the order. Defense-in-depth in case the marketplace listing
+// is later deleted/edited — the snapshot is the only record left.
+const ORDER_SNAPSHOT_PUBLISHER_PRIVATE = [
+  'websitePublisherEmail',
+  'websitePublisherName',
+  'websitePublisherPrice',
+];
+
+// Return true if the caller is the publisher of this specific order. Used
+// to gate visibility of snapshot publisher fields and (in the future) the
+// publisher_* intake-price fields if we ever want to re-expose them on a
+// publisher's own listings.
+function isCallerPublisherOfOrder(order, user) {
+  if (!user || !order) return false;
+  const publisherIdOnOrder = order.publisher && order.publisher.id;
+  if (publisherIdOnOrder && publisherIdOnOrder === user.id) return true;
+  // Legacy path — orders pre-dating the publisher FK still match on
+  // the snapshotted email.
+  if (!publisherIdOnOrder && order.websitePublisherEmail && user.email
+      && order.websitePublisherEmail === user.email) {
+    return true;
+  }
+  return false;
+}
+
 // Helper function to check if publisher wallet exists
 async function checkPublisherWallet(userId) {
   try {
@@ -83,6 +170,26 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           linkInsertionDescription,
           ...orderData
         } = ctx.request.body.data || ctx.request.body;
+
+        // Audit M2 fix — fail-closed allowlist on the leftover orderData.
+        // Strip anything the advertiser must not be able to set themselves
+        // (lifecycle dates, cancellation metadata, admin-on-behalf fields,
+        // delivery pre-stamps, audit timestamps, etc.). Server-derived
+        // fields (escrowHeld, orderStatus, orderDate, advertiser, publisher,
+        // websiteXxx snapshot fields) are written explicitly below — those
+        // get the canonical values regardless. Log dropped keys so attempted
+        // tampering shows up in ops logs.
+        const droppedOrderKeys = [];
+        for (const k of Object.keys(orderData)) {
+          if (!ALLOWED_ORDER_CREATE_FIELDS.has(k)) {
+            droppedOrderKeys.push(k);
+            delete orderData[k];
+          }
+        }
+        if (droppedOrderKeys.length > 0) {
+          strapi.log.warn(`[order.create] User ${user.id} (${user.email}) tried to set restricted fields on order create, dropped: ${droppedOrderKeys.join(', ')}`);
+        }
+
         console.log("projectId", projectId)
         console.log(projectName)
         // If projectId is provided, verify it exists and belongs to the user
@@ -970,16 +1077,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           filters: combinedFilters
         });
 
-        // Get paginated orders
+        // Get paginated orders. The `website` populate uses an explicit
+        // field whitelist (WEBSITE_PUBLIC_FIELDS) — `website: true` would
+        // have returned publisher_email, publisher_*_pricing intake prices,
+        // gsc_refresh_token, and internal admin state. Allow-list is the
+        // primary defense; the post-fetch snapshot strip below is
+        // defense-in-depth for the denormalized fields on the order row.
         const orders = await strapi.entityService.findMany('api::order.order', {
           filters: combinedFilters,
           populate: {
-            website: true,
+            website: {
+              fields: WEBSITE_PUBLIC_FIELDS,
+            },
             advertiser: {
               fields: ['id', 'username'] // Only populate id and username, exclude email
             },
             publisher: {
-              fields: ['id', 'username'] // Only populate id and username, exclude email  
+              fields: ['id', 'username'] // Only populate id and username, exclude email
             },
             orderContent: true,
             outsourcedContent: true,
@@ -990,6 +1104,21 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           start,
           limit
         });
+
+        // Snapshot-field strip: websitePublisherEmail / Name / Price are
+        // denormalized columns on the order row itself (captured at order
+        // create-time). They were leaking publisher PII + intake price to
+        // advertisers viewing their own orders. Strip per-row based on
+        // whether the caller is the publisher of THAT order — keeps the
+        // fields visible on a publisher's own orders for the publisher
+        // dashboard, strips them everywhere else.
+        for (const order of orders) {
+          if (!isCallerPublisherOfOrder(order, user)) {
+            for (const key of ORDER_SNAPSHOT_PUBLISHER_PRIVATE) {
+              delete order[key];
+            }
+          }
+        }
 
         // Calculate pagination info
         const totalPages = Math.ceil(totalCount / limit);
@@ -1469,18 +1598,21 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         }
 
-        // Use the order service to handle escrow refund before updating the order status
-        await strapi.service('api::order.order').rejectOrder(id, user);
-
-        // Update the order with rejection details
-        const updatedOrder = await strapi.db.query('api::order.order').update({
-          where: { id },
-          data: {
-            orderStatus: 'rejected',
-            rejectedDate: new Date(),
-            rejectionReason: body.reason.trim()
-          }
-        });
+        // Audit M3 fix — service now performs refund + status flip atomically
+        // in one transaction (with SELECT ... FOR UPDATE on the order row).
+        // Pass the rejection reason via a non-enumerable user property; the
+        // service writes it inside the transaction. Idempotent: a second
+        // reject on an already-rejected order returns { alreadyTerminal }
+        // and does NOT issue a second refund.
+        const rejectionReason = body.reason.trim();
+        const rejectResult = await strapi.service('api::order.order').rejectOrder(
+          id,
+          Object.assign({}, user, { __rejectionReason: rejectionReason })
+        );
+        if (rejectResult && rejectResult.alreadyTerminal) {
+          return ctx.badRequest(`Order is already ${rejectResult.currentStatus}`);
+        }
+        const updatedOrder = await strapi.db.query('api::order.order').findOne({ where: { id } });
 
         // Create notification for advertiser about the rejection
         try {
@@ -2226,41 +2358,89 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('You must be logged in to request a revision');
         }
 
-        // Check if the order exists
+        // Audit M5 fix — wrap the read-then-write critical section in a
+        // transaction with SELECT … FOR UPDATE on the order row. The
+        // previous flow had a window where a concurrent completeOrder
+        // could read the same 'delivered' row, drain escrow, and credit
+        // the publisher before this update committed the
+        // revisionStatus='requested' flip. The lock now serializes:
+        // whichever transaction commits first wins, the other observes
+        // the post-commit state and bails.
+        let updated = null;
+        let serviceError = null;
+        try {
+          await strapi.db.transaction(async ({ trx }) => {
+            const lockRow = await trx('orders').where({ id: orderId }).forUpdate().select('id');
+            if (!lockRow || lockRow.length === 0) {
+              serviceError = { code: 404, msg: 'Order not found' };
+              return;
+            }
+
+            // Re-fetch under the lock so the validation reflects the
+            // post-commit state of any concurrent writer.
+            const order = await strapi.entityService.findOne('api::order.order', orderId, {
+              populate: ['advertiser', 'publisher'],
+            });
+            if (!order) {
+              serviceError = { code: 404, msg: 'Order not found' };
+              return;
+            }
+
+            if (order.advertiser?.id !== user.id) {
+              serviceError = { code: 403, msg: 'Only the advertiser can request revisions' };
+              return;
+            }
+
+            // Cannot request a revision once the order is terminal (a
+            // concurrent completeOrder may have committed first).
+            const TERMINAL = ['completed', 'cancelled', 'rejected', 'refunded'];
+            if (TERMINAL.includes(order.orderStatus)) {
+              serviceError = { code: 400, msg: `Cannot request revision; order is already ${order.orderStatus}.` };
+              return;
+            }
+            // Revisions only apply to delivered work.
+            if (order.orderStatus !== 'delivered') {
+              serviceError = { code: 400, msg: `Revision can only be requested on a delivered order (current status: ${order.orderStatus})` };
+              return;
+            }
+
+            // 5-day window from delivery.
+            if (order.deliveredDate) {
+              const deliveredDate = new Date(order.deliveredDate);
+              const daysDifference = Math.floor((new Date() - deliveredDate) / (1000 * 60 * 60 * 24));
+              if (daysDifference > 5) {
+                serviceError = { code: 400, msg: 'Revision can only be requested within 5 working days of delivery' };
+                return;
+              }
+            } else {
+              serviceError = { code: 400, msg: 'Order has not been delivered yet' };
+              return;
+            }
+
+            updated = await strapi.entityService.update('api::order.order', orderId, {
+              data: {
+                orderStatus: 'accepted',
+                revisionRequestedAt: new Date(),
+                revisionDeadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+                revisionStatus: 'requested',
+              },
+            });
+          });
+        } catch (txErr) {
+          console.error('requestRevision transaction failed:', txErr);
+          return ctx.internalServerError(txErr.message || 'An error occurred while requesting revision');
+        }
+
+        if (serviceError) {
+          if (serviceError.code === 404) return ctx.notFound(serviceError.msg);
+          if (serviceError.code === 403) return ctx.forbidden(serviceError.msg);
+          return ctx.badRequest(serviceError.msg);
+        }
+
+        // Re-fetch the order for downstream side-effects (notifications, emails)
+        // which expect populated relations.
         const order = await strapi.entityService.findOne('api::order.order', orderId, {
           populate: ['advertiser', 'publisher'],
-        });
-
-        if (!order) {
-          return ctx.notFound('Order not found');
-        }
-
-        // Ensure user is the advertiser for this order
-        if (order.advertiser?.id !== user.id) {
-          return ctx.forbidden('Only the advertiser can request revisions');
-        }
-
-        // Validate 5-day window for requesting revisions
-        if (order.deliveredDate) {
-          const deliveredDate = new Date(order.deliveredDate);
-          const currentDate = new Date();
-          const daysDifference = Math.floor((currentDate - deliveredDate) / (1000 * 60 * 60 * 24));
-
-          if (daysDifference > 5) {
-            return ctx.badRequest('Revision can only be requested within 5 working days of delivery');
-          }
-        } else {
-          return ctx.badRequest('Order has not been delivered yet');
-        }
-
-        // Update order status and set revision timestamps
-        const updated = await strapi.entityService.update('api::order.order', orderId, {
-          data: {
-            orderStatus: 'accepted',
-            revisionRequestedAt: new Date(),
-            revisionDeadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
-            revisionStatus: 'requested',
-          }
         });
 
         // Create a communication record for the revision request
@@ -2732,7 +2912,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     // Cancel an order
     async cancelOrder(ctx) {
       const { id } = ctx.params;
-      const { reason, cancelledBy } = ctx.request.body;
+      const { reason } = ctx.request.body;
       const user = ctx.state.user;
 
       try {
@@ -2751,36 +2931,65 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.notFound('Order not found');
         }
 
-        // 2. Validate cancellation permission
+        // Audit M1 fix — derive cancelledBy SERVER-SIDE from the caller's
+        // identity, not from the request body. The previous code trusted
+        // ctx.request.body.cancelledBy and the validateCancellation service
+        // short-circuited to "allowed: true" when cancelledBy === 'system' —
+        // letting any authorized caller bypass the 7-day-window /
+        // ownership / status-stage rules and mask their identity in the
+        // cancellation record. The 'system' value must NEVER be reachable
+        // from a controller — it is reserved for cron-only direct service
+        // calls.
+        const isAdmin = user && user.role && (
+          user.role.type === 'admin' ||
+          user.role.type === 'super_admin' ||
+          user.role.name === 'Admin' ||
+          user.role.name === 'Administrator'
+        );
+        let cancelledBy;
+        if (isAdmin) {
+          cancelledBy = 'admin';
+        } else if (order.advertiser && order.advertiser.id === user.id) {
+          cancelledBy = 'advertiser';
+        } else if (order.publisher && order.publisher.id === user.id) {
+          cancelledBy = 'publisher';
+        } else {
+          return ctx.forbidden('You are not authorized to cancel this order.');
+        }
+
+        // 2. Validate cancellation permission (server-derived cancelledBy)
         const canCancel = await strapi.service('api::order.order').validateCancellation(order, user.id, cancelledBy);
         if (!canCancel.allowed) {
           return ctx.badRequest(canCancel.reason);
         }
 
-        // 3. Refund escrow to advertiser (buyer)
-        const refundAmount = await strapi.service('api::order.order').refundEscrowToAdvertiser(order);
-
-        // 4. Update order status
-        const updatedOrder = await strapi.entityService.update('api::order.order', id, {
-          data: {
-            orderStatus: 'cancelled',
-            cancellationReason: reason,
-            cancelledBy,
-            cancelledAt: new Date()
-          }
+        // Audit M7 fix — refund + status flip + audit log run in a single
+        // transaction with SELECT ... FOR UPDATE on the order row. A
+        // concurrent cancel/cron retry sees the post-commit state via the
+        // idempotency check and returns alreadyTerminal without refunding.
+        const result = await strapi.service('api::order.order').cancelOrderAtomic(id, {
+          cancelledBy,
+          reason,
+          actorUserId: user.id,
         });
 
-        // 5. Create audit log
-        await strapi.service('api::order.order').createAuditLog(order, 'cancelled', user.id, reason);
+        if (result.alreadyTerminal) {
+          return ctx.badRequest(`Order is already ${result.currentStatus}`);
+        }
 
-        // 6. Send notifications (email + in-app)
-        await strapi.service('api::order.order').sendCancellationNotifications(order, cancelledBy, reason);
+        // Side-effects AFTER the transaction commits — a notification
+        // failure must not roll back the refund.
+        try {
+          await strapi.service('api::order.order').sendCancellationNotifications(order, cancelledBy, reason);
+        } catch (e) {
+          console.error('Cancellation notification failed:', e.message);
+        }
 
         return {
           data: {
-            order: updatedOrder,
-            refundAmount,
-            refundedTo: 'advertiser'
+            order: result.order,
+            refundAmount: result.refundAmount,
+            refundedTo: result.refundedTo,
           }
         };
       } catch (error) {
