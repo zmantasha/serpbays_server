@@ -15,6 +15,7 @@ module.exports = createCoreController('api::offer.offer', ({ strapi }) => ({
     async getApplicableOffers(ctx) {
         try {
             const userId = ctx.state?.user?.id;
+            if (!userId) return ctx.unauthorized();
             const { amount, couponCode } = ctx.query;
 
             if (!amount) {
@@ -43,7 +44,8 @@ module.exports = createCoreController('api::offer.offer', ({ strapi }) => ({
     async applyOffers(ctx) {
         try {
             const userId = ctx.state?.user?.id;
-            const { amount, couponCode } = ctx.request.body;
+            if (!userId) return ctx.unauthorized();
+            const { amount, couponCode } = ctx.request.body || {};
 
             if (!amount) {
                 return ctx.badRequest('Amount is required');
@@ -70,10 +72,16 @@ module.exports = createCoreController('api::offer.offer', ({ strapi }) => ({
      */
     async validateCoupon(ctx) {
         try {
+            // Defense-in-depth auth gate. validateCoupon reveals offer
+            // details (bonusType, bonusValue, maxBonusCap) on valid hits
+            // and isn't rate-limited. Restricting to authenticated callers
+            // ensures coupon-brute-force at least requires a registered
+            // account (raises the cost / makes attackers traceable).
             const userId = ctx.state?.user?.id;
-            const { couponCode, amount } = ctx.request.body;
+            if (!userId) return ctx.unauthorized();
 
-            if (!couponCode) {
+            const { couponCode, amount } = ctx.request.body || {};
+            if (typeof couponCode !== 'string' || couponCode.length === 0 || couponCode.length > 64) {
                 return ctx.badRequest('Coupon code is required');
             }
 
@@ -127,6 +135,16 @@ module.exports = createCoreController('api::offer.offer', ({ strapi }) => ({
      */
     async getStats(ctx) {
         try {
+            // Defense-in-depth: getStats was reachable via custom-route with
+            // policies:[] — only super_admin currently has the permission grant
+            // so it 403s for non-admins via Strapi's permission gate. But if a
+            // future grant change widens access, we still want to gate at the
+            // controller level. Stats are aggregate / competitively sensitive
+            // (totalBonusDistributed reveals how much marketing has paid out).
+            const u = ctx.state?.user;
+            const isAdmin = u && u.role && (u.role.type === 'admin' || u.role.type === 'super_admin');
+            if (!isAdmin) return ctx.forbidden('Admin access required');
+
             const totalOffers = await strapi.db.query('api::offer.offer').count({});
             const activeOffers = await strapi.db.query('api::offer.offer').count({
                 where: {

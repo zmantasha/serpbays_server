@@ -776,27 +776,42 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     }
   },
 
-  // Public wrapper for adding funds
+  // PUBLIC HTTP wrapper for adding funds — DISABLED.
+  //
+  // CRITICAL: the pre-fix implementation took `amount`, `paymentMethod`, and
+  // `transactionId` from ctx.request.body and called `addMainFunds(userId,
+  // amount, ...)` directly. NO payment-gateway verification. The
+  // Authenticated role has `api::user-wallet.user-wallet.addFunds`
+  // permission, so ANY logged-in user could POST
+  //   /api/wallet/add-funds {amount:<arbitrary>, paymentMethod:'manual'}
+  // and credit their own wallet with arbitrary money. Free funds.
+  //
+  // Legitimate top-up flows:
+  //   POST /api/transactions/payment    → creates a pending transaction
+  //   Gateway webhooks                  → credit wallet after confirmed payment
+  //     (paypal-webhook, razorpay-webhook, stripe-webhook, phonepe-webhook;
+  //      all signature-verified, all M11 amount-checked)
+  //   POST /api/transactions/verify-paypal → server-authoritative manual verify
+  //   Admin bank-transfer approval (admin-gated, post-Pass-7)
+  //   redeemPromo (separate handler — voucher / promo code path)
+  //
+  // The internal `addMainFunds(userId, amount, ...)` helper remains for
+  // those legitimate server-side credit paths (called by the webhook
+  // controllers and the order-refund flow). Only the HTTP wrapper is
+  // closed off.
+  //
+  // Returning 410 (Gone) so any client still hitting this surfaces clearly
+  // in logs/alerts rather than failing silently like a 403.
   async addFunds(ctx) {
-    try {
-      const userId = ctx.state.user.id;
-      const { amount, paymentMethod, transactionId } = ctx.request.body;
-
-      if (!amount || amount <= 0) {
-        return ctx.badRequest('Invalid amount');
-      }
-
-      const result = await this.addMainFunds(userId, amount, {
-        gateway: paymentMethod || 'manual',
-        gatewayTransactionId: transactionId,
-        description: `Added funds via ${paymentMethod}`
-      });
-
-      return { data: result };
-    } catch (error) {
-      console.error('Error in addFunds:', error);
-      return ctx.badRequest('Failed to add funds');
-    }
+    strapi.log?.warn?.(
+      `[user-wallet] DISABLED /api/wallet/add-funds called by user=${ctx.state?.user?.id ?? 'anon'} ip=${ctx.request.ip}`
+    );
+    ctx.status = 410;
+    ctx.body = {
+      error: 'gone',
+      message: 'Direct wallet credit is not available. Use the payment-intent / webhook flow.',
+    };
+    return;
   },
 
   // Add funds to promo balance (from vouchers/promo codes)
