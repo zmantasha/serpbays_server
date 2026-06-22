@@ -632,6 +632,14 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         }
       }
 
+      // Real-time wallet update — publisher sees mainBalance drop +
+      // pendingWithdrawalBalance rise instantly.
+      try {
+        await strapi.service("api::user-wallet.user-wallet").emitBalanceUpdate(
+          ctx.state.user.id, "withdrawal_pending", { withdrawalId: withdrawalRequest.id }
+        );
+      } catch (_) { /* best-effort */ }
+
       return {
         data: withdrawalRequest,
         meta: {
@@ -951,6 +959,15 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.error('Failed to create withdrawal denied notification:', notificationError);
         // Don't fail the denial if notification fails
       }
+
+      // Real-time wallet update — refund landed; publisher sees
+      // mainBalance restore + pendingWithdrawalBalance decrement.
+      try {
+        await strapi.service("api::user-wallet.user-wallet").emitBalanceUpdate(
+          withdrawalRequest.publisher.id, "withdrawal_refund",
+          { withdrawalId: withdrawalRequest.id }
+        );
+      } catch (_) { /* best-effort */ }
 
       return {
         data: updatedRequest,

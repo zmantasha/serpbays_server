@@ -788,6 +788,21 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Added ${amount} to main balance for user ${userId}`);
+
+      // Emit real-time wallet update — every webhook controller + the
+      // order-refund flow + admin manual credit eventually reach this
+      // helper, so patching here covers all of them at once.
+      try {
+        await strapi
+          .service('api::user-wallet.user-wallet')
+          .emitBalanceUpdate(userId, transactionData.type || 'deposit', {
+            txAmount: parseFloat(amount),
+            gateway: transactionData.gateway || 'system',
+            gatewayTransactionId: transactionData.gatewayTransactionId,
+            orderId: transactionData.order || null,
+          });
+      } catch (_) { /* emit is best-effort; DB is source of truth */ }
+
       return { success: true, newMainBalance, newTotalBalance };
     } catch (error) {
       console.error('Error adding main funds:', error);
@@ -867,6 +882,18 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Added ${amount} to promo balance for user ${userId}`);
+
+      // Real-time wallet update — covers redeemPromo + offer-engine bonus
+      // application (the legitimate consumers of this helper).
+      try {
+        await strapi
+          .service('api::user-wallet.user-wallet')
+          .emitBalanceUpdate(userId, 'promo_redemption', {
+            txAmount: parseFloat(amount),
+            promoCodeId,
+          });
+      } catch (_) { /* best-effort */ }
+
       return { success: true, newPromoBalance, newTotalBalance };
     } catch (error) {
       console.error('Error adding promo funds:', error);
@@ -942,6 +969,20 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Spent ${amount} from wallet for user ${userId} (Promo: ${promoSpent}, Main: ${mainSpent})`);
+
+      // Real-time wallet update — caught by AI credit-burn + order spend
+      // + every other spendFunds caller.
+      try {
+        await strapi
+          .service('api::user-wallet.user-wallet')
+          .emitBalanceUpdate(userId, 'spend', {
+            txAmount: spendAmount,
+            promoSpent,
+            mainSpent,
+            orderId,
+          });
+      } catch (_) { /* best-effort */ }
+
       return {
         success: true,
         promoSpent,

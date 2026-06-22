@@ -211,8 +211,21 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
   async completeOrder(id, user) {
     let updatedOrder;
     let websiteIdForSideEffects;
+    let advertiserIdForEvent;
+    let publisherIdForEvent;
 
-    await strapi.db.transaction(async () => {
+    await strapi.db.transaction(async ({ trx }) => {
+      // Audit M5 fix — SELECT … FOR UPDATE on the order row so a concurrent
+      // requestRevision/completeRevision/admin write serializes on this lock
+      // and is observed after we commit (or we observe its commit, hitting
+      // the revisionStatus guard below). Without the lock, a parallel
+      // requestRevision could update revisionStatus='requested' AFTER we
+      // already read the row but BEFORE we credit the publisher.
+      const lockRow = await trx('orders').where({ id }).forUpdate().select('id');
+      if (!lockRow || lockRow.length === 0) {
+        throw new Error('Order not found');
+      }
+
       // Re-read the order inside the transaction so any concurrent writer
       // sees the row consistently. Populating relations here also avoids a
       // second round-trip later.
@@ -238,6 +251,20 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       if (order.orderStatus !== 'delivered') {
         throw new Error(`Only delivered orders can be completed (current status: ${order.orderStatus})`);
+      }
+
+      // Audit M5 fix — revision pending guard. completeOrder previously
+      // checked only orderStatus. The natural state machine flips status
+      // back to 'accepted' on requestRevision, so this was usually safe;
+      // but a row-level inconsistency (race, admin edit, future regression)
+      // that left orderStatus='delivered' + revisionStatus='requested'/
+      // 'in_progress' would silently release escrow against pending work.
+      // Block completion until the revision is resolved (the publisher's
+      // completeRevision sets revisionStatus='completed', which is allowed).
+      if (order.revisionStatus === 'requested' || order.revisionStatus === 'in_progress') {
+        throw new Error(
+          `Cannot complete order while revision is "${order.revisionStatus}". Publisher must complete the revision first.`
+        );
       }
       if (!order.publisher) {
         throw new Error('Order has no assigned publisher');
@@ -397,6 +424,17 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.log(`[ORDER COMPLETE] Order ${id} completed atomically.`);
     });
 
+    // Emit real-time wallet updates to BOTH parties — advertiser's escrow
+    // dropped, publisher's main balance went up. Fire AFTER commit so the
+    // DB state matches what the event advertises.
+    try {
+      const walletService = strapi.service('api::user-wallet.user-wallet');
+      await Promise.all([
+        walletService.emitBalanceUpdate(advertiserIdForEvent, 'order_completion', { orderId: id, side: 'advertiser' }),
+        walletService.emitBalanceUpdate(publisherIdForEvent, 'order_completion', { orderId: id, side: 'publisher' }),
+      ]);
+    } catch (_) { /* best-effort */ }
+
     // Non-critical side effect — fire AFTER the transaction has committed so
     // a TAT-update failure can't roll back the money movement.
     if (websiteIdForSideEffects) {
@@ -418,11 +456,36 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
     return updatedOrder;
   },
 
-  // When an order is rejected, refund escrow to advertiser
+  // When an order is rejected, refund escrow to advertiser AND flip status.
+  // Both refund and status update happen inside a single transaction with
+  // a row-level lock so a concurrent reject / cancel / cron call serializes
+  // on the lock and sees the post-commit state (status='rejected') — making
+  // the operation idempotent and double-refund-proof.
   async rejectOrder(id, user) {
-    // Use transaction to ensure data consistency
     return await strapi.db.transaction(async ({ trx }) => {
-      // Get the order with all relations
+      // Audit M3 fix — SELECT ... FOR UPDATE on the order row up front so
+      // a concurrent reject/cancel/cron is forced to wait for our commit
+      // and then observes the new status, hitting the idempotency branch
+      // below.
+      const locked = await trx('orders').where({ id }).forUpdate().select('order_status');
+      if (!locked || locked.length === 0) {
+        throw new Error('Order not found');
+      }
+
+      // Idempotency / pre-state check (replaces the old generic pending
+      // check). Any non-pending status either means the order moved on or
+      // a parallel reject already committed — either way, NO refund.
+      const currentStatus = locked[0].order_status;
+      if (currentStatus !== 'pending') {
+        if (['rejected', 'cancelled', 'refunded'].includes(currentStatus)) {
+          // Already terminated by another caller — return without refunding.
+          // The caller treats this as a no-op; idempotent retry.
+          return { alreadyTerminal: true, currentStatus };
+        }
+        throw new Error('Only pending orders can be rejected');
+      }
+
+      // Get the order with all relations (under the lock).
       const order = await this.getCompleteOrder(id);
       console.log("Processing order rejection:", {
         orderId: id,
@@ -432,10 +495,6 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       if (!order) {
         throw new Error('Order not found');
-      }
-
-      if (order.orderStatus !== 'pending') {
-        throw new Error('Only pending orders can be rejected');
       }
 
       // Get advertiser ID (handling both object and direct ID references)
@@ -550,7 +609,25 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       console.log("Refund transactions created successfully");
 
-      console.log(`Order ${id} rejected and escrow refunded to correct balance types`);
+      // Audit M3 fix — flip orderStatus INSIDE the transaction so the
+      // refund and the status change commit/roll back together. Was
+      // previously done in the controller as a separate update, which
+      // opened a window where the refund could commit but the status
+      // remained 'pending' (next retry would have refunded again — see
+      // M3 reproducer; this path was implicitly safe via the
+      // refundEscrowToAdvertiser's "insufficient escrow" throw, but
+      // we're closing the architectural gap regardless).
+      const reason = (user && user.__rejectionReason) || null;
+      await strapi.db.query('api::order.order').update({
+        where: { id },
+        data: {
+          orderStatus: 'rejected',
+          rejectedDate: new Date(),
+          ...(reason ? { rejectionReason: reason } : {}),
+        },
+      });
+
+      console.log(`Order ${id} rejected and escrow refunded atomically`);
       return order;
     });
   },
@@ -713,8 +790,26 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
   // Cancellation Helper: Validate if order can be cancelled
   async validateCancellation(order, userId, cancelledBy) {
-    // System cancellations (cron jobs)
+    // System cancellations (cron jobs).
+    // Audit M1 defense-in-depth: 'system' MUST NOT be reachable from a
+    // controller — if a userId is set, the call came from a user request
+    // and the controller failed to derive cancelledBy server-side.
     if (cancelledBy === 'system') {
+      if (userId != null) {
+        return { allowed: false, reason: 'system cancellation is reserved for cron jobs (no user context)' };
+      }
+      return { allowed: true };
+    }
+
+    // Admin cancellations. The controller derives 'admin' from the caller's
+    // role; admins may cancel orders in any pre-completion state (the route
+    // is already gated to super_admin). Replaces the legacy practice of
+    // using cancelledBy='system' from admin clicks.
+    if (cancelledBy === 'admin') {
+      const TERMINAL = ['completed', 'cancelled', 'rejected', 'refunded'];
+      if (TERMINAL.includes(order.orderStatus)) {
+        return { allowed: false, reason: `Order is already ${order.orderStatus}; cannot cancel.` };
+      }
       return { allowed: true };
     }
 
@@ -781,7 +876,28 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
   },
 
   // Cancellation Helper: Refund escrow
+  //
+  // Audit M7 fix — must be called INSIDE a transaction that holds a row-lock
+  // on the order. Two guards prevent double-refund:
+  //   (a) Idempotency pre-state check: refuses to refund if a successful
+  //       refund tx already exists for this order, OR if the order is
+  //       already in a terminal status.
+  //   (b) Escrow-amount check: throws (no longer clamps) if the wallet's
+  //       escrowBalance is less than the requested refund amount — a
+  //       drained-escrow state means a refund already happened.
+  // Combined with the row-lock + status-flip-in-same-trx in cancelOrderAtomic
+  // / rejectOrder, this makes refunds idempotent and double-refund-proof.
   async refundEscrowToAdvertiser(order) {
+    // (a) Idempotency: refuse if a successful refund already exists.
+    const existingRefunds = await strapi.db.query('api::transaction.transaction').findMany({
+      where: { order: order.id, type: 'refund', transactionStatus: 'success' },
+      select: ['id'],
+    });
+    if (existingRefunds && existingRefunds.length > 0) {
+      console.warn(`[REFUND IDEMPOTENT] Order ${order.id} already has ${existingRefunds.length} successful refund tx — skipping.`);
+      throw new Error(`Order ${order.id} has already been refunded`);
+    }
+
     // Get advertiser (buyer) wallet
     const advertiserWallet = await strapi.controller('api::user-wallet.user-wallet')
       .getOrCreateWallet(order.advertiser.id);
@@ -789,20 +905,14 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
     const refundAmount = parseFloat(order.totalAmount);
     const currentEscrow = parseFloat(advertiserWallet.escrowBalance) || 0;
 
-    // The escrow bucket can drift from reality (historical resets by read
-    // paths, legacy orders created before escrow tracking, partial failures).
-    // The authoritative record of what the advertiser paid is the order's
-    // totalAmount + spendingBreakdown + the original payment transaction —
-    // NOT this bucket. So we DON'T block the refund when escrow looks short:
-    // we log the drift, refund the advertiser exactly what they paid, and
-    // clamp the escrow bucket at 0 (below) so it never goes negative.
-    //
-    // Double-refunds are already prevented upstream: validateCancellation only
-    // permits cancelling an 'accepted' order, and cancelOrder flips the status
-    // to 'cancelled' immediately after this refund — a second cancel attempt
-    // fails the status check before reaching here.
+    // (b) Escrow-amount check. Previously this was just a warning + clamp,
+    // which silently absorbed double-refund attempts (the second call read
+    // escrow=0, clamped to 0, but still credited mainBalance another time).
+    // Now we throw — a drained escrow means a refund already happened.
     if (currentEscrow < refundAmount) {
-      console.warn(`[ESCROW DRIFT] Order ${order.id}: escrow bucket $${currentEscrow} < refund $${refundAmount} for advertiser ${order.advertiser.id}. Refunding per payment record; clamping escrow at 0.`);
+      throw new Error(
+        `Insufficient escrow for refund on order ${order.id}: have $${currentEscrow}, need $${refundAmount}. Likely already refunded.`
+      );
     }
 
     // Check if order has spending breakdown metadata
@@ -907,10 +1017,83 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.log(`[Refund] $${refundAmount} refunded to advertiser ${order.advertiser.id} for order ${order.id}`);
     }
 
+    // Real-time wallet update — advertiser sees refund land instantly.
+    try {
+      await strapi.service("api::user-wallet.user-wallet").emitBalanceUpdate(
+        order.advertiser.id, "order_cancellation", { orderId: order.id, refundAmount }
+      );
+    } catch (_) { /* best-effort */ }
+
     return refundAmount;
   },
 
   // Cancellation Helper: Create audit log
+  // Audit M7 fix — atomic cancel. Wraps the entire cancellation critical
+  // section (row lock → idempotency check → refund → status flip) inside a
+  // single transaction. Used by:
+  //   - controllers.cancelOrder (user-initiated cancel from advertiser/publisher/admin)
+  //   - cron/order-cancellation (auto-cancel of stale pending/accepted orders)
+  // The SELECT ... FOR UPDATE lock serializes concurrent attempts; the
+  // pre-state check makes the operation idempotent (a retry against an
+  // already-cancelled order is a no-op, not a double refund).
+  async cancelOrderAtomic(orderId, options = {}) {
+    const { cancelledBy = 'system', reason = null, notes = null, actorUserId = null } = options;
+    return await strapi.db.transaction(async ({ trx }) => {
+      // Row-level exclusive lock. Concurrent cancels/rejects/cron runs
+      // block here until this commits/rolls back.
+      const locked = await trx('orders').where({ id: orderId }).forUpdate().select('id', 'order_status');
+      if (!locked || locked.length === 0) {
+        throw new Error('Order not found');
+      }
+      const currentStatus = locked[0].order_status;
+
+      // Idempotency. If the order has already moved to a terminal state,
+      // do NOT refund again. Return a sentinel so the caller can choose to
+      // ignore (cron) or surface as a 4xx (controller).
+      const TERMINAL = ['cancelled', 'rejected', 'refunded', 'completed'];
+      if (TERMINAL.includes(currentStatus)) {
+        return { alreadyTerminal: true, currentStatus };
+      }
+
+      // Re-fetch order with relations under the lock.
+      const order = await strapi.entityService.findOne('api::order.order', orderId, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
+      if (!order) throw new Error('Order not found');
+
+      // Refund escrow. Throws if already refunded (defense-in-depth) or
+      // if escrow drained — both of which indicate a prior partial commit.
+      const refundAmount = await this.refundEscrowToAdvertiser(order);
+
+      // Flip status INSIDE the transaction so a failure rolls back the
+      // refund. The locks plus the idempotency pre-check guarantee no
+      // concurrent caller can write a competing status here.
+      await strapi.db.query('api::order.order').update({
+        where: { id: orderId },
+        data: {
+          orderStatus: 'cancelled',
+          cancellationReason: reason,
+          cancellationNotes: notes,
+          cancelledBy,
+          cancelledAt: new Date(),
+        },
+      });
+
+      // Audit log inside the transaction — links the actor and the action
+      // to the same commit boundary as the money movement.
+      try {
+        await this.createAuditLog(order, 'cancelled', actorUserId, reason);
+      } catch (auditErr) {
+        // Audit log failure must not orphan a successful cancel. Log and
+        // continue — the cancellation is real even if the audit row failed.
+        // (createAuditLog itself swallows internal errors, but be defensive.)
+        console.error(`[ORDER CANCEL] audit log write failed for order ${orderId}: ${auditErr.message}`);
+      }
+
+      return { success: true, refundAmount, refundedTo: 'advertiser', order };
+    });
+  },
+
   async createAuditLog(order, action, userId, reason) {
     try {
       await strapi.entityService.create('api::order-audit-log.order-audit-log', {

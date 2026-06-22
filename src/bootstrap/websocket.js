@@ -21,8 +21,25 @@ module.exports = ({ strapi }) => {
   });
 
 
-  // Store connected users
-  const connectedUsers = new Map();
+  // Track sockets per user. CRITICAL: the previous implementation stored
+  // ONE socket per userId; a second tab/device replaced the first, and
+  // emitToUser(userId, ...) only reached the latest tab. Two tabs from the
+  // same user → only the most recent one saw wallet updates.
+  // The Map below is kept for `getConnectedUsers()` introspection, but emit
+  // routes via Socket.IO ROOMS (multi-socket safe).
+  const connectedUsers = new Map();   // userId → Set<socket.id>
+  const trackUserSocket = (userId, socket) => {
+    const uid = parseInt(userId);
+    if (!connectedUsers.has(uid)) connectedUsers.set(uid, new Set());
+    connectedUsers.get(uid).add(socket.id);
+  };
+  const untrackUserSocket = (userId, socket) => {
+    const uid = parseInt(userId);
+    const set = connectedUsers.get(uid);
+    if (!set) return;
+    set.delete(socket.id);
+    if (set.size === 0) connectedUsers.delete(uid);
+  };
 
   // Verify JWT token
   const verifyToken = async (token) => {
@@ -63,19 +80,27 @@ module.exports = ({ strapi }) => {
         return;
       }
 
-      console.log(`User ${userId} connected via WebSocket`);
+      // Defense-in-depth: cross-check that the userId in the query matches
+      // the verified JWT's `id` claim. Pre-fix, a client could connect with
+      // a valid JWT for user A and `userId=B` in the query — joining user
+      // B's room and receiving B's events. Reject mismatches.
+      if (Number.parseInt(userId, 10) !== Number.parseInt(decoded.id, 10)) {
+        console.error(`[WS] userId mismatch — query=${userId} jwt.id=${decoded.id}; rejecting`);
+        socket.disconnect();
+        return;
+      }
 
-      // Store socket connection
-      connectedUsers.set(parseInt(userId), socket);
+      console.log(`User ${userId} connected via WebSocket (socket ${socket.id})`);
 
-      // Join user's room
+      // Track this socket (allows multiple per user)
+      trackUserSocket(userId, socket);
+
+      // Join user's room — Socket.IO rooms support multi-socket membership.
       socket.join(`user_${userId}`);
-      console.log(`User ${userId} joined room: user_${userId}`);
 
       // Handle disconnection
       socket.on('disconnect', () => {
-        console.log(`User ${userId} disconnected`);
-        connectedUsers.delete(parseInt(userId));
+        untrackUserSocket(userId, socket);
       });
 
       // Handle errors
@@ -99,22 +124,26 @@ module.exports = ({ strapi }) => {
   // Store io instance in strapi
   strapi.io = io;
 
-  // Add helper methods
+  // emitToUser — route via Socket.IO rooms so EVERY socket the user has
+  // open (multi-tab, multi-device) receives the event. The boolean return
+  // value reflects whether the user has any active socket — useful for
+  // logging "user offline" diagnostics without spamming the log.
   strapi.io.emitToUser = (userId, event, data) => {
-    const userSocket = connectedUsers.get(parseInt(userId));
-    if (userSocket) {
-      console.log(`✅ Emitting ${event} to user ${userId} with data:`, JSON.stringify(data, null, 2));
-      userSocket.emit(event, data);
-      return true;
-    } else {
-      console.log(`❌ User ${userId} not connected. Currently connected users:`, Array.from(connectedUsers.keys()));
-      return false;
-    }
+    const uid = parseInt(userId);
+    if (!Number.isInteger(uid) || uid <= 0) return false;
+    // Use room-based emit — io.to() targets every socket in that room.
+    io.to(`user_${uid}`).emit(event, data);
+    return connectedUsers.has(uid);
   };
 
   // Add method to check connected users
   strapi.io.getConnectedUsers = () => {
     return Array.from(connectedUsers.keys());
+  };
+
+  strapi.io.socketCount = (userId) => {
+    const set = connectedUsers.get(parseInt(userId));
+    return set ? set.size : 0;
   };
 
   // Log setup completion
