@@ -467,6 +467,21 @@ async function handlePaymentSucceeded(paymentIntent) {
 
         console.log(`[STRIPE] ✅ Transaction ${transaction.id} completed successfully`);
 
+        // Real-time push so the client wallet UI reflects the deposit
+        // instantly. Best-effort — webhook success must not depend on it.
+        try {
+          const targetUserId = wallet.users_permissions_user?.id;
+          if (targetUserId) {
+            await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+              targetUserId,
+              'stripe_deposit',
+              { transactionId: transaction.id, paymentIntentId: paymentIntent.id, amount: transactionAmount, walletId: wallet.id }
+            );
+          }
+        } catch (emitErr) {
+          console.warn('[STRIPE] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
+
         // Save target for invoice creation outside the lock
         invoiceTarget = { transaction, user: wallet.users_permissions_user };
 
@@ -683,6 +698,24 @@ async function handleChargeRefunded(charge) {
       });
 
       console.log(`[STRIPE] ✅ Refund processed: $${refundAmount} deducted from wallet ${wallet.id}`);
+
+      // Real-time push so the user sees the refund debit immediately.
+      try {
+        const walletWithUser = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { id: wallet.id },
+          populate: ['users_permissions_user'],
+        });
+        const targetUserId = walletWithUser?.users_permissions_user?.id;
+        if (targetUserId) {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            targetUserId,
+            'stripe_refund',
+            { transactionId: transaction.id, chargeId: charge.id, refundAmount, walletId: wallet.id }
+          );
+        }
+      } catch (emitErr) {
+        console.warn('[STRIPE] emitBalanceUpdate (refund) failed (non-fatal):', emitErr.message);
+      }
     }
 
   } catch (error) {

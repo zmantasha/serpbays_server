@@ -1159,6 +1159,18 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         // Don't fail the payment marking if notification fails
       }
 
+      // Real-time push: pendingWithdrawalBalance just dropped — let any open
+      // publisher session know without forcing a refresh. Best-effort.
+      try {
+        await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+          withdrawalRequest.publisher.id,
+          'withdrawal_paid',
+          { withdrawalId: withdrawalRequest.id, amount: withdrawalRequest.amount }
+        );
+      } catch (emitErr) {
+        console.error('[WithdrawalController] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+      }
+
       return {
         data: updatedRequest,
         meta: {

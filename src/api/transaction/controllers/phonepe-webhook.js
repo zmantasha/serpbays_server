@@ -262,7 +262,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   async updateWalletBalance(walletId, amount, currency) {
     try {
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { id: walletId }
+        where: { id: walletId },
+        populate: ['users_permissions_user'],
       });
 
       if (!wallet) {
@@ -284,6 +285,20 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       });
 
       console.log(`[PHONEPE WALLET] 💵 Wallet updated: Main=${currentMainBalance} + ${amount} = ${newMainBalance}`);
+
+      // Real-time push so the wallet UI sees the deposit instantly.
+      try {
+        const targetUserId = wallet.users_permissions_user?.id;
+        if (targetUserId) {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            targetUserId,
+            'phonepe_deposit',
+            { walletId, amount, currency }
+          );
+        }
+      } catch (emitErr) {
+        console.warn('[PHONEPE WALLET] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+      }
 
     } catch (error) {
       console.error('[PHONEPE WALLET] Error updating wallet:', error);

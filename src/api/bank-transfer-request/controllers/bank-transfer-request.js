@@ -246,7 +246,7 @@ module.exports = {
         if (request.status === 'completed' || request.status === 'rejected') {
           if (request.status === status) {
             // Idempotent no-op on identical re-submission.
-            return { httpKind: 'ok', updated: request, walletCredited: false };
+            return { httpKind: 'ok', updated: request, walletCredited: false, userId: request.user_id };
           }
           return { httpKind: 'badRequest', message: `Cannot transition from ${request.status} to ${status}` };
         }
@@ -298,7 +298,7 @@ module.exports = {
           }
         }
 
-        return { httpKind: 'ok', updated: updatedRequest, walletCredited };
+        return { httpKind: 'ok', updated: updatedRequest, walletCredited, userId: request.user_id };
       });
 
       if (result.httpKind === 'notFound') {
@@ -309,6 +309,21 @@ module.exports = {
       }
       const updatedRequest = result.updated;
       const request = updatedRequest; // for the email block below
+
+      // Real-time push: emit on the requester's channel only when the wallet
+      // actually moved. Fires AFTER the transaction commits so the client
+      // never sees a stale balance. Best-effort.
+      if (result.walletCredited && result.userId) {
+        try {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            result.userId,
+            'bank_transfer',
+            { bankTransferRequestId: numericId, amount: parseFloat(request.amount), referenceNumber: request.referenceNumber || request.reference_number }
+          );
+        } catch (emitErr) {
+          strapi.log?.warn?.(`[BANK TRANSFER] emitBalanceUpdate failed (non-fatal): ${emitErr.message}`);
+        }
+      }
 
       // Send status update email to user
       try {

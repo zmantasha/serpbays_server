@@ -94,6 +94,8 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       console.log(`[RAZORPAY WEBHOOK] Payment captured: ${paymentId} for order ${orderId}, Razorpay amount: ${razorpayAmountINR} ${currency}`);
 
+      let emitContext = null;
+
       // ✅ BEST PRACTICE: Use database transaction with row-level locking to prevent race conditions
       // This ensures only ONE webhook can process the same transaction at a time
       await strapi.db.transaction(async ({ trx }) => {
@@ -188,8 +190,33 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         if (status === 'captured' && transaction.user_wallet) {
           await this.updateWalletBalance(transaction.user_wallet.id, amountToCredit, creditCurrency);
           console.log(`[RAZORPAY WEBHOOK] ✅ Successfully credited ${amountToCredit} ${creditCurrency} to wallet ${transaction.user_wallet.id}`);
+          emitContext = {
+            walletId: transaction.user_wallet.id,
+            transactionId: transaction.id,
+            paymentId,
+            amount: amountToCredit,
+          };
         }
       });
+
+      if (emitContext) {
+        try {
+          const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { id: emitContext.walletId },
+            populate: ['users_permissions_user'],
+          });
+          const targetUserId = wallet?.users_permissions_user?.id;
+          if (targetUserId) {
+            await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+              targetUserId,
+              'razorpay_deposit',
+              emitContext
+            );
+          }
+        } catch (emitErr) {
+          console.warn('[RAZORPAY WEBHOOK] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
+      }
 
     } catch (error) {
       console.error('[RAZORPAY WEBHOOK] Error in handlePaymentCaptured:', error);
@@ -265,6 +292,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const status = order.status;
 
       console.log(`[RAZORPAY WEBHOOK] Order paid: ${orderId}, Razorpay amount: ${razorpayAmountINR} ${currency}, status: ${status}`);
+
+      // Captured for the post-commit emit. Set inside the transaction; used
+      // outside it so the WS notify only fires after the wallet write commits.
+      let emitContext = null;
 
       // ✅ BEST PRACTICE: Use database transaction with row-level locking to prevent race conditions
       await strapi.db.transaction(async ({ trx }) => {
@@ -344,8 +375,36 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         if (status === 'paid' && transaction.user_wallet) {
           await this.updateWalletBalance(transaction.user_wallet.id, amountToCredit, creditCurrency);
           console.log(`[RAZORPAY WEBHOOK] ✅ Successfully credited ${amountToCredit} ${creditCurrency} to wallet ${transaction.user_wallet.id}`);
+          emitContext = {
+            walletId: transaction.user_wallet.id,
+            transactionId: transaction.id,
+            paymentId,
+            amount: amountToCredit,
+          };
         }
       });
+
+      // Post-commit real-time push (best-effort). Done OUTSIDE the
+      // transaction so a rolled-back wallet credit never produces a stale
+      // event on the wire.
+      if (emitContext) {
+        try {
+          const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { id: emitContext.walletId },
+            populate: ['users_permissions_user'],
+          });
+          const targetUserId = wallet?.users_permissions_user?.id;
+          if (targetUserId) {
+            await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+              targetUserId,
+              'razorpay_deposit',
+              emitContext
+            );
+          }
+        } catch (emitErr) {
+          console.warn('[RAZORPAY WEBHOOK] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
+      }
 
     } catch (error) {
       console.error('[RAZORPAY WEBHOOK] Error in handleOrderPaid:', error);
@@ -647,6 +706,22 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         const currency = transaction.currency;
         await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
         console.log(`[RAZORPAY VERIFY] ✅ Updated wallet balance +${amount} ${currency} for transaction ${transaction.id}`);
+        try {
+          const w = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { id: transaction.user_wallet.id },
+            populate: ['users_permissions_user'],
+          });
+          const uid = w?.users_permissions_user?.id;
+          if (uid) {
+            await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+              uid,
+              'razorpay_deposit',
+              { transactionId: transaction.id, walletId: transaction.user_wallet.id, amount, paymentId: paymentId || null }
+            );
+          }
+        } catch (emitErr) {
+          console.warn('[RAZORPAY VERIFY] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
       } else if (status === 'success' && previousStatus === 'success') {
         console.log(`[RAZORPAY VERIFY] ⚠️ Transaction ${transaction.id} already successful - wallet already credited`);
       }
@@ -784,6 +859,22 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
 
         console.log(`[RAZORPAY MANUAL] ✅ Updated transaction ${transaction.id} and wallet ${transaction.user_wallet.id}`);
+        try {
+          const w = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+            where: { id: transaction.user_wallet.id },
+            populate: ['users_permissions_user'],
+          });
+          const uid = w?.users_permissions_user?.id;
+          if (uid) {
+            await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+              uid,
+              'razorpay_manual',
+              { transactionId: transaction.id, walletId: transaction.user_wallet.id, amount, paymentId: payment_id || null }
+            );
+          }
+        } catch (emitErr) {
+          console.warn('[RAZORPAY MANUAL] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
       }
 
       return ctx.send({

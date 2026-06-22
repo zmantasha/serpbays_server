@@ -307,6 +307,29 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         console.error('[ADMIN TRANSACTION EDIT] Failed to write audit log:', auditErr.message);
       }
 
+      // Real-time push when admin's transaction edit actually moved the wallet.
+      // Emit on the TARGET user's channel (not admin's).
+      if (walletDelta !== 0 && result.updatedWallet) {
+        try {
+          const targetUserId = existing.users_permissions_user?.id;
+          if (targetUserId) {
+            await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+              targetUserId,
+              'admin_transaction_edit',
+              {
+                adminId: adminUser.id,
+                transactionId: id,
+                walletId: result.updatedWallet.id,
+                walletDelta,
+                fundSource: balanceField === 'promoBalance' ? 'promo_fund' : 'main_fund',
+              }
+            );
+          }
+        } catch (emitErr) {
+          console.error('[ADMIN TRANSACTION EDIT] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
+      }
+
       ctx.send({
         data: result.updatedTx,
         walletDelta,
@@ -380,14 +403,27 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // If this is a payment transaction, update user wallet
       if (updatedTransaction.type === 'payment') {
+        const targetUserId = updatedTransaction.users_permissions_user.id;
         const wallet = await strapi.controller('api::user-wallet.user-wallet')
-          .getOrCreateWallet(updatedTransaction.users_permissions_user.id);
+          .getOrCreateWallet(targetUserId);
 
         await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
           data: {
             balance: parseFloat(wallet.balance) + parseFloat(updatedTransaction.amount)
           }
         });
+
+        // Real-time push so the target user sees the admin-approved credit
+        // without refreshing. Best-effort.
+        try {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            targetUserId,
+            'admin_transaction_approve',
+            { adminId: ctx.state.user.id, transactionId: id, walletId: wallet.id, amount: parseFloat(updatedTransaction.amount) }
+          );
+        } catch (emitErr) {
+          console.error('[ADMIN TRANSACTION APPROVE] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
       }
 
       ctx.send({

@@ -727,6 +727,17 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       strapi.log.info(`[VERIFY-PAYPAL] ✅ orderId=${orderId} wallet=${wallet.id} credited $${amountToCredit}`);
 
+      // Real-time push so the wallet UI sees the deposit instantly.
+      try {
+        await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+          userId,
+          'paypal_verify',
+          { orderId, walletId: wallet.id, amount: amountToCredit, transactionId: transaction.id }
+        );
+      } catch (emitErr) {
+        strapi.log.warn(`[VERIFY-PAYPAL] emitBalanceUpdate failed (non-fatal): ${emitErr.message}`);
+      }
+
       return ctx.send({
         success: true,
         message: 'Payment verified and wallet updated',

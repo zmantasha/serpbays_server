@@ -291,6 +291,24 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       console.log(`[PAYPAL WEBHOOK] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amountToCredit} (PayPal charged $${paypalCaptureAmount})`);
 
+      // Real-time push so the client sees the deposit instantly. Best-effort.
+      try {
+        const walletWithUser = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { id: walletId },
+          populate: ['users_permissions_user'],
+        });
+        const targetUserId = walletWithUser?.users_permissions_user?.id;
+        if (targetUserId) {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            targetUserId,
+            'paypal_deposit',
+            { orderId, captureId: capture.id, amount: amountToCredit, walletId }
+          );
+        }
+      } catch (emitErr) {
+        console.warn('[PAYPAL WEBHOOK] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+      }
+
     } catch (error) {
       console.error('[PAYPAL WEBHOOK] Error handling payment completed:', error);
     }
