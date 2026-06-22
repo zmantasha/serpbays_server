@@ -19,7 +19,13 @@ module.exports = {
       path: '/payment-gateways/calculate-fees',
       handler: 'payment-gateways.calculateFees',
       config: {
-        auth: false // Allow public access for fee calculation
+        auth: false, // Allow public access for fee calculation
+        // Rate limit: 30 requests / minute / IP. Razorpay/PhonePe paths
+        // hit ExchangeRate-API on every call; without this an anonymous
+        // attacker could flood the endpoint to burn the outbound quota
+        // and inflate the per-API-call cost. 30/min allows legitimate
+        // checkout retries while bounding spend.
+        policies: [{ name: 'global::simple-rate-limit', config: { max: 30, interval: 60000 } }],
       }
     },
     {

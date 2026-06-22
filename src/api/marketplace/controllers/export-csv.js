@@ -410,9 +410,9 @@ module.exports = {
 
   async exportSelected(ctx) {
     try {
-      console.log('Export selected called with body:', ctx.request.body);
-      
-      // Get selected IDs from request body (POST) or query (GET)
+      // Get selected IDs from request body (POST) or query (GET). Body
+      // dump removed — the request body may include an arbitrarily-long
+      // ids array which bloats logs without adding diagnostic value.
       const ids = ctx.request.body?.ids || ctx.query.ids;
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
         return ctx.badRequest('No IDs provided for export');

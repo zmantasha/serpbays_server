@@ -96,8 +96,11 @@ module.exports = {
           break;
 
         default:
+          // Pre-fix dumped `JSON.stringify(event, null, 2)` here — the
+          // event object contains card metadata, billing address, and
+          // (depending on the event) tokenised payment-method handles.
+          // Log only the event-type label; payload stays on Stripe.
           console.log(`[STRIPE WEBHOOK] ℹ️ Unhandled event type: ${event.type}`);
-          console.log(`[STRIPE WEBHOOK] Event data:`, JSON.stringify(event, null, 2));
       }
 
       // Always return 200 to acknowledge receipt

@@ -139,7 +139,10 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
     const { id } = ctx.params;
     const { name, marketplaces, description } = ctx.request.body.data;
 
-    console.log('📝 UPDATE request received:', { id, userId: user?.id, data: ctx.request.body.data });
+    // Pre-fix logged ctx.request.body.data (full update payload). Trimmed
+    // to id + user.id only so logs don't carry rich-text list names or
+    // free-form descriptions.
+    strapi.log?.info?.(`[marketplace-list] update id=${id} user=${user?.id}`);
 
     if (!user) {
       console.log('❌ User not authenticated');
