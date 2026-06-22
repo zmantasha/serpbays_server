@@ -337,10 +337,16 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.notFound('Wallet not found');
       }
 
-      // Get pagination parameters
-      const { page = 1, pageSize = 10 } = ctx.query;
-      const limit = parseInt(pageSize);
-      const offset = (parseInt(page) - 1) * limit;
+      // Pagination with hard caps. Pre-fix `pageSize` was caller-supplied
+      // and unbounded — request `pageSize=10_000_000` to attempt DoS via
+      // a huge JSON serialization. Cap at 100; non-numeric falls back to 10.
+      const rawPage = Number.parseInt(ctx.query?.page, 10);
+      const rawPageSize = Number.parseInt(ctx.query?.pageSize, 10);
+      const page = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
+      const limit = Number.isFinite(rawPageSize) && rawPageSize >= 1
+        ? Math.min(rawPageSize, 100)
+        : 10;
+      const offset = (page - 1) * limit;
 
       // Get transactions with pagination
       const [transactions, total] = await strapi.db.query('api::transaction.transaction').findWithCount({
