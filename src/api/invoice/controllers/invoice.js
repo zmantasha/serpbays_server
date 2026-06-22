@@ -17,32 +17,26 @@ module.exports = createCoreController('api::invoice.invoice', ({ strapi }) => ({
       const { id } = ctx.params;
       const userId = ctx.state.user?.id;
 
-    
-
       if (!userId) {
-        console.log('No user ID found in request');
         return ctx.unauthorized('You must be logged in to download invoices.');
       }
 
-      // Find the invoice with related user
-      
-      const invoice = await strapi.entityService.findOne('api::invoice.invoice', id, {
-        populate: ['user']
-      });
-
-  
-      
-      if (!invoice) {
-       
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
         return ctx.notFound('Invoice not found');
       }
 
-    
+      // Populate `user` with id only — pre-fix populated the full up_users
+      // row (password hash, withdrawalOtp, paypal_email, billing PII)
+      // even though only user.id is needed for the ownership check.
+      const invoice = await strapi.entityService.findOne('api::invoice.invoice', numericId, {
+        populate: { user: { fields: ['id'] } }
+      });
 
-      // Check if the user owns this invoice
-      if (invoice.user?.id !== userId) {
-       
-        return ctx.forbidden('You do not have permission to download this invoice');
+      if (!invoice || invoice.user?.id !== userId) {
+        // 404 (not 403) on cross-tenant — defeat invoice-id enumeration
+        // (sequential integer ids are guessable).
+        return ctx.notFound('Invoice not found');
       }
 
       // Create PDF document with better page settings
