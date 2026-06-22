@@ -132,9 +132,21 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         });
       }
       
-      // Get chatroom with all communications
+      // Allow-listed populate — pre-fix returned full up_users rows for
+      // advertiser/publisher/communications.sender (password hash,
+      // withdrawalOtp, paypal_email, billing PII). Caller is already
+      // confirmed a party to this order (check at L113-118), so showing
+      // the other party's email is reasonable; the SPA also renders
+      // sender usernames. Other PII fields stay private.
       const populatedChatroom = await strapi.entityService.findOne('api::chatroom.chatroom', chatroom.id, {
-        populate: ['order', 'advertiser', 'publisher', 'communications', 'communications.sender'],
+        populate: {
+          order: { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: ['id', 'username', 'email'] },
+          publisher:  { fields: ['id', 'username', 'email'] },
+          communications: {
+            populate: { sender: { fields: ['id', 'username', 'email'] } },
+          },
+        },
       });
       
       return { data: populatedChatroom };
@@ -304,20 +316,46 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
   // Download chat transcript (Admin functionality)
   async downloadTranscript(ctx) {
     const { id } = ctx.params;
-    
+    // SECURITY (pre-fix): the handler had NO auth check and NO party
+    // check. The Authenticated role has
+    // `api::chatroom.chatroom.downloadTranscript` permission so any
+    // logged-in user could GET /chatrooms/<N>/transcript and download
+    // any chatroom's full conversation — including both parties' emails
+    // and (via the populate chain) the full up_users rows for the
+    // sender + advertiser + publisher (password hash, withdrawalOtp,
+    // paypal_email, billing PII).
+    if (!ctx.state.user) return ctx.unauthorized();
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Chatroom not found');
+    }
+
     try {
-      // Get chatroom with all communications
-      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', id, {
-        populate: [
-          'order', 
-          'advertiser', 
-          'publisher', 
-          'communications',
-          'communications.sender'
-        ],
+      // Allow-listed populate — id/username/email are the only user
+      // fields the transcript renderer below needs; password hash et al.
+      // never leave the DB.
+      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', numericId, {
+        populate: {
+          order: { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: ['id', 'username', 'email'] },
+          publisher:  { fields: ['id', 'username', 'email'] },
+          communications: {
+            populate: { sender: { fields: ['id', 'username', 'email'] } },
+          },
+        },
       });
-      
+
       if (!chatroom) {
+        return ctx.notFound('Chatroom not found');
+      }
+
+      // Party check: only the advertiser or publisher of the chatroom
+      // may download. 404 (not 403) so callers cannot enumerate which
+      // chatroom IDs exist via the differential.
+      const u = ctx.state.user;
+      const isParty = chatroom.advertiser?.id === u.id
+                   || chatroom.publisher?.id === u.id;
+      if (!isParty) {
         return ctx.notFound('Chatroom not found');
       }
       
@@ -384,23 +422,40 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
     }
   },
   
-  // Get full conversation details for admin view
+  // Get full conversation details. Despite the legacy "for admin view"
+  // comment, the route is granted to the Authenticated role with no
+  // ownership check in the pre-fix handler — same CRITICAL leak class
+  // as downloadTranscript above. Now: auth gate + party check + same
+  // allow-listed populate. Real admin consumers use /chatrooms/admin
+  // and /chatrooms/:id/admin-view (admin-jwt-auth + is-admin policy).
   async getFullConversation(ctx) {
     const { id } = ctx.params;
-    
+    if (!ctx.state.user) return ctx.unauthorized();
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Chatroom not found');
+    }
+
     try {
-      // Get chatroom with all communications
-      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', id, {
-        populate: [
-          'order', 
-          'advertiser', 
-          'publisher', 
-          'communications',
-          'communications.sender'
-        ],
+      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', numericId, {
+        populate: {
+          order: { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: ['id', 'username', 'email'] },
+          publisher:  { fields: ['id', 'username', 'email'] },
+          communications: {
+            populate: { sender: { fields: ['id', 'username', 'email'] } },
+          },
+        },
       });
-      
+
       if (!chatroom) {
+        return ctx.notFound('Chatroom not found');
+      }
+
+      const u = ctx.state.user;
+      const isParty = chatroom.advertiser?.id === u.id
+                   || chatroom.publisher?.id === u.id;
+      if (!isParty) {
         return ctx.notFound('Chatroom not found');
       }
       
