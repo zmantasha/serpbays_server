@@ -10,47 +10,47 @@ module.exports = {
    * Handle Stripe Webhook Events
    */
   async handleWebhook(ctx) {
+    // ─────────────────────────────────────────────────────────────────────
+    // SECURITY — signature verification is MANDATORY in all environments.
+    //
+    // Pre-fix this handler had a NODE_ENV === 'development' bypass that
+    // accepted ctx.request.body as the canonical event whenever the raw
+    // body was unavailable, with verification skipped entirely. A
+    // misconfigured production deploy (NODE_ENV not set, NODE_ENV stripped
+    // by container env, NODE_ENV intentionally set to 'development' for
+    // diagnostics) would silently disable verification — any anonymous
+    // POSTer could forge a payment_intent.succeeded event and trigger
+    // handlePaymentSucceeded → wallet credit. This is now removed; the
+    // handler ALWAYS calls stripeService.verifyWebhookSignature and fails
+    // closed when STRIPE_WEBHOOK_SECRET / raw body / signature is missing.
+    // ─────────────────────────────────────────────────────────────────────
+
     const signature = ctx.request.headers['stripe-signature'];
-    
-    // Get raw body for signature verification
-    // Try multiple ways to get the raw body
-    let rawBody = ctx.request.body[Symbol.for('unparsedBody')] || 
-                  ctx.request.body._unparsedBody || 
-                  ctx.request.rawBody;
-
-    // If we still don't have raw body, try to get it from the request
-    if (!rawBody) {
-      // For development/testing, we might need to reconstruct from parsed body
-      if (process.env.NODE_ENV === 'development' && ctx.request.body && Object.keys(ctx.request.body).length > 0) {
-        console.warn('[STRIPE WEBHOOK] ⚠️ Using parsed body for development - signature verification may fail');
-        rawBody = JSON.stringify(ctx.request.body);
-      } else {
-        console.error('[STRIPE WEBHOOK] ❌ No raw body found in request');
-        console.error('[STRIPE WEBHOOK] Available body keys:', Object.keys(ctx.request.body || {}));
-        return ctx.badRequest('Invalid request body - raw body required for signature verification');
-      }
-    }
-
     if (!signature) {
-      console.error('[STRIPE WEBHOOK] ❌ No signature header found');
+      console.error('[STRIPE WEBHOOK] ❌ Missing signature header');
       return ctx.badRequest('Missing signature header');
     }
 
+    // Raw body is the Stripe-signed payload. Without it we cannot verify
+    // — fail closed (no reconstruction from parsed body).
+    const rawBody =
+      ctx.request.body?.[Symbol.for('unparsedBody')] ||
+      ctx.request.body?._unparsedBody ||
+      ctx.request.rawBody;
+    if (!rawBody) {
+      console.error('[STRIPE WEBHOOK] ❌ Raw body unavailable — signature cannot be verified');
+      return ctx.badRequest('Raw body required for signature verification');
+    }
+
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error('[STRIPE WEBHOOK] ❌ CRITICAL: STRIPE_WEBHOOK_SECRET not configured');
+      return ctx.internalServerError('Webhook verification not configured');
+    }
+
     try {
-      let event;
-      
-      // Verify webhook signature (skip in development if raw body not available)
-      if (process.env.NODE_ENV === 'development' && rawBody === JSON.stringify(ctx.request.body)) {
-        console.warn('[STRIPE WEBHOOK] ⚠️ Development mode: Skipping signature verification');
-        event = ctx.request.body; // Use the parsed body directly
-      } else {
-        const stripeService = strapi.service('api::transaction.stripe-service');
-        event = stripeService.verifyWebhookSignature(
-          rawBody,
-          signature,
-          process.env.STRIPE_WEBHOOK_SECRET
-        );
-      }
+      const stripeService = strapi.service('api::transaction.stripe-service');
+      const event = stripeService.verifyWebhookSignature(rawBody, signature, webhookSecret);
 
       console.log(`[STRIPE WEBHOOK] 📣 Received event: ${event.type}, ID: ${event.id}`);
 
@@ -108,10 +108,11 @@ module.exports = {
       });
 
     } catch (error) {
+      // Log full error server-side; do NOT echo error.message in the
+      // response. A forged-webhook attacker can probe failure modes via
+      // the response body otherwise.
       console.error('[STRIPE WEBHOOK] ❌ Webhook processing failed:', error);
-      // Return 400 for signature verification failures
-      // This tells Stripe not to retry
-      return ctx.badRequest(error.message);
+      return ctx.badRequest('Webhook processing failed');
     }
   },
 
@@ -182,7 +183,7 @@ module.exports = {
 
     } catch (error) {
       console.error('[STRIPE MANUAL] ❌ Error marking transaction as failed:', error);
-      return ctx.badRequest(error.message);
+      return ctx.badRequest('Failed to mark transaction as failed');
     }
   },
 
@@ -287,7 +288,7 @@ module.exports = {
 
     } catch (error) {
       console.error('[STRIPE CHECK] ❌ Error checking transaction status:', error);
-      return ctx.badRequest(error.message);
+      return ctx.badRequest('Failed to check transaction status');
     }
   }
 };
