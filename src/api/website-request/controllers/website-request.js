@@ -59,45 +59,57 @@ module.exports = createCoreController('api::website-request.website-request', ({
     }
   },
 
-  // Custom find method to allow users to see their own requests
+  // Find — fail-CLOSED. Pre-fix any non-advertiser (publisher, plain user)
+  // bypassed the userEmail filter entirely because `user.Advertiser` was
+  // falsy, and super.find ran without a scope → cross-tenant list. Admins
+  // were the only intended unscoped reader. Now we require role.type==='admin'
+  // for the unscoped path; everyone else is restricted to their own email.
   async find(ctx) {
     const user = ctx.state.user;
-
     if (!user) {
       return ctx.unauthorized('You must be logged in to view website requests.');
     }
-
-    // Advertisers can only see their own requests
-    if (user.Advertiser) {
+    const isAdmin = user.role && user.role.type === 'admin';
+    if (!isAdmin) {
       if (!ctx.query) ctx.query = {};
-      if (!ctx.query.filters) ctx.query.filters = {};
-      ctx.query.filters.userEmail = user.email;
+      const userFilter = { userEmail: user.email };
+      ctx.query.filters = ctx.query.filters
+        ? { $and: [ctx.query.filters, userFilter] }
+        : userFilter;
     }
-    // Admin users can see all requests (no filter applied)
-
     return await super.find(ctx);
   },
 
-  // Custom findOne method with access control
   async findOne(ctx) {
     const user = ctx.state.user;
-
     if (!user) {
       return ctx.unauthorized('You must be logged in to view website requests.');
     }
-
-    const entity = await strapi.entityService.findOne('api::website-request.website-request', ctx.params.id);
-
-    if (!entity) {
+    const numericId = Number(ctx.params.id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
       return ctx.notFound('Website request not found');
     }
-
-    // Advertisers can only see their own requests
-    if (user.Advertiser && entity.userEmail !== user.email) {
-      return ctx.forbidden('You can only view your own website requests.');
+    const entity = await strapi.entityService.findOne(
+      'api::website-request.website-request',
+      numericId
+    );
+    if (!entity) return ctx.notFound('Website request not found');
+    const isAdmin = user.role && user.role.type === 'admin';
+    if (!isAdmin && entity.userEmail !== user.email) {
+      // 404 not 403 — defeat enumeration.
+      return ctx.notFound('Website request not found');
     }
-
     return { data: entity };
+  },
+
+  // No legitimate user-side update path. All status changes happen via the
+  // outreach team / admin. Forbid the default PUT route.
+  async update(ctx) {
+    return ctx.forbidden('Direct website-request updates are not allowed');
+  },
+
+  async delete(ctx) {
+    return ctx.forbidden('Website requests cannot be deleted');
   }
 }));
 
