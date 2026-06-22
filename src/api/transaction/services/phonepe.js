@@ -50,12 +50,19 @@ class PhonePeService {
    * Similar to Razorpay createOrder
    */
   async createTransaction(amount, currency = 'INR', metadata = {}) {
-    console.log(this.merchantId)
-    console.log(this.saltKey)
+    // CRITICAL (pre-fix): `console.log(this.saltKey)` dumped the PhonePe
+    // signing key to server logs on every transaction creation. Anyone
+    // with log access (operators, log-aggregation infra, accidental
+    // log-share) would have the signing key — enabling forged callbacks
+    // that credit arbitrary wallets via the phonepe-webhook (which uses
+    // the same salt to verify signatures). Same class of leak as any
+    // committed-secret incident. Logs replaced with merchantId-only
+    // (non-secret) + a boolean "Salt Key: Set/Missing" check.
+    if (!this.merchantId || !this.saltKey) {
+      strapi.log?.error?.('[PHONEPE] credentials not configured');
+      throw new Error('PhonePe credentials not configured');
+    }
     try {
-      if (!this.merchantId || !this.saltKey) {
-        throw new Error('PhonePe credentials not configured');
-      }
 
       // Generate unique merchant transaction ID
       const merchantTransactionId = `TXN_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -77,14 +84,12 @@ class PhonePeService {
           type: 'PAY_PAGE'
         }
       };
-      console.log("payment",paymentRequest)
 
       // Convert to base64
       const base64Payload = Buffer.from(JSON.stringify(paymentRequest)).toString('base64');
 
       // Generate signature
       const signature = this.generateSignature(base64Payload);
-  console.log("signature",signature)
       // Make API request
       const response = await axios.post(
         `${this.baseUrl}/pg/v1/pay`,
@@ -99,7 +104,6 @@ class PhonePeService {
           },
         }
       );
-console.log("response",response)
       if (response.data.success) {
         console.log(`[PHONEPE] Transaction created: ${merchantTransactionId}`);
         
