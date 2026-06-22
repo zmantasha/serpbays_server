@@ -74,6 +74,47 @@ const PUBLISHER_SETTABLE_STATUSES = new Set([
   'approval_pending',
 ]);
 
+// ============================================================================
+// Ownership helper — audit finding #5 fix
+// ============================================================================
+// Source of truth for row ownership is `currentPublisherId` (a user relation).
+// `publisherEmail` is a legacy denormalised cache that pre-dates the relation;
+// it's only meaningful when `currentPublisherId` is unset.
+//
+// The PRE-FIX code at update():513 and find():253/283 used `(currentPubId.id ===
+// user.id) || (publisherEmail === user.email)` — the email leg fired even when
+// currentPublisherId WAS set. Bad-actor user B could PUT or list rows whose
+// publisherEmail happened to equal B's email (email recycle, admin email
+// edit, dual-tenant fluke). Reproduced 2026-06-15: row 15, owner=263, leaked
+// to / mutable by user 260.
+//
+// The strict rule: if currentPublisherId is set, only that user is the owner.
+// The email leg is ONLY consulted for legacy unlinked rows.
+// ============================================================================
+function isPublisherWebsiteOwner(row, user) {
+  if (!row || !user) return false;
+  const rowOwnerId = row.currentPublisherId?.id ?? row.currentPublisherId ?? null;
+  if (rowOwnerId != null) {
+    return rowOwnerId === user.id;
+  }
+  // Legacy unlinked rows (no relation populated) fall back to email match.
+  return Boolean(row.publisherEmail) && row.publisherEmail === user.email;
+}
+
+// $or fragment for find()/findMany Strapi queries. Same semantics:
+// rows owned via currentPublisherId, OR legacy unlinked rows matching email.
+function ownedByUserFilter(user) {
+  return {
+    $or: [
+      { currentPublisherId: user.id },
+      { $and: [
+        { currentPublisherId: { $null: true } },
+        { publisherEmail: user.email },
+      ] },
+    ],
+  };
+}
+
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
   // Create new publisher website submission
   async create(ctx) {
@@ -102,88 +143,125 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         strapi.log.warn(`[publisher-website.create] User ${user.id} (${user.email}) tried to set restricted fields, dropped: ${droppedKeys.join(', ')}`);
       }
 
-      // Handle reseller code if provided
+      // Normalize URL to lowercase to prevent case-sensitive duplicates
+      filteredData.url = filteredData.url ? filteredData.url.toLowerCase() : filteredData.url;
+
+      // Pre-validate reseller code WITHOUT consuming it. Consumption happens
+      // inside the transaction below (only if we actually take the create
+      // path). Pre-validation lets us return ctx.badRequest cleanly without
+      // having to throw across the transaction boundary.
       let resellerCodeData = null;
       if (filteredData.resellerCode) {
         try {
-          // Validate and use the reseller code
           const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(filteredData.resellerCode);
-
           if (!codeValidation.valid) {
             return ctx.badRequest(`Invalid reseller code: ${codeValidation.reason}`);
           }
-
-          // Use the code (increment counter)
-          await strapi.service('api::reseller-code.reseller-code').useCode(filteredData.resellerCode, user.id);
           resellerCodeData = codeValidation.codeData;
-
         } catch (error) {
-          console.error('Error processing reseller code:', error);
+          strapi.log.error(`[publisher-website.create] reseller code validate failed: ${error && error.message}`);
           return ctx.badRequest('Failed to validate reseller code');
         }
       }
 
-      // Normalize URL to lowercase to prevent case-sensitive duplicates
-      filteredData.url = filteredData.url ? filteredData.url.toLowerCase() : filteredData.url;
+      // Race-safety: the existence-check + create sequence is NOT race-safe by
+      // itself — N concurrent POSTs all see an empty findMany before any
+      // insert. Audit finding #4 reproduced this with 5 concurrent calls
+      // producing 5 duplicate rows. We serialize via a transaction-scoped
+      // Postgres advisory lock keyed on hash(`pw_create:<userId>:<url>`).
+      // Subsequent contenders wait inside the lock, then find the winner's
+      // row and route through the idempotent path. Lock auto-releases at
+      // transaction commit/rollback.
+      const lockKey = `pw_create:${user.id}:${filteredData.url}`;
 
-      // Check if this URL already exists for this publisher using ID relation
-      const existingSubmission = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-        filters: {
-          url: filteredData.url,
-          currentPublisherId: user.id
+      const outcome = await strapi.db.transaction(async ({ trx }) => {
+        await trx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', [lockKey]);
+
+        // Inside the lock: existence check.
+        const existingSubmission = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
+          filters: { url: filteredData.url, currentPublisherId: user.id },
+        });
+
+        if (existingSubmission && existingSubmission.length > 0) {
+          const existing = existingSubmission[0];
+          const existingStatus = existing.submissionStatus;
+          // Reject duplicates against verified / approved / claimed / paused
+          // rows — they must NOT be regressed by a re-POST (finding #3).
+          if (!PUBLISHER_SETTABLE_STATUSES.has(existingStatus)) {
+            return { action: 'conflict', existing, existingStatus };
+          }
+          // Idempotent return for retries on a pre-approval row.
+          return { action: 'idempotent', existing, existingStatus };
         }
+
+        // Create path: consume reseller code now (only on actual create,
+        // never on retry, per finding #3). Inside the transaction so that
+        // if the create below fails, the use is rolled back.
+        if (resellerCodeData) {
+          try {
+            await strapi.service('api::reseller-code.reseller-code').useCode(filteredData.resellerCode, user.id);
+          } catch (e) {
+            strapi.log.error(`[publisher-website.create] reseller useCode failed: ${e && e.message}`);
+            throw new Error('reseller_use_failed');
+          }
+        }
+
+        const submissionData = {
+          ...filteredData,
+          publisherEmail: user.email,
+          publisherName: user.username || user.email,
+          publishedAt: new Date(),
+          // Verification fields — never trust caller input here.
+          gscVerified: false,
+          gscVerifiedAt: null,
+          gscRefreshToken: null,
+          gscPermissionLevel: null,
+          verificationMethod: null,
+          // Ownership relations bound to JWT user.
+          originalPublisherId: user.id,
+          currentPublisherId: user.id,
+        };
+        if (resellerCodeData) {
+          submissionData.addedByReseller = true;
+          submissionData.resellerCode = filteredData.resellerCode;
+          submissionData.submissionStatus = 'pending_final_submission';
+          submissionData.stepCompleted = 2;
+          submissionData.verificationMethod = 'reseller-code';
+        } else {
+          submissionData.addedByReseller = false;
+          submissionData.submissionStatus = 'pending_verification';
+        }
+
+        const created = await strapi.entityService.create('api::publisher-website.publisher-website', {
+          data: submissionData,
+        });
+        return { action: 'created', row: created };
+      }).catch((err) => {
+        if (err && err.message === 'reseller_use_failed') return { action: 'reseller_failed' };
+        throw err;
       });
 
-      // Prepare submission data — server-controlled fields override anything
-      // the caller might have supplied (the whitelist already filtered most,
-      // but explicit assignments here are belt-and-suspenders).
-      const submissionData = {
-        ...filteredData,
-        publisherEmail: user.email,
-        publisherName: user.username || user.email,
-        publishedAt: new Date(),
-        // Verification fields — never trust caller input here:
-        gscVerified: false,
-        gscVerifiedAt: null,
-        gscRefreshToken: null,
-        gscPermissionLevel: null,
-        verificationMethod: null,
-        // Ownership/relation fields — bound to the JWT user only:
-        originalPublisherId: user.id,
-        currentPublisherId: user.id,
-      };
-
-      // Add reseller code data if provided
-      if (resellerCodeData) {
-        submissionData.addedByReseller = true;
-        submissionData.resellerCode = filteredData.resellerCode;
-        // Reseller code bypasses GSC verification (this is the legitimate
-        // ahead-of-time-vetted path; the reseller-code use counter was
-        // already incremented above).
-        submissionData.submissionStatus = 'pending_final_submission';
-        submissionData.stepCompleted = 2;
-        submissionData.verificationMethod = 'reseller-code';
-        submissionData.gscVerified = false; // Not GSC verified, but reseller verified
-      } else {
-        submissionData.addedByReseller = false;
-        // Always start in pending_verification. Promotion to a verified
-        // status is the GSC OAuth callback's responsibility, NOT this
-        // controller. (The old code branched on data.gscVerified here,
-        // which was a self-elevation backdoor.)
-        submissionData.submissionStatus = 'pending_verification';
+      // Translate the transaction outcome to an HTTP response.
+      if (outcome.action === 'reseller_failed') {
+        return ctx.badRequest('Failed to apply reseller code');
       }
-
-      let result;
-      if (existingSubmission && existingSubmission.length > 0) {
-        // Update existing submission
-        result = await strapi.entityService.update('api::publisher-website.publisher-website', existingSubmission[0].id, {
-          data: submissionData
-        });
-      } else {
-        // Create new submission
-        result = await strapi.entityService.create('api::publisher-website.publisher-website', {
-          data: submissionData
-        });
+      if (outcome.action === 'conflict') {
+        strapi.log.warn(`[publisher-website.create] User ${user.id} (${user.email}) POSTed duplicate URL for already-progressed row ${outcome.existing.id} url=${filteredData.url} status=${outcome.existingStatus} — refusing 409`);
+        ctx.status = 409;
+        ctx.body = {
+          data: null,
+          error: {
+            status: 409,
+            name: 'ConflictError',
+            message: `Website already exists at status '${outcome.existingStatus}'. Use PUT /api/publisher-websites/${outcome.existing.id} to update.`,
+            details: { websiteId: outcome.existing.id, submissionStatus: outcome.existingStatus },
+          },
+        };
+        return;
+      }
+      if (outcome.action === 'idempotent') {
+        strapi.log.info(`[publisher-website.create] User ${user.id} POSTed duplicate URL for pre-approval row ${outcome.existing.id} url=${filteredData.url} status=${outcome.existingStatus} — returning existing without changes`);
+        return { data: outcome.existing, alreadyExists: true };
       }
 
       // Moderation email is intentionally not sent here. Adding a website
@@ -191,8 +269,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // pending_final_submission). The "Submitted for Moderation" email is
       // fired by the lifecycle hook when the status actually transitions to
       // approval_pending via the client's Submit for Review action.
-
-      return { data: result };
+      return { data: outcome.row };
     } catch (error) {
       console.error('Error creating publisher website submission:', error);
       return ctx.internalServerError('Failed to submit website');
@@ -215,12 +292,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const pageSize = Math.min(parseInt(pagination.pageSize) || 20, 100); // Max 100 per page
       const offset = (page - 1) * pageSize;
 
-      // Build filters using immutable user ID relation (PRIMARY) or email (FALLBACK)
+      // Strict ownership filter — finding #5 fix. The email leg is gated on
+      // currentPublisherId being unset (legacy unlinked rows only). Without
+      // this gate, user B could see user A's rows when A's row carried B's
+      // email as a denormalised cache.
       const filters = {
-        $or: [
-          { currentPublisherId: user.id },
-          { publisherEmail: user.email }
-        ]
+        ...ownedByUserFilter(user),
       };
 
       // Add search filter if provided
@@ -245,12 +322,11 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         where: filters
       });
 
-      // Get approved count across ALL pages (using base user ownership filters, ignoring search/status filters)
+      // Get approved count across ALL pages (using base user ownership
+      // filters, ignoring search/status filters). Same strict ownership rule
+      // as the main `filters` above — finding #5.
       const baseOwnershipFilters = {
-        $or: [
-          { currentPublisherId: user.id },
-          { publisherEmail: user.email }
-        ],
+        ...ownedByUserFilter(user),
         submissionStatus: 'approved'
       };
       const approvedCount = await strapi.db.query('api::publisher-website.publisher-website').count({
@@ -258,12 +334,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       });
 
       // Fetch paginated submissions using database query API for better performance
+      // Pre-fix populated currentPublisherId + originalPublisherId as string-array
+      // → full up_users row leak (password hash, withdrawalOtp, paypal_email, ...).
+      // Caller is the owner — only the id is needed for downstream checks.
       const submissions = await strapi.db.query('api::publisher-website.publisher-website').findMany({
         where: filters,
         orderBy: sort,
         limit: pageSize,
         offset: offset,
-        populate: ['currentPublisherId', 'originalPublisherId']
+        populate: {
+          currentPublisherId: { select: ['id'] },
+          originalPublisherId: { select: ['id'] },
+        },
       });
 
       // Attach the latest open/decided update-request per website so the
@@ -437,21 +519,26 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to view website details.');
       }
 
-      // Find the website with publisher relation populated
-      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: ['currentPublisherId']
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        return ctx.notFound('Website not found');
+      }
+      // Populate currentPublisherId with id-only (pre-fix returned the full
+      // up_users row — password hash, withdrawalOtp, paypal_email leak).
+      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', numericId, {
+        populate: { currentPublisherId: { fields: ['id'] } }
       });
 
       if (!website) {
         return ctx.notFound('Website not found');
       }
 
-      // Check ownership: prefer userId, fallback to email for legacy records
       const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
         (!website.currentPublisherId && website.publisherEmail === user.email);
 
       if (!isOwner) {
-        return ctx.forbidden('You can only view your own website submissions.');
+        // 404 not 403 — defeat website-id enumeration.
+        return ctx.notFound('Website not found');
       }
 
       return { data: website };
@@ -467,22 +554,49 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const { id } = ctx.params;
       const { data } = ctx.request.body;
       const user = ctx.state.user;
-      console.log("dataaa", data)
+
       if (!user) {
         return ctx.unauthorized('You must be logged in to update a website.');
       }
 
-      // Check if this submission belongs to the user (using ID relation if possible, fallback to email for legacy)
-      const existing = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: ['updateRequests', 'currentPublisherId']
-      });
+      // ===================================================================
+      // Audit finding #7 fix — TOCTOU on the publisher-website update path.
+      // ===================================================================
+      // Acquire row-level lock at the top of a transaction so that:
+      //  (a) a concurrent claimOwnership that flips the row to
+      //      ownership_claimed/ownership_transferred can't slip between
+      //      the ownership check and the entityService.update below;
+      //  (b) the "is this an approved/live listing?" decision at L660 reads
+      //      FRESH state inside the lock, not the stale findOne from L553
+      //      (e.g. a parallel admin pause that clears marketplaceId);
+      //  (c) two simultaneous owner edits (double-click save) serialize
+      //      cleanly rather than racing on lifecycle side-effects.
+      // strapi.entityService calls inside this transaction inherit the trx
+      // via AsyncLocalStorage, so all reads/writes below are within the
+      // locked transaction.
+      const txResult = await strapi.db.transaction(async ({ trx }) => {
+        // Row-level exclusive lock (blocks concurrent writers on this row).
+        const lockRow = await trx('publisher_websites')
+          .where({ id })
+          .forUpdate()
+          .select('id');
+        if (!lockRow || lockRow.length === 0) {
+          return { httpKind: 'notFound' };
+        }
 
-      // Verification logic: prefer ID check, fallback to email
-      const isOwner = (existing.currentPublisherId && existing.currentPublisherId.id === user.id) ||
-        (existing.publisherEmail === user.email);
+        // Re-fetch under the lock — this is the FRESH state used by all
+        // checks and decisions below.
+        const existing = await strapi.entityService.findOne(
+          'api::publisher-website.publisher-website',
+          id,
+          { populate: ['updateRequests', 'currentPublisherId'] }
+        );
 
-      if (!existing || !isOwner) {
-        return ctx.forbidden('You can only update your own website submissions.');
+      // Strict ownership check — finding #5 fix. publisherEmail is ONLY
+      // honoured when currentPublisherId is null (legacy unlinked rows).
+      // See helper definition near the top of the file.
+      if (!existing || !isPublisherWebsiteOwner(existing, user)) {
+        return { httpKind: 'forbidden' };
       }
 
       // SECURITY: fail-closed whitelist on update input. The legacy code
@@ -518,7 +632,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             const codeValidation = await strapi.service('api::reseller-code.reseller-code').validateCode(filteredUpdate.resellerCode);
 
             if (!codeValidation.valid) {
-              return ctx.badRequest(`Invalid reseller code: ${codeValidation.reason}`);
+              return { httpKind: 'badRequest', message: `Invalid reseller code: ${codeValidation.reason}` };
             }
 
             // Use the code (increment counter)
@@ -526,7 +640,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             const useResult = await strapi.service('api::reseller-code.reseller-code').useCode(filteredUpdate.resellerCode, user.id);
 
           } catch (error) {
-            return ctx.badRequest('Failed to validate reseller code');
+            return { httpKind: 'badRequest', message: 'Failed to validate reseller code' };
           }
         }
       }
@@ -689,7 +803,21 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         }
       }
 
-      return { data: updated };
+        return { httpKind: 'ok', updated };
+      });
+
+      // Translate the transaction outcome into HTTP responses. The lock is
+      // released (commit/rollback) before this point.
+      if (!txResult || txResult.httpKind === 'notFound') {
+        return ctx.notFound('Website not found');
+      }
+      if (txResult.httpKind === 'forbidden') {
+        return ctx.forbidden('You can only update your own website submissions.');
+      }
+      if (txResult.httpKind === 'badRequest') {
+        return ctx.badRequest(txResult.message || 'Update failed');
+      }
+      return { data: txResult.updated };
     } catch (error) {
       console.error('Error updating publisher website:', error);
       return ctx.internalServerError('Failed to update website');
@@ -709,9 +837,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.log('User role structure:', JSON.stringify(user?.role, null, 2));
       const isAdmin = user && user.role && (
         user.role.type === 'admin' ||
-        user.role.name === 'Admin' ||
-        user.role.name === 'Administrator' ||
-        user.email === 'mantasha@wordscloud.in'  // Special admin access
+        user.role.type === 'super_admin'
       );
 
       if (!isAdmin) {
@@ -842,9 +968,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       const isAdmin = user && user.role && (
         user.role.type === 'admin' ||
-        user.role.name === 'Admin' ||
-        user.role.name === 'Administrator' ||
-        user.email === 'mantasha@wordscloud.in'
+        user.role.type === 'super_admin'
       );
 
       if (!isAdmin) {
@@ -912,9 +1036,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       const isAdmin = user && user.role && (
         user.role.type === 'admin' ||
-        user.role.name === 'Admin' ||
-        user.role.name === 'Administrator' ||
-        user.email === 'mantasha@wordscloud.in'
+        user.role.type === 'super_admin'
       );
 
       if (!isAdmin) {
@@ -958,9 +1080,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       const isAdmin = user && user.role && (
         user.role.type === 'admin' ||
-        user.role.name === 'Admin' ||
-        user.role.name === 'Administrator' ||
-        user.email === 'mantasha@wordscloud.in'
+        user.role.type === 'super_admin'
       );
 
       if (!isAdmin) {
@@ -1254,67 +1374,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     }
   },
 
-  // Delete publisher website and associated marketplace listing
-  async delete(ctx) {
-    try {
-      const { id } = ctx.params;
-      const user = ctx.state.user;
-
-      if (!user) {
-        return ctx.unauthorized('You must be logged in to delete websites.');
-      }
-
-      // First find the website to check ownership
-      const website = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: ['currentPublisherId']
-      });
-
-      if (!website) {
-        return ctx.notFound('Website not found');
-      }
-
-      // Check ownership: prefer userId, fallback to email for legacy records
-      const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
-        (!website.currentPublisherId && website.publisherEmail === user.email);
-
-      if (!isOwner) {
-        return ctx.forbidden('You can only delete your own website submissions.');
-      }
-
-      console.log(`Deleting website ID: ${id} for user ID: ${user.id}`);
-
-      // If website has a marketplace listing, delete it first
-      if (website.marketplaceId) {
-        try {
-          console.log(`Deleting marketplace listing ID: ${website.marketplaceId}`);
-          await strapi.entityService.delete('api::marketplace.marketplace', website.marketplaceId);
-          console.log('Marketplace listing deleted successfully');
-        } catch (marketplaceError) {
-          console.error('Error deleting marketplace listing:', marketplaceError);
-          // Continue with deletion even if marketplace deletion fails
-          // This prevents orphaned publisher websites
-        }
-      }
-
-      // Delete the publisher website
-      await strapi.entityService.delete('api::publisher-website.publisher-website', id);
-      console.log('Publisher website deleted successfully');
-
-      return {
-        data: {
-          id: website.id,
-          url: website.url,
-          deleted: true,
-          deletedAt: new Date().toISOString()
-        },
-        message: 'Website and associated marketplace listing deleted successfully'
-      };
-
-    } catch (error) {
-      console.error('Error deleting publisher website:', error);
-      return ctx.internalServerError('Failed to delete website');
-    }
-  },
+  // NOTE: the canonical async delete() handler lives further down in this
+  // module (search for "Delete publisher website" comment block). A duplicate
+  // declaration that USED to live here at L1330 was dead code per JS object-
+  // literal duplicate-key rules — see audit finding #2 (resolved 2026-06-15).
 
   // Pause/Resume listing
   async pauseListing(ctx) {
@@ -1453,146 +1516,253 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to claim ownership.');
       }
 
-      // Find the existing website. claimedBy is a manyToOne relation, so it
-      // must be populated for the idempotency check below to resolve it
-      // (otherwise existingWebsite.claimedBy is undefined and a double-
-      // click submits two claims back-to-back).
-      const existingWebsite = await strapi.entityService.findOne('api::publisher-website.publisher-website', id, {
-        populate: ['currentPublisherId', 'originalPublisherId', 'claimedBy']
-      });
-
-      if (!existingWebsite) {
+      // Cheap pre-check (no lock yet) to short-circuit obviously-bad inputs.
+      const preCheck = await strapi.entityService.findOne('api::publisher-website.publisher-website', id);
+      if (!preCheck) {
         return ctx.notFound('Website not found');
       }
 
-      // Check if user is already the owner (by userId or email for legacy)
-      const isAlreadyOwner = (existingWebsite.currentPublisherId && existingWebsite.currentPublisherId.id === user.id) ||
-        (!existingWebsite.currentPublisherId && existingWebsite.publisherEmail === user.email);
-
-      if (isAlreadyOwner) {
-        return ctx.badRequest('You already own this website');
-      }
-
-      // Idempotency check FIRST — before we consume any proof. If this
-      // user already has an open claim against this row (double-click on
-      // submit, retry after a slow network round-trip, etc.), return the
-      // existing claim so the second call doesn't consume the proof and
-      // then fail with a "must verify first" message.
-      const existingClaimerId = existingWebsite.claimedBy?.id ?? existingWebsite.claimedBy ?? null;
-      if (existingClaimerId === user.id && existingWebsite.newOwnerWebsiteId) {
-        const existingClaim = await strapi.entityService.findOne(
-          'api::publisher-website.publisher-website',
-          existingWebsite.newOwnerWebsiteId
-        );
-        if (existingClaim && existingClaim.submissionStatus === 'approval_pending') {
-          console.log(
-            `[CLAIM IDEMPOTENT] User ${user.id} already has an open claim (#${existingClaim.id}) against website ${id} — returning existing claim instead of creating a duplicate.`
-          );
-          return ctx.send({
-            success: true,
-            message: 'Your claim is already submitted and under review.',
-            data: {
-              newWebsiteId: existingClaim.id,
-              originalWebsiteId: existingWebsite.id,
-              claimedWebsite: existingClaim,
-              alreadySubmitted: true,
-            },
-          });
+      // Fail-closed whitelist on caller-supplied fields (mirrors create()
+      // and update()). Without this, the claimant can splat arbitrary
+      // columns — addedByReseller, reviewedBy, ahrefs_*, gscRefreshToken,
+      // etc. — into the new row by including them in the POST body.
+      const rawClaim = data || {};
+      const filteredClaim = {};
+      const droppedClaimKeys = [];
+      for (const k of Object.keys(rawClaim)) {
+        if (ALLOWED_USER_FIELDS.has(k)) {
+          filteredClaim[k] = rawClaim[k];
+        } else {
+          droppedClaimKeys.push(k);
         }
       }
+      if (droppedClaimKeys.length > 0) {
+        strapi.log.warn(`[publisher-website.claim] User ${user.id} (${user.email}) tried to set restricted fields, dropped: ${droppedClaimKeys.join(', ')}`);
+      }
 
-      // GSC verification gate. The claim flow no longer reads
-      // existingWebsite.gscVerified (which would only be true if the
-      // claimant or someone else had verified directly on the original
-      // row — which we now deliberately avoid for cross-account verifies).
-      // Instead, the claimant must hold a fresh cross-account proof in
-      // the in-memory proofs store, recorded earlier by the GSC callback
-      // when they completed Google OAuth. The proof is consumed here so
-      // it can't be reused for a different row.
-      //
-      // Same-user verifies (where the claimant is already the row's owner
-      // — unusual in a claim scenario, but harmless) still pass via the
-      // sameUserAlreadyVerified branch, reading the row's existing flag.
       const gscHelpers = require('../../../utils/gsc-helpers');
-      const sameUserAlreadyVerified =
-        existingWebsite.gscVerified === true &&
-        existingWebsite.currentPublisherId &&
-        existingWebsite.currentPublisherId.id === user.id;
-      const proof = gscHelpers.consumeCrossAccountProof(user.id, existingWebsite.url);
-      if (!proof && !sameUserAlreadyVerified) {
+
+      // Track a consumed proof so we can re-record it if the transaction
+      // rolls back (closures across the strapi.db.transaction boundary).
+      let consumedProofForRollback = null;
+      // ===================================================================
+      // Audit finding #7 fix — TOCTOU race on the original row.
+      // ===================================================================
+      // Pre-fix: findOne → idempotency check → ownerHasGscProof check →
+      // proof consume → create + update all ran without holding a row-level
+      // lock. Two concurrent claimants both passed the "already claimed?"
+      // check, both created new rows, both wrote claimedBy/newOwnerWebsiteId
+      // → last writer won, the loser's claim row was orphaned (verified
+      // 2026-06-15: 2 claims → 2 rows + 1 orphan).
+      //
+      // Fix: acquire SELECT … FOR UPDATE on the original row at the very
+      // top of a single transaction, re-fetch fresh state inside the lock,
+      // re-run every state-dependent check on that fresh state, then
+      // create + update — all atomically. Concurrent contenders block on
+      // the lock; when they wake, they see the post-claim state and route
+      // through the idempotency / already-claimed-by-other branches.
+      //
+      // Proof handling: consume INSIDE the transaction (so it's only
+      // consumed when we actually proceed). On transaction failure the
+      // catch re-records the proof so the user can retry without redoing
+      // Google OAuth. Concurrent same-user double-clicks are handled by
+      // the idempotency branch on the second pass through the lock.
+      let outcome;
+      try {
+        outcome = await strapi.db.transaction(async ({ trx }) => {
+          // Row-level exclusive lock. Holds until commit/rollback.
+          // strapi.entityService.findOne does NOT use this connection
+          // (Strapi 5's AsyncLocalStorage tracking IS supposed to thread
+          // the trx, but to guarantee the lock we issue an explicit
+          // forUpdate select first). Concurrent transactions targeting
+          // the same row.id will block here.
+          const lockRow = await trx('publisher_websites')
+            .where({ id })
+            .forUpdate()
+            .select('id', 'url', 'submission_status', 'publisher_email');
+          if (!lockRow || lockRow.length === 0) {
+            return { action: 'notFound' };
+          }
+
+          // Re-fetch the full row with relations populated under the lock.
+          const existingWebsite = await strapi.entityService.findOne(
+            'api::publisher-website.publisher-website',
+            id,
+            { populate: ['currentPublisherId', 'originalPublisherId', 'claimedBy'] }
+          );
+          if (!existingWebsite) return { action: 'notFound' };
+
+          // Re-check ownership on the FRESH row state.
+          const isAlreadyOwner =
+            (existingWebsite.currentPublisherId && existingWebsite.currentPublisherId.id === user.id) ||
+            (!existingWebsite.currentPublisherId && existingWebsite.publisherEmail === user.email);
+          if (isAlreadyOwner) {
+            return { action: 'alreadyOwner' };
+          }
+
+          // Idempotency: this user already claimed it (double-click retry).
+          const existingClaimerId = existingWebsite.claimedBy?.id ?? existingWebsite.claimedBy ?? null;
+          if (existingClaimerId === user.id && existingWebsite.newOwnerWebsiteId) {
+            const existingClaim = await strapi.entityService.findOne(
+              'api::publisher-website.publisher-website',
+              existingWebsite.newOwnerWebsiteId
+            );
+            if (existingClaim && existingClaim.submissionStatus === 'approval_pending') {
+              return { action: 'idempotent', existingWebsite, existingClaim };
+            }
+          }
+
+          // NEW (finding #7): if the row is already claimed by SOMEONE ELSE,
+          // refuse with 409. This is the race-loser branch — the lock made
+          // it block until the winner committed; now it sees the post-claim
+          // state and bails cleanly.
+          if (existingClaimerId && existingClaimerId !== user.id) {
+            return { action: 'alreadyClaimedByOther', byUserId: existingClaimerId, existingWebsite };
+          }
+          if (existingWebsite.submissionStatus === 'ownership_claimed' ||
+              existingWebsite.submissionStatus === 'ownership_transferred') {
+            return { action: 'alreadyClaimedByOther', byUserId: existingClaimerId, existingWebsite };
+          }
+
+          // GSC verification gates (re-checked under the lock so a parallel
+          // GSC callback that just stamped gscVerified=true on the original
+          // row is observed correctly).
+          const sameUserAlreadyVerified =
+            existingWebsite.gscVerified === true &&
+            existingWebsite.currentPublisherId &&
+            existingWebsite.currentPublisherId.id === user.id;
+          const ownerHasGscProof =
+            existingWebsite.gscVerified === true &&
+            existingWebsite.verificationMethod === 'google-search-console' &&
+            existingWebsite.currentPublisherId &&
+            existingWebsite.currentPublisherId.id !== user.id;
+          if (ownerHasGscProof) {
+            return { action: 'ownerGscProof', existingWebsite };
+          }
+
+          // Consume the cross-account proof. On a transaction rollback the
+          // outer catch re-records it. Concurrent same-user double-clicks
+          // serialize on the lock; the second pass through the lock hits
+          // the idempotency branch above (the first claim is now visible).
+          const proof = gscHelpers.consumeCrossAccountProof(user.id, existingWebsite.url);
+          if (!proof && !sameUserAlreadyVerified) {
+            return { action: 'noProof', existingWebsite };
+          }
+          if (proof) consumedProofForRollback = { ...proof, websiteUrl: existingWebsite.url };
+          const claimPermissionLevel = proof?.gscPermissionLevel
+            || existingWebsite.gscPermissionLevel
+            || 'siteOwner';
+          const gscVerifiedAtStamp = proof?.verifiedAt
+            ? new Date(proof.verifiedAt).toISOString()
+            : new Date().toISOString();
+
+          const newOwnerWebsiteData = {
+            ...filteredClaim,
+            url: existingWebsite.url,
+            publisherEmail: user.email,
+            publisherName: user.username || user.email.split('@')[0],
+            originalWebsiteId: existingWebsite.id,
+            claimedFrom: existingWebsite.publisherEmail,
+            claimedAt: new Date().toISOString(),
+            ownershipTransferReason: 'claimed_by_owner',
+            originalPublisherId: existingWebsite.currentPublisherId || null,
+            currentPublisherId: user.id,
+            verificationMethod: 'google-search-console',
+            gscVerified: true,
+            gscVerifiedAt: gscVerifiedAtStamp,
+            gscPermissionLevel: claimPermissionLevel,
+            submissionStatus: 'approval_pending',
+            stepCompleted: 4,
+            submittedForReviewAt: new Date().toISOString(),
+          };
+
+          const created = await strapi.entityService.create(
+            'api::publisher-website.publisher-website',
+            { data: newOwnerWebsiteData }
+          );
+          await strapi.entityService.update(
+            'api::publisher-website.publisher-website',
+            id,
+            {
+              data: {
+                submissionStatus: 'ownership_claimed',
+                claimedBy: user.id,
+                claimedAt: new Date().toISOString(),
+                newOwnerWebsiteId: created.id,
+              },
+            }
+          );
+
+          return { action: 'created', proof, created, existingWebsite };
+        });
+      } catch (txErr) {
+        if (consumedProofForRollback) {
+          try {
+            gscHelpers.recordCrossAccountProof({
+              userId: user.id,
+              websiteUrl: consumedProofForRollback.websiteUrl,
+              gscPermissionLevel: consumedProofForRollback.gscPermissionLevel,
+            });
+          } catch (_) { /* best-effort */ }
+        }
+        strapi.log.error(`[publisher-website.claim] transaction failed for user ${user.id} website ${id}: ${txErr && txErr.message}`);
+        return ctx.internalServerError('Failed to process ownership claim');
+      }
+
+      // Translate the transaction outcome into HTTP responses. The
+      // transaction is committed (or rolled back) before this point;
+      // no DB state changes happen below this line.
+      if (!outcome || outcome.action === 'notFound') {
+        return ctx.notFound('Website not found');
+      }
+      if (outcome.action === 'alreadyOwner') {
+        return ctx.badRequest('You already own this website');
+      }
+      if (outcome.action === 'idempotent') {
+        console.log(
+          `[CLAIM IDEMPOTENT] User ${user.id} already has an open claim (#${outcome.existingClaim.id}) against website ${id} — returning existing claim instead of creating a duplicate.`
+        );
+        return ctx.send({
+          success: true,
+          message: 'Your claim is already submitted and under review.',
+          data: {
+            newWebsiteId: outcome.existingClaim.id,
+            originalWebsiteId: outcome.existingWebsite.id,
+            claimedWebsite: outcome.existingClaim,
+            alreadySubmitted: true,
+          },
+        });
+      }
+      if (outcome.action === 'alreadyClaimedByOther') {
+        // Race-loser branch. Lock observed the post-claim state.
+        strapi.log.warn(
+          `[publisher-website.claim] user ${user.id} lost race for website ${id}; already claimed by user ${outcome.byUserId || '(unknown)'}`
+        );
+        ctx.status = 409;
+        ctx.body = {
+          error: {
+            status: 409,
+            name: 'ConflictError',
+            message: 'This website has already been claimed by another user.',
+          },
+        };
+        return;
+      }
+      if (outcome.action === 'ownerGscProof') {
+        return ctx.badRequest(
+          'This website has been verified by its current owner via Google Search Console and cannot be claimed.'
+        );
+      }
+      if (outcome.action === 'noProof') {
         return ctx.badRequest(
           'Claim ownership requires Google Search Console verification first. Please complete verification before submitting a claim.'
         );
       }
-      const claimPermissionLevel = proof?.gscPermissionLevel
-        || existingWebsite.gscPermissionLevel
-        || 'siteOwner';
 
-      console.log('🏴 Processing ownership claim for website:', existingWebsite.url);
-      console.log('🏴 Original owner:', existingWebsite.publisherEmail);
-      console.log('🏴 New claiming owner:', user.email);
-
-      // STEP 1: Create a NEW website entry for the claiming user
-      // Now we can use the same URL since unique constraint is removed
-      const newOwnerWebsiteData = {
-        ...data,
-        url: existingWebsite.url, // Same URL is now allowed
-        publisherEmail: user.email,
-        publisherName: user.username || user.email.split('@')[0],
-
-        // Reference to original website
-        originalWebsiteId: existingWebsite.id,
-        claimedFrom: existingWebsite.publisherEmail,
-        claimedAt: new Date().toISOString(),
-        ownershipTransferReason: 'claimed_by_owner',
-
-        // Set publisher relations correctly for new owner
-        originalPublisherId: existingWebsite.currentPublisherId || null,
-        currentPublisherId: user.id,
-
-        // Verification details — the claimant proved this themselves via
-        // the GSC HMAC channel (either a same-user verification on their
-        // own pre-existing row, or a cross-account proof consumed above).
-        // The permission level reflects what their Google account actually
-        // has on the domain.
-        verificationMethod: 'google-search-console',
-        gscVerified: true,
-        gscVerifiedAt: new Date().toISOString(),
-        gscPermissionLevel: claimPermissionLevel,
-
-        // Status - submit for admin review (NOT approved yet)
-        submissionStatus: 'approval_pending',
-        stepCompleted: 4,
-        submittedForReviewAt: new Date().toISOString()
-      };
-
-      // Create the new website entry for the claiming user
-      const newOwnerWebsite = await strapi.entityService.create('api::publisher-website.publisher-website', {
-        data: newOwnerWebsiteData
-      });
-
+      // outcome.action === 'created' — success path.
+      const newOwnerWebsite = outcome.created;
+      const existingWebsite = outcome.existingWebsite;
       console.log('✅ New website entry created for claiming user:', newOwnerWebsite.id);
-
-      // STEP 2: Update the ORIGINAL website to show "Ownership Transferred" status
-      // This keeps the original publisher's data intact but marks it as transferred
-      await strapi.entityService.update('api::publisher-website.publisher-website', id, {
-        data: {
-          submissionStatus: 'ownership_claimed',
-          // ownershipTransferredAt: new Date().toISOString(),
-          // ownershipTransferReason: 'claimed_by_owner',
-          claimedBy: user.id,
-          claimedAt: new Date().toISOString(),
-          newOwnerWebsiteId: newOwnerWebsite.id, // Link to new owner's entry
-
-          // Set relations correctly - find the original publisher's user ID
-          // originalPublisherId: existingWebsite.currentPublisherId || null,
-          // currentPublisherId: user.id, // New owner becomes current
-
-          // Keep ALL original data intact - just change status
-          // Original publisher can still see all their historical data
-        }
-      });
-
       console.log('✅ Original website marked as ownership transferred');
 
       // Send ownership claimed email to original publisher
@@ -1611,9 +1781,6 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       } catch (emailError) {
         console.error('[EMAIL] Failed to send ownership claimed email:', emailError.message);
       }
-
-      // Note: Marketplace delisting will be handled automatically by the lifecycle hook
-      // when the new owner's website gets approved
 
       return ctx.send({
         success: true,
@@ -1648,73 +1815,69 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Clean the domain and normalize to lowercase
       const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
 
-      // Find all websites by URL
-      const allWebsites = await strapi.entityService.findMany('api::publisher-website.publisher-website', {
-        filters: {
-          url: cleanDomain
-        },
-        fields: ['id', 'url', 'publisherEmail', 'publisherName', 'addedByReseller', 'submissionStatus', 'verificationMethod', 'gscVerified']
+      // This endpoint is PUBLIC (anonymous-reachable). It MUST NOT leak
+      // publisher PII (email, name) — pre-fix it logged publisherEmail to
+      // server logs and returned publisherName in the response, allowing
+      // a competitor to scrape domain → publisher mappings.
+      // Internal lookup pulls only the fields the claim decision needs.
+      const allWebsites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
+        where: { url: cleanDomain },
+        select: ['id', 'url', 'submissionStatus', 'verificationMethod', 'gscVerified', 'addedByReseller'],
       });
 
       if (!allWebsites || allWebsites.length === 0) {
         return ctx.send({
           exists: false,
           claimable: false,
-          message: 'Website not found'
         });
       }
 
-      console.log('🔍 [checkClaimable] Found websites for', cleanDomain, ':', allWebsites.map(w => ({
-        id: w.id,
-        status: w.submissionStatus,
-        verificationMethod: w.verificationMethod,
-        publisherEmail: w.publisherEmail
-      })));
-
-      // Prioritize active websites over ownership_transferred ones
       const activeWebsites = allWebsites.filter(w => w.submissionStatus !== 'ownership_transferred');
       const website = activeWebsites.length > 0 ? activeWebsites[0] : allWebsites[0];
-
-      console.log('🎯 [checkClaimable] Selected website:', {
-        id: website.id,
-        status: website.submissionStatus,
-        verificationMethod: website.verificationMethod,
-        isActive: activeWebsites.length > 0
-      });
-
-      console.log('🔍 [checkClaimable] Website found:', {
-        id: website.id,
-        url: website.url,
-        publisherEmail: website.publisherEmail,
-        submissionStatus: website.submissionStatus,
-        verificationMethod: website.verificationMethod
-      });
-
-      // Simple logic: If verification method is Google Search Console, don't allow claiming
       const isGSCVerified = website.verificationMethod === 'google-search-console';
 
-      console.log('🔍 [checkClaimable] GSC verified:', isGSCVerified);
-
+      // Public response: only the booleans + the row id/url needed by the
+      // SPA's claim-form pre-fill. NO publisher PII (publisherName /
+      // publisherEmail) and NO internal admin state (submissionStatus,
+      // addedByReseller) — those would let a competitor scrape domain →
+      // publisher mappings + workflow state.
       return ctx.send({
         exists: true,
-        claimable: !isGSCVerified, // Can only claim if NOT verified via GSC
-        isGSCVerified: isGSCVerified,
-        currentStatus: website.submissionStatus,
+        claimable: !isGSCVerified,
+        isGSCVerified,
         data: {
           id: website.id,
           url: website.url,
-          publisherName: website.publisherName,
-          verificationMethod: website.verificationMethod
-        }
+        },
       });
 
     } catch (error) {
-      console.error('Error checking claimable domain:', error);
+      strapi.log?.error?.('[publisher-website] checkClaimable failed', { error: error.message });
       return ctx.internalServerError('Error checking domain');
     }
   },
 
-  // Delete publisher website
+  /**
+   * Delete a publisher_website row owned by the caller.
+   *
+   * Audit finding #2 (resolved 2026-06-15): a duplicate `async delete` used to
+   * live earlier in this file at L1330; per ECMAScript object-literal
+   * duplicate-key semantics, the later declaration (this one) was the only one
+   * Strapi exposed. The earlier handler — which would have cascaded the
+   * marketplace listing and allowed any-status deletes — was dead code. It has
+   * been removed; only this canonical handler remains.
+   *
+   * Policy (intentionally restrictive):
+   *   - Only the row's owner (relation, NOT just publisherEmail per finding
+   *     #5) can delete.
+   *   - Only rows still in step 1 / pending_verification / unverified can be
+   *     deleted. Approved or GSC-verified rows go through pause/delist, not
+   *     delete. This keeps marketplace listings, orders, and audit history
+   *     intact.
+   *   - If a row somehow has a stale marketplaceId despite being step 1
+   *     (legacy / data-drift), we cascade-delete the marketplace row too so
+   *     we don't leave an orphan.
+   */
   async delete(ctx) {
     const { id } = ctx.params;
     const user = ctx.state.user;
@@ -1724,44 +1887,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.unauthorized('You must be logged in to delete a website.');
       }
 
-      // Fetch the website with publisher relation
       const website = await strapi.entityService.findOne(
         'api::publisher-website.publisher-website',
         id,
-        {
-          populate: ['currentPublisherId']
-        }
+        { populate: { currentPublisherId: { fields: ['id'] } } }
       );
 
       if (!website) {
         return ctx.notFound('Website not found');
       }
 
-      // Security: Verify ownership (prefer userId, fallback to email for legacy)
-      const isOwner = (website.currentPublisherId && website.currentPublisherId.id === user.id) ||
-        (!website.currentPublisherId && website.publisherEmail === user.email);
-
-      if (!isOwner) {
-        return ctx.forbidden('You do not have permission to delete this website');
+      // Strict ownership check (finding #5 fix shares the same helper).
+      if (!isPublisherWebsiteOwner(website, user)) {
+        // 404 not 403 — defeat enumeration.
+        return ctx.notFound('Website not found');
       }
 
-      // Business Rule: Cannot delete verified websites (Step 2+)
+      // Business Rule: Cannot delete verified websites.
       if (website.gscVerified || website.addedByReseller) {
         return ctx.badRequest({
           error: 'Cannot delete verified website',
           message: 'This website has been verified and cannot be deleted. Please contact support if you need assistance.'
         });
       }
-
-      // Business Rule: Only allow deletion if step 1
+      // Business Rule: Only allow deletion if step 1.
       if (website.stepCompleted > 1) {
         return ctx.badRequest({
           error: 'Cannot delete verified website',
           message: 'This website has completed verification and cannot be deleted.'
         });
       }
-
-      // Business Rule: Only allow deletion if status is pending_verification
+      // Business Rule: Only pending_verification rows are deletable.
       if (website.submissionStatus !== 'pending_verification') {
         return ctx.badRequest({
           error: 'Invalid website status',
@@ -1769,11 +1925,28 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         });
       }
 
-      // All checks passed - proceed with deletion
+      // Defensive marketplace cascade — should never fire given the
+      // business rules above (a step-1 / pending_verification row has no
+      // legitimate reason to carry a marketplaceId), but data drift happens.
+      // Failing the cascade is non-fatal: log and proceed with the row delete
+      // so we don't leave the user wedged.
+      let marketplaceCascaded = false;
+      if (website.marketplaceId) {
+        try {
+          await strapi.entityService.delete('api::marketplace.marketplace', website.marketplaceId);
+          marketplaceCascaded = true;
+          strapi.log.warn(`[publisher-website.delete] defensive marketplace cascade fired for pre-approval row ${id} (marketplaceId=${website.marketplaceId}) — drift?`);
+        } catch (mpErr) {
+          strapi.log.error(`[publisher-website.delete] marketplace cascade failed for row ${id} marketplaceId=${website.marketplaceId}: ${mpErr && mpErr.message}`);
+        }
+      }
+
       await strapi.entityService.delete(
         'api::publisher-website.publisher-website',
         id
       );
+
+      strapi.log.info(`[publisher-website.delete] user=${user.id} websiteId=${id} url=${website.url} priorStatus=${website.submissionStatus} marketplaceCascaded=${marketplaceCascaded}`);
 
       return ctx.send({
         success: true,

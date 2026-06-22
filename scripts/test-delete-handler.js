@@ -123,7 +123,9 @@ const fs = require('fs');
     rid = await mkRow('owner-check', { submissionStatus: 'pending_verification', stepCompleted: 1, gscVerified: false });
     ctx = mkCtx(rid, other);
     await ctrl.delete(ctx);
-    assert(ctx._err?.code === 403, 'non-owner gets 403');
+    // 404 (not 403) on cross-tenant — enumeration defense applied in
+    // broadsweep pass 4 (commit 84ddd29 era). Pre-fix this was 403.
+    assert(ctx._err?.code === 404, 'non-owner gets 404 (enumeration defense)');
     assert(await stillExists(rid), 'row still exists after non-owner attempt');
     await cleanupRow(rid);
 

@@ -335,6 +335,20 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       // posture toward Google Search Console).
       delete sanitized.gsc_permission_level;
 
+      // Internal admin / operational state — never exposed to non-admin
+      // consumers. The admin panel reads via /admin/marketplace/* which
+      // does not go through this sanitizer.
+      const INTERNAL_FIELDS = [
+        'approvalStatus', 'blacklist_status',
+        'delistedReason', 'delistedAt',
+        'dataVersion', 'bulkRefreshSkipTools',
+        'lastAhrefsRefreshAt', 'lastAhrefsExportAt',
+        'lastMozRefreshAt', 'lastMozExportAt',
+        'lastSemrushRefreshAt', 'lastSemrushExportAt',
+        'lastPriceUpdateAt', 'lastMetricUpdateAt',
+      ];
+      for (const k of INTERNAL_FIELDS) delete sanitized[k];
+
       return sanitized;
     };
 
@@ -379,6 +393,21 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced create with validation
   async create(ctx) {
     const user = ctx.state.user;
+    if (!user) return ctx.unauthorized();
+
+    // Pre-fix: an advertiser (user.Advertiser === true) could POST
+    // /api/marketplaces with publisher_email = victim and the handler at
+    // L413-422 would auto-link the victim's user record as the publisher
+    // — letting any logged-in advertiser create marketplace listings in
+    // someone else's name with arbitrary prices. The admin panel uses
+    // /admin/marketplace; the publisher app creates listings via the
+    // publisher-website lifecycle, not this endpoint. So /api/marketplaces
+    // POST has no legitimate non-admin / non-publisher consumer.
+    const isAdmin = user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
+    const isPublisher = user.Advertiser === false || user.Publisher === true;
+    if (!isAdmin && !isPublisher) {
+      return ctx.forbidden('Marketplace listings can only be created by publishers or admins');
+    }
 
     // Calculate placement speed if TAT is provided
     if (ctx.request.body.data && ctx.request.body.data.tat !== undefined) {
@@ -391,10 +420,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       return ctx.badRequest(`Validation failed: ${validationErrors.join(', ')}`);
     }
 
-    // Publisher filtering: Publishers can only create listings with their own email
-    if (user && user.Advertiser === false) {
+    // Publisher: force publisher_email + publisher FK to themselves. Strip
+    // any caller-supplied values so a non-admin publisher cannot create a
+    // listing in someone else's name.
+    if (!isAdmin) {
       if (!ctx.request.body.data) ctx.request.body.data = {};
       ctx.request.body.data.publisher_email = user.email;
+      ctx.request.body.data.publisher = user.id;
     }
 
     // CRITICAL: Ensure publisher user ID is always linked
@@ -437,6 +469,33 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
   // Enhanced update with validation
   async update(ctx) {
     const user = ctx.state.user;
+    if (!user) return ctx.unauthorized();
+
+    // Pre-fix: the ownership check only ran for publishers
+    // (user.Advertiser === false). Advertisers / plain users skipped the
+    // check entirely and proceeded to super.update — letting any logged-in
+    // user tamper with ANY marketplace listing's fields (prices, status,
+    // metrics, is_featured). Now fail-CLOSED: admin OR matching publisher.
+    const isAdmin = user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
+    const isPublisher = user.Advertiser === false || user.Publisher === true;
+    if (!isAdmin && !isPublisher) {
+      return ctx.forbidden('Marketplace listings can only be updated by their publisher or an admin');
+    }
+
+    if (!isAdmin) {
+      const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
+        fields: ['publisher_email'],
+        populate: { publisher: { fields: ['id'] } },
+      });
+      const isOwner = entry && (
+        (entry.publisher && entry.publisher.id === user.id) ||
+        (!entry.publisher && entry.publisher_email === user.email)
+      );
+      if (!entry || !isOwner) {
+        // 404 not 401 — defeat enumeration.
+        return ctx.notFound('Marketplace listing not found');
+      }
+    }
 
     // Calculate placement speed if TAT is provided
     if (ctx.request.body.data && ctx.request.body.data.tat !== undefined) {
@@ -447,22 +506,6 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     const validationErrors = this.validateMarketplaceData(ctx.request.body.data || {});
     if (validationErrors.length > 0) {
       return ctx.badRequest(`Validation failed: ${validationErrors.join(', ')}`);
-    }
-
-    // Publisher filtering: Publishers can only update their own listings
-    if (user && user.Advertiser === false) {
-      const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
-        fields: ['publisher_email'],
-        populate: ['publisher']
-      });
-      // Check ownership: prefer userId (publisher relation), fallback to email for legacy
-      const isOwner = entry && (
-        (entry.publisher && entry.publisher.id === user.id) ||
-        (!entry.publisher && entry.publisher_email === user.email)
-      );
-      if (!entry || !isOwner) {
-        return ctx.unauthorized('You are not allowed to update this listing.');
-      }
     }
 
     // CRITICAL: Ensure publisher user ID is linked on updates
@@ -507,23 +550,30 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     return await super.update(ctx);
   },
 
-  // Enhanced delete with authorization
+  // Enhanced delete with authorization. Pre-fix advertisers/plain users
+  // bypassed the ownership check (it only ran for `user.Advertiser ===
+  // false`) → delete IDOR on any marketplace listing. Now fail-CLOSED.
   async delete(ctx) {
     const user = ctx.state.user;
+    if (!user) return ctx.unauthorized();
 
-    // Publisher filtering: Publishers can only delete their own listings
-    if (user && user.Advertiser === false) {
+    const isAdmin = user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
+    const isPublisher = user.Advertiser === false || user.Publisher === true;
+    if (!isAdmin && !isPublisher) {
+      return ctx.forbidden('Marketplace listings can only be deleted by their publisher or an admin');
+    }
+
+    if (!isAdmin) {
       const entry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
         fields: ['publisher_email'],
-        populate: ['publisher']
+        populate: { publisher: { fields: ['id'] } },
       });
-      // Check ownership: prefer userId (publisher relation), fallback to email for legacy
       const isOwner = entry && (
         (entry.publisher && entry.publisher.id === user.id) ||
         (!entry.publisher && entry.publisher_email === user.email)
       );
       if (!entry || !isOwner) {
-        return ctx.unauthorized('You are not allowed to delete this listing.');
+        return ctx.notFound('Marketplace listing not found');
       }
     }
 

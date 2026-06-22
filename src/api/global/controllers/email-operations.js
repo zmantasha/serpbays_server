@@ -338,7 +338,7 @@ module.exports = createCoreController('api::global.global', ({ strapi }) => ({
       }
 
       // Check if user is admin or has special access
-      const isAdmin = (user.role && (user.role.type === 'admin' || user.role.name === 'Admin')) || user.email === 'mantasha@wordscloud.in';
+      const isAdmin = user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
       
       if (!isAdmin) {
         return ctx.forbidden('Admin access required');

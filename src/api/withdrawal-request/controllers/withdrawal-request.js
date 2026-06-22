@@ -737,7 +737,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Check if user is an admin or has special access
       const { role, email } = ctx.state.user;
-      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      const hasAdminAccess = role && (role.type === 'admin' || role.type === 'super_admin');
 
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
@@ -851,7 +851,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Check if user is an admin or has special access
       const { role, email } = ctx.state.user;
-      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      const hasAdminAccess = role && (role.type === 'admin' || role.type === 'super_admin');
 
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
@@ -973,7 +973,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
 
       const { role, email } = ctx.state.user;
-      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      const hasAdminAccess = role && (role.type === 'admin' || role.type === 'super_admin');
 
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
