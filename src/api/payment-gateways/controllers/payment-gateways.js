@@ -76,15 +76,24 @@ module.exports = {
    */
   async calculateFees(ctx) {
     try {
-      const { amount, paymentMethod, currency = 'USD' } = ctx.request.body;
+      const { amount, paymentMethod, currency = 'USD' } = ctx.request.body || {};
 
-      // Validate input
-      if (!amount || !paymentMethod) {
+      // Validate input. PUBLIC endpoint — bound the amount + validate the
+      // gateway name enum so a malformed request can't trigger pathological
+      // computation (Infinity / NaN propagation) or make the SPA process
+      // negative fees. Each gateway lookup may also hit the external
+      // exchange-rate API; recommend per-IP rate limiting at the
+      // middleware layer to bound outbound API spend.
+      if (!amount || typeof paymentMethod !== 'string' || paymentMethod.length === 0 || paymentMethod.length > 32) {
         return ctx.badRequest('Amount and payment method are required');
+      }
+      const VALID_METHODS = new Set(['stripe', 'paypal', 'razorpay', 'phonepe', 'bank_transfer']);
+      if (!VALID_METHODS.has(paymentMethod.toLowerCase())) {
+        return ctx.badRequest('Invalid payment method');
       }
 
       const parsedAmount = parseFloat(amount);
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || parsedAmount > 1_000_000) {
         return ctx.badRequest('Invalid amount');
       }
 
@@ -206,26 +215,21 @@ module.exports = {
    * Update payment gateway settings (admin only)
    */
   async updateSettings(ctx) {
-    try {
-      const { gateway, settings } = ctx.request.body;
-
-      if (!gateway || !settings) {
-        return ctx.badRequest('Gateway and settings are required');
-      }
-
-      // In a real implementation, you would save these settings to a database
-      // For now, we'll just return success
-      console.log(`[PAYMENT GATEWAYS] Updating settings for ${gateway}:`, settings);
-
-      ctx.send({
-        message: `Settings updated for ${gateway}`,
-        gateway,
-        settings
-      });
-
-    } catch (error) {
-      console.error('[PAYMENT GATEWAYS] Error updating settings:', error);
-      return ctx.internalServerError('Failed to update payment gateway settings');
-    }
+    // The pre-fix handler was a stub that simply console.log'd the body
+    // and returned `Settings updated for ${gateway}` regardless — leading
+    // a future admin UI to believe a write happened when nothing was
+    // persisted. Real settings live in env vars (STRIPE_ENABLED,
+    // PAYPAL_FEE_PERCENTAGE, USD_TO_INR_RATE, etc.) and changes require
+    // a deploy. Returning 501 Not Implemented so any caller surfaces the
+    // gap clearly instead of silently succeeding.
+    strapi.log?.warn?.(
+      `[payment-gateways] updateSettings called by user=${ctx.state?.user?.id ?? 'anon'} ip=${ctx.request.ip} — stub endpoint, no persistence`
+    );
+    ctx.status = 501;
+    ctx.body = {
+      error: 'not_implemented',
+      message: 'Payment-gateway settings are managed via environment variables. Update via deploy, not via API.',
+    };
+    return;
   }
 };
