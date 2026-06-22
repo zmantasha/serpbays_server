@@ -465,59 +465,80 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   // Regression test: `scripts/test-pending-tx-route-removed.js`.
 
   // Get transaction status
+  // Public payment-status check — used by the gateway redirect-back flow
+  // (Razorpay / Stripe / PayPal land back at the SPA before the user's
+  // session has finished hydrating; the SPA polls this endpoint with the
+  // gateway-issued payment-intent ID to learn the outcome).
+  //
+  // SECURITY (pre-fix → post-fix):
+  //   - Pre-fix accepted EITHER the gateway transaction id OR the internal
+  //     numeric transaction id, with no auth. Anonymous attackers could
+  //     iterate /transactions/status/<sequential-int> and harvest every
+  //     transaction's type / amount / status + invoice id + invoice
+  //     PDF URL. Confirmed exploitable on staging at id=85 → returned
+  //     {"amount":100,"transactionStatus":"success",...}.
+  //
+  // Post-fix:
+  //   - Only accept gateway-issued IDs. Gateway IDs are ≥ 14 chars of
+  //     unguessable base62/hex (~80+ bits entropy: Razorpay pay_*, Stripe
+  //     pi_*, PayPal PAYID-*). A purely numeric id is rejected outright —
+  //     killing the enumeration vector. No `where: { id }` fallback.
+  //   - Response is narrowed to { transactionStatus, gatewayTransactionId }
+  //     so even a leaked gateway id cannot disclose amount / type /
+  //     invoice URL.
   async getTransactionStatus(ctx) {
     try {
       const { id } = ctx.params;
-
-      // First try to find by gateway transaction ID (payment intent ID)
-      let transaction = await strapi.db.query('api::transaction.transaction').findOne({
-        where: { gatewayTransactionId: id },
-        populate: ['user_wallet', 'invoice']
-      });
-
-      if (!transaction) {
-        // If not found, try to find by internal transaction ID
-        transaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: { id },
-          populate: ['user_wallet', 'invoice']
-        });
+      if (typeof id !== 'string' || id.length === 0) {
+        return ctx.notFound('Transaction not found');
+      }
+      // Reject purely-numeric ids — that's the internal-id-IDOR path.
+      // Gateway IDs always contain at least one non-digit character.
+      if (/^\d+$/.test(id)) {
+        return ctx.notFound('Transaction not found');
+      }
+      // Defensive: bound the length so a 50 MB body can't be passed via
+      // path-param-smuggling proxies.
+      if (id.length > 256) {
+        return ctx.notFound('Transaction not found');
       }
 
-      if (!transaction) {
-        // If still not found, check Stripe directly
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: id },
+        select: ['id', 'gatewayTransactionId', 'transactionStatus'],
+      });
+
+      if (transaction) {
+        return {
+          data: {
+            transactionStatus: transaction.transactionStatus,
+            gatewayTransactionId: transaction.gatewayTransactionId,
+          },
+        };
+      }
+
+      // Fall back to Stripe direct lookup only when the id looks like a
+      // Stripe payment intent (`pi_*`). This prevents anonymous callers
+      // from probing the Stripe account with arbitrary strings.
+      if (/^pi_[a-zA-Z0-9_]+$/.test(id)) {
         try {
           const paymentIntent = await stripe.paymentIntents.retrieve(id);
           return {
             data: {
               transactionStatus: paymentIntent.status === 'succeeded' ? 'success' :
                 paymentIntent.status === 'processing' ? 'pending' : 'failed',
-              description: `Payment ${paymentIntent.status}`,
-              stripeStatus: paymentIntent.status
-            }
+              gatewayTransactionId: id,
+            },
           };
         } catch (stripeError) {
-          console.error('Error checking Stripe payment intent:', stripeError);
+          strapi.log?.error?.('[transaction] stripe lookup failed', { error: stripeError.message });
           return ctx.notFound('Transaction not found');
         }
       }
 
-      return {
-        data: {
-          id: transaction.id,
-          type: transaction.type,
-          amount: transaction.amount,
-          currency: transaction.currency,
-          transactionStatus: transaction.transactionStatus,
-          description: transaction.description,
-          invoice: transaction.invoice ? {
-            id: transaction.invoice.id,
-            invoiceNumber: transaction.invoice.invoiceNumber,
-            pdfUrl: transaction.invoice.pdfUrl
-          } : null
-        }
-      };
+      return ctx.notFound('Transaction not found');
     } catch (error) {
-      console.error('Error getting transaction status:', error);
+      strapi.log?.error?.('[transaction] getTransactionStatus failed', { error: error.message });
       return ctx.badRequest('Failed to get transaction status');
     }
   },

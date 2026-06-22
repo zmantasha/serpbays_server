@@ -135,7 +135,140 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     return JSON.stringify([]);
   };
 
+  // ===== Default core-router overrides — CRITICAL gating ============
+  //
+  // routes/order.js declares createCoreRouter('api::order.order', ...),
+  // which registers GET /api/orders, GET /api/orders/:id, PUT /api/orders/:id,
+  // and DELETE /api/orders/:id. The `Authenticated` role has find / findOne /
+  // update / delete grants on this content type. Without overrides in the
+  // controller, the default Strapi core controllers would be used — they
+  // apply NO row-level ownership filter, so any logged-in user could:
+  //   - GET /api/orders → list every order on the platform
+  //   - GET /api/orders/:N → read any order
+  //   - PUT /api/orders/:N → mutate ANY field on any order (orderStatus,
+  //     escrowHeld, websitePublisherPrice snapshot, etc.) — direct wallet /
+  //     payout manipulation
+  //   - DELETE /api/orders/:N → delete any order
+  //
+  // The handlers below replace those defaults with explicit gating:
+  //   - find / findOne use the same allow-list / snapshot-strip / IDOR
+  //     filter as getMyOrders (which is the supported listing endpoint).
+  //   - update is forbidden via the default route — every legitimate state
+  //     transition has its own scoped endpoint (POST /orders/:id/accept,
+  //     /reject, /deliver, /complete, /dispute, /cancel, /finalize,
+  //     /request-revision, /start-revision, /complete-revision). Force
+  //     callers through those gates.
+  //   - delete is forbidden outright; an order is a financial audit record.
+  function buildOrderOwnershipFilter(user) {
+    if (!user || typeof user.id !== 'number') return null;
+    const clauses = [
+      { advertiser: user.id },
+      { publisher: user.id },
+    ];
+    if (user.email) clauses.push({ websitePublisherEmail: user.email });
+    return { $or: clauses };
+  }
+
   return {
+    async find(ctx) {
+      if (!ctx.state.user) {
+        return ctx.unauthorized('You must be logged in to list orders');
+      }
+      const ownership = buildOrderOwnershipFilter(ctx.state.user);
+      if (!ownership) return ctx.unauthorized();
+      const userFilters = ctx.query?.filters;
+      ctx.query = {
+        ...ctx.query,
+        filters: userFilters ? { $and: [userFilters, ownership] } : ownership,
+        populate: {
+          website: { fields: WEBSITE_PUBLIC_FIELDS },
+          advertiser: { fields: ['id', 'username'] },
+          publisher:  { fields: ['id', 'username'] },
+        },
+      };
+      const ps = Number.parseInt(ctx.query?.pagination?.pageSize, 10);
+      if (Number.isFinite(ps) && ps > 100) {
+        ctx.query.pagination = { ...ctx.query.pagination, pageSize: 100 };
+      }
+      const result = await super.find(ctx);
+      // Strip snapshot publisher fields per row for non-publishers.
+      const rows = result?.data;
+      if (Array.isArray(rows)) {
+        for (const row of rows) {
+          const attrs = row?.attributes || row;
+          if (!isCallerPublisherOfOrder(attrs, ctx.state.user)) {
+            for (const k of ORDER_SNAPSHOT_PUBLISHER_PRIVATE) {
+              if (attrs && k in attrs) delete attrs[k];
+            }
+          }
+        }
+      }
+      return result;
+    },
+
+    async findOne(ctx) {
+      if (!ctx.state.user) {
+        return ctx.unauthorized('You must be logged in to view this order');
+      }
+      const { id } = ctx.params;
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        return ctx.notFound('Order not found');
+      }
+      const order = await strapi.entityService.findOne('api::order.order', numericId, {
+        fields: [
+          'id', 'documentId', 'orderStatus', 'websiteUrl',
+          'placementSpeed', 'orderDate', 'assignedDate', 'deliveredDate',
+          'completedDate', 'totalPrice', 'platformFee',
+          'createdAt', 'updatedAt', 'publishedAt',
+          'websitePublisherEmail', 'websitePublisherName', 'websitePublisherPrice',
+        ],
+        populate: {
+          website: { fields: WEBSITE_PUBLIC_FIELDS },
+          advertiser: { fields: ['id', 'username'] },
+          publisher:  { fields: ['id', 'username'] },
+        },
+      });
+      if (!order) return ctx.notFound('Order not found');
+      const isAdvertiser = order.advertiser?.id === ctx.state.user.id;
+      const isPublisherFK = order.publisher?.id === ctx.state.user.id;
+      const isSnapshotPublisher = !order.publisher?.id
+        && order.websitePublisherEmail
+        && ctx.state.user.email
+        && order.websitePublisherEmail === ctx.state.user.email;
+      if (!isAdvertiser && !isPublisherFK && !isSnapshotPublisher) {
+        // 404 not 403 — defeat order-id enumeration.
+        return ctx.notFound('Order not found');
+      }
+      // Strip snapshot publisher fields when the caller is NOT the publisher.
+      const safe = { ...order };
+      if (!isPublisherFK && !isSnapshotPublisher) {
+        for (const k of ORDER_SNAPSHOT_PUBLISHER_PRIVATE) {
+          if (k in safe) delete safe[k];
+        }
+      }
+      return { data: safe };
+    },
+
+    async update(ctx) {
+      // Every legitimate state transition has its own scoped endpoint
+      // (accept / reject / deliver / complete / dispute / cancel /
+      // finalize / *-revision). The default PUT /api/orders/:id route
+      // would let a caller stamp ANY field (orderStatus → completed
+      // triggers wallet release; escrowHeld; websitePublisherPrice
+      // snapshot → publisher payout; ...). Disable it.
+      return ctx.forbidden(
+        'Direct order updates are not allowed. Use the specific action endpoints (accept, deliver, complete, cancel, etc.).'
+      );
+    },
+
+    async delete(ctx) {
+      // Orders are a financial / audit record. They are never deleted
+      // by users; cancellation is a state transition handled via
+      // POST /orders/:id/cancel.
+      return ctx.forbidden('Orders cannot be deleted; use /orders/:id/cancel');
+    },
+
     // Custom create method to handle order creation with content
     async create(ctx) {
       try {

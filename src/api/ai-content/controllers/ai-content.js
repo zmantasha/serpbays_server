@@ -130,7 +130,7 @@ module.exports = {
             });
         } catch (error) {
             strapi.log.error('[AI CONTENT] Generation error:', error);
-            return ctx.internalServerError(error.message || 'Failed to generate AI content');
+            return ctx.internalServerError('Failed to generate AI content');
         }
     },
 
@@ -152,7 +152,7 @@ module.exports = {
             return ctx.send({ success: true, ...meta });
         } catch (error) {
             strapi.log.error('[AI CONTENT] Meta generation error:', error);
-            return ctx.internalServerError(error.message || 'Failed to generate meta fields');
+            return ctx.internalServerError('Failed to generate meta fields');
         }
     },
 
