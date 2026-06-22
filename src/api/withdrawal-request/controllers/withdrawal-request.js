@@ -18,7 +18,130 @@ function safeCompareOtp(stored, provided) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// ===== Field-exposure controls =====
+//
+// privateAttributes in schema.json covers: payment_notes, denial_reason,
+// external_transaction_id, payment_reference. But it does NOT cover:
+//   - admin_notes (internal admin commentary)
+//   - details (JSON: bank account / PayPal / Payoneer destination data)
+//   - publisher (populated → full up_users row leak: password hash,
+//     withdrawalOtp/Amount/Attempts, paypal_email, billing PII, ...)
+// We allow-list explicitly here so the default-find / findOne responses
+// (and any future overrides) can never auto-leak those fields.
+const WITHDRAWAL_USER_FIELDS = [
+  'id', 'documentId',
+  'amount', 'method', 'withdrawal_status',
+  // 'details' intentionally OMITTED at the listing level — it contains
+  // payout destination data (bank #, PayPal email, ...). Surfaced only
+  // on the owner's getMyWithdrawals/sub-resource flows.
+  'createdAt', 'updatedAt', 'publishedAt',
+  'approved_at', 'paid_at', 'rejected_at',
+];
+
+function isWithdrawalOwner(record, user) {
+  if (!record || !user || typeof user.id !== 'number') return false;
+  return record.publisher?.id === user.id;
+}
+
+function isAdminUser(user) {
+  if (!user) return false;
+  // Defense-in-depth: handler-level admin gate uses role.type. Magic-string
+  // email backdoor in the codebase is being phased out — do not honor it
+  // here. Role check only.
+  return user.role && user.role.type === 'admin';
+}
+
 module.exports = createCoreController('api::withdrawal-request.withdrawal-request', ({ strapi }) => ({
+
+  // ===== Default-route overrides — close the Authenticated-role IDOR =====
+  //
+  // routes/withdrawal-request.js declares createCoreRouter (except: ['create']).
+  // That registers GET /api/withdrawal-requests, GET /:id, PUT /:id, DELETE /:id.
+  // The Authenticated role has find / findOne / update / delete on this
+  // content type. With NO controller overrides, any logged-in user could:
+  //   - GET /api/withdrawal-requests → list every withdrawal on the
+  //     platform (amount, method, status, full payout destination JSON,
+  //     publisher PII, admin_notes).
+  //   - GET /api/withdrawal-requests/:N → read any withdrawal.
+  //   - PUT /api/withdrawal-requests/:N → mutate fields not protected by
+  //     the wave-4 status-transition lifecycle (details / admin_notes /
+  //     payment_reference / external_transaction_id).
+  //   - DELETE /api/withdrawal-requests/:N → delete any withdrawal.
+  // Sensitive operations (approve/deny/mark-paid) DO have an in-handler
+  // role.type==='admin' gate already, so they are not exposed by this gap.
+
+  async find(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to list withdrawal requests');
+    }
+    // Admins → trust their query (still subject to default scoping; admin
+    // UI is the intended consumer).
+    if (isAdminUser(ctx.state.user)) {
+      return super.find(ctx);
+    }
+    // Publishers → restrict to their own rows.
+    const userFilters = ctx.query?.filters;
+    const ownership = { publisher: ctx.state.user.id };
+    ctx.query = {
+      ...ctx.query,
+      filters: userFilters ? { $and: [userFilters, ownership] } : ownership,
+      fields: WITHDRAWAL_USER_FIELDS,
+      populate: undefined,
+    };
+    return super.find(ctx);
+  },
+
+  async findOne(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to view this withdrawal request');
+    }
+    const { id } = ctx.params;
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Withdrawal request not found');
+    }
+    const record = await strapi.db.query('api::withdrawal-request.withdrawal-request').findOne({
+      where: { id: numericId },
+      populate: { publisher: { select: ['id'] } },
+    });
+    if (!record) return ctx.notFound('Withdrawal request not found');
+    if (!isAdminUser(ctx.state.user) && !isWithdrawalOwner(record, ctx.state.user)) {
+      // 404 not 403 — defeat withdrawal-id enumeration.
+      return ctx.notFound('Withdrawal request not found');
+    }
+    // Build the response from the allow-list. Admins also get the
+    // user-safe shape via the same route; admin UI uses dedicated
+    // /admin/withdrawals endpoints for the full record.
+    const safe = {};
+    for (const k of WITHDRAWAL_USER_FIELDS) {
+      if (record[k] !== undefined) safe[k] = record[k];
+    }
+    // Owner is allowed to see their own `details` (their own bank/paypal data).
+    if (isWithdrawalOwner(record, ctx.state.user) && record.details !== undefined) {
+      safe.details = record.details;
+    }
+    return { data: safe };
+  },
+
+  async update(ctx) {
+    // All legitimate updates flow through the explicit admin endpoints:
+    //   POST /admin/withdrawal-requests/:id/approve
+    //   POST /admin/withdrawal-requests/:id/deny
+    //   POST /admin/withdrawal-requests/:id/mark-as-paid
+    // Each has an in-handler admin role gate + wave-4 status guard.
+    // Disable the default PUT /api/withdrawal-requests/:id route — it
+    // bypasses status-transition rules for non-status fields (admin_notes,
+    // details, payment_reference) and there is no legitimate user-facing
+    // use case.
+    return ctx.forbidden(
+      'Direct withdrawal updates are not allowed. Use the specific admin action endpoints.'
+    );
+  },
+
+  async delete(ctx) {
+    // Withdrawals are a financial audit record. Never deleted by users.
+    return ctx.forbidden('Withdrawal requests cannot be deleted');
+  },
 
   // Send OTP for withdrawal verification
   async sendWithdrawalOtp(ctx) {

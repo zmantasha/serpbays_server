@@ -6,8 +6,89 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// ===== Default core-router gating =====
+//
+// routes/chatroom.js uses createCoreRouter('api::chatroom.chatroom') with
+// no config override. That registers GET /api/chatrooms, /:id and PUT /:id.
+// The Authenticated role has find / findOne / update on this content type.
+// Without controller overrides, any logged-in user could:
+//   - GET /api/chatrooms → list every chat thread on the platform
+//     (advertiser/publisher relations populated = up_users PII leak)
+//   - GET /api/chatrooms/:N → read any chatroom metadata
+//   - PUT /api/chatrooms/:N → reassign / close / archive any chatroom
+const CHATROOM_PUBLIC_FIELDS = [
+  'id', 'documentId', 'status', 'lastActivity',
+  'createdAt', 'updatedAt', 'publishedAt',
+];
+const CHATROOM_USER_FIELDS = ['id', 'username'];
+
+function buildChatroomOwnership(user) {
+  if (!user || typeof user.id !== 'number') return null;
+  return {
+    $or: [
+      { advertiser: user.id },
+      { publisher: user.id },
+    ],
+  };
+}
+
 module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => ({
-  
+
+  async find(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to list chatrooms');
+    }
+    const ownership = buildChatroomOwnership(ctx.state.user);
+    if (!ownership) return ctx.unauthorized();
+    const userFilters = ctx.query?.filters;
+    ctx.query = {
+      ...ctx.query,
+      filters: userFilters ? { $and: [userFilters, ownership] } : ownership,
+      fields: CHATROOM_PUBLIC_FIELDS,
+      populate: {
+        advertiser: { fields: CHATROOM_USER_FIELDS },
+        publisher:  { fields: CHATROOM_USER_FIELDS },
+      },
+    };
+    return super.find(ctx);
+  },
+
+  async findOne(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to view this chatroom');
+    }
+    const { id } = ctx.params;
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Chatroom not found');
+    }
+    const record = await strapi.db.query('api::chatroom.chatroom').findOne({
+      where: { id: numericId },
+      populate: {
+        advertiser: { select: ['id'] },
+        publisher:  { select: ['id'] },
+      },
+    });
+    if (!record) return ctx.notFound('Chatroom not found');
+    const isParty = record.advertiser?.id === ctx.state.user.id
+                 || record.publisher?.id === ctx.state.user.id;
+    if (!isParty) return ctx.notFound('Chatroom not found');
+    const safe = {};
+    for (const k of CHATROOM_PUBLIC_FIELDS) {
+      if (record[k] !== undefined) safe[k] = record[k];
+    }
+    return { data: safe };
+  },
+
+  async update(ctx) {
+    // Legitimate chatroom mutations flow through PUT /chatrooms/:id/status
+    // and POST /chatrooms/order/:orderId/mark-read. Disable the default
+    // PUT /api/chatrooms/:id route.
+    return ctx.forbidden(
+      'Direct chatroom updates are not allowed. Use the specific action endpoints.'
+    );
+  },
+
   // Get or create chatroom for an order
   async getOrCreateChatroom(ctx) {
     const { orderId } = ctx.params;
