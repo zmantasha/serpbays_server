@@ -657,29 +657,46 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       if (error.message && error.message.includes('Duplicate promo redemption')) {
         return ctx.badRequest('You have already used this promo code');
       }
-      return ctx.badRequest(error.message || 'Failed to redeem code');
+      strapi.log?.error?.('[promo] redeemPromo failed', { error: error.message });
+      return ctx.badRequest('Failed to redeem code');
     }
   },
 
   // Check promo code or voucher code validity
+  // POST /api/wallet/check-promo — validate code WITHOUT consuming it.
+  // Audit notes:
+  //   - Pre-fix had no in-handler auth check. The route declares
+  //     `auth:{}` (empty), which Strapi treats as "any auth strategy
+  //     accepted but no specific permission required" — semantics shift
+  //     across Strapi versions. We add an explicit unauthorized() guard
+  //     so anonymous callers cannot brute-force codes regardless of
+  //     route-config interpretation.
+  //   - Length-cap the code to defeat pathological inputs.
+  //   - The response still returns the bonus `amount` on valid hits —
+  //     end users need it to make an informed redemption decision. Brute-
+  //     force risk is reduced by requiring authentication (attackers are
+  //     traceable to an account) but not eliminated — recommend per-IP +
+  //     per-user rate limit middleware as ops follow-up.
+  //   - `error.message` no longer echoed; server-side log only.
   async checkPromoCode(ctx) {
     try {
-      const { promoCode } = ctx.request.body;
-      if (!promoCode) {
+      const userId = ctx.state?.user?.id;
+      if (!userId) {
+        return ctx.unauthorized('Authentication required');
+      }
+      const { promoCode } = ctx.request.body || {};
+      if (typeof promoCode !== 'string' || promoCode.length === 0 || promoCode.length > 64) {
         return ctx.badRequest('Promo code is required');
       }
 
       let codeData = null;
       let codeType = 'promo';
 
-      // First, try to find a promo code
       const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
         where: {
           code: promoCode,
           promoStatus: 'active',
-          expiryDate: {
-            $gt: new Date()
-          }
+          expiryDate: { $gt: new Date() }
         }
       });
 
@@ -687,17 +704,13 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         codeData = promo;
         codeType = 'promo';
       } else {
-        // If not a promo code, try to find a voucher code
         const voucher = await strapi.db.query('api::voucher-code.voucher-code').findOne({
           where: {
             code: promoCode,
             voucherStatus: 'active',
-            expiryDate: {
-              $gt: new Date()
-            }
+            expiryDate: { $gt: new Date() }
           }
         });
-
         if (voucher) {
           codeData = voucher;
           codeType = 'voucher';
@@ -711,14 +724,14 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       return {
         data: {
           valid: true,
-          codeType: codeType,
+          codeType,
           amount: codeData.amount,
-          expiryDate: codeData.expiryDate
-        }
+          expiryDate: codeData.expiryDate,
+        },
       };
     } catch (error) {
-      console.error('Promo/Voucher code check error:', error);
-      return ctx.badRequest(error.message || 'Failed to check code');
+      strapi.log?.error?.('[promo] checkPromoCode failed', { error: error.message });
+      return ctx.badRequest('Failed to check code');
     }
   },
 
