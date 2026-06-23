@@ -1,5 +1,10 @@
 module.exports = [
   'strapi::errors',
+  // Response compression (gzip / brotli). Strapi 5 ships this but it's
+  // opt-in. JSON payloads from /api/marketplace, /api/orders, etc. shrink
+  // 4-8x over the wire — direct page-load latency win on every request.
+  // Placed early in the chain so it wraps everything downstream.
+  'strapi::compression',
   {
     name: 'strapi::security',
     config: {

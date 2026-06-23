@@ -201,9 +201,12 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     try {
       const { templateId, projectName } = ctx.request.body;
       
-      // Get the template
+      // Get the template. Perf-pass-10: was `populate: '*'` which pulls
+      // every relation on the project content type. Only the scalar fields
+      // below are read downstream — no relations need populating for the
+      // template copy. Drops payload size + skips the JOIN cost.
       const template = await strapi.entityService.findOne('api::project.project', templateId, {
-        populate: '*'
+        fields: ['description', 'category', 'contentGuidelines', 'brandVoiceGuidelines', 'template'],
       });
 
       if (!template || !template.template) {

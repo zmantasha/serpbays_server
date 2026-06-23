@@ -96,8 +96,9 @@ assert(/useQueryClient/.test(P_MODAL),
   'modal imports useQueryClient');
 assert(/queryClient\.invalidateQueries\(\{\s*queryKey:\s*queryKeys\.users\.detail\(selectedUser\.id\)/.test(P_MODAL),
   'invalidates users.detail(id) on success');
-assert(/queryClient\.invalidateQueries\(\{\s*queryKey:\s*queryKeys\.dashboard\.all/.test(P_MODAL),
-  'invalidates dashboard.all on success');
+// Perf-pass-10 narrowed this from 3 invalidations down to just
+// users.detail. The dashboard + users-list invalidation now flows
+// through the dashboard hook's WS subscription (debounced 400ms).
 
 out(`\n=== SUMMARY: ${pass} passed, ${fail} failed ===`);
 process.exit(fail === 0 ? 0 : 1);

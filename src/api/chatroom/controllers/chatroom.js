@@ -1216,41 +1216,34 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
 
       const chatroom = message.chatroom;
       
-      // Emit to both advertiser and publisher
+      // Perf-pass-10: was `strapi.io.emit(...)` which broadcasts to EVERY
+      // connected socket. At 1000 sockets that's 1000× wasted bandwidth
+      // per chat message — every socket receives the payload and silently
+      // ignores it because the event name doesn't match their listener.
+      // `emitToUser` routes via Socket.IO rooms (room `user_<id>`), so
+      // only sockets belonging to the target user receive the payload.
+      const messagePayload = {
+        type: 'new_message',
+        chatroomId: chatroom.id,
+        orderId: message.order?.id,
+        message: {
+          id: message.id,
+          content: message.message,
+          sender: {
+            id: message.sender?.id,
+            username: message.sender?.username
+          },
+          createdAt: message.createdAt,
+          isUnread: true
+        }
+      };
+
+      // Emit to both advertiser and publisher via room-based routing
       if (chatroom.advertiser?.id) {
-        strapi.io.emit(`user_${chatroom.advertiser.id}_message`, {
-          type: 'new_message',
-          chatroomId: chatroom.id,
-          orderId: message.order?.id,
-          message: {
-            id: message.id,
-            content: message.message,
-            sender: {
-              id: message.sender?.id,
-              username: message.sender?.username
-            },
-            createdAt: message.createdAt,
-            isUnread: true
-          }
-        });
+        strapi.io.emitToUser(chatroom.advertiser.id, `user_${chatroom.advertiser.id}_message`, messagePayload);
       }
-      
       if (chatroom.publisher?.id) {
-        strapi.io.emit(`user_${chatroom.publisher.id}_message`, {
-          type: 'new_message',
-          chatroomId: chatroom.id,
-          orderId: message.order?.id,
-          message: {
-            id: message.id,
-            content: message.message,
-            sender: {
-              id: message.sender?.id,
-              username: message.sender?.username
-            },
-            createdAt: message.createdAt,
-            isUnread: true
-          }
-        });
+        strapi.io.emitToUser(chatroom.publisher.id, `user_${chatroom.publisher.id}_message`, messagePayload);
       }
     } catch (error) {
       console.error('Error sending WebSocket notification:', error);
