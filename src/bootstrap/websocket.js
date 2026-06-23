@@ -92,6 +92,13 @@ module.exports = ({ strapi }) => {
   // `admins` Socket.IO room so emitToAdmins() reaches every admin tab.
   const connectedAdmins = new Set(); // socket.id strings
 
+  // Publishers join a global `publishers` room so the server can broadcast
+  // newly-created orders that don't yet have an assigned publisher (no
+  // per-user channel to emit on). Publisher status comes from the
+  // user.Publisher boolean — multi-role users with both Advertiser and
+  // Publisher = true land here.
+  const connectedPublishers = new Set();
+
   // Verify JWT token
   const verifyToken = async (token) => {
     try {
@@ -149,11 +156,13 @@ module.exports = ({ strapi }) => {
       // Join user's room — Socket.IO rooms support multi-socket membership.
       socket.join(`user_${userId}`);
 
-      // Admin role check — must come from the DB, not the JWT claim. A
+      // Role detection — must come from the DB, not the JWT claim. A
       // stale JWT issued before a role downgrade would otherwise keep
-      // admin access live. Look up the user with their role and join
-      // the `admins` room if they're an admin or super_admin.
+      // admin access live. Single lookup covers both admin and publisher
+      // gating; the user.Publisher boolean controls marketplace
+      // broadcast eligibility.
       let isAdmin = false;
+      let isPublisher = false;
       try {
         const userWithRole = await strapi.entityService.findOne(
           'plugin::users-permissions.user',
@@ -162,10 +171,15 @@ module.exports = ({ strapi }) => {
         );
         const roleType = userWithRole?.role?.type;
         isAdmin = roleType === 'admin' || roleType === 'super_admin';
+        isPublisher = !!userWithRole?.Publisher;
         if (isAdmin) {
           socket.join('admins');
           connectedAdmins.add(socket.id);
           console.log(`[WS] admin user ${userId} joined 'admins' room (role=${roleType})`);
+        }
+        if (isPublisher) {
+          socket.join('publishers');
+          connectedPublishers.add(socket.id);
         }
       } catch (roleErr) {
         // Non-fatal — admin loses live admin events but their user
@@ -177,6 +191,7 @@ module.exports = ({ strapi }) => {
       socket.on('disconnect', () => {
         untrackUserSocket(userId, socket);
         if (isAdmin) connectedAdmins.delete(socket.id);
+        if (isPublisher) connectedPublishers.delete(socket.id);
       });
 
       // Handle errors
@@ -221,6 +236,15 @@ module.exports = ({ strapi }) => {
   strapi.io.emitToAdmins = (event, data) => {
     io.to('admins').emit(event, data);
     return connectedAdmins.size > 0;
+  };
+
+  // Fan-out to every connected publisher. Used for events that don't
+  // belong to one specific user — primarily new pending orders that
+  // haven't been picked up yet, so the available-orders page on each
+  // publisher's screen can refresh without polling.
+  strapi.io.emitToPublishers = (event, data) => {
+    io.to('publishers').emit(event, data);
+    return connectedPublishers.size > 0;
   };
 
   // Add method to check connected users

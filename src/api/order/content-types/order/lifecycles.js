@@ -30,6 +30,35 @@ module.exports = {
         'created',
         { initialStatus: result.orderStatus || 'pending' }
       );
+
+      // Marketplace broadcast: a brand-new pending order with no publisher
+      // assigned is invisible to per-user channels (no publisher.id to
+      // route to). Without this, every publisher's available-orders page
+      // sits on its `staleTime: 30000` window before they realize a new
+      // job appeared. Broadcasting to the `publishers` room lets each
+      // publisher's client invalidate its `availableOrders` query
+      // immediately. Gated on no publisher relation so we don't fire
+      // for direct-assigned orders (which already hit the publisher
+      // channel via the regular emitOrderUpdate above).
+      try {
+        if (typeof strapi.io?.emitToPublishers === 'function') {
+          // Reload with the publisher relation so we know whether to fire.
+          const fresh = await strapi.entityService.findOne('api::order.order', result.id, {
+            populate: ['publisher'],
+          });
+          if (fresh && !fresh.publisher?.id) {
+            strapi.io.emitToPublishers('order:created_for_marketplace', {
+              type: 'order:created_for_marketplace',
+              orderId: fresh.id,
+              websiteUrl: fresh.websiteUrl || null,
+              totalAmount: fresh.totalAmount != null ? Number(fresh.totalAmount) : null,
+              occurredAt: new Date().toISOString(),
+            });
+          }
+        }
+      } catch (broadcastErr) {
+        strapi.log?.warn?.(`[Order lifecycle] marketplace broadcast failed (non-fatal): ${broadcastErr.message}`);
+      }
     } catch (err) {
       strapi.log?.warn?.(`[Order lifecycle] afterCreate emit failed (non-fatal): ${err.message}`);
     }
