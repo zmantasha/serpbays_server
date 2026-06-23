@@ -79,6 +79,15 @@ module.exports = createCoreService('api::user-wallet.user-wallet', ({ strapi }) 
       };
 
       strapi.io.emitToUser(uid, 'wallet:balance_updated', payload);
+
+      // Fan out to panel20. Admins see live wallet movements across the
+      // entire user base; the payload carries userId so the admin client
+      // can route per-user invalidation. Per-admin seq is NOT meaningful
+      // here (different users → different counters), so the client
+      // dedups by (userId, seq) instead of seq alone.
+      if (typeof strapi.io.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:wallet_event', payload);
+      }
       return true;
     } catch (err) {
       strapi.log?.error?.('[wallet:emit] failed', { error: err.message, userId, reason });

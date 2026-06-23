@@ -41,6 +41,13 @@ module.exports = ({ strapi }) => {
     if (set.size === 0) connectedUsers.delete(uid);
   };
 
+  // Track admin sockets separately for fan-out + introspection. Whether
+  // a user is an admin is decided at connect-time by loading their role
+  // from the DB (the JWT claim alone is untrusted — role.type can change
+  // without re-issuing the token). Admins additionally join the global
+  // `admins` Socket.IO room so emitToAdmins() reaches every admin tab.
+  const connectedAdmins = new Set(); // socket.id strings
+
   // Verify JWT token
   const verifyToken = async (token) => {
     try {
@@ -98,9 +105,34 @@ module.exports = ({ strapi }) => {
       // Join user's room — Socket.IO rooms support multi-socket membership.
       socket.join(`user_${userId}`);
 
+      // Admin role check — must come from the DB, not the JWT claim. A
+      // stale JWT issued before a role downgrade would otherwise keep
+      // admin access live. Look up the user with their role and join
+      // the `admins` room if they're an admin or super_admin.
+      let isAdmin = false;
+      try {
+        const userWithRole = await strapi.entityService.findOne(
+          'plugin::users-permissions.user',
+          decoded.id,
+          { populate: ['role'] }
+        );
+        const roleType = userWithRole?.role?.type;
+        isAdmin = roleType === 'admin' || roleType === 'super_admin';
+        if (isAdmin) {
+          socket.join('admins');
+          connectedAdmins.add(socket.id);
+          console.log(`[WS] admin user ${userId} joined 'admins' room (role=${roleType})`);
+        }
+      } catch (roleErr) {
+        // Non-fatal — admin loses live admin events but their user
+        // channel still works. Logged for ops.
+        console.warn(`[WS] role lookup failed for user ${userId}: ${roleErr.message}`);
+      }
+
       // Handle disconnection
       socket.on('disconnect', () => {
         untrackUserSocket(userId, socket);
+        if (isAdmin) connectedAdmins.delete(socket.id);
       });
 
       // Handle errors
@@ -136,6 +168,17 @@ module.exports = ({ strapi }) => {
     return connectedUsers.has(uid);
   };
 
+  // Fan-out to every connected admin socket. Used by the emit helpers
+  // (wallet, order, withdrawal, bank-transfer) to give panel20 a live
+  // feed of every user's events without subscribing per-user. Admin-room
+  // membership is decided at handshake-time via DB role lookup, not the
+  // JWT claim, so a stale token from before a role downgrade cannot
+  // sneak into the room.
+  strapi.io.emitToAdmins = (event, data) => {
+    io.to('admins').emit(event, data);
+    return connectedAdmins.size > 0;
+  };
+
   // Add method to check connected users
   strapi.io.getConnectedUsers = () => {
     return Array.from(connectedUsers.keys());
@@ -145,6 +188,8 @@ module.exports = ({ strapi }) => {
     const set = connectedUsers.get(parseInt(userId));
     return set ? set.size : 0;
   };
+
+  strapi.io.adminSocketCount = () => connectedAdmins.size;
 
   // Log setup completion
   console.log('WebSocket server initialized successfully');

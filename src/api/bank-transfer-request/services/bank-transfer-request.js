@@ -55,6 +55,16 @@ module.exports = createCoreService('api::bank-transfer-request.bank-transfer-req
       };
 
       strapi.io.emitToUser(targetUserId, 'bank_transfer:status_changed', payload);
+
+      // Fan out to panel20 — admins triage offline deposits from a
+      // shared queue. userId surfaces in the payload for per-user
+      // routing in the admin UI.
+      if (typeof strapi.io.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:bank_transfer_event', {
+          ...payload,
+          userId: targetUserId,
+        });
+      }
     } catch (err) {
       strapi.log?.warn?.(`[BankTransfer] emitBankTransferStatusChanged failed (non-fatal): ${err.message}`);
     }

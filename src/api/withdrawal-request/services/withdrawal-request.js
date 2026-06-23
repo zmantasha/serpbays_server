@@ -57,6 +57,17 @@ module.exports = createCoreService('api::withdrawal-request.withdrawal-request',
       };
 
       strapi.io.emitToUser(publisherId, 'withdrawal:status_changed', payload);
+
+      // Fan out to panel20. Admin needs to see new withdrawal requests
+      // pop into their queue and watch status flips live as other admins
+      // approve / deny / mark-paid. Payload includes publisherId so the
+      // admin client can label which user the request belongs to.
+      if (typeof strapi.io.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:withdrawal_event', {
+          ...payload,
+          publisherId,
+        });
+      }
     } catch (err) {
       strapi.log?.warn?.(`[Withdrawal] emitWithdrawalStatusChanged failed (non-fatal): ${err.message}`);
     }

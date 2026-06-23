@@ -1228,6 +1228,18 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         }));
       }
       await Promise.all(emits);
+
+      // Fan out to panel20. One emit per order transition (not one per
+      // party) — the admin orders list shows the row regardless of
+      // perspective. Includes both party ids so the admin client can
+      // filter by user when relevant.
+      if (typeof strapi.io.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:order_event', {
+          ...basePayload,
+          advertiserId,
+          publisherId,
+        });
+      }
     } catch (err) {
       strapi.log?.warn?.(`[Order] emitOrderUpdate failed (non-fatal): ${err.message}`);
     }
