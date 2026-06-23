@@ -7,6 +7,19 @@
 const { createCoreService } = require('@strapi/strapi').factories;
 const { getPublisherCommissionRate } = require('../../../constants/commission');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-user monotonic seq for order:status_changed pushes. Mirrors the wallet
+// emit pattern so the client can drop out-of-order events that arrive after
+// a fresher one (reconnect storms, multi-tab races).
+// ─────────────────────────────────────────────────────────────────────────────
+const orderSeqByUser = new Map();
+const nextOrderSeq = (userId) => {
+  const k = Number.parseInt(userId, 10);
+  const cur = (orderSeqByUser.get(k) || 0) + 1;
+  orderSeqByUser.set(k, cur);
+  return cur;
+};
+
 module.exports = createCoreService('api::order.order', ({ strapi }) => ({
   // Extend the default create method to handle escrow
   async create(data, user) {
@@ -1152,6 +1165,71 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       );
     } catch (e) {
       console.error("Failed to create notification for advertiser", e);
+    }
+  },
+
+  /**
+   * Real-time push: emit `order:status_changed` on BOTH parties' channels so
+   * advertiser AND publisher dashboards re-render without polling.
+   *
+   * Best-effort: a WS failure logs a warning but never breaks the underlying
+   * status change. Per-user monotonic seq numbers let the client drop
+   * out-of-order events.
+   *
+   * @param {object|number} orderOrId — order entity (preferred — saves a DB
+   *   roundtrip) or the order id.
+   * @param {string} reason — terse machine tag (e.g. 'accepted', 'delivered',
+   *   'completed', 'rejected', 'cancelled', 'disputed', 'revision_requested').
+   * @param {object} meta — small payload of context (cancelledBy, deliveryUrl,
+   *   etc.). Don't put PII here — it's logged by clients.
+   */
+  async emitOrderUpdate(orderOrId, reason, meta = {}) {
+    try {
+      if (!strapi.io || typeof strapi.io.emitToUser !== 'function') return;
+
+      // Resolve the order with both parties + the populate the UI cares about.
+      const id = typeof orderOrId === 'object' ? orderOrId.id : orderOrId;
+      if (!id) return;
+      const order = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher'],
+      });
+      if (!order) return;
+
+      const advertiserId = order.advertiser?.id || null;
+      const publisherId = order.publisher?.id || null;
+      const occurredAt = new Date().toISOString();
+
+      const basePayload = {
+        type: 'order:status_changed',
+        orderId: order.id,
+        status: order.orderStatus,
+        reason,
+        websiteUrl: order.websiteUrl || null,
+        totalAmount: order.totalAmount != null ? Number(order.totalAmount) : null,
+        deliveredDate: order.deliveredDate || null,
+        acceptedDate: order.acceptedDate || null,
+        occurredAt,
+        meta: meta || {},
+      };
+
+      const emits = [];
+      if (advertiserId) {
+        emits.push(strapi.io.emitToUser(advertiserId, 'order:status_changed', {
+          ...basePayload,
+          side: 'advertiser',
+          seq: nextOrderSeq(advertiserId),
+        }));
+      }
+      if (publisherId) {
+        emits.push(strapi.io.emitToUser(publisherId, 'order:status_changed', {
+          ...basePayload,
+          side: 'publisher',
+          seq: nextOrderSeq(publisherId),
+        }));
+      }
+      await Promise.all(emits);
+    } catch (err) {
+      strapi.log?.warn?.(`[Order] emitOrderUpdate failed (non-fatal): ${err.message}`);
     }
 
     // Email to publisher (if exists) using universal template
