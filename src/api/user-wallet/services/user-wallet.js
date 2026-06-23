@@ -32,16 +32,7 @@
  */
 
 const { createCoreService } = require('@strapi/strapi').factories;
-
-// Per-process sequence counter (Map<userId, lastSeq>). For horizontal scaling
-// with multiple Strapi pods, this should be replaced with a Redis INCR call —
-// see the audit's ops-follow-up section.
-const seqByUser = new Map();
-const nextSeq = (userId) => {
-  const cur = (seqByUser.get(userId) || 0) + 1;
-  seqByUser.set(userId, cur);
-  return cur;
-};
+const seq = require('../../../utils/realtime-seq')('wallet');
 
 module.exports = createCoreService('api::user-wallet.user-wallet', ({ strapi }) => ({
   async emitBalanceUpdate(userId, reason = 'unspecified', meta = {}) {
@@ -75,7 +66,7 @@ module.exports = createCoreService('api::user-wallet.user-wallet', ({ strapi }) 
         balance: { main, promo, escrow, total, pendingWithdrawal },
         occurredAt: new Date().toISOString(),
         meta: meta || {},
-        seq: nextSeq(uid),
+        seq: await seq.next(uid),
       };
 
       strapi.io.emitToUser(uid, 'wallet:balance_updated', payload);

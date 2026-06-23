@@ -55,8 +55,12 @@ assert(/async\s+emitBalanceUpdate\s*\(\s*userId\s*,\s*reason/.test(UW_SVC),
   'emitBalanceUpdate service method defined');
 assert(/strapi\.io\.emitToUser\s*\(\s*uid\s*,\s*['"]wallet:balance_updated['"]/.test(UW_SVC),
   'emits on the wallet:balance_updated channel');
-// Per-user monotonic sequence numbers (so clients drop stale events)
-assert(/seqByUser\s*=\s*new\s+Map\(\)|nextSeq\s*=\s*\(userId\)\s*=>/.test(UW_SVC),
+// Per-user monotonic sequence numbers (so clients drop stale events).
+// Pass 7 centralized seq into utils/realtime-seq so any of these shapes pass:
+//   - legacy in-place Map (pre-pass-7)
+//   - require('.../realtime-seq')('wallet') factory call (post-pass-7)
+//   - seq.next(uid) call site (post-pass-7)
+assert(/seqByUser\s*=\s*new\s+Map\(\)|nextSeq\s*=\s*\(userId\)\s*=>|require\(['"][^'"]*realtime-seq['"]\)\(['"]wallet['"]\)|seq\.next\(\s*uid\s*\)/.test(UW_SVC),
   'per-user monotonic seq numbers (out-of-order safety)');
 // Payload includes balance breakdown
 assert(/balance:\s*\{\s*main,\s*promo,\s*escrow,\s*total,\s*pendingWithdrawal\s*\}/.test(UW_SVC),

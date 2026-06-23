@@ -5,16 +5,7 @@
  */
 
 const { createCoreService } = require('@strapi/strapi').factories;
-
-// Per-user monotonic seq for withdrawal:status_changed pushes. Mirrors the
-// wallet/order emit pattern so the client can drop out-of-order events.
-const withdrawalSeqByUser = new Map();
-const nextWithdrawalSeq = (userId) => {
-  const k = Number.parseInt(userId, 10);
-  const cur = (withdrawalSeqByUser.get(k) || 0) + 1;
-  withdrawalSeqByUser.set(k, cur);
-  return cur;
-};
+const seq = require('../../../utils/realtime-seq')('withdrawal');
 
 module.exports = createCoreService('api::withdrawal-request.withdrawal-request', ({ strapi }) => ({
   /**
@@ -53,7 +44,7 @@ module.exports = createCoreService('api::withdrawal-request.withdrawal-request',
         method: request.method || null,
         occurredAt: new Date().toISOString(),
         meta: meta || {},
-        seq: nextWithdrawalSeq(publisherId),
+        seq: await seq.next(publisherId),
       };
 
       strapi.io.emitToUser(publisherId, 'withdrawal:status_changed', payload);

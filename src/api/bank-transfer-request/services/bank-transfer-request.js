@@ -5,15 +5,7 @@
  */
 
 const { createCoreService } = require('@strapi/strapi').factories;
-
-// Per-user monotonic seq for bank_transfer:status_changed pushes.
-const btrSeqByUser = new Map();
-const nextBtrSeq = (userId) => {
-  const k = Number.parseInt(userId, 10);
-  const cur = (btrSeqByUser.get(k) || 0) + 1;
-  btrSeqByUser.set(k, cur);
-  return cur;
-};
+const seq = require('../../../utils/realtime-seq')('bank_transfer');
 
 module.exports = createCoreService('api::bank-transfer-request.bank-transfer-request', ({ strapi }) => ({
   /**
@@ -51,7 +43,7 @@ module.exports = createCoreService('api::bank-transfer-request.bank-transfer-req
         referenceNumber: request.referenceNumber || null,
         occurredAt: new Date().toISOString(),
         meta: meta || {},
-        seq: nextBtrSeq(targetUserId),
+        seq: await seq.next(targetUserId),
       };
 
       strapi.io.emitToUser(targetUserId, 'bank_transfer:status_changed', payload);

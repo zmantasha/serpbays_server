@@ -6,19 +6,7 @@
 
 const { createCoreService } = require('@strapi/strapi').factories;
 const { getPublisherCommissionRate } = require('../../../constants/commission');
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Per-user monotonic seq for order:status_changed pushes. Mirrors the wallet
-// emit pattern so the client can drop out-of-order events that arrive after
-// a fresher one (reconnect storms, multi-tab races).
-// ─────────────────────────────────────────────────────────────────────────────
-const orderSeqByUser = new Map();
-const nextOrderSeq = (userId) => {
-  const k = Number.parseInt(userId, 10);
-  const cur = (orderSeqByUser.get(k) || 0) + 1;
-  orderSeqByUser.set(k, cur);
-  return cur;
-};
+const seq = require('../../../utils/realtime-seq')('order');
 
 module.exports = createCoreService('api::order.order', ({ strapi }) => ({
   // Extend the default create method to handle escrow
@@ -1214,17 +1202,19 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       const emits = [];
       if (advertiserId) {
+        const advSeq = await seq.next(advertiserId);
         emits.push(strapi.io.emitToUser(advertiserId, 'order:status_changed', {
           ...basePayload,
           side: 'advertiser',
-          seq: nextOrderSeq(advertiserId),
+          seq: advSeq,
         }));
       }
       if (publisherId) {
+        const pubSeq = await seq.next(publisherId);
         emits.push(strapi.io.emitToUser(publisherId, 'order:status_changed', {
           ...basePayload,
           side: 'publisher',
-          seq: nextOrderSeq(publisherId),
+          seq: pubSeq,
         }));
       }
       await Promise.all(emits);

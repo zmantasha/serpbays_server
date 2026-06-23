@@ -66,8 +66,8 @@ const C_PDET  = CLIENT('app/(dashboard)/publisher/order-detail/[id]/page.tsx');
 const C_DASH  = CLIENT('app/(dashboard)/dashboard/page.tsx');
 
 out('\n=== 1) Server: withdrawal-request service + lifecycle ===');
-assert(/withdrawalSeqByUser\s*=\s*new\s+Map\(\)/.test(WR_SVC),
-  'per-user withdrawal seq Map declared');
+assert(/withdrawalSeqByUser\s*=\s*new\s+Map\(\)|require\(['"][^'"]*realtime-seq['"]\)\(['"]withdrawal['"]\)/.test(WR_SVC),
+  'per-user withdrawal seq (Map pre-pass-7, realtime-seq factory post-pass-7)');
 assert(/async\s+emitWithdrawalStatusChanged\s*\(/.test(WR_SVC),
   'emitWithdrawalStatusChanged service method defined');
 assert(/strapi\.io\.emitToUser\(\s*publisherId,\s*['"]withdrawal:status_changed['"]/.test(WR_SVC),
@@ -79,8 +79,8 @@ assert(/state\.statusChanged[\s\S]{0,1500}emitWithdrawalStatusChanged/.test(WR_L
   'afterUpdate emit is gated on state.statusChanged (no spam on note-only edits)');
 
 out('\n=== 2) Server: bank-transfer-request service + lifecycle (NEW) ===');
-assert(/btrSeqByUser\s*=\s*new\s+Map\(\)/.test(BTR_SVC),
-  'per-user bank-transfer seq Map declared');
+assert(/btrSeqByUser\s*=\s*new\s+Map\(\)|require\(['"][^'"]*realtime-seq['"]\)\(['"]bank_transfer['"]\)/.test(BTR_SVC),
+  'per-user bank-transfer seq (Map pre-pass-7, realtime-seq factory post-pass-7)');
 assert(/async\s+emitBankTransferStatusChanged\s*\(/.test(BTR_SVC),
   'emitBankTransferStatusChanged service method defined');
 assert(/strapi\.io\.emitToUser\(\s*targetUserId,\s*['"]bank_transfer:status_changed['"]/.test(BTR_SVC),

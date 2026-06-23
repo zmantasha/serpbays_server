@@ -113,8 +113,10 @@ assert(!/import\s*\{\s*walletBalanceEvents/.test(C_EARN),
   'unused walletBalanceEvents import removed');
 
 out('\n=== 6) Server: order emitOrderUpdate helper + seq ===');
-assert(/orderSeqByUser\s*=\s*new\s+Map\(\)/.test(ORDER_SVC),
-  'per-user order seq Map declared');
+// Pass 7 moved seq into utils/realtime-seq; either the legacy Map or the
+// new factory import qualifies.
+assert(/orderSeqByUser\s*=\s*new\s+Map\(\)|require\(['"][^'"]*realtime-seq['"]\)\(['"]order['"]\)/.test(ORDER_SVC),
+  'per-user order seq (Map pre-pass-7, realtime-seq factory post-pass-7)');
 assert(/async\s+emitOrderUpdate\s*\(\s*orderOrId/.test(ORDER_SVC),
   'emitOrderUpdate service method defined');
 assert(/strapi\.io\.emitToUser\(\s*advertiserId,\s*['"]order:status_changed['"]/.test(ORDER_SVC),
