@@ -401,6 +401,19 @@ module.exports = {
     }
   },
 
+  // Real-time push on creation so any other open tab / device for the
+  // requester sees the new pending request without a refresh.
+  async afterCreate(event) {
+    try {
+      const { result } = event;
+      if (!result?.id) return;
+      await strapi.service('api::withdrawal-request.withdrawal-request')
+        .emitWithdrawalStatusChanged(result, null, { lifecycle: 'afterCreate' });
+    } catch (err) {
+      strapi.log?.warn?.(`[Withdrawal lifecycle] afterCreate emit failed (non-fatal): ${err.message}`);
+    }
+  },
+
   // Lifecycle hook that runs after a withdrawal request is updated.
   async afterUpdate(event) {
     const { result, state } = event;
@@ -421,5 +434,12 @@ module.exports = {
       console.log(`[Lifecycle] Withdrawal request ${result.id} transitioned ${state.previousStatus} → denied - refunding to wallet`);
       await handleDeniedWithdrawal(result);
     }
+
+    // Real-time push to the requester. Best-effort — handler itself
+    // swallows errors, so a WS failure never breaks the status change.
+    try {
+      await strapi.service('api::withdrawal-request.withdrawal-request')
+        .emitWithdrawalStatusChanged(result, state.previousStatus, { lifecycle: 'afterUpdate' });
+    } catch (_) { /* swallowed in the service */ }
   },
-}; 
+};
