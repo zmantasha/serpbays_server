@@ -201,13 +201,28 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     try {
       const { templateId, projectName } = ctx.request.body;
       
-      // Get the template. Perf-pass-10: was `populate: '*'` which pulls
-      // every relation on the project content type. Only the scalar fields
-      // below are read downstream — no relations need populating for the
-      // template copy. Drops payload size + skips the JOIN cost.
-      const template = await strapi.entityService.findOne('api::project.project', templateId, {
-        fields: ['description', 'category', 'contentGuidelines', 'brandVoiceGuidelines', 'template'],
-      });
+      // KNOWN BROKEN — see follow-up note below. The fields requested here
+      // (`description`, `category`, `contentGuidelines`, `brandVoiceGuidelines`,
+      // `template`) do NOT exist on the project schema (verified against
+      // src/api/project/content-types/project/schema.json AND the actual
+      // `projects` table — no such columns). The endpoint references a
+      // partially-shipped "template" feature whose schema attributes were
+      // never landed.
+      //
+      // My pass-10B fix replaced `populate: '*'` with this `fields:[]` —
+      // but every key in that list is bogus, so under Strapi 5's stricter
+      // query-fields validator this call throws ValidationError before
+      // anything else runs.
+      //
+      // Defensive fix: remove the `fields:[]` constraint so the findOne
+      // returns the bare schema (id + scalars that DO exist). The
+      // downstream `if (!template.template)` will short-circuit to 404
+      // cleanly since template.template is undefined. Endpoint stays
+      // non-functional but no longer 500s.
+      //
+      // Follow-up: either ship the template-feature schema attributes via
+      // a migration, or remove this endpoint entirely.
+      const template = await strapi.entityService.findOne('api::project.project', templateId);
 
       if (!template || !template.template) {
         return ctx.notFound('Template not found');
@@ -294,8 +309,14 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     }
 
     try {
+      // KNOWN BROKEN — same shape as createFromTemplate above. The fields
+      // `totalBudget`, `usedBudget`, `metrics` do NOT exist on the project
+      // schema (verified at the DB level — no such columns on the
+      // `projects` table). budgetUtilization downstream reads will resolve
+      // to undefined and `metrics: project.metrics || {}` already guards
+      // for that. Drop the fields:[] so the call doesn't throw Strapi 5
+      // ValidationError; everything else degrades gracefully to zeros.
       const project = await strapi.entityService.findOne('api::project.project', numericId, {
-        fields: ['id', 'totalBudget', 'usedBudget', 'metrics'],
         populate: {
           owner: { fields: ['id'] },
           team:  { fields: ['id'] },
@@ -360,8 +381,14 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     }
 
     try {
+      // KNOWN BROKEN — `metrics` is not on the project schema (the
+      // updateMetrics endpoint persists data that has no column to land in).
+      // The endpoint chain (find → ownership-check → entityService.update
+      // with { metrics }) effectively becomes a 200 with no DB write.
+      // Drop the fields:[] so Strapi 5's query-fields validator doesn't
+      // throw before the ownership check runs. Follow-up: add `metrics`
+      // as a `type: "json"` attribute via migration, or remove this endpoint.
       const project = await strapi.entityService.findOne('api::project.project', numericId, {
-        fields: ['id', 'metrics'],
         populate: { owner: { fields: ['id'] } },
       });
 

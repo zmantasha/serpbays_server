@@ -314,14 +314,17 @@ module.exports = createCoreController('api::communication.communication', ({ str
           const recipient = await strapi.entityService.findOne(
             'plugin::users-permissions.user',
             recipientId,
-            { fields: ['id', 'username', 'email', 'first_name'] }
+            // The user schema uses `firstName` (camelCase). `first_name`
+            // (snake_case) was a typo Strapi 4 silently ignored; Strapi 5
+            // throws ValidationError on the findOne.
+            { fields: ['id', 'username', 'email', 'firstName'] }
           );
           if (recipient?.email) {
             const senderRole = user.id === order.advertiser?.id ? 'Advertiser' : 'Publisher';
             const emailService = strapi.service('api::global.email-operations');
             await emailService.sendNewMessageEmail({
               receiverEmail: recipient.email,
-              receiverName: recipient.first_name || recipient.username || 'User',
+              receiverName: recipient.firstName || recipient.username || 'User',
               senderRole,
               messageText: message,
               messageTime: populated.createdAt,
