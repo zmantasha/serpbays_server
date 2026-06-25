@@ -9,19 +9,25 @@
  * same bug class that broke /api/orders/:id after the
  * placementSpeed → assignedDate → totalPrice → platformFee chain.
  *
- * The challenge: many call sites have BOTH a top-level `fields:` array
- * (validated against the outer content type) AND nested `populate.X.fields:`
- * arrays (validated against X's content type). They look identical in raw
- * text; brace-depth tracking is required to distinguish them.
+ * Coverage:
+ *   - TOP-LEVEL fields[]: validated against the OUTER content type
+ *   - NESTED populate.X.fields[]: validated against X's TARGET content type
+ *     (resolved via the outer schema's relations map). Arbitrarily deep
+ *     populate trees are walked recursively.
+ *
+ * Skipped (out of scope — different field rules apply):
+ *   - components / dynamiczone (lives in src/components/, not src/api)
+ *   - media relations (Strapi file attributes: url/hash/ext/etc.)
+ *   - Unknown relation targets (logged as "unresolved" — manual review)
  *
  * Approach:
- *   1. Load every schema.json → contentTypeUid → Set<attribute>.
- *   2. For each .js file, find every `entityService.findOne|findMany|findFirst`
- *      or `db.query(...).findOne|findMany|findFirst` call.
- *   3. Parse the options object: walk character-by-character tracking brace
- *      depth, and identify the TOP-LEVEL `fields: [...]` (depth 1 inside
- *      the options object) vs nested ones inside `populate: { ... }`.
- *   4. Validate the top-level keys against the schema.
+ *   1. Load every schema.json. For each content type, build BOTH
+ *      `attributes` (Set<string>) AND `relations` (Map<attrName, targetUid>).
+ *   2. For each .js file, find every entityService.findOne|findMany|findFirst|findPage
+ *      and db.query(...).findOne|findMany|findFirst call.
+ *   3. Walk the options object with brace-depth tracking. Recursively walk
+ *      any populate: { X: { fields/populate: ... } } subtree; at each
+ *      depth, validate fields[] against the resolved target content type.
  *
  * Run: cd serpbays_server && node scripts/audit-bogus-fields.js
  *
@@ -41,239 +47,292 @@ const STRAPI_IMPLICIT = new Set([
   'locale', 'localizations',
 ]);
 
-// ─── Step 1: build attribute map ──────────────────────────────────────
-const SCHEMAS = {};
+// ─── Step 1: build attribute + relation maps ──────────────────────────
+const ATTRS = {};      // uid → Set<attribute>
+const RELATIONS = {};  // uid → Map<attrName, targetUid>
 
-function loadSchemaFile(uid, schemaPath, extraAttrs = []) {
+function loadSchema(uid, schemaPath, extraAttrs = []) {
   if (!fs.existsSync(schemaPath)) return;
+  let schema;
   try {
-    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
-    SCHEMAS[uid] = new Set([
-      ...Object.keys(schema.attributes || {}),
-      ...STRAPI_IMPLICIT,
-      ...extraAttrs,
-    ]);
-  } catch {}
+    schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  } catch {
+    return;
+  }
+  const attributes = schema.attributes || {};
+  ATTRS[uid] = new Set([...Object.keys(attributes), ...STRAPI_IMPLICIT, ...extraAttrs]);
+  const rels = new Map();
+  for (const [name, def] of Object.entries(attributes)) {
+    if (!def || typeof def !== 'object') continue;
+    if (def.type === 'relation' && typeof def.target === 'string') {
+      rels.set(name, def.target);
+    } else if (def.type === 'media') {
+      // Media attributes always resolve to the upload-plugin file content
+      // type, regardless of allowedTypes (images/videos/files).
+      rels.set(name, 'plugin::upload.file');
+    }
+    // Components and dynamiczone left out — they have a separate schema
+    // tree under src/components/ that's out of scope for this audit.
+  }
+  RELATIONS[uid] = rels;
 }
 
-(function loadSchemas() {
+(function loadAllSchemas() {
   const apiRoot = path.join('src', 'api');
   if (fs.existsSync(apiRoot)) {
     for (const resource of fs.readdirSync(apiRoot)) {
       const ctDir = path.join(apiRoot, resource, 'content-types');
       if (!fs.existsSync(ctDir)) continue;
       for (const ct of fs.readdirSync(ctDir)) {
-        loadSchemaFile(`api::${resource}.${ct}`, path.join(ctDir, ct, 'schema.json'));
+        loadSchema(`api::${resource}.${ct}`, path.join(ctDir, ct, 'schema.json'));
       }
     }
   }
-  // users-permissions user lives in extensions
-  loadSchemaFile(
+  loadSchema(
     'plugin::users-permissions.user',
     path.join('src', 'extensions', 'users-permissions', 'content-types', 'user', 'schema.json'),
     ['username', 'email', 'provider', 'password', 'resetPasswordToken',
      'confirmationToken', 'confirmed', 'blocked', 'role'],
   );
-  // users-permissions role — standard plugin attributes (no on-disk schema).
-  SCHEMAS['plugin::users-permissions.role'] = new Set([
+  // users-permissions role — plugin built-in (no on-disk schema)
+  ATTRS['plugin::users-permissions.role'] = new Set([
     'id', 'documentId', 'createdAt', 'updatedAt',
     'name', 'description', 'type', 'permissions', 'users',
   ]);
+  RELATIONS['plugin::users-permissions.role'] = new Map();
+  // upload file — plugin built-in
+  ATTRS['plugin::upload.file'] = new Set([
+    'id', 'documentId', 'createdAt', 'updatedAt', 'publishedAt',
+    'name', 'alternativeText', 'caption', 'width', 'height', 'formats',
+    'hash', 'ext', 'mime', 'size', 'url', 'previewUrl', 'provider',
+    'provider_metadata', 'related', 'folder', 'folderPath',
+  ]);
+  RELATIONS['plugin::upload.file'] = new Map();
 })();
 
-// ─── Step 2: parse JS files with brace-depth tracking ─────────────────
+// ─── Step 2: parsing helpers (brace-depth aware) ──────────────────────
 
-const FIND_CALL = /(?:strapi\.)?(?:entityService\.(?:findOne|findMany|findFirst|findPage)|db\.query\(\s*['"]((?:api|plugin)::[a-zA-Z\-_.]+)['"]\s*\)\.(?:findOne|findMany|findFirst))/g;
-// Two flavors:
-//   strapi.entityService.findOne('api::x.y', id, { ... })
-//   strapi.db.query('api::x.y').findOne({ ... })
+function skipPastChar(text, i, len) {
+  // Walks past strings / line comments / block comments. Returns the new
+  // index, or null if `text[i]` doesn't open one of those. Caller advances
+  // by 1 if null is returned.
+  const c = text[i];
+  if (c === '"' || c === "'" || c === '`') {
+    const quote = c;
+    i++;
+    while (i < len && text[i] !== quote) {
+      if (text[i] === '\\') { i += 2; continue; }
+      if (quote === '`' && text[i] === '$' && text[i + 1] === '{') {
+        i += 2;
+        let td = 1;
+        while (i < len && td > 0) {
+          if (text[i] === '{') td++;
+          else if (text[i] === '}') td--;
+          i++;
+        }
+        continue;
+      }
+      i++;
+    }
+    return i + 1;
+  }
+  if (c === '/' && text[i + 1] === '/') {
+    while (i < len && text[i] !== '\n') i++;
+    return i;
+  }
+  if (c === '/' && text[i + 1] === '*') {
+    i += 2;
+    while (i < len && !(text[i] === '*' && text[i + 1] === '/')) i++;
+    return i + 2;
+  }
+  return null;
+}
 
-const REPORTS = [];
-
-function findMatchingBrace(text, openIndex) {
-  // openIndex points at `{`. Return index of matching `}`. Handles strings,
-  // single-line + multi-line comments, escaped chars.
+function findMatching(text, openIndex, openChar, closeChar) {
   let depth = 1;
   let i = openIndex + 1;
   const len = text.length;
   while (i < len && depth > 0) {
-    const c = text[i];
-    // Skip strings
-    if (c === '"' || c === "'" || c === '`') {
-      const quote = c;
-      i++;
-      while (i < len && text[i] !== quote) {
-        if (text[i] === '\\') { i += 2; continue; }
-        if (quote === '`' && text[i] === '$' && text[i + 1] === '{') {
-          // template literal — skip the expression by walking braces
-          i += 2;
-          let td = 1;
-          while (i < len && td > 0) {
-            if (text[i] === '{') td++;
-            else if (text[i] === '}') td--;
-            i++;
-          }
-          continue;
-        }
-        i++;
-      }
-      i++;
-      continue;
-    }
-    // Skip // line comments
-    if (c === '/' && text[i + 1] === '/') {
-      while (i < len && text[i] !== '\n') i++;
-      continue;
-    }
-    // Skip /* block */ comments
-    if (c === '/' && text[i + 1] === '*') {
-      i += 2;
-      while (i < len && !(text[i] === '*' && text[i + 1] === '/')) i++;
-      i += 2;
-      continue;
-    }
-    if (c === '{') depth++;
-    else if (c === '}') depth--;
+    const skipped = skipPastChar(text, i, len);
+    if (skipped !== null) { i = skipped; continue; }
+    if (text[i] === openChar) depth++;
+    else if (text[i] === closeChar) depth--;
     i++;
   }
   return depth === 0 ? i - 1 : -1;
 }
 
-function findArgListClose(text, openParenIndex) {
-  // Same idea but tracking parens (and respecting strings/braces inside).
-  let pd = 1, bd = 0;
-  let i = openParenIndex + 1;
-  while (i < text.length && pd > 0) {
-    const c = text[i];
-    if (c === '"' || c === "'" || c === '`') {
-      const quote = c;
-      i++;
-      while (i < text.length && text[i] !== quote) {
-        if (text[i] === '\\') { i += 2; continue; }
-        i++;
-      }
-      i++;
-      continue;
-    }
-    if (c === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      continue;
-    }
-    if (c === '/' && text[i + 1] === '*') {
-      i += 2;
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
-      i += 2;
-      continue;
-    }
-    if (c === '(') pd++;
-    else if (c === ')') pd--;
-    else if (c === '{') bd++;
-    else if (c === '}') bd--;
-    i++;
-  }
-  return pd === 0 ? i - 1 : -1;
+const findMatchingBrace = (text, i) => findMatching(text, i, '{', '}');
+const findMatchingBracket = (text, i) => findMatching(text, i, '[', ']');
+const findMatchingParen = (text, i) => findMatching(text, i, '(', ')');
+
+function extractKeysFromArrayLiteral(text, openBracket, closeBracket) {
+  const body = text.slice(openBracket + 1, closeBracket);
+  const stripped = body.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const matches = stripped.match(/['"][a-zA-Z_][a-zA-Z0-9_]*['"]/g) || [];
+  return matches.map(s => s.slice(1, -1));
 }
 
-function extractTopLevelOptionsObject(text, callOpenParen, callCloseParen) {
-  // Inside the args list (between callOpenParen+1 and callCloseParen-1),
-  // find the LAST `{ ... }` that's at paren-depth 1 of the call. That's
-  // the options object. Skip strings/comments/nested braces.
-  let i = callOpenParen + 1;
-  let lastOptionsRange = null;
-  while (i < callCloseParen) {
+// Inside an options object's body [open, close], find each top-level
+// property at name `name`. Returns array of (valueStart, valueEnd) pairs
+// — the value can be a literal, `{...}` block, `[...]` array, etc.
+// We only look at depth 1 (immediately inside the options object).
+function findTopLevelPropertyValues(text, open, close, name) {
+  const results = [];
+  let i = open + 1;
+  while (i < close) {
+    const skipped = skipPastChar(text, i, text.length);
+    if (skipped !== null) { i = skipped; continue; }
     const c = text[i];
-    if (c === '"' || c === "'" || c === '`') {
-      const quote = c;
-      i++;
-      while (i < text.length && text[i] !== quote) {
-        if (text[i] === '\\') { i += 2; continue; }
-        i++;
-      }
-      i++;
-      continue;
-    }
-    if (c === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      continue;
-    }
-    if (c === '/' && text[i + 1] === '*') {
-      i += 2;
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
-      i += 2;
-      continue;
-    }
     if (c === '{') {
-      const close = findMatchingBrace(text, i);
-      if (close > 0 && close < callCloseParen) {
-        lastOptionsRange = [i, close];
-        i = close + 1;
+      const end = findMatchingBrace(text, i);
+      if (end > 0) { i = end + 1; continue; }
+    }
+    if (c === '[') {
+      const end = findMatchingBracket(text, i);
+      if (end > 0) { i = end + 1; continue; }
+    }
+    // Check for `<name>:` at depth-1
+    if (text.slice(i, i + name.length + 1) === `${name}:`) {
+      let j = i + name.length + 1;
+      while (j < close && /\s/.test(text[j])) j++;
+      // Determine value end based on opening char
+      if (text[j] === '[' || text[j] === '{' || text[j] === '(') {
+        const closers = { '[': ']', '{': '}', '(': ')' };
+        const end = findMatching(text, j, text[j], closers[text[j]]);
+        if (end > 0) { results.push([j, end]); i = end + 1; continue; }
+      } else if (text[j] === "'" || text[j] === '"' || text[j] === '`') {
+        const s = skipPastChar(text, j, text.length);
+        results.push([j, s - 1]);
+        i = s;
+        continue;
+      } else {
+        // boolean / number / undefined / identifier — value ends at next , or }
+        let k = j;
+        while (k < close && text[k] !== ',' && text[k] !== '}' && text[k] !== '\n') k++;
+        results.push([j, k - 1]);
+        i = k;
         continue;
       }
     }
     i++;
   }
-  return lastOptionsRange;
+  return results;
 }
 
-function extractTopLevelFieldsArray(text, optionsOpen, optionsClose) {
-  // Walk inside the options object body. At depth 1 (immediately inside
-  // the options braces), find `fields: [ ... ]`. Skip nested objects.
-  let i = optionsOpen + 1;
-  while (i < optionsClose) {
+// Inside `populate: { ... }` value, enumerate each top-level relation key
+// and return [(name, valueStart, valueEnd)] for those whose value is `{`.
+// (Other shapes — bare booleans, simple object refs, primitives — don't
+// have fields[] to validate.)
+function enumeratePopulateRelations(text, populateOpen, populateClose) {
+  const results = [];
+  let i = populateOpen + 1;
+  while (i < populateClose) {
+    const skipped = skipPastChar(text, i, text.length);
+    if (skipped !== null) { i = skipped; continue; }
     const c = text[i];
-    if (c === '"' || c === "'" || c === '`') {
-      const quote = c;
-      i++;
-      while (i < text.length && text[i] !== quote) {
-        if (text[i] === '\\') { i += 2; continue; }
-        i++;
-      }
-      i++;
-      continue;
-    }
-    if (c === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      continue;
-    }
-    if (c === '/' && text[i + 1] === '*') {
-      i += 2;
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
-      i += 2;
-      continue;
-    }
     if (c === '{') {
-      const close = findMatchingBrace(text, i);
-      if (close > 0) { i = close + 1; continue; }
+      const end = findMatchingBrace(text, i);
+      if (end > 0) { i = end + 1; continue; }
     }
-    // Check for `fields:` at depth-1
-    if (text.slice(i, i + 7) === 'fields:') {
-      let j = i + 7;
-      while (j < optionsClose && /\s/.test(text[j])) j++;
-      if (text[j] === '[') {
-        // Find matching ]
-        let bd = 1;
-        let k = j + 1;
-        while (k < optionsClose && bd > 0) {
-          if (text[k] === '[') bd++;
-          else if (text[k] === ']') bd--;
-          if (bd === 0) break;
-          k++;
+    if (c === '[') {
+      const end = findMatchingBracket(text, i);
+      if (end > 0) { i = end + 1; continue; }
+    }
+    // Look for `name:` at depth-1 or `'name':` / `"name":`
+    let nameMatch = null;
+    if (text[i] === "'" || text[i] === '"') {
+      const quote = text[i];
+      let q = i + 1;
+      while (q < populateClose && text[q] !== quote) q++;
+      const candidate = text.slice(i + 1, q);
+      // expect immediately after closing quote: optional space + `:`
+      let after = q + 1;
+      while (after < populateClose && /\s/.test(text[after])) after++;
+      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(candidate) && text[after] === ':') {
+        nameMatch = { name: candidate, afterColon: after + 1 };
+      }
+    } else if (/[a-zA-Z_]/.test(text[i])) {
+      let q = i;
+      while (q < populateClose && /[a-zA-Z0-9_]/.test(text[q])) q++;
+      const candidate = text.slice(i, q);
+      let after = q;
+      while (after < populateClose && /\s/.test(text[after])) after++;
+      if (text[after] === ':' && candidate) {
+        nameMatch = { name: candidate, afterColon: after + 1 };
+      }
+    }
+    if (nameMatch) {
+      let j = nameMatch.afterColon;
+      while (j < populateClose && /\s/.test(text[j])) j++;
+      if (text[j] === '{') {
+        const end = findMatchingBrace(text, j);
+        if (end > 0) {
+          results.push({ name: nameMatch.name, open: j, close: end });
+          i = end + 1;
+          continue;
         }
-        return [j, k]; // inclusive of brackets
+      } else {
+        // primitive / bare ref / true/false — no fields to validate
+        let k = j;
+        while (k < populateClose && text[k] !== ',' && text[k] !== '}' && text[k] !== '\n') k++;
+        i = k;
+        continue;
       }
     }
     i++;
   }
-  return null;
+  return results;
 }
 
-function extractKeysFromArrayLiteral(text, openBracket, closeBracket) {
-  const body = text.slice(openBracket + 1, closeBracket);
-  const stripped = body.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  // Match quoted bare identifiers.
-  const matches = stripped.match(/['"][a-zA-Z_][a-zA-Z0-9_]*['"]/g) || [];
-  return matches.map(s => s.slice(1, -1));
+// ─── Step 3: per-call walker ──────────────────────────────────────────
+
+const REPORTS = []; // { file, line, uid, depth, scope, keys, bogus, note? }
+
+function validateOptionsObject(text, optionsOpen, optionsClose, currentUid, file, lineNo, scope) {
+  // 1) Validate top-level fields[] against currentUid
+  const fieldsValues = findTopLevelPropertyValues(text, optionsOpen, optionsClose, 'fields');
+  for (const [start, end] of fieldsValues) {
+    if (text[start] !== '[') continue;
+    const keys = extractKeysFromArrayLiteral(text, start, end);
+    if (keys.length === 0) continue;
+    const attrs = ATTRS[currentUid];
+    if (!attrs) {
+      REPORTS.push({ file, line: lineNo, uid: currentUid, scope, keys, bogus: [], note: 'schema not loaded' });
+      continue;
+    }
+    const bogus = keys.filter(k => !attrs.has(k));
+    if (bogus.length > 0) {
+      REPORTS.push({ file, line: lineNo, uid: currentUid, scope, keys, bogus });
+    }
+  }
+
+  // 2) Recurse into populate: { X: { ... } } — resolve X via relations map
+  const populateValues = findTopLevelPropertyValues(text, optionsOpen, optionsClose, 'populate');
+  for (const [start, end] of populateValues) {
+    if (text[start] !== '{') continue;
+    const relations = RELATIONS[currentUid] || new Map();
+    const subEntries = enumeratePopulateRelations(text, start, end);
+    for (const { name, open, close } of subEntries) {
+      const targetUid = relations.get(name);
+      if (!targetUid) {
+        // Could be a component, dynamiczone, media (resolved via different
+        // metadata), OR an attribute that doesn't exist on the outer
+        // schema (which is itself a bug — populating a non-existent
+        // relation). Strapi 5 may or may not throw on this depending on
+        // the call path; flag for manual review with a soft warning.
+        REPORTS.push({
+          file, line: lineNo, uid: currentUid, scope: `${scope} > populate.${name}`,
+          keys: [], bogus: [], note: 'unresolved populate target (component/media/unknown)',
+        });
+        continue;
+      }
+      validateOptionsObject(text, open, close, targetUid, file, lineNo, `${scope} > populate.${name}`);
+    }
+  }
 }
+
+const FIND_CALL = /(?:strapi\.)?(?:entityService\.(?:findOne|findMany|findFirst|findPage)|db\.query\(\s*['"]((?:api|plugin)::[a-zA-Z\-_.]+)['"]\s*\)\.(?:findOne|findMany|findFirst))/g;
 
 function scanFile(filePath) {
   const text = fs.readFileSync(filePath, 'utf8');
@@ -281,43 +340,38 @@ function scanFile(filePath) {
   FIND_CALL.lastIndex = 0;
   while ((m = FIND_CALL.exec(text)) !== null) {
     const matchEnd = m.index + m[0].length;
-    // Find the opening paren of the call's args list.
     let p = matchEnd;
     while (p < text.length && text[p] !== '(') p++;
     if (p >= text.length) continue;
-    const closeParen = findArgListClose(text, p);
+    const closeParen = findMatchingParen(text, p);
     if (closeParen < 0) continue;
 
-    // Determine the contentTypeUid:
+    // Resolve content type uid
     let uid;
     if (m[1]) {
-      // db.query() flavor — uid is in capture group 1
       uid = m[1];
     } else {
-      // entityService — first arg is the uid string
-      const firstArgMatch = text.slice(p + 1, closeParen).match(/['"]((?:api|plugin)::[a-zA-Z\-_.]+)['"]/);
-      uid = firstArgMatch ? firstArgMatch[1] : null;
+      const firstArg = text.slice(p + 1, closeParen).match(/['"]((?:api|plugin)::[a-zA-Z\-_.]+)['"]/);
+      uid = firstArg ? firstArg[1] : null;
     }
     if (!uid) continue;
 
-    const options = extractTopLevelOptionsObject(text, p, closeParen);
-    if (!options) continue;
-    const fieldsArray = extractTopLevelFieldsArray(text, options[0], options[1]);
-    if (!fieldsArray) continue;
+    // Find the last `{ ... }` at paren-depth 1 = the options object.
+    let i = p + 1;
+    let lastOptions = null;
+    while (i < closeParen) {
+      const skipped = skipPastChar(text, i, text.length);
+      if (skipped !== null) { i = skipped; continue; }
+      if (text[i] === '{') {
+        const end = findMatchingBrace(text, i);
+        if (end > 0 && end < closeParen) { lastOptions = [i, end]; i = end + 1; continue; }
+      }
+      i++;
+    }
+    if (!lastOptions) continue;
 
-    const keys = extractKeysFromArrayLiteral(text, fieldsArray[0], fieldsArray[1]);
-    if (keys.length === 0) continue;
-
-    const attrs = SCHEMAS[uid];
     const lineNo = text.slice(0, m.index).split('\n').length;
-    if (!attrs) {
-      REPORTS.push({ file: filePath, line: lineNo, uid, keys, bogus: [], note: 'schema not loaded' });
-      continue;
-    }
-    const bogus = keys.filter(k => !attrs.has(k));
-    if (bogus.length > 0) {
-      REPORTS.push({ file: filePath, line: lineNo, uid, keys, bogus });
-    }
+    validateOptionsObject(text, lastOptions[0], lastOptions[1], uid, filePath, lineNo, uid);
   }
 }
 
@@ -336,23 +390,35 @@ function walkDir(dir) {
 
 walkDir('src');
 
-// ─── Step 3: report ───────────────────────────────────────────────────
-if (REPORTS.length === 0) {
-  console.log('✅ No bogus top-level fields[] keys found.');
-  console.log(`(Scanned ${Object.keys(SCHEMAS).length} content type schemas.)`);
-  process.exit(0);
+// ─── Step 4: report ───────────────────────────────────────────────────
+
+const bogus = REPORTS.filter(r => r.bogus && r.bogus.length > 0);
+const notes = REPORTS.filter(r => r.note && !r.bogus.length);
+
+console.log(`Scanned ${Object.keys(ATTRS).length} content type schemas + relation maps.`);
+console.log(`Found ${bogus.length} call site(s) with bogus fields[] keys.`);
+console.log(`Found ${notes.length} unresolved populate target(s) (component/media/unknown — manual review).`);
+
+if (bogus.length === 0) {
+  console.log('\n✅ No bogus fields[] keys found (top-level OR nested).');
 }
 
-console.log(`Found ${REPORTS.length} call site(s) with bogus top-level fields[] keys:\n`);
-for (const r of REPORTS) {
+for (const r of bogus) {
   console.log(`\n${r.file}:${r.line}`);
+  console.log(`  scope:       ${r.scope}`);
   console.log(`  contentType: ${r.uid}`);
-  if (r.note) {
-    console.log(`  note: ${r.note}`);
-    continue;
-  }
   console.log(`  fields:      [${r.keys.join(', ')}]`);
   console.log(`  ❌ bogus:    [${r.bogus.join(', ')}]`);
 }
-console.log(`\nTotal: ${REPORTS.length} call site(s) need fixing.`);
-process.exit(1);
+
+// Print unresolved populate targets ONLY if --verbose is passed, OR if
+// caller wants the full picture. They're noisy (lots of legit components +
+// media populates that aren't bugs).
+if (process.argv.includes('--verbose')) {
+  if (notes.length) console.log('\n--- unresolved populate targets ---');
+  for (const r of notes) {
+    console.log(`${r.file}:${r.line}  scope=${r.scope}`);
+  }
+}
+
+process.exit(bogus.length === 0 ? 0 : 1);
