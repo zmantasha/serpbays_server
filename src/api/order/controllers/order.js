@@ -217,8 +217,15 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       }
       const order = await strapi.entityService.findOne('api::order.order', numericId, {
         fields: [
+          // Note: `placementSpeed` is NOT an order attribute — it lives on
+          // marketplace as `placement_speed` and is already returned via
+          // the `website` populate below (WEBSITE_PUBLIC_FIELDS L52).
+          // Including it here previously caused Strapi 5 to reject every
+          // findOne with `Invalid key placementSpeed`, surfacing after a
+          // publisher accepted an order and the client navigated to
+          // /orders/<id>.
           'id', 'documentId', 'orderStatus', 'websiteUrl',
-          'placementSpeed', 'orderDate', 'assignedDate', 'deliveredDate',
+          'orderDate', 'assignedDate', 'deliveredDate',
           'completedDate', 'totalPrice', 'platformFee',
           'createdAt', 'updatedAt', 'publishedAt',
           'websitePublisherEmail', 'websitePublisherName', 'websitePublisherPrice',
