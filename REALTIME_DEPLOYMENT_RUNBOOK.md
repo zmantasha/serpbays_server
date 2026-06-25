@@ -129,6 +129,41 @@ npm run build
 pm2 restart serpbays-adminpanel
 ```
 
+### 4.4 CRITICAL — Next.js build is the deploy boundary
+
+Next.js compiles the client bundle at `npm run build` time and serves
+the pre-compiled artifacts from `.next/` for the lifetime of the process.
+The pm2 restart loads the new server-side code but **the client JS shipped
+to admin browsers comes from the existing `.next/` directory**.
+
+If you `pm2 restart` without `npm run build` first, you ship the OLD
+bundle to every admin's browser — even though the source files on disk
+look correct.
+
+**Detection**: `stat -c '%y' .next/BUILD_ID` shows the timestamp of the
+last build. It should match (or be after) the commit you intended to deploy.
+
+**This bit us on 2026-06-25** — a refetchInterval polling bug-fix
+landed on `security-fixes`, but the panel20 pm2 process had 5-day
+uptime serving the pre-fix `.next/`. The on-disk source had the fix; the
+running bundle didn't. Users reported "the fix didn't work" — accurate
+description of what they saw, because the new code was never actually
+running on the box.
+
+### 4.5 Browser cache after a panel20 deploy
+
+Static assets are now served with `Cache-Control: public, max-age=31536000,
+immutable` (perf-pass-10). New builds get new content-hashed filenames
+(`layout-<hash>.js`), so:
+
+- **New tab / fresh login**: picks up new bundle automatically.
+- **Already-open admin tab**: browser holds the OLD bundle until it sees
+  a new HTML response referencing the new hash. After a deploy, tell
+  admins with open tabs to do a hard refresh (Ctrl+Shift+R / Cmd+Shift+R).
+  Until they refresh, they're running the old client code (which may
+  poll, miss new WS channels, etc.) — but no data corruption risk;
+  server is authoritative.
+
 ---
 
 ## 5. Post-deploy verification
