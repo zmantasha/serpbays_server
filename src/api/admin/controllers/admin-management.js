@@ -271,6 +271,28 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
         },
       });
 
+      // Real-time push to the target admin so panel20 can refresh their
+      // session (and therefore the sidebar / page-permission gates)
+      // without waiting for next-tab-focus (the bug-fix #70 fallback
+      // behavior after we disabled the 60s session poll).
+      //
+      // Pass-11 close on Gap 5 from the final wiring-coverage audit:
+      // emit on the TARGET user's channel (not the admins room) — only
+      // the admin whose perms changed needs to refresh. Panel20 layout
+      // listens and calls session.update() on receipt.
+      try {
+        if (typeof strapi.io?.emitToUser === 'function') {
+          strapi.io.emitToUser(id, 'admin:permissions_changed', {
+            type: 'admin:permissions_changed',
+            targetUserId: Number(id),
+            occurredAt: new Date().toISOString(),
+            meta: { changedBy: ctx.state?.user?.id || null },
+          });
+        }
+      } catch (broadcastErr) {
+        strapi.log?.warn?.(`[ADMIN-MGMT] permissions broadcast failed (non-fatal): ${broadcastErr.message}`);
+      }
+
       ctx.send({ admin: shapeAdmin(updated) });
     } catch (err) {
       strapi.log.error('[ADMIN-MGMT] updateAdminPermissions error', err);

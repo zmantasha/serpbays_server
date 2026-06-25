@@ -1245,6 +1245,13 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
       if (chatroom.publisher?.id) {
         strapi.io.emitToUser(chatroom.publisher.id, `user_${chatroom.publisher.id}_message`, messagePayload);
       }
+
+      // Pass-11: admin fan-out so the panel20 `/communications` queue
+      // refreshes when any new message arrives in any chatroom. Same
+      // payload — admin UI uses `chatroomId` + `orderId` to route.
+      if (typeof strapi.io.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:chat_event', messagePayload);
+      }
     } catch (error) {
       console.error('Error sending WebSocket notification:', error);
     }
