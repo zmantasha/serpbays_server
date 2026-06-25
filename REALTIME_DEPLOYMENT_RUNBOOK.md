@@ -164,6 +164,41 @@ immutable` (perf-pass-10). New builds get new content-hashed filenames
   poll, miss new WS channels, etc.) — but no data corruption risk;
   server is authoritative.
 
+### 4.6 Pre-commit hook for the bogus-fields scanner
+
+A Husky pre-commit hook (`.husky/pre-commit`) runs
+`scripts/audit-bogus-fields.js` on any commit that stages a file under
+`src/api/**.js`, `src/extensions/**.js`, or any `content-types/*/schema.json`.
+
+Setup (auto-installed via `npm install` thanks to `"prepare": "husky"`):
+
+```bash
+cd serpbays_server
+npm install --legacy-peer-deps   # provisions .husky/_/ runtime
+```
+
+Verify by trying to commit a known-bad change:
+
+```bash
+# 1. Inject a synthetic bogus key into a controller
+sed -i.bak "0,/fields: \['id', 'username'\]/{s//fields: ['id', 'username', 'BOGUS']/}" \
+  src/api/order/controllers/order.js
+git add src/api/order/controllers/order.js
+git commit -m "test"
+# Expect: hook reports the site, exits 1, commit blocked
+mv src/api/order/controllers/order.js.bak src/api/order/controllers/order.js
+```
+
+If you're certain the audit is a false positive and need to commit anyway:
+
+```bash
+git commit --no-verify   # bypasses ALL pre-commit hooks
+```
+
+**CI should run `npm run audit:fields` independently** — a `--no-verify`
+bypass on a developer machine shouldn't sneak a bug into main. Add it to
+your CI workflow (GitHub Actions / GitLab CI / etc.) as a required check.
+
 ---
 
 ## 5. Post-deploy verification
