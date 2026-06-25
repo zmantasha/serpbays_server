@@ -215,18 +215,23 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       if (!Number.isInteger(numericId) || numericId <= 0) {
         return ctx.notFound('Order not found');
       }
+      // Every key below must exist as an actual attribute on the order
+       // content type (src/api/order/content-types/order/schema.json).
+       // Strapi 5's query-fields validator rejects unknown keys with
+       // `ValidationError: Invalid key <name>` — Strapi 4 silently
+       // ignored them. Bogus keys observed and removed (2026-06-25):
+       //   placementSpeed — lives on marketplace (placement_speed),
+       //                    already returned via the website populate
+       //   assignedDate   — the actual attribute is `acceptedDate`
+       //   totalPrice     — the actual attribute is `totalAmount`
+       //   platformFee    — not on schema at all (derived value; if the
+       //                    UI ever needs it, compute it in a response
+       //                    shaper, don't request it from the DB)
       const order = await strapi.entityService.findOne('api::order.order', numericId, {
         fields: [
-          // Note: `placementSpeed` is NOT an order attribute — it lives on
-          // marketplace as `placement_speed` and is already returned via
-          // the `website` populate below (WEBSITE_PUBLIC_FIELDS L52).
-          // Including it here previously caused Strapi 5 to reject every
-          // findOne with `Invalid key placementSpeed`, surfacing after a
-          // publisher accepted an order and the client navigated to
-          // /orders/<id>.
           'id', 'documentId', 'orderStatus', 'websiteUrl',
-          'orderDate', 'assignedDate', 'deliveredDate',
-          'completedDate', 'totalPrice', 'platformFee',
+          'orderDate', 'acceptedDate', 'deliveredDate',
+          'completedDate', 'totalAmount',
           'createdAt', 'updatedAt', 'publishedAt',
           'websitePublisherEmail', 'websitePublisherName', 'websitePublisherPrice',
         ],
