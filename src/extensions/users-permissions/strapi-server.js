@@ -1,5 +1,60 @@
 'use strict';
 
+// =============================================================================
+// JWT token-version revocation helpers
+// =============================================================================
+// Audit finding #11 stage 1. Every issued Strapi JWT embeds the user's
+// current tokenVersion. The verify() override rejects any JWT whose claim
+// tokenVersion is < the user's current value, regardless of JWT TTL.
+//
+// JWT expiry stays 7 days (config/plugins.js). This is the revocation knob:
+// bumping tokenVersion on the user row invalidates every JWT issued before
+// the bump.
+//
+// Triggers that bump:
+//   - POST /api/auth/logout                  → +1 (this user)
+//   - POST /api/auth/revoke/:id              → +1 (admin-only, target user)
+//   - User update with role/blocked changing → +1 (via beforeUpdate lifecycle)
+//   - users-permissions changePassword path  → +1 (via auth controller extension)
+//
+// Backward compatibility: old JWTs minted before this column existed have no
+// tokenVersion claim. We treat missing as 0, and the column defaults to 0,
+// so existing sessions stay valid until a trigger fires for that user.
+//
+// Sync NOTE: this changes services.jwt.issue() from sync to async because we
+// need a DB read to grab the current tokenVersion. The two call sites
+// (clerk.js, admin/admin.js) are updated to await.
+// =============================================================================
+
+const lookupTokenVersion = async (strapi, userId) => {
+  if (userId == null) return 0;
+  try {
+    const u = await strapi.db.query('plugin::users-permissions.user').findOne({
+      where: { id: userId },
+      select: ['id', 'tokenVersion'],
+    });
+    return u ? (u.tokenVersion ?? 0) : 0;
+  } catch (e) {
+    // Failing the lookup must NOT lock out a legitimate user — fall back to
+    // 0 and log. The signed value being 0 still matches the default DB row
+    // value for unbumped users.
+    strapi.log.warn(`[jwt.tokenVersion] lookup failed for user ${userId}: ${e && e.message}`);
+    return 0;
+  }
+};
+
+const bumpTokenVersion = async (strapi, userId, reason) => {
+  if (userId == null) return;
+  try {
+    // Atomic increment via knex so concurrent bumps don't race.
+    await strapi.db.connection('up_users').where({ id: userId }).increment('token_version', 1);
+    strapi.log.info(`[jwt.tokenVersion] bumped user=${userId} reason=${reason || 'unspecified'}`);
+  } catch (e) {
+    strapi.log.error(`[jwt.tokenVersion] bump failed for user ${userId}: ${e && e.message}`);
+    throw e;
+  }
+};
+
 module.exports = (plugin) => {
   // Get the original controller
   const sanitizeOutput = (user) => {
@@ -258,6 +313,22 @@ module.exports = (plugin) => {
     'onboardingState',
   ]);
 
+  // Fields with enum schemas. Empty string / null is NOT a valid enum
+  // value — Strapi 5's Yup validator rejects every PUT /api/users/me that
+  // carries one with `YupValidationError: identity must be one of the
+  // following values: SEO, Agency, Other,` (note the trailing comma —
+  // that's Yup including the empty value the client sent at the end).
+  //
+  // Client form libraries commonly initialize select inputs to '' and
+  // serialize the whole user object on save — so any user who never set
+  // their identity would have every profile update crash. Drop empty /
+  // null for these fields BEFORE handing off to entityService.update;
+  // the semantic intent of "no value provided" is "don't change", and
+  // that's what we honor.
+  //
+  // Add new enum-typed fields here whenever the schema gains one.
+  const ENUM_FIELDS = new Set(['identity']);
+
   // Extend the users controller
   plugin.controllers.user.updateMe = async (ctx) => {
     try {
@@ -275,11 +346,19 @@ module.exports = (plugin) => {
       const updateData = {};
       const droppedKeys = [];
       for (const key of Object.keys(rawUpdateData)) {
-        if (ALLOWED_SELF_UPDATE.has(key)) {
-          updateData[key] = rawUpdateData[key];
-        } else {
+        if (!ALLOWED_SELF_UPDATE.has(key)) {
           droppedKeys.push(key);
+          continue;
         }
+        const value = rawUpdateData[key];
+        // Drop empty / null for enum-typed fields — Yup would otherwise
+        // reject the whole PUT (see ENUM_FIELDS comment above). Free-text
+        // fields keep their empty-string handling so a user CAN clear
+        // an optional phoneNumber / website / etc. by sending "".
+        if (ENUM_FIELDS.has(key) && (value === '' || value === null || value === undefined)) {
+          continue;
+        }
+        updateData[key] = value;
       }
 
       console.log('[UPDATE ME] User ID:', userId);
@@ -379,6 +458,111 @@ module.exports = (plugin) => {
       policies: []
     }
   });
+
+  // ===========================================================================
+  // JWT token-version
+  // ===========================================================================
+  // Strategy: wrap verify() ONLY (it's already async upstream — adding the
+  // tokenVersion check is safe). Do NOT wrap issue() — Strapi's upstream
+  // auth.js controllers call jwt.issue() synchronously and place the result
+  // directly in a JSON response body (login, register, forgot-password,
+  // reset-password at node_modules/.../auth.js:90/104/141/173). Making issue()
+  // return a Promise would ship `jwt: {}` to clients on those routes.
+  //
+  // Instead: expose a separate async helper `issueWithTokenVersion()` that
+  // our own callers (clerk sync, admin login) use. Upstream-minted JWTs lack
+  // the tokenVersion claim — which the verify() check treats as 0. New users
+  // default to tokenVersion=0 → upstream JWTs validate fine until the first
+  // logout/revoke/role-change for that user, at which point tokenVersion
+  // becomes >= 1 and the upstream-minted JWT is rejected. So upstream callers
+  // are auto-revoked-aware without any modification.
+  const upstreamJwtFactory = plugin.services.jwt;
+  plugin.services.jwt = (deps) => {
+    const base = upstreamJwtFactory(deps);
+    const { strapi } = deps;
+    return {
+      ...base,
+      // issue() is intentionally unchanged from upstream (sync).
+      /**
+       * Async helper for our own callers (clerk.js, admin/admin.js).
+       * Looks up the user's current tokenVersion and embeds it in the claim
+       * so this specific JWT survives the verify() check until the next
+       * tokenVersion bump.
+       */
+      async issueWithTokenVersion(payload, jwtOptions) {
+        const enriched = { ...(payload || {}) };
+        if (enriched.id != null && enriched.tokenVersion === undefined) {
+          enriched.tokenVersion = await lookupTokenVersion(strapi, enriched.id);
+        }
+        return base.issue(enriched, jwtOptions);
+      },
+      /**
+       * verify(token) — calls upstream (decodes + verifies signature), then
+       * rejects if the claim's tokenVersion is less than the user's current
+       * tokenVersion in the DB. Missing claim tokenVersion is treated as 0
+       * (back-compat for JWTs issued before this code shipped).
+       */
+      async verify(token) {
+        const payload = await base.verify(token);
+        if (!payload || payload.id == null) return payload;
+        const claimTv = payload.tokenVersion ?? 0;
+        const userTv = await lookupTokenVersion(strapi, payload.id);
+        if (claimTv < userTv) {
+          // Mirror the upstream error shape so the strategy treats this
+          // as a normal invalid-token failure (401, not 500).
+          throw new Error('Invalid token.');
+        }
+        return payload;
+      },
+    };
+  };
+
+  // ===========================================================================
+  // Lifecycle bump trigger
+  // ===========================================================================
+  // Bump tokenVersion when an admin (or any code path) updates security-
+  // sensitive fields on a user: role, blocked, confirmed. The role-switch
+  // controller (Advertiser/Publisher flag flip) is intentionally NOT a
+  // trigger — that's a normal product flow and shouldn't kick the user out.
+  const TOKEN_REVOKING_FIELDS = new Set(['role', 'blocked', 'confirmed']);
+
+  const existingBeforeUpdate = plugin.contentTypes.user.lifecycles.beforeUpdate;
+  plugin.contentTypes.user.lifecycles.beforeUpdate = async (event) => {
+    if (existingBeforeUpdate) await existingBeforeUpdate(event);
+    const data = (event.params && event.params.data) || {};
+    const whereId = event.params && event.params.where && event.params.where.id;
+    if (!whereId) return;
+    const touchesSecurity = Object.keys(data).some((k) => TOKEN_REVOKING_FIELDS.has(k));
+    if (!touchesSecurity) return;
+    // Inject the bump into the same UPDATE so it commits atomically with
+    // the role/blocked change. We add 1 to the CURRENT value here; for
+    // concurrent writers a transient stale-read is fine — the only effect
+    // is one extra invalidation generation, never a missed revocation.
+    const currentTv = await lookupTokenVersion(strapi, whereId);
+    data.tokenVersion = currentTv + 1;
+    strapi.log.info(`[jwt.tokenVersion] beforeUpdate bumping user=${whereId} reason=field-change touched=${Object.keys(data).filter(k => TOKEN_REVOKING_FIELDS.has(k)).join(',')}`);
+  };
+
+  // ===========================================================================
+  // Logout + manual revoke endpoints live in src/api/auth/controllers/session.js
+  // and src/api/auth/routes/session.js (standard Strapi API loader; extending
+  // the users-permissions plugin's controllers from here proved unreliable
+  // for net-new methods in Strapi 5).
+  //
+  // Password-change wrap: defensive — Clerk owns auth in this project so
+  // Strapi's built-in changePassword endpoint is rarely hit, but if anyone
+  // re-enables Strapi's local password flow the revocation comes along.
+  // ===========================================================================
+  if (plugin.controllers.auth && typeof plugin.controllers.auth.changePassword === 'function') {
+    const upstreamChangePassword = plugin.controllers.auth.changePassword;
+    plugin.controllers.auth.changePassword = async (ctx) => {
+      const result = await upstreamChangePassword(ctx);
+      if (ctx.state.user && ctx.state.user.id) {
+        await bumpTokenVersion(strapi, ctx.state.user.id, 'password-change');
+      }
+      return result;
+    };
+  }
 
   return plugin;
 }; 
