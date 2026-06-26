@@ -1,14 +1,46 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// Cart scalar fields exposed in responses. The caller knows their own
+// identity from the JWT — the cart endpoint has no business returning
+// any user data, so the `user` relation is intentionally NOT in this
+// list and never populated. Strapi 5's `db.query` (used below) bypasses
+// the default sanitizeOutput middleware, so without an allow-list it
+// returns ALL columns including private ones — that's how the pre-fix
+// version leaked `password` (null when Clerk handles auth),
+// `resetPasswordToken`, `confirmationToken`, `clerkId`, `confirmed`,
+// `blocked`, `provider`, etc. via the populated user relation.
+const CART_PUBLIC_FIELDS = [
+  'id',
+  'items',         // user-controlled JSON of cart items
+  'formData',      // user-controlled JSON of checkout form state
+  'sourceProjectId',
+  'createdAt', 'updatedAt',
+];
+
+// Defense-in-depth shaper. Even if a future change adds a populate or
+// reaches for `cart.user`, this pass strips everything not on the
+// allow-list before send.
+function sanitizeCartForResponse(cart) {
+  if (!cart || typeof cart !== 'object') return cart;
+  const out = {};
+  for (const k of CART_PUBLIC_FIELDS) {
+    if (cart[k] !== undefined) out[k] = cart[k];
+  }
+  return out;
+}
+
 module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
   async getUserCart(ctx) {
     try {
       const userId = ctx.state.user.id;
 
-      // Find user's cart
+      // No populate of `user` — the caller IS the user (JWT-authenticated)
+      // and no code path reads cart.user. Pre-fix `populate: ['user']`
+      // returned the full up_users row including password/email/clerkId/
+      // resetPasswordToken/confirmationToken/confirmed/blocked/provider.
       const cart = await strapi.db.query('api::cart.cart').findOne({
         where: { user: userId },
-        populate: ['user'],
+        select: CART_PUBLIC_FIELDS,
       });
 
       if (!cart) {
@@ -81,10 +113,10 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
         }
       }
 
-      return {
+      return sanitizeCartForResponse({
         ...cart,
         items: itemsWithLiveData
-      };
+      });
     } catch (error) {
       ctx.throw(500, error);
     }
@@ -146,7 +178,7 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
       }
       // ========== END AUTOSEND ABANDONED CART LIST SYNC ==========
 
-      return cart;
+      return sanitizeCartForResponse(cart);
     } catch (error) {
       ctx.throw(500, error);
     }

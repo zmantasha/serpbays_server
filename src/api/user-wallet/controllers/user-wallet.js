@@ -6,6 +6,65 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// Transaction-response allow-list. UI consumes 14 of these fields
+// (TransactionHistory.tsx, 2026-06-25 grep). Excluded — never reach the
+// wire — are gateway `metadata` JSON, `promo_code_id`, `email_sent_at`,
+// and the implicit `user_wallet` / `users_permissions_user` FKs.
+// Every name in this list MUST exist as an attribute on the transaction
+// content type (src/api/transaction/content-types/transaction/schema.json).
+// Strapi 5's query-fields validator throws ValidationError on unknown
+// keys (Strapi 4 silently ignored them). `balanceAfter` was in the
+// pre-fix list but isn't a real schema attribute — that was the cause
+// of the 2026-06-25 P0 incident where /api/api/wallet/transactions
+// started 400-ing right after the PII allow-list landed. If the UI
+// ever needs a running balance, it must be computed (don't request it
+// from the DB).
+const TRANSACTION_PUBLIC_FIELDS = [
+  'id', 'type', 'amount', 'fee', 'netAmount',
+  'transactionStatus', 'gateway', 'gatewayTransactionId',
+  'external_transaction_id', 'payment_notes', 'denial_reason',
+  'description', 'fund_source',
+  'createdAt', 'completedAt', 'failedAt', 'canceledAt',
+];
+
+// PII / blob fields on `transaction.order` that must NEVER reach a user
+// response. These are denormalized snapshot columns on the order row;
+// the wallet/transactions UI renders only `order.id`. Removed via
+// `sanitizeTransactionForResponse` regardless of how the populate was
+// shaped at the query layer — `strapi.db.query()` silently ignores the
+// nested `populate.order.fields` allow-list, so a code-level strip is
+// the only reliable defense.
+const ORDER_PII_FIELDS_ON_TRANSACTION = [
+  'websitePublisherEmail', 'websitePublisherName', 'websitePublisherPrice',
+  'websiteSnapshot', 'metadata',
+];
+
+function sanitizeTransactionForResponse(tx) {
+  if (!tx || typeof tx !== 'object') return tx;
+  // `tx.order` populated from the relation: clip to `{ id }` only — the
+  // wallet UI reads `transaction.order.id` to render an "Order #N" label
+  // and nothing else.
+  if (tx.order && typeof tx.order === 'object') {
+    tx.order = { id: tx.order.id };
+  }
+  // `tx.invoice` clip — UI reads only invoiceNumber + pdfUrl + id.
+  if (tx.invoice && typeof tx.invoice === 'object') {
+    tx.invoice = {
+      id: tx.invoice.id,
+      invoiceNumber: tx.invoice.invoiceNumber,
+      pdfUrl: tx.invoice.pdfUrl,
+    };
+  }
+  // Belt-and-braces: also strip the order-PII columns if they ever land
+  // on the transaction row itself (defensive — they're scalar columns
+  // on `order`, not on `transaction`, so this is a no-op today but
+  // protects against a future denormalization that copies them across).
+  for (const k of ORDER_PII_FIELDS_ON_TRANSACTION) {
+    if (k in tx) delete tx[k];
+  }
+  return tx;
+}
+
 module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi }) => ({
 
   // Centralized wallet creation - USE THIS EVERYWHERE
@@ -237,7 +296,12 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
             type: 'escrow_release',
             order: { id: { $in: Array.from(completedOrderIds) } }
           },
-          populate: ['order'],
+          // Only `order.id` is read below (the dedup map keys on it).
+          // Allow-list keeps the denormalized publisher-PII columns
+          // (`websitePublisherEmail`, `websitePublisherName`,
+          // `websiteSnapshot`) out of the SQL projection entirely.
+          fields: ['id', 'amount', 'createdAt'],
+          populate: { order: { fields: ['id'] } },
           sort: { createdAt: 'desc' }
         });
 
@@ -348,24 +412,32 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         : 10;
       const offset = (page - 1) * limit;
 
-      // Get transactions with pagination
-      const [transactions, total] = await strapi.db.query('api::transaction.transaction').findWithCount({
-        where: { user_wallet: wallet.id },
-        orderBy: { createdAt: 'DESC' },
-        populate: ['invoice', 'order'],
-        limit,
-        offset
-      });
+      // Use entityService (NOT strapi.db.query) — Strapi 5's db.query API
+      // silently IGNORES the nested `populate.X.fields` allow-list, so
+      // `populate: { order: { fields: ['id'] } }` would return the full
+      // order row including `websitePublisherEmail` / `websitePublisherName`
+      // / `websiteSnapshot`. entityService honors the nested shape.
+      // The post-fetch `sanitizeTransactionForResponse` below is the
+      // defense-in-depth: even if the query layer ever regresses,
+      // PII never reaches the wire.
+      const filters = { user_wallet: { id: wallet.id } };
+      const [transactions, total] = await Promise.all([
+        strapi.entityService.findMany('api::transaction.transaction', {
+          filters,
+          fields: TRANSACTION_PUBLIC_FIELDS,
+          populate: {
+            order:   { fields: ['id'] },
+            invoice: { fields: ['id', 'invoiceNumber', 'pdfUrl'] },
+          },
+          sort: { createdAt: 'desc' },
+          limit,
+          start: offset,
+        }),
+        strapi.entityService.count('api::transaction.transaction', { filters }),
+      ]);
 
-      // Transform the data to include invoice information
-      const transformedTransactions = transactions.map(transaction => ({
-        ...transaction,
-        invoice: transaction.invoice ? {
-          id: transaction.invoice.id,
-          invoiceNumber: transaction.invoice.invoiceNumber,
-          pdfUrl: transaction.invoice.pdfUrl
-        } : null
-      }));
+      // Belt-and-braces strip on every row before responding.
+      const transformedTransactions = transactions.map(sanitizeTransactionForResponse);
 
       return {
         data: transformedTransactions,
@@ -379,6 +451,14 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }
       };
     } catch (error) {
+      // Log the actual exception so future regressions surface in PM2
+      // logs immediately — bare swallowing hid the `Invalid key
+      // balanceAfter` ValidationError that broke this endpoint after
+      // the PII allow-list landed (2026-06-25). The user-facing
+      // message stays generic to avoid leaking schema internals.
+      strapi.log?.error?.(
+        `[wallet/transactions] getTransactions failed: ${error?.name || 'Error'}: ${error?.message}`
+      );
       return ctx.badRequest('Failed to get transactions');
     }
   },

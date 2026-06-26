@@ -6,6 +6,54 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// PII discipline for project responses (2026-06-25 audit).
+// Pre-fix: every populate of `owner` and `team` returned the full
+// up_users row (email, username, phone, password hash, withdrawalOtp,
+// paypal_email, billing PII). 14 broad populates across the controller
+// — every user-facing handler leaked.
+// Post-fix: relations are clipped to { id }. UI consumption verified
+// by grep across serpbays_client — only `project.team.length` is read.
+// Owner identity is implied (the caller IS the owner on getMyProjects);
+// no further surface is needed.
+const PROJECT_USER_FIELDS = ['id'];
+
+// Allow-listed scalar fields on the project row itself. Mirrors the
+// order-controller pattern: only what the UI consumes; admin/internal
+// columns excluded. `publishedAt` IS included because project schema
+// has `draftAndPublish: true` (verified via schema.json).
+const PROJECT_PUBLIC_FIELDS = [
+  'id', 'documentId',
+  'ProjectName', 'projectUrl',
+  'startDate', 'archived', 'status',
+  'createdAt', 'updatedAt', 'publishedAt',
+];
+
+// Standard nested populate for project list/detail responses. Every
+// relation is `{ fields: [...] }` not `: true` — a future schema
+// addition (e.g. a PII column on a related type) can't auto-leak.
+const PROJECT_LIST_POPULATE = {
+  owner:  { fields: PROJECT_USER_FIELDS },
+  team:   { fields: PROJECT_USER_FIELDS },
+  orders: { fields: ['id', 'orderStatus'] },
+  files:  { fields: ['id', 'url', 'name', 'mime', 'size', 'alternativeText'] },
+};
+
+// Defense-in-depth response shaper. Even when an internal handler uses
+// a broad populate (for auth checks or internal email composition),
+// this strips owner/team to { id } before the response is sent.
+function sanitizeProjectResponse(project) {
+  if (!project || typeof project !== 'object') return project;
+  if (project.owner && typeof project.owner === 'object') {
+    project.owner = { id: project.owner.id };
+  }
+  if (Array.isArray(project.team)) {
+    project.team = project.team.map(m => (m && typeof m === 'object') ? { id: m.id } : m);
+  } else if (project.team && typeof project.team === 'object') {
+    project.team = { id: project.team.id };
+  }
+  return project;
+}
+
 module.exports = createCoreController('api::project.project', ({ strapi }) => ({
   // Create a new project
   async create(ctx) {
@@ -45,7 +93,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
       // Create the project
       const entity = await strapi.entityService.create('api::project.project', {
         data: projectData,
-        populate: ['owner', 'team', 'files']
+        populate: { owner: { fields: PROJECT_USER_FIELDS }, team: { fields: PROJECT_USER_FIELDS }, files: { fields: ['id', 'url', 'name', 'mime', 'size', 'alternativeText'] } }
       });
 
       // Send project created email via AutoSend
@@ -70,7 +118,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
 
     try {
       const entity = await strapi.entityService.findOne('api::project.project', id, {
-        populate: ['owner', 'team', 'orders', 'files']
+        populate: PROJECT_LIST_POPULATE
       });
 
       if (!entity) {
@@ -97,7 +145,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
   // Get projects for current user.
   //
   // SECURITY — relation field allow-lists:
-  //   populate: ['owner', 'team', 'orders', 'files'] expanded full user objects
+  //   populate: PROJECT_LIST_POPULATE expanded full user objects
   //   from up_users, leaking password hash, resetPasswordToken,
   //   confirmationToken, *active withdrawal OTPs*, PayPal / Payoneer payout
   //   emails, billing address, phone, VAT/GST, clerk_id, tokenVersion, and
@@ -137,18 +185,8 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
 
       const projects = await strapi.entityService.findMany('api::project.project', {
         filters,
-        fields: [
-          'id', 'documentId',
-          'ProjectName', 'projectUrl',
-          'startDate', 'archived', 'status',
-          'createdAt', 'updatedAt', 'publishedAt',
-        ],
-        populate: {
-          owner: { fields: ['id', 'username', 'email'] },
-          team:  { fields: ['id', 'username', 'email'] },
-          orders: { fields: ['id', 'orderStatus'] },
-          files:  { fields: ['id', 'url', 'name', 'mime', 'size', 'alternativeText'] },
-        },
+        fields: PROJECT_PUBLIC_FIELDS,
+        populate: PROJECT_LIST_POPULATE,
         sort: { createdAt: 'desc' },
         start,
         limit: pageSize
@@ -157,7 +195,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
       const pageCount = Math.ceil(totalCount / pageSize);
 
       return {
-        data: projects,
+        data: projects.map(sanitizeProjectResponse),
         meta: {
           pagination: {
             page,
@@ -244,11 +282,11 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
 
       const project = await strapi.entityService.create('api::project.project', {
         data: newProject,
-        populate: ['owner', 'team']
+        populate: { owner: { fields: PROJECT_USER_FIELDS }, team: { fields: PROJECT_USER_FIELDS } }
       });
 
       return {
-        data: project
+        data: sanitizeProjectResponse(project)
       };
     } catch (error) {
       return ctx.badRequest('Failed to create project from template', { error: error.message });
@@ -264,7 +302,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     try {
       // Check if user is project owner
       const project = await strapi.entityService.findOne('api::project.project', id, {
-        populate: ['owner', 'team']
+        populate: { owner: { fields: PROJECT_USER_FIELDS }, team: { fields: PROJECT_USER_FIELDS } }
       });
 
       if (!project) {
@@ -280,11 +318,11 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
         data: {
           team: [...(project.team?.map(t => t.id) || []), ...userIds]
         },
-        populate: ['owner', 'team']
+        populate: { owner: { fields: PROJECT_USER_FIELDS }, team: { fields: PROJECT_USER_FIELDS } }
       });
 
       return {
-        data: updatedProject
+        data: sanitizeProjectResponse(updatedProject)
       };
     } catch (error) {
       return ctx.badRequest('Failed to add team members', { error: error.message });
@@ -434,7 +472,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     try {
       // Check if project exists and user has access
       const project = await strapi.entityService.findOne('api::project.project', id, {
-        populate: ['owner', 'team']
+        populate: { owner: { fields: PROJECT_USER_FIELDS }, team: { fields: PROJECT_USER_FIELDS } }
       });
 
       if (!project) {
@@ -449,7 +487,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
       // Update the project
       const updatedProject = await strapi.entityService.update('api::project.project', id, {
         data: ctx.request.body.data || ctx.request.body,
-        populate: ['owner', 'team', 'orders', 'files']
+        populate: PROJECT_LIST_POPULATE
       });
 
       const sanitizedEntity = await this.sanitizeOutput(updatedProject, ctx);
@@ -472,7 +510,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     try {
       // Check if project exists and user has access
       const project = await strapi.entityService.findOne('api::project.project', id, {
-        populate: ['owner', 'team']
+        populate: { owner: { fields: PROJECT_USER_FIELDS }, team: { fields: PROJECT_USER_FIELDS } }
       });
 
       if (!project) {
@@ -507,7 +545,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     try {
       // Check if project exists and user has access
       const project = await strapi.entityService.findOne('api::project.project', id, {
-        populate: ['owner', 'team']
+        populate: { owner: { fields: PROJECT_USER_FIELDS }, team: { fields: PROJECT_USER_FIELDS } }
       });
 
       if (!project) {
@@ -529,7 +567,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
           archived: true,
           status: 'archived'
         },
-        populate: ['owner', 'team', 'orders', 'files']
+        populate: PROJECT_LIST_POPULATE
       });
 
       const sanitizedEntity = await this.sanitizeOutput(archivedProject, ctx);
@@ -552,7 +590,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     try {
       // Check if project exists and user has access
       const project = await strapi.entityService.findOne('api::project.project', id, {
-        populate: ['owner', 'team']
+        populate: { owner: { fields: PROJECT_USER_FIELDS }, team: { fields: PROJECT_USER_FIELDS } }
       });
 
       if (!project) {
@@ -574,7 +612,7 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
           archived: false,
           status: 'active'
         },
-        populate: ['owner', 'team', 'orders', 'files']
+        populate: PROJECT_LIST_POPULATE
       });
 
       const sanitizedEntity = await this.sanitizeOutput(unarchivedProject, ctx);

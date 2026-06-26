@@ -152,127 +152,106 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
    */
   async getDashboardStats(ctx) {
     try {
-      const stats = {};
+      // B6 (perf pass 12, 2026-06-25) — pre-fix this handler ran ~10 DB
+      // queries SERIALLY (each await blocking the next). On the heaviest
+      // single admin page (the dashboard), that was wall-clock = sum of
+      // all query times. Refactored to Promise.all so all blocks run in
+      // parallel and total wall-clock = MAX of any single block.
+      //
+      // Per-block try/catch preserved — if (say) the financial block
+      // fails, the other stat tiles still render with their real values
+      // instead of the whole dashboard 500'ing.
+      const usersPromise = (async () => {
+        const [totalUsers, activeUsers, blockedUsers, pendingUsers] = await Promise.all([
+          strapi.db.query('plugin::users-permissions.user').count(),
+          strapi.db.query('plugin::users-permissions.user').count({ where: { confirmed: true, blocked: false } }),
+          strapi.db.query('plugin::users-permissions.user').count({ where: { blocked: true } }),
+          strapi.db.query('plugin::users-permissions.user').count({ where: { confirmed: false } }),
+        ]);
+        console.log('[DASHBOARD STATS] User counts:', { totalUsers, activeUsers, blockedUsers, pendingUsers });
+        return { total: totalUsers, active: activeUsers, blocked: blockedUsers, pending: pendingUsers };
+      })();
 
-      // Get user statistics
-      const totalUsers = await strapi.db.query('plugin::users-permissions.user').count();
-      const activeUsers = await strapi.db.query('plugin::users-permissions.user').count({
-        where: { confirmed: true, blocked: false }
-      });
-      const blockedUsers = await strapi.db.query('plugin::users-permissions.user').count({
-        where: { blocked: true }
-      });
-      const pendingUsers = await strapi.db.query('plugin::users-permissions.user').count({
-        where: { confirmed: false }
-      });
+      const ordersPromise = (async () => {
+        try {
+          const [totalOrders, pendingOrders, completedOrders] = await Promise.all([
+            strapi.db.query('api::order.order').count(),
+            strapi.db.query('api::order.order').count({ where: { orderStatus: 'pending' } }),
+            strapi.db.query('api::order.order').count({ where: { orderStatus: 'completed' } }),
+          ]);
+          console.log('[DASHBOARD] Orders query OK');
+          return { total: totalOrders, pending: pendingOrders, completed: completedOrders };
+        } catch (ordersError) {
+          console.error('[DASHBOARD ERROR] Orders query failed:', ordersError.message);
+          return { total: 0, pending: 0, completed: 0 };
+        }
+      })();
 
-      console.log('[DASHBOARD STATS] User counts:', { totalUsers, activeUsers, blockedUsers, pendingUsers });
+      const financialPromise = (async () => {
+        try {
+          // Revenue = sum of successful inflow transactions (payments + deposits).
+          // transactionStatus enum has no 'completed' value — valid success states are
+          // 'success' and 'paid'. We exclude withdrawals/refunds/fees so this represents
+          // money coming in, not flowing out.
+          const successStatuses = ['success', 'paid'];
+          const revenueTypes = ['payment', 'deposit'];
+          // Withdrawal-request schema field is `withdrawal_status`, not `status`.
+          const [revenueData, pendingWithdrawals] = await Promise.all([
+            strapi.db.query('api::transaction.transaction').findMany({
+              where: {
+                transactionStatus: { $in: successStatuses },
+                type: { $in: revenueTypes },
+              },
+              select: ['amount'],
+            }),
+            strapi.db.query('api::withdrawal-request.withdrawal-request').count({
+              where: { withdrawal_status: 'pending' },
+            }),
+          ]);
+          const totalRevenue = revenueData.reduce(
+            (sum, transaction) => sum + parseFloat(transaction.amount || 0),
+            0
+          );
+          // Count only the transactions that contributed to revenue so the
+          // "X transactions" sub-label on the Revenue card stays consistent.
+          console.log('[DASHBOARD] Financial query OK');
+          return {
+            totalTransactions: revenueData.length,
+            pendingWithdrawals,
+            totalRevenue: totalRevenue.toFixed(2),
+          };
+        } catch (financialError) {
+          console.error('[DASHBOARD ERROR] Financial query failed:', financialError.message);
+          return { totalTransactions: 0, pendingWithdrawals: 0, totalRevenue: '0.00' };
+        }
+      })();
 
-      stats.users = {
-        total: totalUsers,
-        active: activeUsers,
-        blocked: blockedUsers,
-        pending: pendingUsers
-      };
+      const websitesPromise = (async () => {
+        try {
+          const [totalWebsites, approvedWebsites] = await Promise.all([
+            strapi.db.query('api::marketplace.marketplace').count(),
+            strapi.db.query('api::publisher-website.publisher-website').count({
+              where: { submissionStatus: 'approved' },
+            }),
+          ]);
+          console.log('[DASHBOARD] Websites query OK');
+          return { total: totalWebsites, approved: approvedWebsites };
+        } catch (websitesError) {
+          console.error('[DASHBOARD ERROR] Websites query failed:', websitesError.message);
+          return { total: 0, approved: 0 };
+        }
+      })();
 
-      // Get order statistics - wrapped in try-catch to prevent 500 error
-      try {
-        const totalOrders = await strapi.db.query('api::order.order').count();
-        const pendingOrders = await strapi.db.query('api::order.order').count({
-          where: { orderStatus: 'pending' }
-        });
-        const completedOrders = await strapi.db.query('api::order.order').count({
-          where: { orderStatus: 'completed' }
-        });
+      const commsPromise = strapi.db.query('api::communication.communication').count()
+        .then(total => ({ total }))
+        .catch(() => ({ total: 0 }));
 
-        stats.orders = {
-          total: totalOrders,
-          pending: pendingOrders,
-          completed: completedOrders
-        };
-        console.log('[DASHBOARD] Orders query OK');
-      } catch (ordersError) {
-        console.error('[DASHBOARD ERROR] Orders query failed:', ordersError.message);
-        stats.orders = {
-          total: 0,
-          pending: 0,
-          completed: 0
-        };
-      }
+      const [users, orders, financial, websites, communications] = await Promise.all([
+        usersPromise, ordersPromise, financialPromise, websitesPromise, commsPromise,
+      ]);
 
-      // Get financial statistics - wrapped in try-catch
-      try {
-        // Revenue = sum of successful inflow transactions (payments + deposits).
-        // transactionStatus enum has no 'completed' value — valid success states are
-        // 'success' and 'paid'. We exclude withdrawals/refunds/fees so this represents
-        // money coming in, not flowing out.
-        const successStatuses = ['success', 'paid'];
-        const revenueTypes = ['payment', 'deposit'];
-
-        const revenueData = await strapi.db.query('api::transaction.transaction').findMany({
-          where: {
-            transactionStatus: { $in: successStatuses },
-            type: { $in: revenueTypes }
-          },
-          select: ['amount']
-        });
-        const totalRevenue = revenueData.reduce((sum, transaction) => {
-          return sum + parseFloat(transaction.amount || 0);
-        }, 0);
-
-        // Count only the transactions that contributed to revenue so the
-        // "X transactions" sub-label on the Revenue card stays consistent.
-        const totalTransactions = revenueData.length;
-
-        // Withdrawal-request schema field is `withdrawal_status`, not `status`.
-        const pendingWithdrawals = await strapi.db.query('api::withdrawal-request.withdrawal-request').count({
-          where: { withdrawal_status: 'pending' }
-        });
-
-        stats.financial = {
-          totalTransactions,
-          pendingWithdrawals,
-          totalRevenue: totalRevenue.toFixed(2)
-        };
-        console.log('[DASHBOARD] Financial query OK');
-      } catch (financialError) {
-        console.error('[DASHBOARD ERROR] Financial query failed:', financialError.message);
-        stats.financial = {
-          totalTransactions: 0,
-          pendingWithdrawals: 0,
-          totalRevenue: '0.00'
-        };
-      }
-
-      // Get website statistics - wrapped in try-catch
-      try {
-        const totalWebsites = await strapi.db.query('api::marketplace.marketplace').count();
-        const approvedWebsites = await strapi.db.query('api::publisher-website.publisher-website').count({
-          where: { submissionStatus: 'approved' }
-        });
-
-        stats.websites = {
-          total: totalWebsites,
-          approved: approvedWebsites
-        };
-        console.log('[DASHBOARD] Websites query OK');
-      } catch (websitesError) {
-        console.error('[DASHBOARD ERROR] Websites query failed:', websitesError.message);
-        stats.websites = {
-          total: 0,
-          approved: 0
-        };
-      }
-
-      // Get communication statistics
-      const totalCommunications = await strapi.db.query('api::communication.communication').count();
-
-      stats.communications = {
-        total: totalCommunications
-      };
-
+      const stats = { users, orders, financial, websites, communications };
       console.log('[DASHBOARD STATS] Final stats:', JSON.stringify(stats, null, 2));
-
       ctx.send(stats);
 
     } catch (error) {
