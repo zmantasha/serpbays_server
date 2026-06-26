@@ -1,487 +1,466 @@
 'use strict';
 
 /**
- * communication controller
+ * communication controller.
+ *
+ * Hardening summary (compared to the original):
+ *   - find / findOne / update / delete overridden — the `Authenticated`
+ *     role has `find` + `findOne` + `update` permissions on this content
+ *     type, and Strapi's default core controllers apply NO row-level
+ *     ownership filter. Without overrides, any logged-in user could list
+ *     every message on the platform and edit any of them.
+ *   - Every response that includes a populated `sender` relation now
+ *     allow-lists user fields to { id, username }. Pre-fix, sender came
+ *     back as the FULL up_users row (password hash, withdrawalOtp + amount,
+ *     paypal/payoneer emails, billing PII, clerk_id, tokenVersion, etc.)
+ *     because `entityService` does not honor `private: true`.
+ *   - Order populates similarly allow-listed.
+ *   - Dead handlers `acceptOrder`, `requestRevision`, `startRevision`,
+ *     `completeRevision`, `getUserConversations` removed — they were not
+ *     routed but had no auth/IDOR checks, so a future routing change
+ *     would have shipped an instant order-completion / wallet-bypass
+ *     primitive.
+ *   - Input validation on message length and communicationStatus.
+ *   - Snapshot-publisher fallback for legacy orders.
+ *   - Error responses never echo `error.message` to the caller.
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+const SENDER_PUBLIC_FIELDS = ['id', 'username'];
+const ORDER_PUBLIC_FIELDS_FOR_COMM = ['id', 'documentId', 'orderStatus', 'createdAt'];
+const COMM_PUBLIC_FIELDS = [
+  'id', 'documentId',
+  'message', 'communicationStatus', 'isUnread',
+  'createdAt', 'updatedAt', 'publishedAt',
+];
+
+const VALID_STATUS = ['requested', 'acceptance', 'in_progress'];
+const MAX_MESSAGE_LENGTH = 5000;
+
+function isPartyToOrder(order, user) {
+  if (!order || !user || typeof user.id !== 'number') return false;
+  if (order.advertiser && order.advertiser.id === user.id) return true;
+  if (order.publisher && order.publisher.id === user.id) return true;
+  // Snapshot fallback for legacy orders where publisher FK was never set.
+  // Never overrides a present FK.
+  if (!order.publisher?.id
+      && order.websitePublisherEmail
+      && user.email
+      && order.websitePublisherEmail === user.email) {
+    return true;
+  }
+  return false;
+}
+
+function buildCommOwnershipFilter(user) {
+  if (!user || typeof user.id !== 'number') return null;
+  const clauses = [
+    { order: { advertiser: user.id } },
+    { order: { publisher: user.id } },
+    { sender: user.id },
+  ];
+  if (user.email) {
+    clauses.push({ order: { websitePublisherEmail: user.email } });
+  }
+  return { $or: clauses };
+}
+
+// Shape the populated-entity for safe return — drops chatroom (internal
+// id only; never the relation) and strips sender / order to allow-lists.
+function shapeForResponse(populated) {
+  if (!populated) return populated;
+  const out = {};
+  for (const k of COMM_PUBLIC_FIELDS) {
+    if (populated[k] !== undefined) out[k] = populated[k];
+  }
+  if (populated.sender) {
+    out.sender = {};
+    for (const k of SENDER_PUBLIC_FIELDS) {
+      if (populated.sender[k] !== undefined) out.sender[k] = populated.sender[k];
+    }
+  }
+  if (populated.order) {
+    out.order = {};
+    for (const k of ORDER_PUBLIC_FIELDS_FOR_COMM) {
+      if (populated.order[k] !== undefined) out.order[k] = populated.order[k];
+    }
+  }
+  if (populated.chatroom?.id) {
+    out.chatroom = { id: populated.chatroom.id };
+  }
+  return out;
+}
+
 module.exports = createCoreController('api::communication.communication', ({ strapi }) => ({
 
-  // Create a new communication
-  async create(ctx) {
-    const { data } = ctx.request.body;
+  // ===== Default-route overrides — ownership-gated =====
 
+  async find(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to list communications');
+    }
+    const ownership = buildCommOwnershipFilter(ctx.state.user);
+    if (!ownership) return ctx.unauthorized('Authenticated user missing identity');
+    const userFilters = ctx.query?.filters;
+    ctx.query = {
+      ...ctx.query,
+      filters: userFilters ? { $and: [userFilters, ownership] } : ownership,
+      fields: COMM_PUBLIC_FIELDS,
+      populate: {
+        sender: { fields: SENDER_PUBLIC_FIELDS },
+      },
+    };
+    return super.find(ctx);
+  },
+
+  async findOne(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to view this communication');
+    }
+    const { id } = ctx.params;
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Communication not found');
+    }
+    const row = await strapi.db.query('api::communication.communication').findOne({
+      where: { id: numericId },
+      populate: {
+        sender: true,
+        order: {
+          populate: {
+            advertiser: { select: ['id'] },
+            publisher:  { select: ['id'] },
+          },
+        },
+      },
+    });
+    if (!row) return ctx.notFound('Communication not found');
+    const user = ctx.state.user;
+    const isSenderSelf = row.sender?.id === user.id;
+    const isParty = isPartyToOrder(row.order, user);
+    if (!isSenderSelf && !isParty) {
+      return ctx.notFound('Communication not found');
+    }
+    return { data: shapeForResponse(row) };
+  },
+
+  async update(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to update this communication');
+    }
+    const { id } = ctx.params;
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Communication not found');
+    }
+    const existing = await strapi.db.query('api::communication.communication').findOne({
+      where: { id: numericId },
+      populate: { sender: { select: ['id'] } },
+    });
+    if (!existing) return ctx.notFound('Communication not found');
+    if (existing.sender?.id !== ctx.state.user.id) {
+      // Only the original sender may mutate the row. 404 to defeat
+      // enumeration (don't differentiate "exists" from "not yours").
+      return ctx.notFound('Communication not found');
+    }
+    const body = ctx.request.body?.data || ctx.request.body || {};
+    // Whitelist mutable fields — caller cannot reassign sender / order /
+    // chatroom or any other column.
+    const allowed = {};
+    if (typeof body.message === 'string') {
+      const m = body.message.trim();
+      if (m.length === 0 || m.length > MAX_MESSAGE_LENGTH) {
+        return ctx.badRequest('message must be 1..' + MAX_MESSAGE_LENGTH + ' chars');
+      }
+      allowed.message = m;
+    }
+    if (body.communicationStatus !== undefined) {
+      if (!VALID_STATUS.includes(body.communicationStatus)) {
+        return ctx.badRequest('Invalid communicationStatus');
+      }
+      allowed.communicationStatus = body.communicationStatus;
+    }
+    if (typeof body.isUnread === 'boolean') {
+      allowed.isUnread = body.isUnread;
+    }
+    if (Object.keys(allowed).length === 0) {
+      return ctx.badRequest('No mutable fields supplied');
+    }
+    const updated = await strapi.entityService.update('api::communication.communication', numericId, {
+      data: allowed,
+      populate: {
+        sender: { fields: SENDER_PUBLIC_FIELDS },
+        order:  { fields: ORDER_PUBLIC_FIELDS_FOR_COMM },
+      },
+    });
+    return { data: shapeForResponse(updated) };
+  },
+
+  async delete(ctx) {
+    // Communications are an append-only audit trail of the order
+    // conversation. Disallow deletion outright.
+    return ctx.forbidden('Communications cannot be deleted');
+  },
+
+  // ===== Custom handlers =====
+
+  async create(ctx) {
     try {
-      // Get current user
       const user = ctx.state.user;
       if (!user) {
         return ctx.unauthorized('You must be logged in to create a communication');
       }
 
-      // Validate required fields
-      if (!data.message || !data.order) {
-        return ctx.badRequest('Message and order ID are required');
+      const data = ctx.request.body?.data || {};
+
+      // Validate required + bounded inputs.
+      if (typeof data.message !== 'string') {
+        return ctx.badRequest('message must be a string');
+      }
+      const message = data.message.trim();
+      if (message.length === 0 || message.length > MAX_MESSAGE_LENGTH) {
+        return ctx.badRequest('message must be 1..' + MAX_MESSAGE_LENGTH + ' chars');
+      }
+      const orderId = Number(data.order);
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        return ctx.badRequest('order must be a positive integer');
+      }
+      const communicationStatus = data.communicationStatus === undefined
+        ? 'requested'
+        : data.communicationStatus;
+      if (!VALID_STATUS.includes(communicationStatus)) {
+        return ctx.badRequest('Invalid communicationStatus');
       }
 
-      // Check if the order exists
-      const order = await strapi.entityService.findOne('api::order.order', data.order, {
-        populate: ['advertiser', 'publisher', 'chatroom'],
+      const order = await strapi.entityService.findOne('api::order.order', orderId, {
+        fields: ['id', 'orderStatus', 'createdAt', 'websitePublisherEmail'],
+        populate: {
+          advertiser: { fields: ['id'] },
+          publisher:  { fields: ['id'] },
+          chatroom:   { fields: ['id'] },
+        },
       });
+      if (!order) return ctx.notFound('Order not found');
 
-      if (!order) {
+      if (!isPartyToOrder(order, user)) {
+        // 404 not 403 — don't reveal order existence.
         return ctx.notFound('Order not found');
       }
 
-      // Check if user is associated with the order
-      if (
-        order.advertiser?.id !== user.id &&
-        order.publisher?.id !== user.id
-      ) {
-        return ctx.forbidden('You are not authorized to add communications to this order');
-      }
-
-      // Get or create chatroom for this order
-      let chatroom = order.chatroom;
-      if (!chatroom) {
-        chatroom = await strapi.entityService.create('api::chatroom.chatroom', {
+      // Get or create chatroom.
+      let chatroomId = order.chatroom?.id || null;
+      if (!chatroomId) {
+        const created = await strapi.entityService.create('api::chatroom.chatroom', {
           data: {
-            order: data.order,
+            order: order.id,
             advertiser: order.advertiser?.id,
             publisher: order.publisher?.id,
             status: 'active',
             lastActivity: new Date(),
           },
+          fields: ['id'],
         });
+        chatroomId = created.id;
       } else {
-        // Update last activity
-        await strapi.entityService.update('api::chatroom.chatroom', chatroom.id, {
+        await strapi.entityService.update('api::chatroom.chatroom', chatroomId, {
           data: { lastActivity: new Date() },
         });
       }
 
-      // Create the communication with the current user as sender
       const entity = await strapi.entityService.create('api::communication.communication', {
         data: {
-          message: data.message,
+          message,
           sender: user.id,
-          order: data.order,
-          chatroom: chatroom.id,
-          communicationStatus: data.communicationStatus || 'requested',
+          order: order.id,
+          chatroom: chatroomId,
+          communicationStatus,
         },
       });
 
-      // Get the created entity with populated relations
-      const populatedEntity = await strapi.entityService.findOne('api::communication.communication', entity.id, {
-        populate: ['sender', 'order', 'chatroom'],
+      const populated = await strapi.entityService.findOne('api::communication.communication', entity.id, {
+        populate: {
+          sender: { fields: SENDER_PUBLIC_FIELDS },
+          order:  { fields: ORDER_PUBLIC_FIELDS_FOR_COMM },
+          chatroom: { fields: ['id'] },
+        },
       });
 
-      // Determine recipient for the notification
-      // If sender is advertiser, recipient is publisher, and vice-versa
-      let recipientId;
+      // Determine recipient for notification + email (advertiser <-> publisher).
+      let recipientId = null;
       if (order.advertiser && order.publisher) {
-        if (user.id === order.advertiser.id) {
-          recipientId = order.publisher.id;
-        } else if (user.id === order.publisher.id) {
-          recipientId = order.advertiser.id;
-        }
+        if (user.id === order.advertiser.id) recipientId = order.publisher.id;
+        else if (user.id === order.publisher.id) recipientId = order.advertiser.id;
       }
 
-      // Create notification for the recipient
+      // Notification (fire-and-forget; non-blocking on failure).
       if (recipientId) {
         try {
           await strapi.service('api::notification.notification').createCommunicationNotification(
             recipientId,
-            user.id, // senderId is the current user
+            user.id,
             order.id,
             'message_received',
             { communicationId: entity.id }
           );
-          console.log(`Notification created for message ${entity.id} to recipient ${recipientId}`);
         } catch (notificationError) {
-          console.error('Failed to create message_received notification:', notificationError);
-          // Don't fail the communication creation if notification fails
+          strapi.log?.error?.('[communication] notification failed', { error: notificationError.message });
         }
-      } else {
-        console.warn(`Could not determine recipient for message_received notification for order ${order.id}. Advertiser: ${order.advertiser?.id}, Publisher: ${order.publisher?.id}, Sender: ${user.id}`);
       }
 
-      // ========== EMAIL NOTIFICATION ==========
-      // Send email notification to the message recipient
-      if (recipientId && data.message) {
+      // Email (fire-and-forget). Fetch only the fields we need on the recipient.
+      if (recipientId && message) {
         try {
-          // Fetch recipient user details
-          const recipient = await strapi.entityService.findOne('plugin::users-permissions.user', recipientId);
-
-          if (recipient && recipient.email) {
-            // Determine sender role
+          const recipient = await strapi.entityService.findOne(
+            'plugin::users-permissions.user',
+            recipientId,
+            // The user schema uses `firstName` (camelCase). `first_name`
+            // (snake_case) was a typo Strapi 4 silently ignored; Strapi 5
+            // throws ValidationError on the findOne.
+            { fields: ['id', 'username', 'email', 'firstName'] }
+          );
+          if (recipient?.email) {
             const senderRole = user.id === order.advertiser?.id ? 'Advertiser' : 'Publisher';
-
             const emailService = strapi.service('api::global.email-operations');
             await emailService.sendNewMessageEmail({
               receiverEmail: recipient.email,
               receiverName: recipient.firstName || recipient.username || 'User',
               senderRole,
-              messageText: data.message,
-              messageTime: populatedEntity.createdAt,
+              messageText: message,
+              messageTime: populated.createdAt,
               order: {
                 id: order.id,
                 orderStatus: order.orderStatus,
-                createdAt: order.createdAt
+                createdAt: order.createdAt,
               },
-              replyUrl: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`
+              replyUrl: `${process.env.CLIENT_URL}/orders/order-detail/${order.id}`,
             });
           }
         } catch (emailError) {
-          console.error('[Communication] Failed to send new message email:', emailError);
-          // Non-blocking - don't fail the communication creation
+          strapi.log?.error?.('[communication] email send failed', { error: emailError.message });
         }
       }
-      // ========== END EMAIL NOTIFICATION ==========
 
-      // Send WebSocket notification to both participants
+      // WebSocket fan-out to participants (non-blocking).
       try {
         const notificationData = {
           type: 'new_message',
-          chatroomId: chatroom.id,
+          chatroomId,
           orderId: order.id,
           message: {
             id: entity.id,
-            content: data.message,
-            sender: {
-              id: user.id,
-              username: user.username
-            },
-            createdAt: populatedEntity.createdAt,
-            isUnread: true
-          }
+            content: message,
+            sender: { id: user.id, username: user.username },
+            createdAt: populated.createdAt,
+            isUnread: true,
+          },
         };
-
-        // Send WebSocket notification to participants (avoid sending to sender)
         const participantIds = [];
-
         if (order.advertiser?.id && order.advertiser.id !== user.id) {
-          participantIds.push({
-            id: order.advertiser.id,
-            role: 'advertiser'
-          });
+          participantIds.push(order.advertiser.id);
         }
-
         if (order.publisher?.id && order.publisher.id !== user.id) {
-          participantIds.push({
-            id: order.publisher.id,
-            role: 'publisher'
-          });
+          participantIds.push(order.publisher.id);
         }
-
-        // Send to each participant
-        participantIds.forEach(participant => {
-          const event = `user_${participant.id}_message`;
-          console.log(`📤 Sending WebSocket event ${event} to ${participant.role} ${participant.id}`);
-
-          if (strapi.io && strapi.io.emitToUser) {
-            const success = strapi.io.emitToUser(participant.id, event, notificationData);
-            if (!success) {
-              console.log(`⚠️ User ${participant.id} (${participant.role}) not connected`);
-            }
-          } else {
-            console.error('❌ WebSocket not available - strapi.io or emitToUser not found');
+        for (const pid of participantIds) {
+          if (strapi.io?.emitToUser) {
+            strapi.io.emitToUser(pid, `user_${pid}_message`, notificationData);
           }
-        });
+        }
       } catch (websocketError) {
-        console.error('Error sending WebSocket notification:', websocketError);
-        // Don't fail the communication creation if WebSocket fails
+        strapi.log?.error?.('[communication] websocket emit failed', { error: websocketError.message });
       }
 
-      return { data: populatedEntity };
+      return { data: shapeForResponse(populated) };
     } catch (error) {
-      console.error('Error creating communication:', error);
+      strapi.log?.error?.('[communication] create failed', { error: error.message });
       return ctx.internalServerError('An error occurred while creating the communication');
     }
   },
 
-  // Get communications for a specific order
   async getOrderCommunications(ctx) {
-    const { orderId } = ctx.params;
-
     try {
-      // Get current user
       const user = ctx.state.user;
       if (!user) {
         return ctx.unauthorized('You must be logged in to view communications');
       }
-
-      // Check if the order exists and user is associated with it
-      const order = await strapi.entityService.findOne('api::order.order', orderId, {
-        populate: ['advertiser', 'publisher'],
-      });
-
-      if (!order) {
+      const { orderId } = ctx.params;
+      const numericId = Number(orderId);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
         return ctx.notFound('Order not found');
       }
 
-      // Check if user is associated with the order
-      if (
-        order.advertiser?.id !== user.id &&
-        order.publisher?.id !== user.id
-      ) {
-        return ctx.forbidden('You are not authorized to view communications for this order');
+      const order = await strapi.entityService.findOne('api::order.order', numericId, {
+        fields: ['id', 'websitePublisherEmail'],
+        populate: {
+          advertiser: { fields: ['id'] },
+          publisher:  { fields: ['id'] },
+        },
+      });
+      if (!order || !isPartyToOrder(order, user)) {
+        return ctx.notFound('Order not found');
       }
 
-      // Find all communications for this order
       const communications = await strapi.entityService.findMany('api::communication.communication', {
-        filters: { order: orderId },
+        filters: { order: numericId },
         sort: { createdAt: 'asc' },
-        populate: ['sender'],
+        fields: COMM_PUBLIC_FIELDS,
+        populate: {
+          sender: { fields: SENDER_PUBLIC_FIELDS },
+        },
       });
 
       return { data: communications };
     } catch (error) {
-      console.error('Error fetching order communications:', error);
+      strapi.log?.error?.('[communication] getOrderCommunications failed', { error: error.message });
       return ctx.internalServerError('An error occurred while fetching communications');
     }
   },
 
-  // Update communication status
   async updateStatus(ctx) {
-    const { id } = ctx.params;
-    const { communicationStatus } = ctx.request.body;
-
     try {
-      // Get current user
       const user = ctx.state.user;
       if (!user) {
         return ctx.unauthorized('You must be logged in to update a communication');
       }
+      const { id } = ctx.params;
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        return ctx.notFound('Communication not found');
+      }
+      const { communicationStatus } = ctx.request.body || {};
+      if (!VALID_STATUS.includes(communicationStatus)) {
+        return ctx.badRequest('Invalid communicationStatus');
+      }
 
-      // Check if the communication exists
-      const communication = await strapi.entityService.findOne('api::communication.communication', id, {
-        populate: ['sender', 'order', 'order.advertiser', 'order.publisher'],
+      const existing = await strapi.entityService.findOne('api::communication.communication', numericId, {
+        fields: ['id'],
+        populate: {
+          order: {
+            fields: ['id', 'websitePublisherEmail'],
+            populate: {
+              advertiser: { fields: ['id'] },
+              publisher:  { fields: ['id'] },
+            },
+          },
+        },
       });
-
-      if (!communication) {
+      if (!existing) return ctx.notFound('Communication not found');
+      if (!isPartyToOrder(existing.order, user)) {
         return ctx.notFound('Communication not found');
       }
 
-      // Check if user is associated with the order
-      if (
-        communication.order?.advertiser?.id !== user.id &&
-        communication.order?.publisher?.id !== user.id
-      ) {
-        return ctx.forbidden('You are not authorized to update this communication');
-      }
-
-      // Validate status
-      if (!['requested', 'acceptance', 'in_progress'].includes(communicationStatus)) {
-        return ctx.badRequest('Invalid status value');
-      }
-
-      // Update the communication status
-      const updated = await strapi.entityService.update('api::communication.communication', id, {
+      const updated = await strapi.entityService.update('api::communication.communication', numericId, {
         data: { communicationStatus },
+        populate: {
+          sender: { fields: SENDER_PUBLIC_FIELDS },
+          order:  { fields: ORDER_PUBLIC_FIELDS_FOR_COMM },
+        },
       });
-
-      // Get the updated entity with populated relations
-      const populatedEntity = await strapi.entityService.findOne('api::communication.communication', updated.id, {
-        populate: ['sender', 'order'],
-      });
-
-      return { data: populatedEntity };
+      return { data: shapeForResponse(updated) };
     } catch (error) {
-      console.error('Error updating communication status:', error);
+      strapi.log?.error?.('[communication] updateStatus failed', { error: error.message });
       return ctx.internalServerError('An error occurred while updating the communication status');
     }
   },
-
-  // Get all conversations for current user
-  async getUserConversations(ctx) {
-    try {
-      // Get current user
-      const user = ctx.state.user;
-      if (!user) {
-        return ctx.unauthorized('You must be logged in to view conversations');
-      }
-
-      // Find all orders where user is either advertiser or publisher
-      const orders = await strapi.entityService.findMany('api::order.order', {
-        filters: {
-          $or: [
-            { advertiser: user.id },
-            { publisher: user.id }
-          ]
-        },
-        populate: ['advertiser', 'publisher', 'communications', 'communications.sender'],
-        sort: { updatedAt: 'desc' }
-      });
-
-      // Group communications by order and get latest message for each conversation
-      const conversations = [];
-
-      for (const order of orders) {
-        if (order.communications && order.communications.length > 0) {
-          // Sort communications by creation date (latest first)
-          const sortedComms = order.communications.sort((a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-
-          const latestMessage = sortedComms[0];
-          const otherParty = order.advertiser?.id === user.id ? order.publisher : order.advertiser;
-
-          // Count unread messages (messages from other party that are newer than user's last message)
-          const userMessages = sortedComms.filter(comm => comm.sender?.id === user.id);
-          const otherMessages = sortedComms.filter(comm => comm.sender?.id !== user.id);
-
-          const lastUserMessageTime = userMessages.length > 0 ?
-            new Date(userMessages[0].createdAt).getTime() : 0;
-
-          const unreadCount = otherMessages.filter(comm =>
-            new Date(comm.createdAt).getTime() > lastUserMessageTime
-          ).length;
-
-          conversations.push({
-            orderId: order.id,
-            orderTitle: `Order #${order.websiteUrl}`,
-            otherParty: {
-              id: otherParty?.id,
-              username: otherParty?.username,
-              email: otherParty?.email
-            },
-            latestMessage: {
-              id: latestMessage.id,
-              message: latestMessage.message,
-              sender: latestMessage.sender,
-              createdAt: latestMessage.createdAt,
-              communicationStatus: latestMessage.communicationStatus
-            },
-            unreadCount,
-            totalMessages: order.communications.length,
-            orderStatus: order.orderStatus,
-            updatedAt: order.updatedAt
-          });
-        }
-      }
-
-      // Sort conversations by latest activity
-      conversations.sort((a, b) =>
-        new Date(b.latestMessage.createdAt).getTime() - new Date(a.latestMessage.createdAt).getTime()
-      );
-
-      return {
-        data: conversations,
-        meta: {
-          totalConversations: conversations.length,
-          totalUnreadMessages: conversations.reduce((sum, conv) => sum + conv.unreadCount, 0)
-        }
-      };
-    } catch (error) {
-      console.error('Error fetching user conversations:', error);
-      return ctx.internalServerError('An error occurred while fetching conversations');
-    }
-  },
-
-  // New function to handle revision requests
-  async requestRevision(ctx) {
-    const { orderId } = ctx.params;
-    const { message } = ctx.request.body;
-
-    // Validate 5-day window for requesting revisions
-    const order = await strapi.entityService.findOne('api::order.order', orderId);
-    const deliveredDate = new Date(order.deliveredDate);
-    const currentDate = new Date();
-    const daysDifference = calculateWorkingDays(deliveredDate, currentDate);
-
-    if (daysDifference > 5) {
-      return ctx.badRequest('Revision can only be requested within 5 working days of delivery');
-    }
-
-    // Update order status and set revision timestamps
-    await strapi.entityService.update('api::order.order', orderId, {
-      data: {
-        revisionRequestedAt: new Date(),
-        revisionDeadline: calculateDeadline(new Date(), 5), // Add helper to calculate 5 working days
-        revisionStatus: 'requested',
-      }
-    });
-
-    // Create a communication record for the revision request
-    await strapi.entityService.create('api::communication.communication', {
-      data: {
-        message: `Revision requested: ${message}`,
-        sender: ctx.state.user.id,
-        order: orderId,
-        communicationStatus: 'requested',
-      }
-    });
-
-    // Return updated order
-    return { success: true };
-  },
-
-  // Add function to mark revision as in progress (for publisher)
-  async startRevision(ctx) {
-    const { orderId } = ctx.params;
-
-    await strapi.entityService.update('api::order.order', orderId, {
-      data: { revisionStatus: 'in_progress' }
-    });
-
-    // Create a communication record
-    await strapi.entityService.create('api::communication.communication', {
-      data: {
-        message: 'Working on revision',
-        sender: ctx.state.user.id,
-        order: orderId,
-        communicationStatus: 'in_progress',
-      }
-    });
-
-    return { success: true };
-  },
-
-  // Add function to mark revision as completed (for publisher)
-  async completeRevision(ctx) {
-    const { orderId } = ctx.params;
-    const { message } = ctx.request.body;
-
-    await strapi.entityService.update('api::order.order', orderId, {
-      data: { revisionStatus: 'completed' }
-    });
-
-    // Create a communication record
-    await strapi.entityService.create('api::communication.communication', {
-      data: {
-        message: `Revision completed: ${message}`,
-        sender: ctx.state.user.id,
-        order: orderId,
-        communicationStatus: 'acceptance',
-      }
-    });
-
-    return { success: true };
-  },
-
-  // Add function to accept order (for advertiser)
-  async acceptOrder(ctx) {
-    const { orderId } = ctx.params;
-
-    await strapi.entityService.update('api::order.order', orderId, {
-      data: {
-        orderStatus: 'completed',
-        orderAccepted: true,
-        completedDate: new Date()
-      }
-    });
-
-    // Create a final communication record
-    await strapi.entityService.create('api::communication.communication', {
-      data: {
-        message: 'Order accepted and completed',
-        sender: ctx.state.user.id,
-        order: orderId,
-        communicationStatus: 'acceptance',
-      }
-    });
-
-    return { success: true };
-  }
-})); 
+}));

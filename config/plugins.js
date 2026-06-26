@@ -1,3 +1,24 @@
+// CATASTROPHIC pre-fix: the jwtSecret config used `env('JWT_SECRET',
+// 'your-secret-key-here')` — a hardcoded fallback. If JWT_SECRET was
+// unset in the production environment (Docker misconfig, env file not
+// loaded, runtime override missing), Strapi silently signed every JWT
+// with the literal string 'your-secret-key-here'. Anyone reading the
+// repo would know the signing key, and could forge a JWT for ANY user
+// — instant platform-wide account takeover.
+// Fix: load JWT_SECRET strictly; throw at boot if unset. A
+// misconfigured deploy now crashes loudly instead of silently shipping
+// a forgeable signing key.
+function requireSecret(env, name) {
+  const v = env(name);
+  if (!v || typeof v !== 'string' || v.length < 16) {
+    throw new Error(
+      `[config/plugins.js] ${name} is required and must be at least 16 characters. ` +
+      'Refusing to start with a missing or weak secret.'
+    );
+  }
+  return v;
+}
+
 module.exports = ({ env }) => ({
   'users-permissions': {
     config: {
@@ -7,7 +28,7 @@ module.exports = ({ env }) => ({
       jwt: {
         expiresIn: '7d',
       },
-      jwtSecret: env('JWT_SECRET', 'your-secret-key-here'),
+      jwtSecret: requireSecret(env, 'JWT_SECRET'),
       // Enable registration and email confirmation
       allow_register: true,
       email_confirmation: true,

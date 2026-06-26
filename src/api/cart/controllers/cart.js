@@ -62,7 +62,9 @@ module.exports = createCoreController('api::cart.cart', ({ strapi }) => ({
                   description: marketplace.description || '',
                   category: marketplace.category,
                   traffic: marketplace.ahrefs_traffic,
-                  publisher_writing_price: marketplace.publisher_writing_price,
+                  // publisher_writing_price intentionally NOT exposed — it's
+                  // the publisher's intake price (business secret). The
+                  // advertiser-facing fee comes from the order create flow.
                   backlinkType: marketplace.backlink_type
                 }
               };

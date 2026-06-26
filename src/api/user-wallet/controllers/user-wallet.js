@@ -337,10 +337,16 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.notFound('Wallet not found');
       }
 
-      // Get pagination parameters
-      const { page = 1, pageSize = 10 } = ctx.query;
-      const limit = parseInt(pageSize);
-      const offset = (parseInt(page) - 1) * limit;
+      // Pagination with hard caps. Pre-fix `pageSize` was caller-supplied
+      // and unbounded — request `pageSize=10_000_000` to attempt DoS via
+      // a huge JSON serialization. Cap at 100; non-numeric falls back to 10.
+      const rawPage = Number.parseInt(ctx.query?.page, 10);
+      const rawPageSize = Number.parseInt(ctx.query?.pageSize, 10);
+      const page = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
+      const limit = Number.isFinite(rawPageSize) && rawPageSize >= 1
+        ? Math.min(rawPageSize, 100)
+        : 10;
+      const offset = (page - 1) * limit;
 
       // Get transactions with pagination
       const [transactions, total] = await strapi.db.query('api::transaction.transaction').findWithCount({
@@ -657,29 +663,46 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       if (error.message && error.message.includes('Duplicate promo redemption')) {
         return ctx.badRequest('You have already used this promo code');
       }
-      return ctx.badRequest(error.message || 'Failed to redeem code');
+      strapi.log?.error?.('[promo] redeemPromo failed', { error: error.message });
+      return ctx.badRequest('Failed to redeem code');
     }
   },
 
   // Check promo code or voucher code validity
+  // POST /api/wallet/check-promo — validate code WITHOUT consuming it.
+  // Audit notes:
+  //   - Pre-fix had no in-handler auth check. The route declares
+  //     `auth:{}` (empty), which Strapi treats as "any auth strategy
+  //     accepted but no specific permission required" — semantics shift
+  //     across Strapi versions. We add an explicit unauthorized() guard
+  //     so anonymous callers cannot brute-force codes regardless of
+  //     route-config interpretation.
+  //   - Length-cap the code to defeat pathological inputs.
+  //   - The response still returns the bonus `amount` on valid hits —
+  //     end users need it to make an informed redemption decision. Brute-
+  //     force risk is reduced by requiring authentication (attackers are
+  //     traceable to an account) but not eliminated — recommend per-IP +
+  //     per-user rate limit middleware as ops follow-up.
+  //   - `error.message` no longer echoed; server-side log only.
   async checkPromoCode(ctx) {
     try {
-      const { promoCode } = ctx.request.body;
-      if (!promoCode) {
+      const userId = ctx.state?.user?.id;
+      if (!userId) {
+        return ctx.unauthorized('Authentication required');
+      }
+      const { promoCode } = ctx.request.body || {};
+      if (typeof promoCode !== 'string' || promoCode.length === 0 || promoCode.length > 64) {
         return ctx.badRequest('Promo code is required');
       }
 
       let codeData = null;
       let codeType = 'promo';
 
-      // First, try to find a promo code
       const promo = await strapi.db.query('api::promo-code.promo-code').findOne({
         where: {
           code: promoCode,
           promoStatus: 'active',
-          expiryDate: {
-            $gt: new Date()
-          }
+          expiryDate: { $gt: new Date() }
         }
       });
 
@@ -687,17 +710,13 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         codeData = promo;
         codeType = 'promo';
       } else {
-        // If not a promo code, try to find a voucher code
         const voucher = await strapi.db.query('api::voucher-code.voucher-code').findOne({
           where: {
             code: promoCode,
             voucherStatus: 'active',
-            expiryDate: {
-              $gt: new Date()
-            }
+            expiryDate: { $gt: new Date() }
           }
         });
-
         if (voucher) {
           codeData = voucher;
           codeType = 'voucher';
@@ -711,124 +730,27 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       return {
         data: {
           valid: true,
-          codeType: codeType,
+          codeType,
           amount: codeData.amount,
-          expiryDate: codeData.expiryDate
-        }
+          expiryDate: codeData.expiryDate,
+        },
       };
     } catch (error) {
-      console.error('Promo/Voucher code check error:', error);
-      return ctx.badRequest(error.message || 'Failed to check code');
+      strapi.log?.error?.('[promo] checkPromoCode failed', { error: error.message });
+      return ctx.badRequest('Failed to check code');
     }
   },
 
-  // Migration method to fix existing completed orders
-  async fixCompletedOrderEarnings(ctx) {
-    try {
-      console.log('Starting migration to fix completed order earnings...');
-
-      // Get all completed orders
-      const completedOrders = await strapi.db.query('api::order.order').findMany({
-        where: {
-          orderStatus: { $in: ['approved', 'completed'] }
-        },
-        populate: ['publisher', 'advertiser']
-      });
-
-      console.log(`Found ${completedOrders.length} completed orders to process`);
-
-      let processedCount = 0;
-      let errorCount = 0;
-
-      for (const order of completedOrders) {
-        try {
-          if (!order.publisher?.id) {
-            console.log(`Skipping order ${order.id} - no publisher`);
-            continue;
-          }
-
-          // Use centralized wallet creation for publisher
-          let publisherWallet = await this.getOrCreateWallet(order.publisher.id);
-
-          // Check if earnings already credited for this order
-          const existingTransaction = await strapi.entityService.findMany('api::transaction.transaction', {
-            filters: {
-              user_wallet: { id: publisherWallet.id },
-              type: 'escrow_release',
-              order: { id: order.id },
-              publishedAt: { $notNull: true }
-            }
-          });
-
-          if (existingTransaction.length > 0) {
-            console.log(`Order ${order.id} already has credited earnings, checking wallet balance...`);
-
-            // Calculate total earnings that should be in wallet from this order
-            const totalEarnings = existingTransaction.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
-
-            // Add to wallet if not already there (idempotent)
-            await strapi.db.query('api::user-wallet.user-wallet').update({
-              where: { id: publisherWallet.id },
-              data: {
-                balance: publisherWallet.balance + totalEarnings
-              }
-            });
-
-            console.log(`Added ${totalEarnings} to publisher ${order.publisher.id} wallet for order ${order.id}`);
-            processedCount++;
-            continue;
-          }
-
-          // Credit the earnings
-          const paymentAmount = order.totalAmount || 0;
-
-          if (paymentAmount > 0) {
-            // Add to wallet balance
-            await strapi.db.query('api::user-wallet.user-wallet').update({
-              where: { id: publisherWallet.id },
-              data: {
-                balance: publisherWallet.balance + paymentAmount
-              }
-            });
-
-            // Create transaction record
-            await strapi.entityService.create('api::transaction.transaction', {
-              data: {
-                type: 'escrow_release',
-                amount: paymentAmount,
-                netAmount: paymentAmount,
-                transactionStatus: 'success',
-                gateway: 'system',
-                gatewayTransactionId: `migration_${order.id}_${Date.now()}`,
-                description: `Migration: Payment for order #${order.id}`,
-                user_wallet: publisherWallet.id,
-                users_permissions_user: order.publisher.id,
-                order: order.id,
-                publishedAt: new Date()
-              }
-            });
-
-            console.log(`Credited ${paymentAmount} to publisher ${order.publisher.id} for order ${order.id}`);
-            processedCount++;
-          }
-        } catch (error) {
-          console.error(`Error processing order ${order.id}:`, error);
-          errorCount++;
-        }
-      }
-
-      return ctx.send({
-        success: true,
-        message: `Migration completed. Processed: ${processedCount}, Errors: ${errorCount}`,
-        processed: processedCount,
-        errors: errorCount
-      });
-
-    } catch (error) {
-      console.error('Migration error:', error);
-      return ctx.badRequest('Migration failed');
-    }
-  },
+  // Audit C5 — `fixCompletedOrderEarnings` handler removed.
+  // The handler iterated ALL system-wide completed orders and credited
+  // `order.totalAmount` to publishers without idempotency (the existing-tx
+  // branch double-credited the same earnings on every call). It was reachable
+  // by any authenticated user via `POST /api/wallet/fix-earnings`, allowing
+  // any user to inflate publisher wallets by N× total order volume.
+  // The route is deleted in `src/api/user-wallet/routes/user-wallet.js` and
+  // the up_permissions rows are purged by the security migration
+  // `2026.06.17T00.00.00.security-remove-fix-earnings-route.js`.
+  // Regression test: `scripts/test-fix-earnings-removed.js`.
 
   // Add funds to main balance (from direct payments)
   async addMainFunds(userId, amount, transactionData = {}) {
@@ -866,6 +788,21 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Added ${amount} to main balance for user ${userId}`);
+
+      // Emit real-time wallet update — every webhook controller + the
+      // order-refund flow + admin manual credit eventually reach this
+      // helper, so patching here covers all of them at once.
+      try {
+        await strapi
+          .service('api::user-wallet.user-wallet')
+          .emitBalanceUpdate(userId, transactionData.type || 'deposit', {
+            txAmount: parseFloat(amount),
+            gateway: transactionData.gateway || 'system',
+            gatewayTransactionId: transactionData.gatewayTransactionId,
+            orderId: transactionData.order || null,
+          });
+      } catch (_) { /* emit is best-effort; DB is source of truth */ }
+
       return { success: true, newMainBalance, newTotalBalance };
     } catch (error) {
       console.error('Error adding main funds:', error);
@@ -873,27 +810,42 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
     }
   },
 
-  // Public wrapper for adding funds
+  // PUBLIC HTTP wrapper for adding funds — DISABLED.
+  //
+  // CRITICAL: the pre-fix implementation took `amount`, `paymentMethod`, and
+  // `transactionId` from ctx.request.body and called `addMainFunds(userId,
+  // amount, ...)` directly. NO payment-gateway verification. The
+  // Authenticated role has `api::user-wallet.user-wallet.addFunds`
+  // permission, so ANY logged-in user could POST
+  //   /api/wallet/add-funds {amount:<arbitrary>, paymentMethod:'manual'}
+  // and credit their own wallet with arbitrary money. Free funds.
+  //
+  // Legitimate top-up flows:
+  //   POST /api/transactions/payment    → creates a pending transaction
+  //   Gateway webhooks                  → credit wallet after confirmed payment
+  //     (paypal-webhook, razorpay-webhook, stripe-webhook, phonepe-webhook;
+  //      all signature-verified, all M11 amount-checked)
+  //   POST /api/transactions/verify-paypal → server-authoritative manual verify
+  //   Admin bank-transfer approval (admin-gated, post-Pass-7)
+  //   redeemPromo (separate handler — voucher / promo code path)
+  //
+  // The internal `addMainFunds(userId, amount, ...)` helper remains for
+  // those legitimate server-side credit paths (called by the webhook
+  // controllers and the order-refund flow). Only the HTTP wrapper is
+  // closed off.
+  //
+  // Returning 410 (Gone) so any client still hitting this surfaces clearly
+  // in logs/alerts rather than failing silently like a 403.
   async addFunds(ctx) {
-    try {
-      const userId = ctx.state.user.id;
-      const { amount, paymentMethod, transactionId } = ctx.request.body;
-
-      if (!amount || amount <= 0) {
-        return ctx.badRequest('Invalid amount');
-      }
-
-      const result = await this.addMainFunds(userId, amount, {
-        gateway: paymentMethod || 'manual',
-        gatewayTransactionId: transactionId,
-        description: `Added funds via ${paymentMethod}`
-      });
-
-      return { data: result };
-    } catch (error) {
-      console.error('Error in addFunds:', error);
-      return ctx.badRequest('Failed to add funds');
-    }
+    strapi.log?.warn?.(
+      `[user-wallet] DISABLED /api/wallet/add-funds called by user=${ctx.state?.user?.id ?? 'anon'} ip=${ctx.request.ip}`
+    );
+    ctx.status = 410;
+    ctx.body = {
+      error: 'gone',
+      message: 'Direct wallet credit is not available. Use the payment-intent / webhook flow.',
+    };
+    return;
   },
 
   // Add funds to promo balance (from vouchers/promo codes)
@@ -930,6 +882,18 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Added ${amount} to promo balance for user ${userId}`);
+
+      // Real-time wallet update — covers redeemPromo + offer-engine bonus
+      // application (the legitimate consumers of this helper).
+      try {
+        await strapi
+          .service('api::user-wallet.user-wallet')
+          .emitBalanceUpdate(userId, 'promo_redemption', {
+            txAmount: parseFloat(amount),
+            promoCodeId,
+          });
+      } catch (_) { /* best-effort */ }
+
       return { success: true, newPromoBalance, newTotalBalance };
     } catch (error) {
       console.error('Error adding promo funds:', error);
@@ -1005,6 +969,20 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       });
 
       console.log(`Spent ${amount} from wallet for user ${userId} (Promo: ${promoSpent}, Main: ${mainSpent})`);
+
+      // Real-time wallet update — caught by AI credit-burn + order spend
+      // + every other spendFunds caller.
+      try {
+        await strapi
+          .service('api::user-wallet.user-wallet')
+          .emitBalanceUpdate(userId, 'spend', {
+            txAmount: spendAmount,
+            promoSpent,
+            mainSpent,
+            orderId,
+          });
+      } catch (_) { /* best-effort */ }
+
       return {
         success: true,
         promoSpent,

@@ -6,8 +6,89 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// ===== Default core-router gating =====
+//
+// routes/chatroom.js uses createCoreRouter('api::chatroom.chatroom') with
+// no config override. That registers GET /api/chatrooms, /:id and PUT /:id.
+// The Authenticated role has find / findOne / update on this content type.
+// Without controller overrides, any logged-in user could:
+//   - GET /api/chatrooms → list every chat thread on the platform
+//     (advertiser/publisher relations populated = up_users PII leak)
+//   - GET /api/chatrooms/:N → read any chatroom metadata
+//   - PUT /api/chatrooms/:N → reassign / close / archive any chatroom
+const CHATROOM_PUBLIC_FIELDS = [
+  'id', 'documentId', 'status', 'lastActivity',
+  'createdAt', 'updatedAt', 'publishedAt',
+];
+const CHATROOM_USER_FIELDS = ['id', 'username'];
+
+function buildChatroomOwnership(user) {
+  if (!user || typeof user.id !== 'number') return null;
+  return {
+    $or: [
+      { advertiser: user.id },
+      { publisher: user.id },
+    ],
+  };
+}
+
 module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => ({
-  
+
+  async find(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to list chatrooms');
+    }
+    const ownership = buildChatroomOwnership(ctx.state.user);
+    if (!ownership) return ctx.unauthorized();
+    const userFilters = ctx.query?.filters;
+    ctx.query = {
+      ...ctx.query,
+      filters: userFilters ? { $and: [userFilters, ownership] } : ownership,
+      fields: CHATROOM_PUBLIC_FIELDS,
+      populate: {
+        advertiser: { fields: CHATROOM_USER_FIELDS },
+        publisher:  { fields: CHATROOM_USER_FIELDS },
+      },
+    };
+    return super.find(ctx);
+  },
+
+  async findOne(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to view this chatroom');
+    }
+    const { id } = ctx.params;
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Chatroom not found');
+    }
+    const record = await strapi.db.query('api::chatroom.chatroom').findOne({
+      where: { id: numericId },
+      populate: {
+        advertiser: { select: ['id'] },
+        publisher:  { select: ['id'] },
+      },
+    });
+    if (!record) return ctx.notFound('Chatroom not found');
+    const isParty = record.advertiser?.id === ctx.state.user.id
+                 || record.publisher?.id === ctx.state.user.id;
+    if (!isParty) return ctx.notFound('Chatroom not found');
+    const safe = {};
+    for (const k of CHATROOM_PUBLIC_FIELDS) {
+      if (record[k] !== undefined) safe[k] = record[k];
+    }
+    return { data: safe };
+  },
+
+  async update(ctx) {
+    // Legitimate chatroom mutations flow through PUT /chatrooms/:id/status
+    // and POST /chatrooms/order/:orderId/mark-read. Disable the default
+    // PUT /api/chatrooms/:id route.
+    return ctx.forbidden(
+      'Direct chatroom updates are not allowed. Use the specific action endpoints.'
+    );
+  },
+
   // Get or create chatroom for an order
   async getOrCreateChatroom(ctx) {
     const { orderId } = ctx.params;
@@ -51,9 +132,21 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         });
       }
       
-      // Get chatroom with all communications
+      // Allow-listed populate — pre-fix returned full up_users rows for
+      // advertiser/publisher/communications.sender (password hash,
+      // withdrawalOtp, paypal_email, billing PII). Caller is already
+      // confirmed a party to this order (check at L113-118), so showing
+      // the other party's email is reasonable; the SPA also renders
+      // sender usernames. Other PII fields stay private.
       const populatedChatroom = await strapi.entityService.findOne('api::chatroom.chatroom', chatroom.id, {
-        populate: ['order', 'advertiser', 'publisher', 'communications', 'communications.sender'],
+        populate: {
+          order: { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: ['id', 'username', 'email'] },
+          publisher:  { fields: ['id', 'username', 'email'] },
+          communications: {
+            populate: { sender: { fields: ['id', 'username', 'email'] } },
+          },
+        },
       });
       
       return { data: populatedChatroom };
@@ -223,20 +316,46 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
   // Download chat transcript (Admin functionality)
   async downloadTranscript(ctx) {
     const { id } = ctx.params;
-    
+    // SECURITY (pre-fix): the handler had NO auth check and NO party
+    // check. The Authenticated role has
+    // `api::chatroom.chatroom.downloadTranscript` permission so any
+    // logged-in user could GET /chatrooms/<N>/transcript and download
+    // any chatroom's full conversation — including both parties' emails
+    // and (via the populate chain) the full up_users rows for the
+    // sender + advertiser + publisher (password hash, withdrawalOtp,
+    // paypal_email, billing PII).
+    if (!ctx.state.user) return ctx.unauthorized();
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Chatroom not found');
+    }
+
     try {
-      // Get chatroom with all communications
-      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', id, {
-        populate: [
-          'order', 
-          'advertiser', 
-          'publisher', 
-          'communications',
-          'communications.sender'
-        ],
+      // Allow-listed populate — id/username/email are the only user
+      // fields the transcript renderer below needs; password hash et al.
+      // never leave the DB.
+      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', numericId, {
+        populate: {
+          order: { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: ['id', 'username', 'email'] },
+          publisher:  { fields: ['id', 'username', 'email'] },
+          communications: {
+            populate: { sender: { fields: ['id', 'username', 'email'] } },
+          },
+        },
       });
-      
+
       if (!chatroom) {
+        return ctx.notFound('Chatroom not found');
+      }
+
+      // Party check: only the advertiser or publisher of the chatroom
+      // may download. 404 (not 403) so callers cannot enumerate which
+      // chatroom IDs exist via the differential.
+      const u = ctx.state.user;
+      const isParty = chatroom.advertiser?.id === u.id
+                   || chatroom.publisher?.id === u.id;
+      if (!isParty) {
         return ctx.notFound('Chatroom not found');
       }
       
@@ -303,23 +422,40 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
     }
   },
   
-  // Get full conversation details for admin view
+  // Get full conversation details. Despite the legacy "for admin view"
+  // comment, the route is granted to the Authenticated role with no
+  // ownership check in the pre-fix handler — same CRITICAL leak class
+  // as downloadTranscript above. Now: auth gate + party check + same
+  // allow-listed populate. Real admin consumers use /chatrooms/admin
+  // and /chatrooms/:id/admin-view (admin-jwt-auth + is-admin policy).
   async getFullConversation(ctx) {
     const { id } = ctx.params;
-    
+    if (!ctx.state.user) return ctx.unauthorized();
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Chatroom not found');
+    }
+
     try {
-      // Get chatroom with all communications
-      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', id, {
-        populate: [
-          'order', 
-          'advertiser', 
-          'publisher', 
-          'communications',
-          'communications.sender'
-        ],
+      const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', numericId, {
+        populate: {
+          order: { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: ['id', 'username', 'email'] },
+          publisher:  { fields: ['id', 'username', 'email'] },
+          communications: {
+            populate: { sender: { fields: ['id', 'username', 'email'] } },
+          },
+        },
       });
-      
+
       if (!chatroom) {
+        return ctx.notFound('Chatroom not found');
+      }
+
+      const u = ctx.state.user;
+      const isParty = chatroom.advertiser?.id === u.id
+                   || chatroom.publisher?.id === u.id;
+      if (!isParty) {
         return ctx.notFound('Chatroom not found');
       }
       
@@ -1080,41 +1216,41 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
 
       const chatroom = message.chatroom;
       
-      // Emit to both advertiser and publisher
+      // Perf-pass-10: was `strapi.io.emit(...)` which broadcasts to EVERY
+      // connected socket. At 1000 sockets that's 1000× wasted bandwidth
+      // per chat message — every socket receives the payload and silently
+      // ignores it because the event name doesn't match their listener.
+      // `emitToUser` routes via Socket.IO rooms (room `user_<id>`), so
+      // only sockets belonging to the target user receive the payload.
+      const messagePayload = {
+        type: 'new_message',
+        chatroomId: chatroom.id,
+        orderId: message.order?.id,
+        message: {
+          id: message.id,
+          content: message.message,
+          sender: {
+            id: message.sender?.id,
+            username: message.sender?.username
+          },
+          createdAt: message.createdAt,
+          isUnread: true
+        }
+      };
+
+      // Emit to both advertiser and publisher via room-based routing
       if (chatroom.advertiser?.id) {
-        strapi.io.emit(`user_${chatroom.advertiser.id}_message`, {
-          type: 'new_message',
-          chatroomId: chatroom.id,
-          orderId: message.order?.id,
-          message: {
-            id: message.id,
-            content: message.message,
-            sender: {
-              id: message.sender?.id,
-              username: message.sender?.username
-            },
-            createdAt: message.createdAt,
-            isUnread: true
-          }
-        });
+        strapi.io.emitToUser(chatroom.advertiser.id, `user_${chatroom.advertiser.id}_message`, messagePayload);
       }
-      
       if (chatroom.publisher?.id) {
-        strapi.io.emit(`user_${chatroom.publisher.id}_message`, {
-          type: 'new_message',
-          chatroomId: chatroom.id,
-          orderId: message.order?.id,
-          message: {
-            id: message.id,
-            content: message.message,
-            sender: {
-              id: message.sender?.id,
-              username: message.sender?.username
-            },
-            createdAt: message.createdAt,
-            isUnread: true
-          }
-        });
+        strapi.io.emitToUser(chatroom.publisher.id, `user_${chatroom.publisher.id}_message`, messagePayload);
+      }
+
+      // Pass-11: admin fan-out so the panel20 `/communications` queue
+      // refreshes when any new message arrives in any chatroom. Same
+      // payload — admin UI uses `chatroomId` + `orderId` to route.
+      if (typeof strapi.io.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:chat_event', messagePayload);
       }
     } catch (error) {
       console.error('Error sending WebSocket notification:', error);

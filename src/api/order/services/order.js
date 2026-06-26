@@ -5,6 +5,8 @@
  */
 
 const { createCoreService } = require('@strapi/strapi').factories;
+const { getPublisherCommissionRate } = require('../../../constants/commission');
+const seq = require('../../../utils/realtime-seq')('order');
 
 module.exports = createCoreService('api::order.order', ({ strapi }) => ({
   // Extend the default create method to handle escrow
@@ -195,165 +197,296 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
     });
   },
 
-  // When an order is completed, mark funds as available to publisher but don't transfer yet
+  // When a delivered order is completed: release the advertiser's escrow,
+  // credit the publisher's main balance with their commission share, and
+  // record matching transactions on both sides — all in ONE database
+  // transaction so any failure rolls the lot back.
+  //
+  // Money flow:
+  //   advertiser.escrowBalance  -= order.escrowHeld   (floored at 0)
+  //   publisher.mainBalance     += publisherPayout    (totalAmount × COMMISSION_RATE)
+  // Audit rows created (so the running-balance UI is balanced on both sides):
+  //   escrow_release  → advertiser  (amount = escrowHeld)
+  //   deposit         → publisher   (amount = publisherPayout)
+  //   fee             → publisher   (amount = 0 today; ready for future commission)
   async completeOrder(id, user) {
-    // ✅ CRITICAL: Use database transaction to ensure atomicity
-    // All wallet operations must succeed or all fail - prevents money loss on crashes
-    return await strapi.db.transaction(async ({ trx }) => {
-      // Get the order with all relations
-      const order = await this.getCompleteOrder(id);
-      console.log("Processing order completion:", {
-        orderId: id,
-        status: order.orderStatus,
-        totalAmount: order.totalAmount
-      });
+    let updatedOrder;
+    let websiteIdForSideEffects;
+    let advertiserIdForEvent;
+    let publisherIdForEvent;
 
+    await strapi.db.transaction(async ({ trx }) => {
+      // Audit M5 fix — SELECT … FOR UPDATE on the order row so a concurrent
+      // requestRevision/completeRevision/admin write serializes on this lock
+      // and is observed after we commit (or we observe its commit, hitting
+      // the revisionStatus guard below). Without the lock, a parallel
+      // requestRevision could update revisionStatus='requested' AFTER we
+      // already read the row but BEFORE we credit the publisher.
+      const lockRow = await trx('orders').where({ id }).forUpdate().select('id');
+      if (!lockRow || lockRow.length === 0) {
+        throw new Error('Order not found');
+      }
+
+      // Re-read the order inside the transaction so any concurrent writer
+      // sees the row consistently. Populating relations here also avoids a
+      // second round-trip later.
+      const order = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
       if (!order) {
         throw new Error('Order not found');
       }
 
-      // Prevent duplicate completions - check if already approved
-      if (order.orderStatus === 'approved') {
-        return order; // Already completed, return existing order
+      // Idempotency: if the order is already in any terminal state, this is
+      // a duplicate call (retry, race, or stale UI). Return the existing
+      // order with no side effects. Previously this only checked for
+      // 'approved', which is a status that doesn't even exist on the
+      // completion path — so a concurrent second call could re-credit the
+      // publisher and double-decrement escrow.
+      const TERMINAL_STATUSES = new Set(['completed', 'cancelled', 'rejected', 'refunded']);
+      if (TERMINAL_STATUSES.has(order.orderStatus)) {
+        console.log(`[ORDER COMPLETE] Order ${id} already in terminal state '${order.orderStatus}' — no-op.`);
+        updatedOrder = order;
+        return;
       }
 
       if (order.orderStatus !== 'delivered') {
-        throw new Error('Only delivered orders can be completed');
+        throw new Error(`Only delivered orders can be completed (current status: ${order.orderStatus})`);
       }
 
-      // Make sure publisher exists and get the publisher ID
+      // Audit M5 fix — revision pending guard. completeOrder previously
+      // checked only orderStatus. The natural state machine flips status
+      // back to 'accepted' on requestRevision, so this was usually safe;
+      // but a row-level inconsistency (race, admin edit, future regression)
+      // that left orderStatus='delivered' + revisionStatus='requested'/
+      // 'in_progress' would silently release escrow against pending work.
+      // Block completion until the revision is resolved (the publisher's
+      // completeRevision sets revisionStatus='completed', which is allowed).
+      if (order.revisionStatus === 'requested' || order.revisionStatus === 'in_progress') {
+        throw new Error(
+          `Cannot complete order while revision is "${order.revisionStatus}". Publisher must complete the revision first.`
+        );
+      }
       if (!order.publisher) {
         throw new Error('Order has no assigned publisher');
       }
 
-      // Get publisher and advertiser IDs (handling both object and direct ID references)
       const publisherId = order.publisher.id || order.publisher;
-      const advertiserId = order.advertiser.id || order.advertiser;
+      const advertiserId = order.advertiser?.id || order.advertiser;
+      if (!advertiserId) {
+        throw new Error('Order has no advertiser');
+      }
+      websiteIdForSideEffects = order.website?.id || order.website || null;
 
-      console.log("Getting wallets for:", { publisherId, advertiserId });
-
-      // Get advertiser and publisher wallets (unified system - one wallet per user)
-      const advertiserWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: {
-          users_permissions_user: advertiserId
-        }
-      });
-
+      // Both wallets must exist (the advertiser wallet was created when they
+      // deposited funds; the publisher wallet is lazy-created on first
+      // payout). Lookups happen inside the transaction so any concurrent
+      // wallet edit also gets serialised.
+      const advertiserWallet = await strapi.db
+        .query('api::user-wallet.user-wallet')
+        .findOne({ where: { users_permissions_user: advertiserId } });
       if (!advertiserWallet) {
-        throw new Error('Advertiser wallet not found');
+        throw new Error(`Advertiser wallet not found for user ${advertiserId}`);
       }
 
-      // Use centralized wallet creation for publisher
-      let publisherWallet = await strapi.controller('api::user-wallet.user-wallet').getOrCreateWallet(publisherId);
-      console.log(`Got/created publisher wallet with ID: ${publisherWallet.id}`);
+      let publisherWallet = await strapi.db
+        .query('api::user-wallet.user-wallet')
+        .findOne({ where: { users_permissions_user: publisherId } });
+      if (!publisherWallet) {
+        // Create inside the transaction so it rolls back if anything below
+        // fails. createCoreController.getOrCreateWallet() was used before
+        // but that helper isn't transaction-aware.
+        publisherWallet = await strapi.entityService.create('api::user-wallet.user-wallet', {
+          data: {
+            type: 'unified',
+            currency: 'USD',
+            balance: 0,
+            mainBalance: 0,
+            promoBalance: 0,
+            escrowBalance: 0,
+            pendingWithdrawalBalance: 0,
+            users_permissions_user: publisherId,
+            publishedAt: new Date(),
+          },
+        });
+      }
 
-      // Calculate payment amount (without platform fee)
-      const paymentAmount = order.totalAmount;
+      // Publisher payout = advertiser price × commission rate (configurable
+      // via PUBLISHER_COMMISSION_RATE env). Default is 1.0 today; the math
+      // here is correct once that changes.
+      const COMMISSION_RATE = getPublisherCommissionRate();
+      const escrowHeld = Number(order.escrowHeld) || 0;
+      const totalAmount = Number(order.totalAmount) || 0;
+      const publisherPayout = Math.floor(totalAmount * COMMISSION_RATE);
+      const platformFee = totalAmount - publisherPayout;
 
-      // MONEY FLOW: Advertiser Escrow → Publisher MAIN Balance (earnings are withdrawable)
-      const newAdvertiserEscrow = advertiserWallet.escrowBalance - order.escrowHeld;
+      // Floor escrow at 0 — protects against historical drift (we've already
+      // seen wallets where escrowBalance < escrowHeld) from going negative
+      // and propagating bogus state forward.
+      const currentEscrow = Number(advertiserWallet.escrowBalance) || 0;
+      if (currentEscrow < escrowHeld) {
+        strapi.log.warn(
+          `[ORDER COMPLETE] Escrow drift on order ${id}: wallet escrow=${currentEscrow}, order escrowHeld=${escrowHeld}. Flooring at 0.`
+        );
+      }
+      const newAdvertiserEscrow = Math.max(0, currentEscrow - escrowHeld);
 
-      console.log(`[ORDER COMPLETE] Money Flow for Order ${order.id}:`);
-      console.log(`  - Advertiser ${order.advertiser.id}: Escrow ${advertiserWallet.escrowBalance} → ${newAdvertiserEscrow}`);
-      console.log(`  - Publisher ${publisherId}: Adding ${paymentAmount} to MAIN balance (withdrawable)`);
-      console.log(`  - Amount transferred: ${paymentAmount}`);
+      console.log(`[ORDER COMPLETE] Order ${id}: advertiser ${advertiserId} escrow ${currentEscrow} → ${newAdvertiserEscrow}; publisher ${publisherId} mainBalance +${publisherPayout} (fee ${platformFee}); status delivered → completed.`);
 
-      // ✅ ATOMIC OPERATION 1: Release escrow funds from advertiser wallet 
+      // 1) Decrement advertiser escrow.
       await strapi.db.query('api::user-wallet.user-wallet').update({
         where: { id: advertiserWallet.id },
-        data: {
-          escrowBalance: newAdvertiserEscrow
-        }
+        data: { escrowBalance: newAdvertiserEscrow },
       });
 
-      // ✅ ATOMIC OPERATION 2: Add earnings to publisher MAIN balance (withdrawable funds)
-      await strapi.controller('api::user-wallet.user-wallet').addMainFunds(
-        publisherId,
-        paymentAmount,
-        {
-          description: `Earnings from order #${order.id}`,
-          gateway: 'system',
-          gatewayTransactionId: `earnings_${order.id}_${Date.now()}`,
-          order: order.id // ✅ Link transaction to the order
-        }
-      );
-
-      console.log(`[ORDER COMPLETE] ✅ Money transfer completed successfully`);
-
-      // ✅ ATOMIC OPERATION 3: Create platform fee transaction
-      const feeTransaction = await strapi.entityService.create('api::transaction.transaction', {
+      // 2) Advertiser-side audit row — closes the loop that was previously
+      //    missing. Without this, the running-balance UI back-derived a
+      //    phantom starting balance (the symptom that surfaced as "$101"
+      //    after a $100 deposit on mantasha+3's transaction history).
+      await strapi.entityService.create('api::transaction.transaction', {
         data: {
-          type: 'fee',
-          amount: 0, // Since fee is 0
-          netAmount: 0, // Since fee is 0
+          type: 'escrow_release',
+          amount: escrowHeld,
+          netAmount: escrowHeld,
           fee: 0,
           transactionStatus: 'success',
           gateway: 'system',
-          gatewayTransactionId: `fee_${order.id}_${Date.now()}`,
-          description: `Platform fee for order #${order.id}`,
-          // This would go to the platform wallet in a production system
+          gatewayTransactionId: `escrow_release_${id}_${Date.now()}`,
+          // fund_source enum doesn't include 'escrow'; leave it null and let
+          // the row's type='escrow_release' convey the meaning.
+          description: `Escrow released to publisher on completion of order #${id}`,
+          user_wallet: advertiserWallet.id,
+          users_permissions_user: advertiserId,
+          order: id,
+          publishedAt: new Date(),
+        },
+      });
+
+      // 3) Credit publisher main balance. Inlined (rather than calling
+      //    addMainFunds) so the wallet update + transaction row participate
+      //    in this same db.transaction.
+      const newPublisherMain = (Number(publisherWallet.mainBalance) || 0) + publisherPayout;
+      const newPublisherTotal = (Number(publisherWallet.balance) || 0) + publisherPayout;
+      await strapi.db.query('api::user-wallet.user-wallet').update({
+        where: { id: publisherWallet.id },
+        data: { mainBalance: newPublisherMain, balance: newPublisherTotal },
+      });
+
+      // 4) Publisher-side deposit tx.
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'deposit',
+          amount: publisherPayout,
+          netAmount: publisherPayout,
+          fee: 0,
+          transactionStatus: 'success',
+          gateway: 'system',
+          gatewayTransactionId: `earnings_${id}_${Date.now()}`,
+          fund_source: 'main_fund',
+          description: `Earnings from order #${id}`,
+          user_wallet: publisherWallet.id,
           users_permissions_user: publisherId,
-          order: order.id,
-          publishedAt: new Date()
-        }
+          order: id,
+          publishedAt: new Date(),
+        },
       });
 
-      console.log("Created fee transaction:", {
-        feeTransactionId: feeTransaction.id
+      // 5) Platform fee tx. Amount is the difference between advertiser
+      //    price and publisher payout. With the current 1.0 rate this is 0,
+      //    but the row is still created for auditability.
+      await strapi.entityService.create('api::transaction.transaction', {
+        data: {
+          type: 'fee',
+          amount: platformFee,
+          netAmount: platformFee,
+          fee: platformFee,
+          transactionStatus: 'success',
+          gateway: 'system',
+          gatewayTransactionId: `fee_${id}_${Date.now()}`,
+          description: `Platform fee for order #${id}`,
+          users_permissions_user: publisherId,
+          order: id,
+          publishedAt: new Date(),
+        },
       });
 
-      // ✅ ATOMIC OPERATION 4: Update the order status
-      const updatedOrder = await strapi.entityService.update('api::order.order', id, {
+      // 6) Flip order status. Done last so an outside observer never sees
+      //    'completed' without the wallet writes being committed too — the
+      //    transaction guarantees they commit together.
+      updatedOrder = await strapi.entityService.update('api::order.order', id, {
         data: {
           orderStatus: 'completed',
           completedDate: new Date(),
           orderAccepted: true,
-          revisionStatus: null // Clear revision status when order is completed
-        }
+          revisionStatus: null,
+        },
       });
 
-      console.log(`Order ${id} completed successfully and marked available for withdrawal`);
-
-      // ✅ Transaction committed successfully - all operations atomic
-      // If any operation above fails, ALL operations are rolled back
-
-      // Trigger TAT update for the website based on completed orders
-      // NOTE: This runs AFTER transaction commits (not critical for atomicity)
-      try {
-        const websiteId = order.website?.id || order.website;
-        if (websiteId) {
-          // Don't await this to avoid blocking the order completion
-          // The TAT update will run in the background
-          strapi.service('api::marketplace.marketplace').updateTATFromCompletedOrders(websiteId, {
-            minOrderCount: 1, // Lower threshold for testing
-            lookbackDays: 365,
-            useWeightedAverage: true
-          })
-            .then(result => {
-              if (result) {
-                console.log(`TAT updated for website ${websiteId}: ${result.newTAT} days (${result.placementSpeed})`);
-              } else {
-                console.log(`TAT update skipped for website ${websiteId}: insufficient order history`);
-              }
-            })
-            .catch(error => {
-              console.error(`Failed to update TAT for website ${websiteId}:`, error);
-            });
-        }
-      } catch (error) {
-        console.error('Error triggering TAT update:', error);
-        // Don't fail the order completion if TAT update fails
-      }
-
-      return updatedOrder;
+      console.log(`[ORDER COMPLETE] Order ${id} completed atomically.`);
     });
+
+    // Emit real-time wallet updates to BOTH parties — advertiser's escrow
+    // dropped, publisher's main balance went up. Fire AFTER commit so the
+    // DB state matches what the event advertises.
+    try {
+      const walletService = strapi.service('api::user-wallet.user-wallet');
+      await Promise.all([
+        walletService.emitBalanceUpdate(advertiserIdForEvent, 'order_completion', { orderId: id, side: 'advertiser' }),
+        walletService.emitBalanceUpdate(publisherIdForEvent, 'order_completion', { orderId: id, side: 'publisher' }),
+      ]);
+    } catch (_) { /* best-effort */ }
+
+    // Non-critical side effect — fire AFTER the transaction has committed so
+    // a TAT-update failure can't roll back the money movement.
+    if (websiteIdForSideEffects) {
+      strapi.service('api::marketplace.marketplace').updateTATFromCompletedOrders(websiteIdForSideEffects, {
+        minOrderCount: 1,
+        lookbackDays: 365,
+        useWeightedAverage: true,
+      })
+        .then((result) => {
+          if (result) {
+            console.log(`TAT updated for website ${websiteIdForSideEffects}: ${result.newTAT} days (${result.placementSpeed})`);
+          }
+        })
+        .catch((error) => {
+          console.error(`Failed to update TAT for website ${websiteIdForSideEffects}:`, error);
+        });
+    }
+
+    return updatedOrder;
   },
 
-  // When an order is rejected, refund escrow to advertiser
+  // When an order is rejected, refund escrow to advertiser AND flip status.
+  // Both refund and status update happen inside a single transaction with
+  // a row-level lock so a concurrent reject / cancel / cron call serializes
+  // on the lock and sees the post-commit state (status='rejected') — making
+  // the operation idempotent and double-refund-proof.
   async rejectOrder(id, user) {
-    // Use transaction to ensure data consistency
     return await strapi.db.transaction(async ({ trx }) => {
-      // Get the order with all relations
+      // Audit M3 fix — SELECT ... FOR UPDATE on the order row up front so
+      // a concurrent reject/cancel/cron is forced to wait for our commit
+      // and then observes the new status, hitting the idempotency branch
+      // below.
+      const locked = await trx('orders').where({ id }).forUpdate().select('order_status');
+      if (!locked || locked.length === 0) {
+        throw new Error('Order not found');
+      }
+
+      // Idempotency / pre-state check (replaces the old generic pending
+      // check). Any non-pending status either means the order moved on or
+      // a parallel reject already committed — either way, NO refund.
+      const currentStatus = locked[0].order_status;
+      if (currentStatus !== 'pending') {
+        if (['rejected', 'cancelled', 'refunded'].includes(currentStatus)) {
+          // Already terminated by another caller — return without refunding.
+          // The caller treats this as a no-op; idempotent retry.
+          return { alreadyTerminal: true, currentStatus };
+        }
+        throw new Error('Only pending orders can be rejected');
+      }
+
+      // Get the order with all relations (under the lock).
       const order = await this.getCompleteOrder(id);
       console.log("Processing order rejection:", {
         orderId: id,
@@ -363,10 +496,6 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       if (!order) {
         throw new Error('Order not found');
-      }
-
-      if (order.orderStatus !== 'pending') {
-        throw new Error('Only pending orders can be rejected');
       }
 
       // Get advertiser ID (handling both object and direct ID references)
@@ -481,7 +610,25 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
       console.log("Refund transactions created successfully");
 
-      console.log(`Order ${id} rejected and escrow refunded to correct balance types`);
+      // Audit M3 fix — flip orderStatus INSIDE the transaction so the
+      // refund and the status change commit/roll back together. Was
+      // previously done in the controller as a separate update, which
+      // opened a window where the refund could commit but the status
+      // remained 'pending' (next retry would have refunded again — see
+      // M3 reproducer; this path was implicitly safe via the
+      // refundEscrowToAdvertiser's "insufficient escrow" throw, but
+      // we're closing the architectural gap regardless).
+      const reason = (user && user.__rejectionReason) || null;
+      await strapi.db.query('api::order.order').update({
+        where: { id },
+        data: {
+          orderStatus: 'rejected',
+          rejectedDate: new Date(),
+          ...(reason ? { rejectionReason: reason } : {}),
+        },
+      });
+
+      console.log(`Order ${id} rejected and escrow refunded atomically`);
       return order;
     });
   },
@@ -644,8 +791,26 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
 
   // Cancellation Helper: Validate if order can be cancelled
   async validateCancellation(order, userId, cancelledBy) {
-    // System cancellations (cron jobs)
+    // System cancellations (cron jobs).
+    // Audit M1 defense-in-depth: 'system' MUST NOT be reachable from a
+    // controller — if a userId is set, the call came from a user request
+    // and the controller failed to derive cancelledBy server-side.
     if (cancelledBy === 'system') {
+      if (userId != null) {
+        return { allowed: false, reason: 'system cancellation is reserved for cron jobs (no user context)' };
+      }
+      return { allowed: true };
+    }
+
+    // Admin cancellations. The controller derives 'admin' from the caller's
+    // role; admins may cancel orders in any pre-completion state (the route
+    // is already gated to super_admin). Replaces the legacy practice of
+    // using cancelledBy='system' from admin clicks.
+    if (cancelledBy === 'admin') {
+      const TERMINAL = ['completed', 'cancelled', 'rejected', 'refunded'];
+      if (TERMINAL.includes(order.orderStatus)) {
+        return { allowed: false, reason: `Order is already ${order.orderStatus}; cannot cancel.` };
+      }
       return { allowed: true };
     }
 
@@ -712,7 +877,28 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
   },
 
   // Cancellation Helper: Refund escrow
+  //
+  // Audit M7 fix — must be called INSIDE a transaction that holds a row-lock
+  // on the order. Two guards prevent double-refund:
+  //   (a) Idempotency pre-state check: refuses to refund if a successful
+  //       refund tx already exists for this order, OR if the order is
+  //       already in a terminal status.
+  //   (b) Escrow-amount check: throws (no longer clamps) if the wallet's
+  //       escrowBalance is less than the requested refund amount — a
+  //       drained-escrow state means a refund already happened.
+  // Combined with the row-lock + status-flip-in-same-trx in cancelOrderAtomic
+  // / rejectOrder, this makes refunds idempotent and double-refund-proof.
   async refundEscrowToAdvertiser(order) {
+    // (a) Idempotency: refuse if a successful refund already exists.
+    const existingRefunds = await strapi.db.query('api::transaction.transaction').findMany({
+      where: { order: order.id, type: 'refund', transactionStatus: 'success' },
+      select: ['id'],
+    });
+    if (existingRefunds && existingRefunds.length > 0) {
+      console.warn(`[REFUND IDEMPOTENT] Order ${order.id} already has ${existingRefunds.length} successful refund tx — skipping.`);
+      throw new Error(`Order ${order.id} has already been refunded`);
+    }
+
     // Get advertiser (buyer) wallet
     const advertiserWallet = await strapi.controller('api::user-wallet.user-wallet')
       .getOrCreateWallet(order.advertiser.id);
@@ -720,11 +906,14 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
     const refundAmount = parseFloat(order.totalAmount);
     const currentEscrow = parseFloat(advertiserWallet.escrowBalance) || 0;
 
-    // Validate sufficient escrow before refunding
+    // (b) Escrow-amount check. Previously this was just a warning + clamp,
+    // which silently absorbed double-refund attempts (the second call read
+    // escrow=0, clamped to 0, but still credited mainBalance another time).
+    // Now we throw — a drained escrow means a refund already happened.
     if (currentEscrow < refundAmount) {
-      console.error(`[ESCROW ERROR] Cannot refund $${refundAmount}, only $${currentEscrow} in escrow!`);
-      console.error(`[ESCROW ERROR] Order ID: ${order.id}, Advertiser ID: ${order.advertiser.id}`);
-      throw new Error(`Insufficient escrow balance: have $${currentEscrow}, need $${refundAmount}`);
+      throw new Error(
+        `Insufficient escrow for refund on order ${order.id}: have $${currentEscrow}, need $${refundAmount}. Likely already refunded.`
+      );
     }
 
     // Check if order has spending breakdown metadata
@@ -748,7 +937,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           mainBalance: currentMainBalance + mainRefund,
           promoBalance: currentPromoBalance + promoRefund,
           balance: currentTotalBalance + refundAmount, // Update total balance
-          escrowBalance: currentEscrow - refundAmount
+          escrowBalance: Math.max(0, currentEscrow - refundAmount) // never negative on drift
         }
       });
 
@@ -804,7 +993,7 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
         data: {
           mainBalance: currentMainBalance + refundAmount,
           balance: currentTotalBalance + refundAmount, // Update total balance
-          escrowBalance: currentEscrow - refundAmount
+          escrowBalance: Math.max(0, currentEscrow - refundAmount) // never negative on drift
         }
       });
 
@@ -829,10 +1018,83 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       console.log(`[Refund] $${refundAmount} refunded to advertiser ${order.advertiser.id} for order ${order.id}`);
     }
 
+    // Real-time wallet update — advertiser sees refund land instantly.
+    try {
+      await strapi.service("api::user-wallet.user-wallet").emitBalanceUpdate(
+        order.advertiser.id, "order_cancellation", { orderId: order.id, refundAmount }
+      );
+    } catch (_) { /* best-effort */ }
+
     return refundAmount;
   },
 
   // Cancellation Helper: Create audit log
+  // Audit M7 fix — atomic cancel. Wraps the entire cancellation critical
+  // section (row lock → idempotency check → refund → status flip) inside a
+  // single transaction. Used by:
+  //   - controllers.cancelOrder (user-initiated cancel from advertiser/publisher/admin)
+  //   - cron/order-cancellation (auto-cancel of stale pending/accepted orders)
+  // The SELECT ... FOR UPDATE lock serializes concurrent attempts; the
+  // pre-state check makes the operation idempotent (a retry against an
+  // already-cancelled order is a no-op, not a double refund).
+  async cancelOrderAtomic(orderId, options = {}) {
+    const { cancelledBy = 'system', reason = null, notes = null, actorUserId = null } = options;
+    return await strapi.db.transaction(async ({ trx }) => {
+      // Row-level exclusive lock. Concurrent cancels/rejects/cron runs
+      // block here until this commits/rolls back.
+      const locked = await trx('orders').where({ id: orderId }).forUpdate().select('id', 'order_status');
+      if (!locked || locked.length === 0) {
+        throw new Error('Order not found');
+      }
+      const currentStatus = locked[0].order_status;
+
+      // Idempotency. If the order has already moved to a terminal state,
+      // do NOT refund again. Return a sentinel so the caller can choose to
+      // ignore (cron) or surface as a 4xx (controller).
+      const TERMINAL = ['cancelled', 'rejected', 'refunded', 'completed'];
+      if (TERMINAL.includes(currentStatus)) {
+        return { alreadyTerminal: true, currentStatus };
+      }
+
+      // Re-fetch order with relations under the lock.
+      const order = await strapi.entityService.findOne('api::order.order', orderId, {
+        populate: ['advertiser', 'publisher', 'website'],
+      });
+      if (!order) throw new Error('Order not found');
+
+      // Refund escrow. Throws if already refunded (defense-in-depth) or
+      // if escrow drained — both of which indicate a prior partial commit.
+      const refundAmount = await this.refundEscrowToAdvertiser(order);
+
+      // Flip status INSIDE the transaction so a failure rolls back the
+      // refund. The locks plus the idempotency pre-check guarantee no
+      // concurrent caller can write a competing status here.
+      await strapi.db.query('api::order.order').update({
+        where: { id: orderId },
+        data: {
+          orderStatus: 'cancelled',
+          cancellationReason: reason,
+          cancellationNotes: notes,
+          cancelledBy,
+          cancelledAt: new Date(),
+        },
+      });
+
+      // Audit log inside the transaction — links the actor and the action
+      // to the same commit boundary as the money movement.
+      try {
+        await this.createAuditLog(order, 'cancelled', actorUserId, reason);
+      } catch (auditErr) {
+        // Audit log failure must not orphan a successful cancel. Log and
+        // continue — the cancellation is real even if the audit row failed.
+        // (createAuditLog itself swallows internal errors, but be defensive.)
+        console.error(`[ORDER CANCEL] audit log write failed for order ${orderId}: ${auditErr.message}`);
+      }
+
+      return { success: true, refundAmount, refundedTo: 'advertiser', order };
+    });
+  },
+
   async createAuditLog(order, action, userId, reason) {
     try {
       await strapi.entityService.create('api::order-audit-log.order-audit-log', {
@@ -891,6 +1153,85 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       );
     } catch (e) {
       console.error("Failed to create notification for advertiser", e);
+    }
+  },
+
+  /**
+   * Real-time push: emit `order:status_changed` on BOTH parties' channels so
+   * advertiser AND publisher dashboards re-render without polling.
+   *
+   * Best-effort: a WS failure logs a warning but never breaks the underlying
+   * status change. Per-user monotonic seq numbers let the client drop
+   * out-of-order events.
+   *
+   * @param {object|number} orderOrId — order entity (preferred — saves a DB
+   *   roundtrip) or the order id.
+   * @param {string} reason — terse machine tag (e.g. 'accepted', 'delivered',
+   *   'completed', 'rejected', 'cancelled', 'disputed', 'revision_requested').
+   * @param {object} meta — small payload of context (cancelledBy, deliveryUrl,
+   *   etc.). Don't put PII here — it's logged by clients.
+   */
+  async emitOrderUpdate(orderOrId, reason, meta = {}) {
+    try {
+      if (!strapi.io || typeof strapi.io.emitToUser !== 'function') return;
+
+      // Resolve the order with both parties + the populate the UI cares about.
+      const id = typeof orderOrId === 'object' ? orderOrId.id : orderOrId;
+      if (!id) return;
+      const order = await strapi.entityService.findOne('api::order.order', id, {
+        populate: ['advertiser', 'publisher'],
+      });
+      if (!order) return;
+
+      const advertiserId = order.advertiser?.id || null;
+      const publisherId = order.publisher?.id || null;
+      const occurredAt = new Date().toISOString();
+
+      const basePayload = {
+        type: 'order:status_changed',
+        orderId: order.id,
+        status: order.orderStatus,
+        reason,
+        websiteUrl: order.websiteUrl || null,
+        totalAmount: order.totalAmount != null ? Number(order.totalAmount) : null,
+        deliveredDate: order.deliveredDate || null,
+        acceptedDate: order.acceptedDate || null,
+        occurredAt,
+        meta: meta || {},
+      };
+
+      const emits = [];
+      if (advertiserId) {
+        const advSeq = await seq.next(advertiserId);
+        emits.push(strapi.io.emitToUser(advertiserId, 'order:status_changed', {
+          ...basePayload,
+          side: 'advertiser',
+          seq: advSeq,
+        }));
+      }
+      if (publisherId) {
+        const pubSeq = await seq.next(publisherId);
+        emits.push(strapi.io.emitToUser(publisherId, 'order:status_changed', {
+          ...basePayload,
+          side: 'publisher',
+          seq: pubSeq,
+        }));
+      }
+      await Promise.all(emits);
+
+      // Fan out to panel20. One emit per order transition (not one per
+      // party) — the admin orders list shows the row regardless of
+      // perspective. Includes both party ids so the admin client can
+      // filter by user when relevant.
+      if (typeof strapi.io.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:order_event', {
+          ...basePayload,
+          advertiserId,
+          publisherId,
+        });
+      }
+    } catch (err) {
+      strapi.log?.warn?.(`[Order] emitOrderUpdate failed (non-fatal): ${err.message}`);
     }
 
     // Email to publisher (if exists) using universal template

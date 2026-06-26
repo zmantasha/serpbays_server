@@ -1,14 +1,24 @@
 import axios from 'axios';
 
+function getAdminJwtToken() {
+  try {
+    const stored = localStorage.getItem('jwtToken') || sessionStorage.getItem('jwtToken');
+    if (stored) return JSON.parse(stored);
+  } catch {/* fall through */}
+  const cookie = document.cookie.split('; ').find(r => r.startsWith('jwtToken='));
+  return cookie ? cookie.substring('jwtToken='.length) : null;
+}
+
 export async function exportMarketplaceCsv(selectedIds) {
-  // Call your Strapi backend API to fetch the selected marketplace entries
-  // and return a CSV file for download.
-  // This assumes you have a backend route like /api/marketplaces/export-csv
+  const auth = getAdminJwtToken();
+  if (!auth) throw new Error('Admin auth token not found. Please log out and back in.');
+
   const response = await axios.post('/api/marketplaces/export-csv', { ids: selectedIds }, {
-    responseType: 'blob', // Important for downloading files
+    responseType: 'blob',
+    headers: { Authorization: `Bearer ${auth}` },
+    withCredentials: true,
   });
 
-  // Create a blob from the response and trigger download
   const url = window.URL.createObjectURL(new Blob([response.data]));
   const link = document.createElement('a');
   link.href = url;

@@ -13,6 +13,8 @@
     "seed:example": "node ./scripts/seed.js",
     "start": "strapi start",
     "strapi": "strapi",
+    "audit:fields": "node ./scripts/audit-bogus-fields.js",
+    "prepare": "husky",
     "upgrade": "npx @strapi/upgrade latest",
     "upgrade:dry": "npx @strapi/upgrade latest --dry",
     "email:setup": "node ./scripts/quick-enable-email.js",
@@ -22,6 +24,7 @@
   "dependencies": {
     "@paypal/checkout-server-sdk": "^1.0.3",
     "@paypal/payouts-sdk": "^1.1.1",
+    "@socket.io/redis-adapter": "^8.3.0",
     "@strapi/design-system": "^1.16.0",
     "@strapi/icons": "^1.16.0",
     "@strapi/plugin-cloud": "5.12.4",
@@ -34,6 +37,8 @@
     "better-sqlite3": "^11.9.1",
     "csv-parse": "^5.6.0",
     "fs-extra": "^10.0.0",
+    "ioredis": "^5.11.1",
+    "jose": "^4.15.9",
     "json2csv": "^6.0.0-alpha.2",
     "koa-ratelimit": "^6.0.0",
     "mime-types": "^2.1.27",
@@ -61,5 +66,8 @@
     "template": "src/templates",
     "javascript": true,
     "typescript": false
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
   }
 }

@@ -12,34 +12,125 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   // Create payment intent
   async createPayment(ctx) {
     try {
-      const { amount, baseAmount, currency = 'USD', gateway } = ctx.request.body;
+      // ═══════════════════════════════════════════════════════════════════
+      // Audit M11 fix — server-authoritative payment model.
+      //
+      // Previously the controller read both `amount` (charge) and
+      // `baseAmount` (wallet credit) from the request body and trusted
+      // them independently. That let an attacker rewrite the body via
+      // DevTools to `{amount: 1, baseAmount: 1000}`, pay $1 via Stripe,
+      // and have $1000 credited to wallet (verified $999/tx exploit).
+      //
+      // Trust model now:
+      //   - `userIntent` (= wallet credit) is the ONLY money value we
+      //     read from the client. The legacy contract sent both `amount`
+      //     (charge total) and `baseAmount` (wallet credit). We prefer
+      //     `baseAmount` (it's the user's actual intent), falling back
+      //     to `amount` for clients that don't send baseAmount.
+      //   - Server derives chargeUSD and expectedChargeCents from
+      //     `userIntent` via `computeFees`. Both wallet credit and
+      //     gateway charge are computed from the SAME server-only math.
+      //     They cannot diverge.
+      //   - Any client-supplied `amount` that differs from the
+      //     server-derived chargeUSD is logged as a tamper attempt.
+      // ═══════════════════════════════════════════════════════════════════
+      const { amount, baseAmount, currency: clientCurrency, gateway } = ctx.request.body;
       const userId = ctx.state?.user?.id;
       let wallet;
+
+      // ═══════════════════════════════════════════════════════════════════
+      // Audit Wave-3 Vector A — server-authoritative currency.
+      //
+      // Pre-fix: the client's `currency` flowed straight through to
+      // `createStripePaymentIntent(amount, currency, …)`, PayPal's
+      // `createOrder(amount, currency, …)`, and PhonePe. Stripe accepted
+      // e.g. `{amount: 100, currency: 'IDR'}` and created a PaymentIntent
+      // for 100 IDR (≈ $0.006) while the wallet credit (USD intent) stayed
+      // at $100 — up to ~17,000× inflation per call.
+      //
+      // The wallet is USD-denominated and there's no funding flow that
+      // legitimately needs non-USD for these three gateways. Force USD
+      // server-side. Razorpay is unaffected — its branch in `computeFees`
+      // already hardcodes 'INR' for the gateway charge.
+      // ═══════════════════════════════════════════════════════════════════
+      const CURRENCY_BY_GATEWAY = { stripe: 'USD', paypal: 'USD', phonepe: 'USD', razorpay: 'INR' };
+      const lowerGateway = (gateway || '').toLowerCase();
+      const serverCurrency = CURRENCY_BY_GATEWAY[lowerGateway] || 'USD';
+      if (clientCurrency && clientCurrency.toUpperCase() !== serverCurrency) {
+        strapi.log.warn(
+          `[CURRENCY_TAMPER] user=${userId} ip=${ctx.request.ip} gateway=${gateway} ` +
+          `client-supplied currency=${clientCurrency} server-forced=${serverCurrency}`
+        );
+      }
+      const currency = serverCurrency;
+
       console.log("[PAYMENT] Received payment request:", {
         amount: amount,
         baseAmount: baseAmount,
         currency: currency,
         gateway: gateway,
         amountType: typeof amount,
-        baseAmountType: typeof baseAmount
+        baseAmountType: typeof baseAmount,
       })
-      // Validate required fields
+
       if (!amount || !gateway) {
         return ctx.badRequest('Amount and gateway are required');
       }
 
-      // Parse amount to float and validate
-      const parsedAmount = parseFloat(amount);
-      const parsedBaseAmount = baseAmount ? parseFloat(baseAmount) : parsedAmount; // Use baseAmount if provided, otherwise use total amount
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      // Pick wallet-credit intent — prefer client's baseAmount (matches
+      // legacy contract), fall back to amount. Either way, this is the
+      // ONLY money value sourced from the client.
+      const userIntentRaw = (baseAmount !== undefined && baseAmount !== null && baseAmount !== '')
+        ? baseAmount
+        : amount;
+      const userIntent = parseFloat(userIntentRaw);
+      if (isNaN(userIntent) || userIntent <= 0) {
         return ctx.badRequest('Invalid amount');
       }
 
-      // Maximum transaction amount check (security measure)
+      // Maximum-transaction cap applied to the user's INTENT (wallet
+      // credit). The derived charge can be slightly higher (e.g. +18%
+      // GST for Razorpay) — we hard-cap that below at 2×.
       const MAX_TRANSACTION_AMOUNT = 10000; // $10,000 USD
-      if (parsedAmount > MAX_TRANSACTION_AMOUNT) {
-        console.warn(`[PAYMENT SECURITY] Transaction amount ${parsedAmount} exceeds maximum ${MAX_TRANSACTION_AMOUNT}`);
+      if (userIntent > MAX_TRANSACTION_AMOUNT) {
+        console.warn(`[PAYMENT SECURITY] Transaction amount ${userIntent} exceeds maximum ${MAX_TRANSACTION_AMOUNT}`);
         return ctx.badRequest(`Maximum transaction amount is $${MAX_TRANSACTION_AMOUNT.toLocaleString()}`);
+      }
+
+      // Server-only math: derive charge + wallet credit + expected
+      // webhook amount from `userIntent`. No client influence below
+      // this line.
+      let feeBreakdown;
+      try {
+        feeBreakdown = await strapi.service('api::transaction.payment').computeFees(gateway, currency, userIntent);
+      } catch (e) {
+        return ctx.badRequest(`Failed to compute fees: ${e.message}`);
+      }
+      const parsedAmount       = feeBreakdown.chargeUSD;          // gateway charge (in USD; converted to gateway currency below for Razorpay)
+      const parsedBaseAmount   = feeBreakdown.walletCreditUSD;    // wallet credit (USD); == userIntent
+      const expectedChargeCents = feeBreakdown.expectedChargeCents;
+
+      // Defense-in-depth cap on the derived charge.
+      if (parsedAmount > MAX_TRANSACTION_AMOUNT * 2) {
+        strapi.log.error(`[PAYMENT SECURITY] Derived charge ${parsedAmount} exceeds 2× MAX. Refusing.`);
+        return ctx.badRequest('Charge amount exceeds maximum allowed.');
+      }
+
+      // Audit M11 — log tamper attempts. In legitimate traffic:
+      //   - For Stripe/PayPal/PhonePe: client's `amount` should equal
+      //     userIntent (no fee added).
+      //   - For Razorpay: client's `amount` should equal userIntent × 1.18
+      //     (its baseAmount + GST), which equals server's parsedAmount.
+      // Anything else is a body-tamper attempt.
+      if (amount !== undefined && amount !== null) {
+        const clientAmount = parseFloat(amount);
+        if (!isNaN(clientAmount) && Math.abs(clientAmount - parsedAmount) > 0.01) {
+          strapi.log.warn(
+            `[BASEAMOUNT_TAMPER] user=${userId} ip=${ctx.request.ip} ` +
+            `gateway=${gateway} clientAmount=${clientAmount} clientBaseAmount=${baseAmount} ` +
+            `server-derived chargeUSD=${parsedAmount} walletCredit=${parsedBaseAmount}`
+          );
+        }
       }
 
       // For development mode without authentication
@@ -123,7 +214,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               email: wallet.users_permissions_user?.email || 'no-email',
               username: wallet.users_permissions_user?.username || 'unknown',
               baseAmount: parsedBaseAmount.toString(), // Store base amount to credit to wallet
-              totalAmount: parsedAmount.toString() // Store total amount paid
+              totalAmount: parsedAmount.toString(), // Store total amount paid
+              // Audit M11 — webhook uses this for the amount-mismatch cross-check.
+              expectedChargeCents: expectedChargeCents.toString(),
             };
 
             // Use the enhanced payment service with metadata
@@ -143,21 +236,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             console.log('[STRIPE] Payment intent created successfully');
             break;
           case 'razorpay':
-            // Convert USD to INR for Razorpay (Razorpay requires INR)
-            let razorpayAmountINR = parsedAmount;
-            let razorpayConversionRate = 1;
-
-            if (currency.toUpperCase() === 'USD') {
-              try {
-                razorpayConversionRate = await exchangeRateService.getExchangeRate('USD', 'INR');
-                razorpayAmountINR = parsedAmount * razorpayConversionRate;
-                console.log(`[RAZORPAY] Converting USD to INR: $${parsedAmount} × ${razorpayConversionRate} = ₹${razorpayAmountINR.toFixed(2)}`);
-              } catch (err) {
-                console.error('[RAZORPAY] Failed to get exchange rate, using fallback:', err.message);
-                razorpayConversionRate = parseFloat(process.env.USD_TO_INR_RATE || '83.25');
-                razorpayAmountINR = parsedAmount * razorpayConversionRate;
-              }
-            }
+            // Audit M11 — reuse FX rate from computeFees so the rate used to
+            // build expectedChargeCents matches the rate used for the actual
+            // Razorpay charge. Avoids a webhook false-positive if live FX
+            // drifts between the two calls.
+            const razorpayConversionRate = feeBreakdown.exchangeRate || 1;
+            const razorpayAmountINR = feeBreakdown.chargeNative; // chargeUSD × rate, already includes GST
+            console.log(`[RAZORPAY] charge $${parsedAmount} USD × ${razorpayConversionRate} = ₹${razorpayAmountINR.toFixed(2)}`);
 
             // Create Razorpay order in INR
             paymentData = await strapi.service('api::transaction.payment').createRazorpayOrder(razorpayAmountINR, 'INR');
@@ -171,7 +256,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             paymentData = await strapi.service('api::transaction.payment').createPayPalOrder(parsedAmount, currency, {
               walletId: wallet.id,
               userId: userId,
-              baseAmount: parsedBaseAmount // Store baseAmount for webhook to use
+              // Audit M11 — server-derived values flow through PayPal metadata
+              // so the webhook can cross-check against the actual PayPal charge.
+              baseAmount: parsedBaseAmount,
+              expectedChargeCents: expectedChargeCents,
+              expectedChargeUSD: parsedAmount,
             });
             break;
           case 'phonepe':
@@ -211,6 +300,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
                 userId: userId || wallet.users_permissions_user?.id,
                 baseAmount: parsedBaseAmount, // Store for reference
                 totalAmount: parsedAmount, // Store total paid for reference
+                // Audit M11 — webhook reads this to validate
+                // paymentIntent.amount (cents) matches what we asked
+                // Stripe to charge. Hard-reject on mismatch.
+                expectedChargeCents: expectedChargeCents,
+                walletCreditUSD: parsedBaseAmount,
                 createdAt: new Date().toISOString()
               },
               publishedAt: new Date()
@@ -255,7 +349,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               metadata: {
                 phonepeData: paymentData,
                 walletId: wallet.id,
-                userId: userId
+                userId: userId,
+                // Audit M11 — webhook cross-check field. PhonePe was
+                // already not exploitable via baseAmount (uses parsedAmount
+                // for both charge and credit) but we include this for
+                // defense-in-depth + uniform webhook validation.
+                expectedChargeCents: expectedChargeCents,
+                walletCreditUSD: parsedBaseAmount,
               },
               publishedAt: new Date()
             },
@@ -298,7 +398,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
               baseAmountUSD: razorpayBaseAmount,
               paidAmountINR: razorpayINRAmount,
               conversionRate: razorpayRate,
-              originalAmountUSD: paymentData.originalAmountUSD || parsedAmount
+              originalAmountUSD: paymentData.originalAmountUSD || parsedAmount,
+              // Audit M11 — webhook validates razorpay payload.amount (paise) === expectedChargeCents.
+              expectedChargeCents: expectedChargeCents,
+              walletCreditUSD: parsedBaseAmount,
             },
             publishedAt: new Date()
           },
@@ -318,358 +421,17 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     }
   },
 
-  // Handle payment webhook
-  async handleWebhook(ctx) {
-    try {
-      const { gateway } = ctx.params;
-      const payload = ctx.request.body;
-
-      // GDPR: Sanitized webhook logging
-      console.log(`📣 RECEIVED ${gateway.toUpperCase()} WEBHOOK - Event type: ${payload.type || 'unknown'}`);
-
-      let isValid = false;
-      let transactionId;
-      let walletIdFromMetadata;
-
-      switch (gateway.toLowerCase()) {
-        case 'stripe': {
-          const stripeSignature = ctx.request.headers['stripe-signature'];
-
-          if (!stripeSignature) {
-            console.error('[STRIPE WEBHOOK] ❌ Missing stripe-signature header');
-            return ctx.badRequest('Missing Stripe signature header');
-          }
-
-          // Verify webhook signature - MANDATORY in all environments
-          const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-          if (!webhookSecret) {
-            console.error('[STRIPE WEBHOOK] ❌ CRITICAL: STRIPE_WEBHOOK_SECRET not configured');
-            return ctx.internalServerError('Webhook signature verification failed - missing secret');
-          }
-
-          // Get raw body for signature verification
-          const rawBody = ctx.request.body[Symbol.for('unparsedBody')] ||
-            ctx.request.body._unparsedBody ||
-            ctx.request.rawBody ||
-            payload;
-
-          if (!rawBody) {
-            console.error('[STRIPE WEBHOOK] ❌ No raw body available for signature verification');
-            return ctx.badRequest('Raw body required for webhook verification');
-          }
-
-          let event;
-          try {
-            // Verify signature using Stripe SDK
-            event = stripe.webhooks.constructEvent(
-              rawBody,
-              stripeSignature,
-              webhookSecret
-            );
-            console.log('[STRIPE WEBHOOK] ✅ Signature verified successfully');
-          } catch (err) {
-            console.error('[STRIPE WEBHOOK] ❌ Signature verification failed:', err.message);
-            return ctx.forbidden('Invalid webhook signature');
-          }
-
-          if (event.type === 'payment_intent.succeeded') {
-            isValid = true;
-            transactionId = event.data.object.id;
-
-            // Get metadata from the payment intent if available
-            if (event.data.object.metadata && event.data.object.metadata.walletId) {
-              walletIdFromMetadata = parseInt(event.data.object.metadata.walletId);
-              console.log(`Found walletId ${walletIdFromMetadata} in Stripe payment intent metadata`);
-            }
-
-            if (event.data.object.payment_intent) {
-              transactionId = event.data.object.payment_intent;
-            }
-            console.log(`💰 Stripe payment intent ${transactionId} succeeded`);
-          } else if (event.type === 'payment_intent.payment_failed') {
-            // Handle payment failure
-            transactionId = event.data.object.id;
-            console.log(`Stripe payment intent ${transactionId} failed`);
-            return { success: true, status: 'failed' };
-          }
-          break;
-        }
-
-        case 'razorpay': {
-          const { order_id, payment_id, razorpay_signature } = payload;
-          isValid = await strapi.service('api::transaction.payment').verifyRazorpayPayment(
-            order_id,
-            payment_id,
-            razorpay_signature
-          );
-          transactionId = order_id;
-          break;
-        }
-
-        case 'paypal': {
-          const orderID = payload.resource ? payload.resource.id : payload.id;
-
-          // SECURITY: Limit verification attempts (max 5 per order) - consistent with Razorpay
-          const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
-            where: {
-              gatewayTransactionId: orderID,
-              gateway: 'paypal'
-            }
-          });
-
-          if (existingTransaction) {
-            const attempts = existingTransaction.metadata?.verificationAttempts || 0;
-            const MAX_VERIFICATION_ATTEMPTS = 5;
-
-            if (attempts >= MAX_VERIFICATION_ATTEMPTS) {
-              console.warn(`[PAYPAL SECURITY] Verification limit exceeded for order ${orderID}. Attempts: ${attempts}`);
-
-              // Mark as failed if still pending
-              if (existingTransaction.transactionStatus === 'pending') {
-                await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
-                  data: {
-                    transactionStatus: 'failed',
-                    payment_notes: 'Verification failed: Maximum verification attempts exceeded'
-                  }
-                });
-              }
-
-              return ctx.send({
-                verified: false,
-                message: 'Maximum verification attempts exceeded',
-                attemptsRemaining: 0
-              });
-            }
-
-            // Increment attempt counter
-            await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
-              data: {
-                metadata: {
-                  ...existingTransaction.metadata,
-                  verificationAttempts: attempts + 1,
-                  lastVerificationAttempt: new Date().toISOString()
-                }
-              }
-            });
-
-            console.log(`[PAYPAL] Verification attempt ${attempts + 1}/${MAX_VERIFICATION_ATTEMPTS} for order ${orderID}`);
-          }
-
-          isValid = await strapi.service('api::transaction.payment').capturePayPalPayment(orderID);
-          transactionId = orderID;
-          break;
-        }
-
-        default:
-          return ctx.badRequest('Invalid payment gateway');
-      }
-
-      if (isValid && transactionId) {
-        // Find transaction by gatewayTransactionId
-        const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: { gatewayTransactionId: transactionId },
-          populate: ['user_wallet']
-        });
-
-        if (existingTransaction) {
-          // ✅ IDEMPOTENCY: Stripe retries webhooks. If already success, do nothing.
-          if (existingTransaction.transactionStatus === 'success') {
-            console.log(`[WEBHOOK] ⚠️ Transaction ${existingTransaction.id} already processed (success), skipping to prevent double-credit and duplicate promo bonus`);
-            return { success: true, message: 'already processed' };
-          }
-
-          console.log(`✅ Found transaction ${existingTransaction.id}, updating status to success`);
-
-          // Update transaction status to success
-          await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
-            data: { transactionStatus: 'success' }
-          });
-
-          // Try to get walletId from transaction data
-          let walletId = existingTransaction.user_wallet?.id;
-
-          // If we can't get the walletId directly, try the metadata
-          if (!walletId && existingTransaction.metadata && existingTransaction.metadata.walletId) {
-            walletId = existingTransaction.metadata.walletId;
-            console.log(`Found walletId ${walletId} in transaction metadata`);
-          }
-
-          // Try the wallet ID from payment intent metadata
-          if (!walletId && walletIdFromMetadata) {
-            walletId = walletIdFromMetadata;
-            console.log(`Using walletId ${walletId} from payment intent metadata`);
-          }
-
-          // If we have userId in metadata but no wallet, try to find their wallet
-          if (!walletId && existingTransaction.metadata && existingTransaction.metadata.userId) {
-            const userId = existingTransaction.metadata.userId;
-            console.log(`Looking for wallet belonging to user ${userId}`);
-
-            const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-              where: { users_permissions_user: userId }
-            });
-
-            if (wallet) {
-              walletId = wallet.id;
-              console.log(`Found wallet ${walletId} for user ${userId}`);
-            }
-          }
-
-          if (walletId) {
-            console.log(`Looking up wallet with ID: ${walletId}`);
-
-            // Find the wallet
-            const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-              where: { id: walletId },
-              populate: ['users_permissions_user']
-            });
-
-            if (wallet) {
-              console.log(`Found wallet for user: ${wallet.users_permissions_user?.id}`);
-
-              const currentBalance = parseFloat(wallet.balance) || 0;
-              const transactionAmount = parseFloat(existingTransaction.amount) || 0;
-              const newBalance = currentBalance + transactionAmount;
-
-              // GDPR: Sanitized balance logging
-              console.log(`💵 Updating wallet balance`);
-
-              try {
-                // Update wallet balance directly (don't create new transaction since we already have one)
-                const currentMainBalance = parseFloat(wallet.mainBalance || 0);
-                const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
-                const newMainBalance = currentMainBalance + transactionAmount;
-                const newTotalBalance = newMainBalance + currentPromoBalance;
-
-                await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
-                  data: {
-                    mainBalance: newMainBalance,
-                    balance: newTotalBalance
-                  }
-                });
-
-                console.log(`✅ Wallet balance updated successfully: Main=${newMainBalance}, Total=${newTotalBalance}`);
-
-                // ========== AUTOSEND: WALLET FUNDED, NO ORDER LIST ==========
-                try {
-                  const walletNoOrderListId = process.env.AUTOSEND_WALLET_NO_ORDER_LIST_ID;
-                  if (walletNoOrderListId && wallet.users_permissions_user) {
-                    const userEmail = wallet.users_permissions_user.email;
-                    if (userEmail) {
-                      // Check if user has any non-cancelled orders as advertiser
-                      const orderCount = await strapi.db.query('api::order.order').count({
-                        where: {
-                          advertiser: wallet.users_permissions_user.id,
-                          orderStatus: { $ne: 'cancelled' }
-                        }
-                      });
-
-                      if (orderCount === 0) {
-                        // User has funded wallet but no orders → add to list
-                        const autoSendService = strapi.service('api::global.autosend-service');
-                        if (autoSendService) {
-                          autoSendService.addToList({ email: userEmail, listId: walletNoOrderListId })
-                            .catch(err => console.error('[Wallet] AutoSend addToList error:', err.message));
-                          console.log(`[AutoSend] User ${userEmail} added to wallet-no-order list (0 orders)`);
-                        }
-                      } else {
-                        console.log(`[AutoSend] User ${userEmail} already has ${orderCount} orders, skipping wallet-no-order list`);
-                      }
-                    }
-                  }
-                } catch (autoSendErr) {
-                  console.error('[Wallet] AutoSend sync error (non-blocking):', autoSendErr.message);
-                }
-                // ========== END AUTOSEND ==========
-
-                // Update the transaction to link it to the wallet and set fund_source
-                await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
-                  data: {
-                    user_wallet: wallet.id,
-                    fund_source: 'main_fund' // Direct payments go to main balance
-                  }
-                });
-
-                // Create invoice for successful deposit
-                if (existingTransaction.type === 'deposit') {
-                  console.log('Creating invoice for successful deposit...');
-                  try {
-                    // Generate invoice number (you might want to use a more sophisticated system)
-                    const invoiceNumber = `INV-${Date.now()}-${existingTransaction.id}`;
-
-                    // Log the transaction data for debugging
-                    console.log('Transaction data for invoice:', {
-                      amount: existingTransaction.amount,
-                      currency: existingTransaction.currency,
-                      userId: wallet.users_permissions_user.id
-                    });
-
-                    // Create the invoice with all required fields
-                    const invoice = await strapi.entityService.create('api::invoice.invoice', {
-                      data: {
-                        invoiceNumber,
-                        invoiceDate: new Date(),
-                        user: wallet.users_permissions_user.id,
-                        transactionId: existingTransaction.id.toString(),
-                        billingName: wallet.users_permissions_user.username || 'Customer',
-                        billingAddress: 'Address on file', // You should get this from user profile
-                        billingCity: 'City',
-                        billingCountry: 'Country',
-                        billingPincode: '000000', // Add default pincode
-                        lineItems: [{
-                          description: 'Wallet Deposit',
-                          amount: transactionAmount,
-                          quantity: 1
-                        }],
-                        subtotal: transactionAmount,
-                        taxAmount: 0,
-                        totalAmount: transactionAmount,
-                        currency: existingTransaction.currency || 'USD', // Ensure currency is set with fallback
-                        status: 'paid',
-                        pdfUrl: `/invoices/${invoiceNumber}.pdf`,
-                        notes: `Wallet deposit transaction ${existingTransaction.id}`,
-                        publishedAt: new Date()
-                      }
-                    });
-
-                    console.log(`✅ Invoice created successfully: ${invoice.id}`);
-
-                    // Link the invoice to the transaction
-                    await strapi.entityService.update('api::transaction.transaction', existingTransaction.id, {
-                      data: {
-                        invoice: invoice.id
-                      }
-                    });
-                  } catch (invoiceError) {
-                    console.error('Error creating invoice:', invoiceError);
-                    // Log more details about the error
-                    if (invoiceError.details?.errors) {
-                      console.error('Validation errors:', invoiceError.details.errors);
-                    }
-                  }
-                }
-              } catch (error) {
-                console.error(`Error updating wallet balance:`, error.message);
-              }
-            } else {
-              console.error(`❌ Wallet with ID ${walletId} not found`);
-            }
-          } else {
-            console.error(`❌ Could not determine wallet ID for transaction ${existingTransaction.id}`);
-          }
-        } else {
-          console.log(`⚠️ No transaction found for gatewayTransactionId: ${transactionId}`);
-        }
-      }
-
-      // Always return success to Stripe
-      return { success: true };
-    } catch (error) {
-      console.error('❌ Webhook error:', error);
-      // Still return 200 status to prevent Stripe retries
-      return { success: false, error: error.message };
-    }
-  },
+  // Audit C9 — generic `handleWebhook` method removed.
+  // The method dispatched by URL `:gateway` param to inline Stripe / PayPal /
+  // Razorpay verification logic that pre-dated the M11 baseAmount fix:
+  //  - PayPal branch captured a body-supplied orderID with NO signature check.
+  //  - Stripe branch verified signature but credited wallet by
+  //    `existingTransaction.amount` with NO `expectedChargeCents` cross-check.
+  //  - Razorpay branch used checkout-HMAC, not webhook-secret HMAC.
+  // Routes that exposed this are also gone (see `routes/transaction.js`).
+  // The hardened, M11-aware gateway-specific controllers remain:
+  //   `controllers/{stripe,razorpay,paypal}-webhook.js`.
+  // Regression test: `scripts/test-generic-webhook-removed.js`.
 
   // Helper method to mark a transaction as failed
   async markTransactionFailed(gatewayTransactionId) {
@@ -694,218 +456,296 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
     }
   },
 
-  // Add a new endpoint to create a pending transaction after payment details are entered
-  async createPendingTransaction(ctx) {
-    try {
-      const { amount, currency, gateway, gatewayTransactionId, walletId } = ctx.request.body;
-
-      // Validate the wallet belongs to the user
-      const userId = ctx.state?.user?.id;
-      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { id: walletId, users_permissions_user: userId }
-      });
-
-      if (!wallet) {
-        return ctx.notFound('Wallet not found or does not belong to user');
-      }
-
-      // Idempotency: if a transaction already exists for this gatewayTransactionId, return it
-      const existing = await strapi.db.query('api::transaction.transaction').findOne({
-        where: { gatewayTransactionId }
-      });
-      if (existing) {
-        console.log(`[PENDING] Transaction already exists for gatewayTransactionId ${gatewayTransactionId}, returning existing row ${existing.id} (idempotent)`);
-        return { data: { transaction: existing } };
-      }
-
-      // Create pending transaction
-      const transaction = await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          type: 'deposit',
-          amount: amount,
-          netAmount: amount,
-          currency: currency,
-          gateway: gateway,
-          gatewayTransactionId: gatewayTransactionId,
-          transactionStatus: 'pending',
-          fund_source: 'main_fund', // Direct payments go to main balance
-          user_wallet: walletId,
-          users_permissions_user: userId || wallet.users_permissions_user,
-          metadata: {
-            walletId: walletId,  // Store the wallet ID in metadata
-            userId: userId       // Store the user ID in metadata
-          },
-          publishedAt: new Date()
-        }
-      });
-
-      console.log(`Created pending transaction ${transaction.id} after payment submission`);
-
-      return { data: { transaction } };
-    } catch (error) {
-      console.error("Error creating pending transaction:", error);
-      return ctx.badRequest(error.message);
-    }
-  },
+  // Audit Wave-3 Vector D — `createPendingTransaction` handler removed.
+  // The handler trusted client-supplied {amount, gateway, gatewayTransactionId}
+  // (with only walletId scoped to the caller) and created a pending tx row
+  // with those values verbatim — letting an attacker plant a $1000 pending
+  // row that the M11 grace-period webhook would then credit on a real $1
+  // gateway payment. Route at `routes/transaction.js` also removed.
+  // Regression test: `scripts/test-pending-tx-route-removed.js`.
 
   // Get transaction status
+  // Public payment-status check — used by the gateway redirect-back flow
+  // (Razorpay / Stripe / PayPal land back at the SPA before the user's
+  // session has finished hydrating; the SPA polls this endpoint with the
+  // gateway-issued payment-intent ID to learn the outcome).
+  //
+  // SECURITY (pre-fix → post-fix):
+  //   - Pre-fix accepted EITHER the gateway transaction id OR the internal
+  //     numeric transaction id, with no auth. Anonymous attackers could
+  //     iterate /transactions/status/<sequential-int> and harvest every
+  //     transaction's type / amount / status + invoice id + invoice
+  //     PDF URL. Confirmed exploitable on staging at id=85 → returned
+  //     {"amount":100,"transactionStatus":"success",...}.
+  //
+  // Post-fix:
+  //   - Only accept gateway-issued IDs. Gateway IDs are ≥ 14 chars of
+  //     unguessable base62/hex (~80+ bits entropy: Razorpay pay_*, Stripe
+  //     pi_*, PayPal PAYID-*). A purely numeric id is rejected outright —
+  //     killing the enumeration vector. No `where: { id }` fallback.
+  //   - Response is narrowed to { transactionStatus, gatewayTransactionId }
+  //     so even a leaked gateway id cannot disclose amount / type /
+  //     invoice URL.
   async getTransactionStatus(ctx) {
     try {
       const { id } = ctx.params;
-
-      // First try to find by gateway transaction ID (payment intent ID)
-      let transaction = await strapi.db.query('api::transaction.transaction').findOne({
-        where: { gatewayTransactionId: id },
-        populate: ['user_wallet', 'invoice']
-      });
-
-      if (!transaction) {
-        // If not found, try to find by internal transaction ID
-        transaction = await strapi.db.query('api::transaction.transaction').findOne({
-          where: { id },
-          populate: ['user_wallet', 'invoice']
-        });
+      if (typeof id !== 'string' || id.length === 0) {
+        return ctx.notFound('Transaction not found');
+      }
+      // Reject purely-numeric ids — that's the internal-id-IDOR path.
+      // Gateway IDs always contain at least one non-digit character.
+      if (/^\d+$/.test(id)) {
+        return ctx.notFound('Transaction not found');
+      }
+      // Defensive: bound the length so a 50 MB body can't be passed via
+      // path-param-smuggling proxies.
+      if (id.length > 256) {
+        return ctx.notFound('Transaction not found');
       }
 
-      if (!transaction) {
-        // If still not found, check Stripe directly
+      const transaction = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: id },
+        select: ['id', 'gatewayTransactionId', 'transactionStatus'],
+      });
+
+      if (transaction) {
+        return {
+          data: {
+            transactionStatus: transaction.transactionStatus,
+            gatewayTransactionId: transaction.gatewayTransactionId,
+          },
+        };
+      }
+
+      // Fall back to Stripe direct lookup only when the id looks like a
+      // Stripe payment intent (`pi_*`). This prevents anonymous callers
+      // from probing the Stripe account with arbitrary strings.
+      if (/^pi_[a-zA-Z0-9_]+$/.test(id)) {
         try {
           const paymentIntent = await stripe.paymentIntents.retrieve(id);
           return {
             data: {
               transactionStatus: paymentIntent.status === 'succeeded' ? 'success' :
                 paymentIntent.status === 'processing' ? 'pending' : 'failed',
-              description: `Payment ${paymentIntent.status}`,
-              stripeStatus: paymentIntent.status
-            }
+              gatewayTransactionId: id,
+            },
           };
         } catch (stripeError) {
-          console.error('Error checking Stripe payment intent:', stripeError);
+          strapi.log?.error?.('[transaction] stripe lookup failed', { error: stripeError.message });
           return ctx.notFound('Transaction not found');
         }
       }
 
-      return {
-        data: {
-          id: transaction.id,
-          type: transaction.type,
-          amount: transaction.amount,
-          currency: transaction.currency,
-          transactionStatus: transaction.transactionStatus,
-          description: transaction.description,
-          invoice: transaction.invoice ? {
-            id: transaction.invoice.id,
-            invoiceNumber: transaction.invoice.invoiceNumber,
-            pdfUrl: transaction.invoice.pdfUrl
-          } : null
-        }
-      };
+      return ctx.notFound('Transaction not found');
     } catch (error) {
-      console.error('Error getting transaction status:', error);
+      strapi.log?.error?.('[transaction] getTransactionStatus failed', { error: error.message });
       return ctx.badRequest('Failed to get transaction status');
     }
   },
 
-  // Manual PayPal payment verification (fallback if webhook fails)
+  // Audit C3 — Manual PayPal payment verification (server-authoritative).
+  //
+  // Pre-fix vulnerabilities (the previous handler trusted client-supplied
+  // `walletId` and used `(orderId, walletId)` for its idempotency check):
+  //   V1. Cross-user wallet credit — any authenticated attacker who knew a
+  //       completed PayPal orderId (their own past payment, leaked invoice
+  //       URL, etc.) could POST `{orderId, walletId:<attacker's wallet>}`
+  //       and credit themselves using someone else's PayPal payment. The
+  //       tuple-keyed idempotency didn't block re-binding the same orderId
+  //       to a different wallet.
+  //   V2. No M11 amount-mismatch cross-check — the credit amount came from
+  //       PayPal's reported `purchase_units[0].amount.value`, with no
+  //       comparison against the server-computed `expectedChargeCents`
+  //       stashed in PayPal `custom_id` at order-creation time. This
+  //       re-opened the M11 baseAmount vector for the manual verify path.
+  //   V3. Wallet credited by PayPal's gross amount (includes fees/GST)
+  //       rather than the server-derived `baseAmount` (the user's actual
+  //       deposit intent). Inconsistent with the webhook path post-M11.
+  //
+  // Fix — model this on `paypal-webhook.handlePaymentCompleted`:
+  //   - Ignore `walletId` from the request body entirely.
+  //   - Parse `custom_id` from the PayPal order (server-set at create time).
+  //   - Verify the order's bound wallet belongs to `ctx.state.user`.
+  //   - M11 cross-check: actualCharge === expectedChargeCents.
+  //   - Credit by `baseAmount`, not by PayPal's gross.
+  //   - Idempotent on `gatewayTransactionId` across all wallets.
   async verifyPayPalPayment(ctx) {
     try {
-      const { orderId, walletId } = ctx.request.body;
+      const userId = ctx.state.user?.id;
+      if (!userId) return ctx.unauthorized();
 
-      if (!orderId || !walletId) {
-        return ctx.badRequest('Order ID and Wallet ID are required');
-      }
+      const { orderId } = ctx.request.body;
+      if (!orderId) return ctx.badRequest('orderId is required');
 
-      console.log(`[MANUAL PAYPAL VERIFY] Checking PayPal order: ${orderId} for wallet: ${walletId}`);
+      strapi.log.info(`[VERIFY-PAYPAL] userId=${userId} orderId=${orderId}`);
 
-      // Get PayPal order details
+      // 1. Server-side fetch of PayPal order via OAuth.
       const orderDetails = await strapi.service('api::transaction.payment').getPayPalOrderDetails(orderId);
-
       if (!orderDetails.success) {
         return ctx.badRequest('Failed to get PayPal order details');
       }
-
       const order = orderDetails.order;
 
-      // Check if order is completed
       if (order.status !== 'COMPLETED') {
         return ctx.badRequest('PayPal order is not completed');
       }
 
-      const purchaseUnit = order.purchase_units[0];
-      const amount = parseFloat(purchaseUnit.amount.value);
+      const purchaseUnit = order.purchase_units?.[0];
+      if (!purchaseUnit) {
+        return ctx.badRequest('PayPal order is missing purchase unit');
+      }
 
-      // Check if transaction already exists
-      const existingTransaction = await strapi.db.query('api::transaction.transaction').findOne({
-        where: {
-          gatewayTransactionId: orderId,
-          user_wallet: walletId
-        }
+      // 2. Parse server-set custom_id. createPayment writes
+      // {walletId, userId, baseAmount, expectedChargeCents} as JSON.
+      let customWalletId = null;
+      let baseAmount = null;
+      let expectedChargeCents = null;
+      try {
+        const customData = JSON.parse(purchaseUnit.custom_id || '{}');
+        customWalletId = customData.walletId != null ? parseInt(customData.walletId, 10) : null;
+        baseAmount = customData.baseAmount != null ? parseFloat(customData.baseAmount) : null;
+        expectedChargeCents = customData.expectedChargeCents != null ? Number(customData.expectedChargeCents) : null;
+      } catch (_) {
+        // Legacy custom_id is a bare wallet id; treat as missing M11 metadata.
+        const n = purchaseUnit.custom_id ? parseInt(purchaseUnit.custom_id, 10) : NaN;
+        if (Number.isFinite(n)) customWalletId = n;
+      }
+
+      if (!customWalletId) {
+        strapi.log.error(`[VERIFY-PAYPAL] orderId=${orderId} missing wallet binding in custom_id — REFUSING`);
+        return ctx.badRequest('Order metadata is incomplete');
+      }
+
+      // 3. Ownership: the wallet bound to this PayPal order must belong to
+      // the caller. Body-supplied walletId is intentionally ignored.
+      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+        where: { id: customWalletId },
+        populate: ['users_permissions_user'],
       });
+      if (!wallet) return ctx.badRequest('Wallet not found');
+      if (wallet.users_permissions_user?.id !== userId) {
+        strapi.log.error(
+          `[VERIFY-PAYPAL] cross-user attempt — orderId=${orderId} ` +
+          `walletOwner=${wallet.users_permissions_user?.id} caller=${userId}`
+        );
+        return ctx.forbidden('You do not own this PayPal order');
+      }
 
-      if (existingTransaction) {
+      // 4. Idempotency — keyed on orderId across ALL wallets so the same
+      // PayPal order cannot be re-credited to a different wallet.
+      const existingSuccess = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { gatewayTransactionId: orderId, gateway: 'paypal', transactionStatus: 'success' },
+      });
+      if (existingSuccess) {
         return ctx.send({
           success: true,
           message: 'Transaction already processed',
-          transaction: existingTransaction
+          transaction: existingSuccess,
         });
       }
 
-      // Find the wallet
-      const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { id: walletId }
-      });
-
-      if (!wallet) {
-        return ctx.badRequest('Wallet not found');
+      // 5. M11 amount-mismatch cross-check.
+      const paypalChargeAmount = parseFloat(purchaseUnit.amount?.value || '0');
+      const actualChargeCents = Math.round(paypalChargeAmount * 100);
+      const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+      if (Number.isFinite(expectedChargeCents) && expectedChargeCents > 0) {
+        if (actualChargeCents !== expectedChargeCents) {
+          strapi.log.error(
+            `[VERIFY-PAYPAL] amount mismatch — REFUSING. ` +
+            `actual=${actualChargeCents}c expected=${expectedChargeCents}c orderId=${orderId}`
+          );
+          // Audit row for the failed attempt.
+          await strapi.entityService.create('api::transaction.transaction', {
+            data: {
+              type: 'deposit',
+              amount: 0,
+              netAmount: 0,
+              transactionStatus: 'failed',
+              gateway: 'paypal',
+              gatewayTransactionId: orderId,
+              description: `PayPal amount mismatch (manual verify) - Order ${orderId}`,
+              user_wallet: wallet.id,
+              users_permissions_user: userId,
+              fund_source: 'main_fund',
+              metadata: {
+                error: 'amount_mismatch',
+                actualChargeCents,
+                expectedChargeCents,
+                orderId,
+                manualVerification: true,
+                processedAt: new Date().toISOString(),
+              },
+              publishedAt: new Date(),
+            },
+          });
+          return ctx.badRequest('Payment amount does not match expected charge');
+        }
+      } else if (new Date() > GRACE_PERIOD_END) {
+        strapi.log.error(`[VERIFY-PAYPAL] missing expectedChargeCents post-grace — REFUSING. orderId=${orderId}`);
+        return ctx.badRequest('Order metadata is incomplete');
+      } else {
+        strapi.log.warn(`[VERIFY-PAYPAL] legacy order missing expectedChargeCents (grace period). orderId=${orderId}`);
       }
 
-      // Update wallet balance
+      // 6. Credit the wallet by server-derived baseAmount (excludes fees/GST).
+      // Fallback to PayPal's gross only for the grace-period legacy branch above.
+      const amountToCredit = baseAmount !== null && baseAmount > 0 ? baseAmount : paypalChargeAmount;
+
       const currentMainBalance = parseFloat(wallet.mainBalance || 0);
       const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
-      const newMainBalance = currentMainBalance + amount;
+      const newMainBalance = currentMainBalance + amountToCredit;
       const newTotalBalance = newMainBalance + currentPromoBalance;
 
       await strapi.db.query('api::user-wallet.user-wallet').update({
-        where: { id: walletId },
-        data: {
-          mainBalance: newMainBalance,
-          balance: newTotalBalance
-        }
+        where: { id: wallet.id },
+        data: { mainBalance: newMainBalance, balance: newTotalBalance },
       });
 
-      // Create transaction record
       const transaction = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'deposit',
-          amount: amount,
-          netAmount: amount,
+          amount: amountToCredit,
+          netAmount: amountToCredit,
           transactionStatus: 'success',
           gateway: 'paypal',
           gatewayTransactionId: orderId,
           description: `PayPal payment - Manual verification`,
-          user_wallet: walletId,
-          users_permissions_user: wallet.users_permissions_user,
+          user_wallet: wallet.id,
+          users_permissions_user: userId,
           fund_source: 'main_fund',
           fee: 0,
           metadata: {
-            orderId: orderId,
-            manualVerification: true
+            orderId,
+            manualVerification: true,
+            baseAmount,
+            expectedChargeCents,
+            paypalCharge: paypalChargeAmount,
           },
-          publishedAt: new Date()
-        }
+          publishedAt: new Date(),
+        },
       });
 
-      console.log(`[MANUAL PAYPAL VERIFY] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amount}`);
+      strapi.log.info(`[VERIFY-PAYPAL] ✅ orderId=${orderId} wallet=${wallet.id} credited $${amountToCredit}`);
+
+      // Real-time push so the wallet UI sees the deposit instantly.
+      try {
+        await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+          userId,
+          'paypal_verify',
+          { orderId, walletId: wallet.id, amount: amountToCredit, transactionId: transaction.id }
+        );
+      } catch (emitErr) {
+        strapi.log.warn(`[VERIFY-PAYPAL] emitBalanceUpdate failed (non-fatal): ${emitErr.message}`);
+      }
 
       return ctx.send({
         success: true,
         message: 'Payment verified and wallet updated',
-        transaction: transaction,
-        newBalance: newTotalBalance
+        transaction,
+        newBalance: newTotalBalance,
       });
-
     } catch (error) {
-      console.error('[MANUAL PAYPAL VERIFY ERROR]', error);
+      strapi.log.error('[VERIFY-PAYPAL] error:', error);
       return ctx.internalServerError('Failed to verify PayPal payment');
     }
   },
@@ -920,7 +760,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       }
 
       // Check if user is admin or has special access
-      const isAdmin = (user.role && (user.role.type === 'admin' || user.role.name === 'Admin')) || user.email === 'mantasha@wordscloud.in';
+      const isAdmin = user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
 
       if (!isAdmin) {
         return ctx.forbidden('Admin access required');
@@ -980,7 +820,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       }
 
       // Check if user is admin or has special access
-      const isAdmin = (user.role && (user.role.type === 'admin' || user.role.name === 'Admin')) || user.email === 'mantasha@wordscloud.in';
+      const isAdmin = user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
 
       if (!isAdmin) {
         return ctx.forbidden('Admin access required');
@@ -1047,7 +887,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       }
 
       // Check if user is admin or has special access
-      const isAdmin = (user.role && (user.role.type === 'admin' || user.role.name === 'Admin')) || user.email === 'mantasha@wordscloud.in';
+      const isAdmin = user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
 
       if (!isAdmin) {
         return ctx.forbidden('Admin access required');

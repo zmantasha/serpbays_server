@@ -29,44 +29,34 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       }
 
       const userId = ctx.state.user.id;
-      const { type, isRead, action, limit = 50, offset = 0 } = ctx.query;
+      const { type, isRead, action } = ctx.query;
+      // Hard cap on limit so a hostile caller cannot request 10M rows.
+      const rawLimit = Number.parseInt(ctx.query?.limit, 10);
+      const rawOffset = Number.parseInt(ctx.query?.offset, 10);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0
+        ? Math.min(rawLimit, 100)
+        : 50;
+      const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
 
-      // Build filters
-      const filters = {
-        recipient: { id: userId }
-      };
+      const filters = { recipient: { id: userId } };
+      if (type) filters.type = type;
+      if (isRead !== undefined) filters.isRead = isRead === 'true';
+      if (action) filters.action = action;
 
-      if (type) {
-        filters.type = type;
-      }
-
-      if (isRead !== undefined) {
-        filters.isRead = isRead === 'true';
-      }
-
-      if (action) {
-        filters.action = action;
-      }
-
-      console.log(`[NotificationController] getMyNotifications for user ${userId} with filters:`, JSON.stringify(filters, null, 2));
-
-      // Get notifications
+      // Pre-fix populated `recipient` returned the FULL up_users row
+      // (password hash, withdrawalOtp, paypal_email, billing PII, ...).
+      // The caller already knows they are the recipient — drop the
+      // populate entirely.
       const notifications = await strapi.entityService.findMany('api::notification.notification', {
         filters,
         sort: { createdAt: 'desc' },
-        limit: parseInt(limit),
-        start: parseInt(offset),
-        populate: ['recipient']
+        limit,
+        start: offset,
       });
-
-      console.log(`[NotificationController] Raw notifications from DB for user ${userId}:`, JSON.stringify(notifications, null, 2));
-      console.log(`Retrieved ${notifications.length} notifications for user ${userId}`);
 
       return {
         data: notifications,
-        meta: {
-          count: notifications.length
-        }
+        meta: { count: notifications.length },
       };
     } catch (error) {
       console.error('Error fetching notifications:', error);
@@ -85,24 +75,25 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       const { id } = ctx.params;
       const userId = ctx.state.user.id;
 
-      // Get the notification and verify ownership
-      const notification = await strapi.entityService.findOne('api::notification.notification', id, {
-        populate: ['recipient']
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        return ctx.notFound('Notification not found');
+      }
+      const notification = await strapi.db.query('api::notification.notification').findOne({
+        where: { id: numericId },
+        populate: { recipient: { select: ['id'] } },
       });
 
       if (!notification) {
         return ctx.notFound('Notification not found');
       }
-
-      if (notification.recipient.id !== userId) {
-        return ctx.forbidden('You can only mark your own notifications as read');
+      if (notification.recipient?.id !== userId) {
+        // 404 not 403 — defeat notification-id enumeration.
+        return ctx.notFound('Notification not found');
       }
 
-      // Update the notification
-      const updatedNotification = await strapi.entityService.update('api::notification.notification', id, {
-        data: {
-          isRead: true
-        }
+      const updatedNotification = await strapi.entityService.update('api::notification.notification', numericId, {
+        data: { isRead: true },
       });
 
       // Get updated unread count
@@ -199,21 +190,24 @@ module.exports = createCoreController('api::notification.notification', ({ strap
       const { id } = ctx.params;
       const userId = ctx.state.user.id;
 
-      // Get the notification and verify ownership
-      const notification = await strapi.entityService.findOne('api::notification.notification', id, {
-        populate: ['recipient']
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        return ctx.notFound('Notification not found');
+      }
+      const notification = await strapi.db.query('api::notification.notification').findOne({
+        where: { id: numericId },
+        populate: { recipient: { select: ['id'] } },
       });
 
       if (!notification) {
         return ctx.notFound('Notification not found');
       }
-
-      if (notification.recipient.id !== userId) {
-        return ctx.forbidden('You can only delete your own notifications');
+      if (notification.recipient?.id !== userId) {
+        // 404 not 403 — defeat notification-id enumeration.
+        return ctx.notFound('Notification not found');
       }
 
-      // Delete the notification
-      await strapi.entityService.delete('api::notification.notification', id);
+      await strapi.entityService.delete('api::notification.notification', numericId);
 
       console.log(`Notification ${id} deleted by user ${userId}`);
 

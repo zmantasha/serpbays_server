@@ -2,28 +2,15 @@
 
 /**
  * project router
+ *
+ * NOTE: a `customController` block previously defined here had an
+ * unauthenticated `findOne` (full populate, no ownership check). It was
+ * never wired (route uses `handler: 'api::project.project.findOne'`
+ * which resolves to controllers/project.js), but the dead code was
+ * removed to prevent a future routing change from accidentally exposing
+ * an instant IDOR. All routes below are gated by `api::project.is-authenticated`.
  */
 
-const { createCoreController } = require('@strapi/strapi').factories;
-
-// Create a custom controller to extend the core controller
-const customController = ({ strapi }) => ({
-  async findOne(ctx) {
-    const { id } = ctx.params;
-    const entity = await strapi.entityService.findOne('api::project.project', id, {
-      populate: ['owner', 'team', 'orders']
-    });
-
-    if (!entity) {
-      return ctx.notFound('Project not found');
-    }
-
-    const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
-    return this.transformResponse(sanitizedEntity);
-  }
-});
-
-// Export the core router with custom configuration
 module.exports = {
   routes: [
     // Core routes

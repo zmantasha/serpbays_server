@@ -10,47 +10,47 @@ module.exports = {
    * Handle Stripe Webhook Events
    */
   async handleWebhook(ctx) {
+    // ─────────────────────────────────────────────────────────────────────
+    // SECURITY — signature verification is MANDATORY in all environments.
+    //
+    // Pre-fix this handler had a NODE_ENV === 'development' bypass that
+    // accepted ctx.request.body as the canonical event whenever the raw
+    // body was unavailable, with verification skipped entirely. A
+    // misconfigured production deploy (NODE_ENV not set, NODE_ENV stripped
+    // by container env, NODE_ENV intentionally set to 'development' for
+    // diagnostics) would silently disable verification — any anonymous
+    // POSTer could forge a payment_intent.succeeded event and trigger
+    // handlePaymentSucceeded → wallet credit. This is now removed; the
+    // handler ALWAYS calls stripeService.verifyWebhookSignature and fails
+    // closed when STRIPE_WEBHOOK_SECRET / raw body / signature is missing.
+    // ─────────────────────────────────────────────────────────────────────
+
     const signature = ctx.request.headers['stripe-signature'];
-    
-    // Get raw body for signature verification
-    // Try multiple ways to get the raw body
-    let rawBody = ctx.request.body[Symbol.for('unparsedBody')] || 
-                  ctx.request.body._unparsedBody || 
-                  ctx.request.rawBody;
-
-    // If we still don't have raw body, try to get it from the request
-    if (!rawBody) {
-      // For development/testing, we might need to reconstruct from parsed body
-      if (process.env.NODE_ENV === 'development' && ctx.request.body && Object.keys(ctx.request.body).length > 0) {
-        console.warn('[STRIPE WEBHOOK] ⚠️ Using parsed body for development - signature verification may fail');
-        rawBody = JSON.stringify(ctx.request.body);
-      } else {
-        console.error('[STRIPE WEBHOOK] ❌ No raw body found in request');
-        console.error('[STRIPE WEBHOOK] Available body keys:', Object.keys(ctx.request.body || {}));
-        return ctx.badRequest('Invalid request body - raw body required for signature verification');
-      }
-    }
-
     if (!signature) {
-      console.error('[STRIPE WEBHOOK] ❌ No signature header found');
+      console.error('[STRIPE WEBHOOK] ❌ Missing signature header');
       return ctx.badRequest('Missing signature header');
     }
 
+    // Raw body is the Stripe-signed payload. Without it we cannot verify
+    // — fail closed (no reconstruction from parsed body).
+    const rawBody =
+      ctx.request.body?.[Symbol.for('unparsedBody')] ||
+      ctx.request.body?._unparsedBody ||
+      ctx.request.rawBody;
+    if (!rawBody) {
+      console.error('[STRIPE WEBHOOK] ❌ Raw body unavailable — signature cannot be verified');
+      return ctx.badRequest('Raw body required for signature verification');
+    }
+
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error('[STRIPE WEBHOOK] ❌ CRITICAL: STRIPE_WEBHOOK_SECRET not configured');
+      return ctx.internalServerError('Webhook verification not configured');
+    }
+
     try {
-      let event;
-      
-      // Verify webhook signature (skip in development if raw body not available)
-      if (process.env.NODE_ENV === 'development' && rawBody === JSON.stringify(ctx.request.body)) {
-        console.warn('[STRIPE WEBHOOK] ⚠️ Development mode: Skipping signature verification');
-        event = ctx.request.body; // Use the parsed body directly
-      } else {
-        const stripeService = strapi.service('api::transaction.stripe-service');
-        event = stripeService.verifyWebhookSignature(
-          rawBody,
-          signature,
-          process.env.STRIPE_WEBHOOK_SECRET
-        );
-      }
+      const stripeService = strapi.service('api::transaction.stripe-service');
+      const event = stripeService.verifyWebhookSignature(rawBody, signature, webhookSecret);
 
       console.log(`[STRIPE WEBHOOK] 📣 Received event: ${event.type}, ID: ${event.id}`);
 
@@ -96,8 +96,11 @@ module.exports = {
           break;
 
         default:
+          // Pre-fix dumped `JSON.stringify(event, null, 2)` here — the
+          // event object contains card metadata, billing address, and
+          // (depending on the event) tokenised payment-method handles.
+          // Log only the event-type label; payload stays on Stripe.
           console.log(`[STRIPE WEBHOOK] ℹ️ Unhandled event type: ${event.type}`);
-          console.log(`[STRIPE WEBHOOK] Event data:`, JSON.stringify(event, null, 2));
       }
 
       // Always return 200 to acknowledge receipt
@@ -108,10 +111,11 @@ module.exports = {
       });
 
     } catch (error) {
+      // Log full error server-side; do NOT echo error.message in the
+      // response. A forged-webhook attacker can probe failure modes via
+      // the response body otherwise.
       console.error('[STRIPE WEBHOOK] ❌ Webhook processing failed:', error);
-      // Return 400 for signature verification failures
-      // This tells Stripe not to retry
-      return ctx.badRequest(error.message);
+      return ctx.badRequest('Webhook processing failed');
     }
   },
 
@@ -182,7 +186,7 @@ module.exports = {
 
     } catch (error) {
       console.error('[STRIPE MANUAL] ❌ Error marking transaction as failed:', error);
-      return ctx.badRequest(error.message);
+      return ctx.badRequest('Failed to mark transaction as failed');
     }
   },
 
@@ -287,7 +291,7 @@ module.exports = {
 
     } catch (error) {
       console.error('[STRIPE CHECK] ❌ Error checking transaction status:', error);
-      return ctx.badRequest(error.message);
+      return ctx.badRequest('Failed to check transaction status');
     }
   }
 };
@@ -372,6 +376,59 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
 
         // Calculate new balance
+        // ─────────────────────────────────────────────────────────────────
+        // Audit M11 — amount-mismatch cross-check.
+        // Before any wallet write, validate that Stripe actually charged
+        // the amount we asked it to charge. If they diverge, refuse the
+        // credit and mark the tx failed.
+        //
+        // expectedChargeCents lives in transaction.metadata (set in
+        // createPayment via computeFees). Legacy pending rows from before
+        // the fix may lack it — we grace-period those for 30 days.
+        // ─────────────────────────────────────────────────────────────────
+        {
+          const expectedChargeCents = Number(transaction.metadata?.expectedChargeCents);
+          const actualChargeCents = Number(paymentIntent.amount);
+          const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+
+          if (Number.isFinite(expectedChargeCents) && expectedChargeCents > 0) {
+            if (actualChargeCents !== expectedChargeCents) {
+              strapi.log.error(
+                `[STRIPE WEBHOOK] amount mismatch — REFUSING wallet credit. ` +
+                `paymentIntent.amount=${actualChargeCents}c expected=${expectedChargeCents}c ` +
+                `tx=${transaction.id} pi=${paymentIntent.id}`
+              );
+              await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+                data: {
+                  transactionStatus: 'failed',
+                  metadata: {
+                    ...transaction.metadata,
+                    error: 'amount_mismatch',
+                    actualChargeCents,
+                    expectedChargeCents,
+                    processedAt: new Date().toISOString(),
+                  },
+                },
+              });
+              return; // no wallet credit
+            }
+          } else if (new Date() > GRACE_PERIOD_END) {
+            strapi.log.error(
+              `[STRIPE WEBHOOK] missing expectedChargeCents post-grace-period — REFUSING. tx=${transaction.id}`
+            );
+            await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+              data: { transactionStatus: 'failed', metadata: { ...transaction.metadata, error: 'missing_expected_amount' } },
+            });
+            return;
+          } else {
+            strapi.log.warn(
+              `[STRIPE WEBHOOK] legacy pending tx missing expectedChargeCents (grace period); ` +
+              `tx=${transaction.id} pi=${paymentIntent.id} actualCents=${actualChargeCents}`
+            );
+          }
+        }
+
+        // Calculate new balance
         const currentMainBalance = parseFloat(wallet.mainBalance || 0);
         const currentPromoBalance = parseFloat(wallet.promoBalance || 0);
         const transactionAmount = parseFloat(transaction.amount);
@@ -409,6 +466,21 @@ async function handlePaymentSucceeded(paymentIntent) {
         });
 
         console.log(`[STRIPE] ✅ Transaction ${transaction.id} completed successfully`);
+
+        // Real-time push so the client wallet UI reflects the deposit
+        // instantly. Best-effort — webhook success must not depend on it.
+        try {
+          const targetUserId = wallet.users_permissions_user?.id;
+          if (targetUserId) {
+            await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+              targetUserId,
+              'stripe_deposit',
+              { transactionId: transaction.id, paymentIntentId: paymentIntent.id, amount: transactionAmount, walletId: wallet.id }
+            );
+          }
+        } catch (emitErr) {
+          console.warn('[STRIPE] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
 
         // Save target for invoice creation outside the lock
         invoiceTarget = { transaction, user: wallet.users_permissions_user };
@@ -626,6 +698,24 @@ async function handleChargeRefunded(charge) {
       });
 
       console.log(`[STRIPE] ✅ Refund processed: $${refundAmount} deducted from wallet ${wallet.id}`);
+
+      // Real-time push so the user sees the refund debit immediately.
+      try {
+        const walletWithUser = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { id: wallet.id },
+          populate: ['users_permissions_user'],
+        });
+        const targetUserId = walletWithUser?.users_permissions_user?.id;
+        if (targetUserId) {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            targetUserId,
+            'stripe_refund',
+            { transactionId: transaction.id, chargeId: charge.id, refundAmount, walletId: wallet.id }
+          );
+        }
+      } catch (emitErr) {
+        console.warn('[STRIPE] emitBalanceUpdate (refund) failed (non-fatal):', emitErr.message);
+      }
     }
 
   } catch (error) {

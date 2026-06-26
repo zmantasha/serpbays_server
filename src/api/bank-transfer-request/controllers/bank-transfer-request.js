@@ -7,30 +7,63 @@
 
 module.exports = {
   /**
-   * Create a new bank transfer request
+   * Create a new bank transfer request.
+   *
+   * SECURITY (pre-fix → post-fix):
+   *   The pre-fix handler took `userId`, `userEmail`, `userName` from the
+   *   request body and stamped them directly onto the record. The update
+   *   path then read `request.userId` and credited THAT wallet on completion
+   *   (L210-216). A logged-in attacker could POST:
+   *     {amount: 1000, userId: <victim_or_self>, referenceNumber: <known>, ...}
+   *   to fabricate a bank-transfer claim under any user id. When an admin
+   *   later approved (matching the reference number against a real bank
+   *   inflow, or via social-engineering), the named userId's wallet was
+   *   credited — i.e. anyone could redirect or fabricate bank credits to
+   *   any account. This is a direct wallet-impersonation primitive.
+   *
+   *   Fix: the JWT is the source of truth. userId/userEmail/userName are
+   *   derived from ctx.state.user. Anything in the body is ignored. Bounds:
+   *   amount ≤ $1M (no-overflow defense), referenceNumber + transactionId
+   *   length-capped.
    */
   async create(ctx) {
     try {
-      const { amount, referenceNumber, notes, transactionId, userId, userEmail, userName } = ctx.request.body;
+      const user = ctx.state.user;
+      if (!user) return ctx.unauthorized();
 
-      // Validate required fields
-      if (!amount || !referenceNumber || !transactionId || !userId) {
-        return ctx.badRequest('Amount, reference number, transaction ID, and user ID are required');
+      const { amount, referenceNumber, notes, transactionId } = ctx.request.body || {};
+
+      // Validate required fields (caller-supplied user fields IGNORED).
+      if (!amount || !referenceNumber || !transactionId) {
+        return ctx.badRequest('Amount, reference number, and transaction ID are required');
+      }
+      if (typeof referenceNumber !== 'string' || referenceNumber.length === 0 || referenceNumber.length > 128) {
+        return ctx.badRequest('Invalid reference number');
+      }
+      if (typeof transactionId !== 'string' || transactionId.length === 0 || transactionId.length > 128) {
+        return ctx.badRequest('Invalid transaction ID');
+      }
+      if (notes !== undefined && (typeof notes !== 'string' || notes.length > 2000)) {
+        return ctx.badRequest('Invalid notes');
       }
 
       const parsedAmount = parseFloat(amount);
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      if (isNaN(parsedAmount) || parsedAmount <= 0 || parsedAmount > 1_000_000) {
         return ctx.badRequest('Invalid amount');
       }
 
-      // Create bank transfer request
+      // Identity is the JWT, NOT the request body.
+      const userId = user.id;
+      const userEmail = user.email;
+      const userName = user.username || user.email;
+
       const bankTransferRequest = await strapi.entityService.create('api::bank-transfer-request.bank-transfer-request', {
         data: {
           amount: parsedAmount,
           referenceNumber,
           transactionId,
-          notes: notes || '',
-          userId: userId,
+          notes: typeof notes === 'string' ? notes : '',
+          userId,
           userEmail,
           userName,
           status: 'pending',
@@ -166,12 +199,24 @@ module.exports = {
   },
 
   /**
-   * Update bank transfer request status (admin only)
+   * Update bank transfer request status (admin-only via global::is-admin policy).
+   *
+   * Adds idempotency: a 'completed' record cannot be re-completed by a
+   * second PUT (pre-fix would have double-credited the wallet because
+   * there was no guard around the wallet update — admins double-clicking
+   * "Mark complete", or two admins racing, would have led to silent
+   * duplicate credits). Status transitions are also gated: once
+   * completed or rejected, the record is sealed.
    */
   async update(ctx) {
     try {
       const { id } = ctx.params;
-      const { status, notes } = ctx.request.body;
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        return ctx.notFound('Bank transfer request not found');
+      }
+
+      const { status, notes } = ctx.request.body || {};
 
       if (!status) {
         return ctx.badRequest('Status is required');
@@ -181,56 +226,102 @@ module.exports = {
       if (!validStatuses.includes(status)) {
         return ctx.badRequest('Invalid status');
       }
-
-      const request = await strapi.db.query('api::bank-transfer-request.bank-transfer-request').findOne({
-        where: { id }
-      });
-
-      if (!request) {
-        return ctx.notFound('Bank transfer request not found');
+      if (notes !== undefined && (typeof notes !== 'string' || notes.length > 2000)) {
+        return ctx.badRequest('Invalid notes');
       }
 
-      // Update the request
-      const updatedRequest = await strapi.entityService.update('api::bank-transfer-request.bank-transfer-request', id, {
-        data: {
-          status,
-          adminNotes: notes || request.adminNotes,
-          updatedAt: new Date()
+      // Lock the row + run the transition atomically so two concurrent
+      // PUTs cannot both credit the wallet.
+      const result = await strapi.db.transaction(async ({ trx }) => {
+        const lockRows = await trx('bank_transfer_requests')
+          .where({ id: numericId })
+          .forUpdate()
+          .select('*');
+        if (!lockRows || lockRows.length === 0) {
+          return { httpKind: 'notFound' };
         }
-      });
+        const request = lockRows[0];
 
-      // If status is completed, update user's wallet balance
-      if (status === 'completed') {
-        try {
+        // Sealed-state guard: once completed or rejected, no further changes.
+        if (request.status === 'completed' || request.status === 'rejected') {
+          if (request.status === status) {
+            // Idempotent no-op on identical re-submission.
+            return { httpKind: 'ok', updated: request, walletCredited: false, userId: request.user_id };
+          }
+          return { httpKind: 'badRequest', message: `Cannot transition from ${request.status} to ${status}` };
+        }
+
+        const updatedRequest = await strapi.entityService.update(
+          'api::bank-transfer-request.bank-transfer-request',
+          numericId,
+          {
+            data: {
+              status,
+              adminNotes: notes || request.admin_notes,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        let walletCredited = false;
+        // Only credit on the SAME transition (pending|processing → completed),
+        // never on a redundant completed → completed (idempotency above
+        // already returned in that case).
+        if (status === 'completed') {
           const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-            where: { users_permissions_user: request.userId }
+            where: { users_permissions_user: request.user_id },
           });
-
           if (wallet) {
-            const newBalance = parseFloat(wallet.mainBalance || 0) + parseFloat(request.amount);
+            const credit = parseFloat(request.amount);
+            const newMain = parseFloat(wallet.mainBalance || 0) + credit;
             await strapi.entityService.update('api::user-wallet.user-wallet', wallet.id, {
               data: {
-                mainBalance: newBalance,
-                balance: newBalance + parseFloat(wallet.promoBalance || 0)
-              }
+                mainBalance: newMain,
+                balance: newMain + parseFloat(wallet.promoBalance || 0),
+              },
             });
-
-            // Create transaction record
             await strapi.entityService.create('api::transaction.transaction', {
               data: {
                 user_wallet: wallet.id,
                 type: 'bank_transfer',
-                amount: parseFloat(request.amount),
-                description: `Bank transfer - Reference: ${request.referenceNumber}`,
-                status: 'completed',
+                amount: credit,
+                description: `Bank transfer - Reference: ${request.reference_number}`,
+                transactionStatus: 'success',
+                gatewayTransactionId: `btr_${request.id}`,
                 createdAt: new Date(),
-                updatedAt: new Date()
-              }
+                updatedAt: new Date(),
+              },
             });
+            walletCredited = true;
+          } else {
+            strapi.log?.error?.(`[BANK TRANSFER] no wallet found for user_id=${request.user_id} on completion of btr ${request.id}`);
           }
-        } catch (walletError) {
-          console.error('Failed to update wallet balance:', walletError);
-          // Don't fail the request if wallet update fails
+        }
+
+        return { httpKind: 'ok', updated: updatedRequest, walletCredited, userId: request.user_id };
+      });
+
+      if (result.httpKind === 'notFound') {
+        return ctx.notFound('Bank transfer request not found');
+      }
+      if (result.httpKind === 'badRequest') {
+        return ctx.badRequest(result.message);
+      }
+      const updatedRequest = result.updated;
+      const request = updatedRequest; // for the email block below
+
+      // Real-time push: emit on the requester's channel only when the wallet
+      // actually moved. Fires AFTER the transaction commits so the client
+      // never sees a stale balance. Best-effort.
+      if (result.walletCredited && result.userId) {
+        try {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            result.userId,
+            'bank_transfer',
+            { bankTransferRequestId: numericId, amount: parseFloat(request.amount), referenceNumber: request.referenceNumber || request.reference_number }
+          );
+        } catch (emitErr) {
+          strapi.log?.warn?.(`[BANK TRANSFER] emitBalanceUpdate failed (non-fatal): ${emitErr.message}`);
         }
       }
 

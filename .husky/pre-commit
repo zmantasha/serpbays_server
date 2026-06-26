@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Pre-commit: bogus-fields audit.
+#
+# Strapi 5's query-fields validator rejects any key in `fields: [...]` that
+# isn't an attribute on the target content type. The pattern bit us four
+# times in one week (placementSpeed → assignedDate → totalPrice →
+# platformFee, then first_name, then the project controller cluster).
+#
+# This hook runs scripts/audit-bogus-fields.js on every commit that
+# touches a relevant file — controllers/services/lifecycles under
+# src/api/, the users-permissions extension, or any schema.json.
+# Scoped via `git diff --cached` so unrelated commits (docs, configs,
+# .md) don't pay the ~1-2s scan cost.
+#
+# Bypass (sparingly, for emergencies):
+#   git commit --no-verify
+#
+# CI should also run `npm run audit:fields` independently so a --no-verify
+# commit doesn't slip a bug into main unnoticed.
+
+# Find staged JS files we care about + any staged schema.json.
+RELEVANT=$(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E '^(src/api/.*\.js$|src/extensions/.*\.js$|.*content-types/.*/schema\.json$)' \
+  || true)
+
+if [ -z "$RELEVANT" ]; then
+  # No relevant files staged — skip the scan, fast path.
+  exit 0
+fi
+
+echo "[husky] Staged files touch controllers/schemas — running bogus-fields audit..."
+echo
+
+if ! node scripts/audit-bogus-fields.js; then
+  echo
+  echo "❌ Commit blocked: bogus fields[] keys detected."
+  echo "   See the report above. Fix the listed sites or run with"
+  echo "   --no-verify to bypass (CI will catch it if you do)."
+  exit 1
+fi
+
+echo "✅ bogus-fields audit clean."
+exit 0

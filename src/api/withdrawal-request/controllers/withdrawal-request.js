@@ -18,7 +18,130 @@ function safeCompareOtp(stored, provided) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// ===== Field-exposure controls =====
+//
+// privateAttributes in schema.json covers: payment_notes, denial_reason,
+// external_transaction_id, payment_reference. But it does NOT cover:
+//   - admin_notes (internal admin commentary)
+//   - details (JSON: bank account / PayPal / Payoneer destination data)
+//   - publisher (populated → full up_users row leak: password hash,
+//     withdrawalOtp/Amount/Attempts, paypal_email, billing PII, ...)
+// We allow-list explicitly here so the default-find / findOne responses
+// (and any future overrides) can never auto-leak those fields.
+const WITHDRAWAL_USER_FIELDS = [
+  'id', 'documentId',
+  'amount', 'method', 'withdrawal_status',
+  // 'details' intentionally OMITTED at the listing level — it contains
+  // payout destination data (bank #, PayPal email, ...). Surfaced only
+  // on the owner's getMyWithdrawals/sub-resource flows.
+  'createdAt', 'updatedAt', 'publishedAt',
+  'approved_at', 'paid_at', 'rejected_at',
+];
+
+function isWithdrawalOwner(record, user) {
+  if (!record || !user || typeof user.id !== 'number') return false;
+  return record.publisher?.id === user.id;
+}
+
+function isAdminUser(user) {
+  if (!user) return false;
+  // Defense-in-depth: handler-level admin gate uses role.type. Magic-string
+  // email backdoor in the codebase is being phased out — do not honor it
+  // here. Role check only.
+  return user.role && user.role.type === 'admin';
+}
+
 module.exports = createCoreController('api::withdrawal-request.withdrawal-request', ({ strapi }) => ({
+
+  // ===== Default-route overrides — close the Authenticated-role IDOR =====
+  //
+  // routes/withdrawal-request.js declares createCoreRouter (except: ['create']).
+  // That registers GET /api/withdrawal-requests, GET /:id, PUT /:id, DELETE /:id.
+  // The Authenticated role has find / findOne / update / delete on this
+  // content type. With NO controller overrides, any logged-in user could:
+  //   - GET /api/withdrawal-requests → list every withdrawal on the
+  //     platform (amount, method, status, full payout destination JSON,
+  //     publisher PII, admin_notes).
+  //   - GET /api/withdrawal-requests/:N → read any withdrawal.
+  //   - PUT /api/withdrawal-requests/:N → mutate fields not protected by
+  //     the wave-4 status-transition lifecycle (details / admin_notes /
+  //     payment_reference / external_transaction_id).
+  //   - DELETE /api/withdrawal-requests/:N → delete any withdrawal.
+  // Sensitive operations (approve/deny/mark-paid) DO have an in-handler
+  // role.type==='admin' gate already, so they are not exposed by this gap.
+
+  async find(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to list withdrawal requests');
+    }
+    // Admins → trust their query (still subject to default scoping; admin
+    // UI is the intended consumer).
+    if (isAdminUser(ctx.state.user)) {
+      return super.find(ctx);
+    }
+    // Publishers → restrict to their own rows.
+    const userFilters = ctx.query?.filters;
+    const ownership = { publisher: ctx.state.user.id };
+    ctx.query = {
+      ...ctx.query,
+      filters: userFilters ? { $and: [userFilters, ownership] } : ownership,
+      fields: WITHDRAWAL_USER_FIELDS,
+      populate: undefined,
+    };
+    return super.find(ctx);
+  },
+
+  async findOne(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to view this withdrawal request');
+    }
+    const { id } = ctx.params;
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Withdrawal request not found');
+    }
+    const record = await strapi.db.query('api::withdrawal-request.withdrawal-request').findOne({
+      where: { id: numericId },
+      populate: { publisher: { select: ['id'] } },
+    });
+    if (!record) return ctx.notFound('Withdrawal request not found');
+    if (!isAdminUser(ctx.state.user) && !isWithdrawalOwner(record, ctx.state.user)) {
+      // 404 not 403 — defeat withdrawal-id enumeration.
+      return ctx.notFound('Withdrawal request not found');
+    }
+    // Build the response from the allow-list. Admins also get the
+    // user-safe shape via the same route; admin UI uses dedicated
+    // /admin/withdrawals endpoints for the full record.
+    const safe = {};
+    for (const k of WITHDRAWAL_USER_FIELDS) {
+      if (record[k] !== undefined) safe[k] = record[k];
+    }
+    // Owner is allowed to see their own `details` (their own bank/paypal data).
+    if (isWithdrawalOwner(record, ctx.state.user) && record.details !== undefined) {
+      safe.details = record.details;
+    }
+    return { data: safe };
+  },
+
+  async update(ctx) {
+    // All legitimate updates flow through the explicit admin endpoints:
+    //   POST /admin/withdrawal-requests/:id/approve
+    //   POST /admin/withdrawal-requests/:id/deny
+    //   POST /admin/withdrawal-requests/:id/mark-as-paid
+    // Each has an in-handler admin role gate + wave-4 status guard.
+    // Disable the default PUT /api/withdrawal-requests/:id route — it
+    // bypasses status-transition rules for non-status fields (admin_notes,
+    // details, payment_reference) and there is no legitimate user-facing
+    // use case.
+    return ctx.forbidden(
+      'Direct withdrawal updates are not allowed. Use the specific admin action endpoints.'
+    );
+  },
+
+  async delete(ctx) {
+    // Withdrawals are a financial audit record. Never deleted by users.
+    return ctx.forbidden('Withdrawal requests cannot be deleted');
+  },
 
   // Send OTP for withdrawal verification
   async sendWithdrawalOtp(ctx) {
@@ -189,10 +312,27 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         return ctx.badRequest(`Invalid verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`);
       }
 
-      // Clear OTP after successful verification (one-time use)
-      await clearOtp();
+      // Atomic OTP consume. Two concurrent requests can both pass
+      // safeCompareOtp above; only ONE can actually clear the row. The
+      // conditional UPDATE serializes the consume — second caller sees 0
+      // affected rows and bails. This is the OTP-side of the over-withdrawal
+      // race fix; the wallet-side is the strapi.db.transaction below.
+      const consumeResult = await strapi.db.connection.raw(
+        `UPDATE up_users
+         SET withdrawal_otp = NULL, withdrawal_otp_expiry = NULL,
+             withdrawal_otp_sent_at = NULL, withdrawal_otp_amount = NULL,
+             withdrawal_otp_attempts = 0, updated_at = NOW()
+         WHERE id = ? AND withdrawal_otp = ?
+         RETURNING id`,
+        [ctx.state.user.id, otpCode]
+      );
+      const otpConsumed = consumeResult && consumeResult.rows && consumeResult.rows.length === 1;
+      if (!otpConsumed) {
+        // Another concurrent request consumed this OTP first.
+        return ctx.badRequest('Verification code is no longer valid (consumed by a concurrent request). Please request a new code.');
+      }
 
-      console.log(`[WithdrawalOTP] OTP verified for user ${ctx.state.user.id}`);
+      console.log(`[WithdrawalOTP] OTP verified + atomically consumed for user ${ctx.state.user.id}`);
 
       // Ensure details is a valid JSON object
       let formattedDetails = details;
@@ -345,111 +485,166 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // The most straightforward approach is to pass all uniqueCompletedOrderTransactions and let the loop pick.
       const completedOrdersTransactionsToProcess = uniqueCompletedOrderTransactions;
 
-      // Create the withdrawal request
-      const withdrawalRequest = await strapi.entityService.create('api::withdrawal-request.withdrawal-request', {
-        data: {
-          publisher: ctx.state.user.id,
-          amount: requestAmount,
-          method,
-          details: formattedDetails,
-          withdrawal_status: 'pending'
+      // ═══════════════════════════════════════════════════════════════════
+      // Atomic money-moving section.
+      //
+      // Wraps wallet read → sufficiency re-check → wallet write →
+      // withdrawal_request insert → transaction insert in a single
+      // strapi.db.transaction with SELECT … FOR UPDATE on the user_wallets
+      // row. Defends against the over-withdrawal race confirmed by the
+      // 14-agent independent verification:
+      //   - Concurrent creates serialize on the row lock (second waits)
+      //   - Re-read inside the lock sees FRESH main_balance
+      //   - Atomic CAS UPDATE (where main_balance = pre-lock value) refuses
+      //     to commit if the value moved underneath — defense-in-depth
+      //   - DB CHECK constraints (chk_user_wallets_main_balance_nonneg etc.,
+      //     applied by migration 2026.06.18T00.00.00) are belt-and-suspenders
+      //
+      // entityService.create calls inside the trx callback rely on Strapi 5
+      // AsyncLocalStorage to propagate the active transaction. The wallet
+      // CAS uses raw knex `trx` directly to guarantee atomicity.
+      // ═══════════════════════════════════════════════════════════════════
+      let withdrawalRequest;
+      let transactionRecord;
+      try {
+        await strapi.db.transaction(async ({ trx }) => {
+          // 1. Lock the wallet row. Second concurrent request waits here.
+          const lockedRow = await trx('user_wallets')
+            .where({ id: publisherWallet.id })
+            .forUpdate()
+            .first();
+          if (!lockedRow) {
+            const e = new Error('Publisher wallet disappeared during lock acquisition');
+            e.isClientError = true;
+            throw e;
+          }
+
+          const lockedMainBalance = parseFloat(lockedRow.main_balance || 0);
+
+          // 2. Re-check sufficiency against FRESH (locked) main_balance.
+          //    This is the check the unlocked pre-trx test could not enforce
+          //    against a concurrent debit.
+          if (lockedMainBalance < totalDeduction) {
+            const e = new Error(
+              `Insufficient withdrawable funds (race-checked under wallet lock). ` +
+              `Available: $${lockedMainBalance.toFixed(2)}, ` +
+              `total required (with 20% platform fee): $${totalDeduction.toFixed(2)}.`
+            );
+            e.isClientError = true;
+            throw e;
+          }
+
+          // 3. CAS update wallet — refuses if main_balance moved between
+          //    lock acquisition and update. Belt-and-suspenders given the
+          //    forUpdate lock should already serialize.
+          const updateCount = await trx('user_wallets')
+            .where({ id: lockedRow.id, main_balance: lockedRow.main_balance })
+            .update({
+              main_balance: trx.raw('main_balance - ?::numeric', [totalDeduction]),
+              balance: trx.raw('balance - ?::numeric', [totalDeduction]),
+              pending_withdrawal_balance: trx.raw('pending_withdrawal_balance + ?::numeric', [requestAmount]),
+              updated_at: new Date(),
+            });
+          if (updateCount !== 1) {
+            throw new Error(
+              `Wallet write conflict (affected ${updateCount} rows; expected 1). ` +
+              `Concurrent transaction modified the wallet. Please retry.`
+            );
+          }
+
+          console.log(
+            `[Withdrawal trx] wallet ${lockedRow.id} debited $${totalDeduction.toFixed(2)} ` +
+            `($${requestAmount} payout + $${platformFee} fee). ` +
+            `main_balance ${lockedMainBalance.toFixed(2)} → ${(lockedMainBalance - totalDeduction).toFixed(2)}`
+          );
+
+          // 4. Create the withdrawal request row. Strapi 5 entityService
+          //    auto-detects the active trx via AsyncLocalStorage and enrolls
+          //    this insert in it.
+          withdrawalRequest = await strapi.entityService.create('api::withdrawal-request.withdrawal-request', {
+            data: {
+              publisher: ctx.state.user.id,
+              amount: requestAmount,
+              method,
+              details: formattedDetails,
+              withdrawal_status: 'pending',
+            },
+          });
+
+          // 5. Create the withdrawal transaction record.
+          transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
+            data: {
+              type: 'withdrawal',
+              amount: totalDeduction,
+              netAmount: requestAmount,
+              fee: platformFee,
+              transactionStatus: 'pending',
+              gateway: method,
+              gatewayTransactionId: uniqueRequestId,
+              description: `Withdrawal request #${withdrawalRequest.id} via ${method} — $${requestAmount} payout + $${platformFee} platform fee (20%)`,
+              user_wallet: publisherWallet.id,
+              users_permissions_user: ctx.state.user.id,
+            },
+          });
+        });
+      } catch (err) {
+        if (err && err.isClientError) {
+          return ctx.badRequest(err.message);
         }
-      });
+        console.error('[Withdrawal create] transaction failed:', err);
+        return ctx.internalServerError(
+          'Failed to create withdrawal request: ' + (err && err.message ? err.message : 'unknown error')
+        );
+      }
 
-      console.log('Created withdrawal request:', withdrawalRequest.id);
+      console.log(`Created withdrawal request: ${withdrawalRequest.id}`);
+      console.log(`[DUPLICATE PREVENTION] Created unique transaction ${transactionRecord.id} with gateway ID: ${uniqueRequestId}`);
 
-      // Process transactions from completed orders to cover the withdrawal amount
+      // Bookkeeping (outside trx): mark escrow_release transactions as
+      // "included in withdrawal #X". Purely cosmetic description updates;
+      // not race-sensitive, not money-moving. Runs only if the trx above
+      // committed.
       if (completedOrdersTransactionsToProcess.length > 0) {
-        // Sort transactions by date (oldest first)
         completedOrdersTransactionsToProcess.sort((a, b) => {
           return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
         });
 
-        // Keep track of orders we've processed to avoid double-counting
         const processedOrderIds = new Set();
-
-        // Track how much we still need to process
         let amountRemaining = requestAmount;
 
-        // Process transactions until we've covered the required amount
         for (const tx of completedOrdersTransactionsToProcess) {
           if (amountRemaining <= 0) break;
-
-          // Skip if no order or if this order has already been processed
           if (!tx.order || !tx.order.id || processedOrderIds.has(tx.order.id)) continue;
-
-          // Mark this order as processed
           processedOrderIds.add(tx.order.id);
-
           const txAmount = parseFloat(tx.amount);
           const amountToUse = Math.min(txAmount, amountRemaining);
 
-          console.log(`Processing transaction ${tx.id} from order ${tx.order.id} - amount: ${txAmount}, using: ${amountToUse}`);
-
-          // Update transaction to mark it as included in this withdrawal request
           let baseDescription = tx.description || '';
           if (baseDescription.includes(' - Included in withdrawal request')) {
             baseDescription = baseDescription.split(' - Included in withdrawal request')[0];
           }
-
           await strapi.entityService.update('api::transaction.transaction', tx.id, {
             data: {
-              description: `${baseDescription} - Included in withdrawal request #${withdrawalRequest.id}`
-            }
+              description: `${baseDescription} - Included in withdrawal request #${withdrawalRequest.id}`,
+            },
           });
-
           amountRemaining -= amountToUse;
         }
       }
 
-      // Create a transaction record for the withdrawal request with unique ID
-      const transactionRecord = await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          type: 'withdrawal',
-          amount: totalDeduction,
-          netAmount: requestAmount,
-          fee: platformFee,
-          transactionStatus: 'pending',
-          gateway: method,
-          gatewayTransactionId: uniqueRequestId, // 🔒 Use unique ID to prevent duplicates
-          description: `Withdrawal request #${withdrawalRequest.id} via ${method} — $${requestAmount} payout + $${platformFee} platform fee (20%)`,
-          user_wallet: publisherWallet.id,
-          users_permissions_user: ctx.state.user.id
-        }
-      });
+      // Real-time wallet update — publisher sees mainBalance drop +
+      // pendingWithdrawalBalance rise instantly.
+      try {
+        await strapi.service("api::user-wallet.user-wallet").emitBalanceUpdate(
+          ctx.state.user.id, "withdrawal_pending", { withdrawalId: withdrawalRequest.id }
+        );
+      } catch (_) { /* best-effort */ }
 
-      console.log(`[DUPLICATE PREVENTION] Created unique transaction ${transactionRecord.id} with gateway ID: ${uniqueRequestId}`);
-
-      // Update the wallet balance when withdrawal is requested
-      // Deduct totalDeduction (withdrawal amount + 20% platform fee) from main balance
-      console.log('Updating wallet balance after withdrawal request:', {
-        previousBalance: publisherWallet.balance,
-        previousMainBalance: publisherWallet.mainBalance,
-        withdrawalAmount: requestAmount,
-        platformFee,
-  totalDeduction
-      });
-
-      // Subtract the TOTAL (withdrawal + fee) from MAIN balance, track only requestAmount as pending withdrawal
-      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) - totalDeduction;
-      const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
-
-      await strapi.db.query('api::user-wallet.user-wallet').update({
-        where: { id: publisherWallet.id },
-        data: {
-          mainBalance: newMainBalance,
-          balance: newTotalBalance,
-          pendingWithdrawalBalance: (parseFloat(publisherWallet.pendingWithdrawalBalance) || 0) + requestAmount
-        }
-      });
-
-      console.log(`Subtracted $${totalDeduction} from wallet (payout: $${requestAmount} + fee: $${platformFee}). New main balance: ${newMainBalance}`);
-      
       return {
         data: withdrawalRequest,
         meta: {
           message: 'Withdrawal request created successfully',
-        }
+        },
       };
 
     } catch (error) {
@@ -550,7 +745,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Check if user is an admin or has special access
       const { role, email } = ctx.state.user;
-      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      const hasAdminAccess = role && (role.type === 'admin' || role.type === 'super_admin');
 
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
@@ -664,7 +859,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
 
       // Check if user is an admin or has special access
       const { role, email } = ctx.state.user;
-      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      const hasAdminAccess = role && (role.type === 'admin' || role.type === 'super_admin');
 
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
@@ -730,33 +925,23 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.log(`[DenyWithdrawal] No matching withdrawal request transaction found for withdrawal #${id}`);
       }
 
-      // Return the funds to the publisher's MAIN balance (since withdrawals only come from main balance)
-      const refundAmount = parseFloat(withdrawalRequest.amount);
-      const newMainBalance = (parseFloat(publisherWallet.mainBalance) || 0) + refundAmount;
-      const newTotalBalance = newMainBalance + (parseFloat(publisherWallet.promoBalance) || 0);
-
-      await strapi.db.query('api::user-wallet.user-wallet').update({
-        where: { id: publisherWallet.id },
-        data: {
-          mainBalance: newMainBalance,
-          balance: newTotalBalance,
-          pendingWithdrawalBalance: Math.max(0, (parseFloat(publisherWallet.pendingWithdrawalBalance) || 0) - refundAmount)
-        }
-      });
-
-      // Create a transaction record for the refund
-      await strapi.entityService.create('api::transaction.transaction', {
-        data: {
-          type: 'refund',
-          amount: withdrawalRequest.amount,
-          netAmount: withdrawalRequest.amount,
-          fee: 0,
-          transactionStatus: 'denied',
-          gateway: 'internal',
-          description: `Withdrawal request denied: ${reason || 'No reason provided'}`,
-          user_wallet: publisherWallet.id
-        }
-      });
+      // Audit Wave-4 R47/R51/R107 — inline refund removed.
+      //
+      // Previously this block credited `withdrawalRequest.amount` (the NET
+      // withdrawal) to mainBalance and decremented pendingWithdrawalBalance.
+      // The entityService.update above flips withdrawal_status='denied' which
+      // triggers `lifecycles.handleDeniedWithdrawal` via afterUpdate — that
+      // lifecycle ALREADY credits the GROSS refund (net + 20% platform fee,
+      // matching what was originally debited at create-time) and decrements
+      // pendingWithdrawalBalance. Running both produced a ~1.8× over-credit
+      // on every deny (e.g. $80 net withdrawal → wallet got $180 back instead
+      // of the correct $100).
+      //
+      // Lifecycle path is the source of truth — its math is correct (totalRefund
+      // = amount + platformFee). Inline refund-tx record was redundant; the
+      // withdrawal transaction is already updated to denied above (lines
+      // 712-731) and the lifecycle's own transaction-status updater handles
+      // any audit-trail follow-up.
 
       // Create notification for publisher about denial
       try {
@@ -774,6 +959,15 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         console.error('Failed to create withdrawal denied notification:', notificationError);
         // Don't fail the denial if notification fails
       }
+
+      // Real-time wallet update — refund landed; publisher sees
+      // mainBalance restore + pendingWithdrawalBalance decrement.
+      try {
+        await strapi.service("api::user-wallet.user-wallet").emitBalanceUpdate(
+          withdrawalRequest.publisher.id, "withdrawal_refund",
+          { withdrawalId: withdrawalRequest.id }
+        );
+      } catch (_) { /* best-effort */ }
 
       return {
         data: updatedRequest,
@@ -796,7 +990,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       }
 
       const { role, email } = ctx.state.user;
-      const hasAdminAccess = (role && role.type === 'admin') || email === 'mantasha@wordscloud.in';
+      const hasAdminAccess = role && (role.type === 'admin' || role.type === 'super_admin');
 
       if (!hasAdminAccess) {
         return ctx.forbidden('Admin access required');
@@ -963,6 +1157,18 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       } catch (notificationError) {
         console.error('Failed to create withdrawal paid notification:', notificationError);
         // Don't fail the payment marking if notification fails
+      }
+
+      // Real-time push: pendingWithdrawalBalance just dropped — let any open
+      // publisher session know without forcing a refresh. Best-effort.
+      try {
+        await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+          withdrawalRequest.publisher.id,
+          'withdrawal_paid',
+          { withdrawalId: withdrawalRequest.id, amount: withdrawalRequest.amount }
+        );
+      } catch (emitErr) {
+        console.error('[WithdrawalController] emitBalanceUpdate failed (non-fatal):', emitErr.message);
       }
 
       return {

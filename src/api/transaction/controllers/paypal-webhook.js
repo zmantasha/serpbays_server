@@ -142,13 +142,18 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       const customId = purchaseUnit.custom_id;
       let walletId = null;
       let baseAmount = null;
+      let expectedChargeCentsFromMeta = null;
 
-      // Try to parse custom_id as JSON (new format with baseAmount)
+      // Try to parse custom_id as JSON (new format with baseAmount + expectedChargeCents)
       try {
         if (customId) {
           const customData = JSON.parse(customId);
           walletId = customData.walletId ? parseInt(customData.walletId) : null;
           baseAmount = customData.baseAmount ? parseFloat(customData.baseAmount) : null;
+          // Audit M11 — server-computed expected charge (cents). Set in
+          // createPayment via computeFees. Used to cross-check the actual
+          // PayPal charge below before crediting the wallet.
+          expectedChargeCentsFromMeta = customData.expectedChargeCents != null ? Number(customData.expectedChargeCents) : null;
         }
       } catch (e) {
         // Fallback: custom_id might be just walletId (old format)
@@ -162,6 +167,56 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Use baseAmount if available, otherwise use full PayPal amount (for backward compatibility)
       const amountToCredit = baseAmount !== null ? baseAmount : paypalCaptureAmount;
+
+      // ─────────────────────────────────────────────────────────────────
+      // Audit M11 — amount-mismatch cross-check.
+      // Compare PayPal's actual capture amount (cents) to the server-
+      // computed expectedChargeCents stashed in PayPal order custom_id.
+      // Refuse to credit on mismatch.
+      // ─────────────────────────────────────────────────────────────────
+      {
+        const actualChargeCents = Math.round(paypalCaptureAmount * 100);
+        const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+        if (Number.isFinite(expectedChargeCentsFromMeta) && expectedChargeCentsFromMeta > 0) {
+          if (actualChargeCents !== expectedChargeCentsFromMeta) {
+            strapi.log.error(
+              `[PAYPAL WEBHOOK] amount mismatch — REFUSING wallet credit. ` +
+              `capture.amount=${actualChargeCents}c expected=${expectedChargeCentsFromMeta}c ` +
+              `walletId=${walletId} captureId=${capture.id}`
+            );
+            // No DB tx exists yet (PayPal creates tx in the webhook). Create
+            // a failed record so the attempt is auditable.
+            await strapi.entityService.create('api::transaction.transaction', {
+              data: {
+                type: 'deposit',
+                amount: 0,
+                netAmount: 0,
+                transactionStatus: 'failed',
+                gateway: 'paypal',
+                gatewayTransactionId: capture.id,
+                description: `PayPal amount mismatch - Order ${orderId}`,
+                user_wallet: walletId,
+                fund_source: 'main_fund',
+                metadata: {
+                  error: 'amount_mismatch',
+                  actualChargeCents,
+                  expectedChargeCents: expectedChargeCentsFromMeta,
+                  orderId,
+                  captureId: capture.id,
+                  processedAt: new Date().toISOString(),
+                },
+                publishedAt: new Date(),
+              },
+            });
+            return;
+          }
+        } else if (new Date() > GRACE_PERIOD_END) {
+          strapi.log.error(`[PAYPAL WEBHOOK] missing expectedChargeCents post-grace-period — REFUSING. orderId=${orderId}`);
+          return;
+        } else {
+          strapi.log.warn(`[PAYPAL WEBHOOK] legacy PayPal order missing expectedChargeCents (grace period); orderId=${orderId}`);
+        }
+      }
 
       console.log(`[PAYPAL WEBHOOK] Amount to credit: ${amountToCredit} (baseAmount: ${baseAmount}, PayPal charged: ${paypalCaptureAmount})`);
 
@@ -235,6 +290,24 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       });
 
       console.log(`[PAYPAL WEBHOOK] ✅ Payment processed successfully - Wallet ${walletId} updated with $${amountToCredit} (PayPal charged $${paypalCaptureAmount})`);
+
+      // Real-time push so the client sees the deposit instantly. Best-effort.
+      try {
+        const walletWithUser = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+          where: { id: walletId },
+          populate: ['users_permissions_user'],
+        });
+        const targetUserId = walletWithUser?.users_permissions_user?.id;
+        if (targetUserId) {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            targetUserId,
+            'paypal_deposit',
+            { orderId, captureId: capture.id, amount: amountToCredit, walletId }
+          );
+        }
+      } catch (emitErr) {
+        console.warn('[PAYPAL WEBHOOK] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+      }
 
     } catch (error) {
       console.error('[PAYPAL WEBHOOK] Error handling payment completed:', error);

@@ -5,5 +5,62 @@
  */
 
 const { createCoreService } = require('@strapi/strapi').factories;
+const seq = require('../../../utils/realtime-seq')('withdrawal');
 
-module.exports = createCoreService('api::withdrawal-request.withdrawal-request');
+module.exports = createCoreService('api::withdrawal-request.withdrawal-request', ({ strapi }) => ({
+  /**
+   * Real-time push: emit `withdrawal:status_changed` on the requester's
+   * channel so the publisher's My Withdrawals + Earnings pages re-render
+   * without polling. Best-effort.
+   *
+   * Called from the content-type afterUpdate lifecycle on every real status
+   * transition (pending → approved | denied; approved → paid | denied). The
+   * wallet emit fires separately via `api::user-wallet.user-wallet
+   * .emitBalanceUpdate` for the same transition.
+   */
+  async emitWithdrawalStatusChanged(requestOrId, previousStatus, meta = {}) {
+    try {
+      if (!strapi.io || typeof strapi.io.emitToUser !== 'function') return;
+
+      const id = typeof requestOrId === 'object' ? requestOrId.id : requestOrId;
+      if (!id) return;
+
+      const request = await strapi.entityService.findOne(
+        'api::withdrawal-request.withdrawal-request',
+        id,
+        { populate: ['publisher'] }
+      );
+      if (!request) return;
+
+      const publisherId = request.publisher?.id || null;
+      if (!publisherId) return;
+
+      const payload = {
+        type: 'withdrawal:status_changed',
+        requestId: request.id,
+        status: request.withdrawal_status,
+        previousStatus: previousStatus || null,
+        amount: request.amount != null ? Number(request.amount) : null,
+        method: request.method || null,
+        occurredAt: new Date().toISOString(),
+        meta: meta || {},
+        seq: await seq.next(publisherId),
+      };
+
+      strapi.io.emitToUser(publisherId, 'withdrawal:status_changed', payload);
+
+      // Fan out to panel20. Admin needs to see new withdrawal requests
+      // pop into their queue and watch status flips live as other admins
+      // approve / deny / mark-paid. Payload includes publisherId so the
+      // admin client can label which user the request belongs to.
+      if (typeof strapi.io.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:withdrawal_event', {
+          ...payload,
+          publisherId,
+        });
+      }
+    } catch (err) {
+      strapi.log?.warn?.(`[Withdrawal] emitWithdrawalStatusChanged failed (non-fatal): ${err.message}`);
+    }
+  },
+}));

@@ -94,7 +94,18 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     }
   },
 
-  // Get projects for current user
+  // Get projects for current user.
+  //
+  // SECURITY — relation field allow-lists:
+  //   populate: ['owner', 'team', 'orders', 'files'] expanded full user objects
+  //   from up_users, leaking password hash, resetPasswordToken,
+  //   confirmationToken, *active withdrawal OTPs*, PayPal / Payoneer payout
+  //   emails, billing address, phone, VAT/GST, clerk_id, tokenVersion, and
+  //   pagePermissions for every owner + team member of every project
+  //   returned. `private: true` in the schema is only enforced by
+  //   `sanitizeOutput`, which this handler bypassed by returning the raw
+  //   findMany result. Each relation now has an explicit `fields` allow-list;
+  //   future schema additions on up_users / order will NOT auto-leak.
   async getMyProjects(ctx) {
     const { user } = ctx.state;
     if (!user) {
@@ -102,7 +113,6 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     }
 
     try {
-      // Build filters
       const filters = {
         $or: [
           { owner: user.id },
@@ -110,30 +120,40 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
         ]
       };
 
-      // Temporarily disable server-side archived filtering to debug
-      // We'll handle filtering on the frontend for now
-
-      // Get pagination parameters from query
+      // Pagination with hard caps. Without these a hostile caller could
+      // request pageSize=10_000_000 and exhaust DB/memory.
       const { pagination } = ctx.query;
-      const page = pagination?.page ? parseInt(pagination.page) : 1;
-      const pageSize = pagination?.pageSize ? parseInt(pagination.pageSize) : 25;
+      const rawPage = Number.parseInt(pagination?.page, 10);
+      const rawPageSize = Number.parseInt(pagination?.pageSize, 10);
+      const page = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
+      const pageSize = Number.isFinite(rawPageSize) && rawPageSize >= 1
+        ? Math.min(rawPageSize, 100)
+        : 9;
       const start = (page - 1) * pageSize;
 
-      // Get total count first
       const totalCount = await strapi.db.query('api::project.project').count({
         where: filters
       });
 
-      // Get paginated projects
       const projects = await strapi.entityService.findMany('api::project.project', {
         filters,
-        populate: ['owner', 'team', 'orders', 'files'],
+        fields: [
+          'id', 'documentId',
+          'ProjectName', 'projectUrl',
+          'startDate', 'archived', 'status',
+          'createdAt', 'updatedAt', 'publishedAt',
+        ],
+        populate: {
+          owner: { fields: ['id', 'username', 'email'] },
+          team:  { fields: ['id', 'username', 'email'] },
+          orders: { fields: ['id', 'orderStatus'] },
+          files:  { fields: ['id', 'url', 'name', 'mime', 'size', 'alternativeText'] },
+        },
         sort: { createdAt: 'desc' },
         start,
         limit: pageSize
       });
 
-      // Calculate pagination metadata
       const pageCount = Math.ceil(totalCount / pageSize);
 
       return {
@@ -148,7 +168,8 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
         }
       };
     } catch (error) {
-      return ctx.badRequest('Failed to fetch projects', { error: error.message });
+      strapi.log?.error?.('[project] getMyProjects failed', { error: error.message });
+      return ctx.badRequest('Failed to fetch projects');
     }
   },
 
@@ -180,10 +201,28 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     try {
       const { templateId, projectName } = ctx.request.body;
       
-      // Get the template
-      const template = await strapi.entityService.findOne('api::project.project', templateId, {
-        populate: '*'
-      });
+      // KNOWN BROKEN — see follow-up note below. The fields requested here
+      // (`description`, `category`, `contentGuidelines`, `brandVoiceGuidelines`,
+      // `template`) do NOT exist on the project schema (verified against
+      // src/api/project/content-types/project/schema.json AND the actual
+      // `projects` table — no such columns). The endpoint references a
+      // partially-shipped "template" feature whose schema attributes were
+      // never landed.
+      //
+      // My pass-10B fix replaced `populate: '*'` with this `fields:[]` —
+      // but every key in that list is bogus, so under Strapi 5's stricter
+      // query-fields validator this call throws ValidationError before
+      // anything else runs.
+      //
+      // Defensive fix: remove the `fields:[]` constraint so the findOne
+      // returns the bare schema (id + scalars that DO exist). The
+      // downstream `if (!template.template)` will short-circuit to 404
+      // cleanly since template.template is undefined. Endpoint stays
+      // non-functional but no longer 500s.
+      //
+      // Follow-up: either ship the template-feature schema attributes via
+      // a migration, or remove this endpoint entirely.
+      const template = await strapi.entityService.findOne('api::project.project', templateId);
 
       if (!template || !template.template) {
         return ctx.notFound('Template not found');
@@ -252,24 +291,56 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
     }
   },
 
-  // Get project analytics
+  // Get project analytics. Owner OR team member only — pre-fix, any
+  // authenticated user could read order counts / budget utilization /
+  // arbitrary `metrics` for any project (read-IDOR). 404 on no-access to
+  // avoid enumerating project IDs.
   async getAnalytics(ctx) {
+    const { user } = ctx.state;
     const { id } = ctx.params;
 
+    if (!user) {
+      return ctx.unauthorized('Authentication required');
+    }
+
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Project not found');
+    }
+
     try {
-      const project = await strapi.entityService.findOne('api::project.project', id, {
-        populate: ['orders']
+      // KNOWN BROKEN — same shape as createFromTemplate above. The fields
+      // `totalBudget`, `usedBudget`, `metrics` do NOT exist on the project
+      // schema (verified at the DB level — no such columns on the
+      // `projects` table). budgetUtilization downstream reads will resolve
+      // to undefined and `metrics: project.metrics || {}` already guards
+      // for that. Drop the fields:[] so the call doesn't throw Strapi 5
+      // ValidationError; everything else degrades gracefully to zeros.
+      const project = await strapi.entityService.findOne('api::project.project', numericId, {
+        populate: {
+          owner: { fields: ['id'] },
+          team:  { fields: ['id'] },
+          orders: { fields: ['id', 'orderStatus'] },
+        },
       });
 
       if (!project) {
         return ctx.notFound('Project not found');
       }
 
-      // Calculate analytics
+      const hasAccess =
+        project.owner?.id === user.id ||
+        (Array.isArray(project.team) && project.team.some(m => m && m.id === user.id));
+      if (!hasAccess) {
+        return ctx.notFound('Project not found');
+      }
+
       const totalOrders = project.orders?.length || 0;
       const completedOrders = project.orders?.filter(o => o.orderStatus === 'completed').length || 0;
       const completionRate = totalOrders > 0 ? (completedOrders / totalOrders) * 100 : 0;
-      const budgetUtilization = project.totalBudget > 0 ? (project.usedBudget / project.totalBudget) * 100 : 0;
+      const budgetUtilization = project.totalBudget > 0
+        ? ((project.usedBudget || 0) / project.totalBudget) * 100
+        : 0;
 
       return {
         data: {
@@ -281,37 +352,73 @@ module.exports = createCoreController('api::project.project', ({ strapi }) => ({
         }
       };
     } catch (error) {
-      return ctx.badRequest('Failed to fetch analytics', { error: error.message });
+      strapi.log?.error?.('[project] getAnalytics failed', { error: error.message });
+      return ctx.badRequest('Failed to fetch analytics');
     }
   },
 
-  // Update project metrics
+  // Update project metrics. Owner-only write — pre-fix, any authenticated
+  // user could overwrite the `metrics` JSON on any project (write-IDOR).
+  // 404 on no-access to avoid enumerating project IDs.
   async updateMetrics(ctx) {
+    const { user } = ctx.state;
     const { id } = ctx.params;
-    const { metrics } = ctx.request.body;
-    console.log(id)
+    const { metrics } = ctx.request.body || {};
+
+    if (!user) {
+      return ctx.unauthorized('Authentication required');
+    }
+
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Project not found');
+    }
+
+    // Reject anything other than a plain object — arrays / scalars / nulls
+    // would corrupt the JSON column or replace it wholesale.
+    if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) {
+      return ctx.badRequest('metrics must be a plain object');
+    }
 
     try {
-      const project = await strapi.entityService.findOne('api::project.project', id);
+      // KNOWN BROKEN — `metrics` is not on the project schema (the
+      // updateMetrics endpoint persists data that has no column to land in).
+      // The endpoint chain (find → ownership-check → entityService.update
+      // with { metrics }) effectively becomes a 200 with no DB write.
+      // Drop the fields:[] so Strapi 5's query-fields validator doesn't
+      // throw before the ownership check runs. Follow-up: add `metrics`
+      // as a `type: "json"` attribute via migration, or remove this endpoint.
+      const project = await strapi.entityService.findOne('api::project.project', numericId, {
+        populate: { owner: { fields: ['id'] } },
+      });
 
       if (!project) {
         return ctx.notFound('Project not found');
       }
 
-      const updatedProject = await strapi.entityService.update('api::project.project', id, {
+      if (project.owner?.id !== user.id) {
+        return ctx.notFound('Project not found');
+      }
+
+      const updatedProject = await strapi.entityService.update('api::project.project', numericId, {
         data: {
           metrics: {
             ...(project.metrics || {}),
             ...metrics
           }
-        }
+        },
+        fields: ['id', 'metrics'],
       });
 
       return {
-        data: updatedProject
+        data: {
+          id: updatedProject.id,
+          metrics: updatedProject.metrics || {},
+        }
       };
     } catch (error) {
-      return ctx.badRequest('Failed to update metrics', { error: error.message });
+      strapi.log?.error?.('[project] updateMetrics failed', { error: error.message });
+      return ctx.badRequest('Failed to update metrics');
     }
   },
 

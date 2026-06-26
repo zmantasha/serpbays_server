@@ -7,6 +7,23 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
+// Resolves a users-permissions user (ctx.state.user) to the corresponding
+// admin_users row by email. `reseller-code.createdBy` is typed as
+// admin::user, NOT plugin::users-permissions.user — so we can't just pass
+// ctx.state.user.id (different table, different ids). Returns null if no
+// matching admin_user exists (the caller might be a super_admin who isn't
+// also seeded as a Strapi admin panel user).
+async function resolveAdminUserIdByEmail(strapi, email) {
+  if (!email) return null;
+  try {
+    const row = await strapi.db.connection('admin_users').where({ email }).first('id');
+    return row?.id || null;
+  } catch (err) {
+    strapi.log.warn(`[codes controller] admin user lookup failed for ${email}: ${err.message}`);
+    return null;
+  }
+}
+
 module.exports = createCoreController('api::reseller-code.reseller-code', ({ strapi }) => ({
   
   /**
@@ -475,6 +492,7 @@ module.exports = createCoreController('api::reseller-code.reseller-code', ({ str
         });
       } else {
         // Create reseller code
+        const adminUserId = await resolveAdminUserIdByEmail(strapi, ctx.state.user?.email);
         const resellerCodeData = {
           code,
           assignedTo: assignedTo || null,
@@ -484,7 +502,9 @@ module.exports = createCoreController('api::reseller-code.reseller-code', ({ str
           isActive: true,
           expiresAt: expiresAt || null,
           notes: notes || null,
-          createdBy: ctx.state.user?.id || null
+          // Only set createdBy when we found a matching admin_user row.
+          // Omitting it (vs. passing null) avoids Strapi's relation validator.
+          ...(adminUserId ? { createdBy: adminUserId } : {}),
         };
         
         newCode = await strapi.entityService.create('api::reseller-code.reseller-code', {
@@ -635,6 +655,7 @@ module.exports = createCoreController('api::reseller-code.reseller-code', ({ str
         }
         
         // Create the code
+        const adminUserId = await resolveAdminUserIdByEmail(strapi, ctx.state.user?.email);
         const codeData = {
           code,
           usageLimit: usageLimit || null,
@@ -642,7 +663,8 @@ module.exports = createCoreController('api::reseller-code.reseller-code', ({ str
           isActive: true,
           expiresAt: expiresAt || null,
           notes: notes || null,
-          createdBy: ctx.state.user?.id || null
+          // Only set createdBy when matching admin_user found; omit otherwise.
+          ...(adminUserId ? { createdBy: adminUserId } : {}),
         };
         
         const newCode = await strapi.entityService.create('api::reseller-code.reseller-code', {

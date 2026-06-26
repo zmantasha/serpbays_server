@@ -8,7 +8,12 @@ module.exports = {
       handler: 'reseller-code.validateCode',
       config: {
         auth: false, // Public endpoint for validation
-        policies: [],
+        // Rate limit: 20 requests / minute / IP. Codes are 12-char base36
+        // (~62 bits entropy → infeasible to brute-force in practice), but
+        // this defends against distributed-probe attempts and reduces
+        // load. The handler already narrows the anonymous response to
+        // {valid, message} only (no usage stats / assignee) per Pass 7.
+        policies: [{ name: 'global::simple-rate-limit', config: { max: 20, interval: 60000 } }],
         middlewares: []
       }
     },

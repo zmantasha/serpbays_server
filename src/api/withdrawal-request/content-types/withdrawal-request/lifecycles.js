@@ -325,21 +325,121 @@ async function handleApprovedWithdrawal(result) {
   }
 }
 
-module.exports = {
-  // Lifecycle hook that runs after a withdrawal request is updated
-  async afterUpdate(event) {
-    const { result, params } = event;
+// Audit Wave-4 R115 / CMS-status-transition bug — legal transition whitelist.
+//
+// Pre-fix: afterUpdate fired the destination handler on EVERY update where the
+// new status matched, regardless of previous status — so a CMS flip
+// denied → approved (no-op on wallet) followed by approved → denied (compound
+// refund) over-credited the wallet and corrupted pendingWithdrawalBalance.
+// The default Strapi update route and the admin content-manager both bypass
+// the controllers' own status guards.
+//
+// Legal transitions are validated in beforeUpdate. Illegal transitions throw
+// a ValidationError, surfaced as a save error in the admin UI. afterUpdate
+// dispatches handlers ONLY when status actually changed (transition detected
+// in beforeUpdate and stashed on event.state).
+const LEGAL_TRANSITIONS = {
+  pending: ['approved', 'denied'],
+  approved: ['paid', 'denied'],  // approved → denied not used by controller but kept legal for admin-reversal via dedicated endpoint
+  denied: [],                    // terminal
+  paid: [],                      // terminal
+};
 
-    // Handle different withdrawal statuses
-    if (result.withdrawal_status === 'approved') {
-      console.log(`[Lifecycle] Withdrawal request ${result.id} marked as approved - sending approval email`);
-      await handleApprovedWithdrawal(result);
-    } else if (result.withdrawal_status === 'paid') {
-      console.log(`[Lifecycle] Withdrawal request ${result.id} marked as paid - updating pendingWithdrawalBalance`);
-      await handlePaidWithdrawal(result);
-    } else if (result.withdrawal_status === 'denied') {
-      console.log(`[Lifecycle] Withdrawal request ${result.id} marked as denied - refunding to wallet`);
-      await handleDeniedWithdrawal(result);
+module.exports = {
+  // Audit Wave-4 — validate status transitions before write. CMS / default
+  // update route now blocked from illegal flips.
+  async beforeUpdate(event) {
+    const { params } = event;
+    event.state = event.state || {};
+    event.state.statusChanged = false;
+
+    const incomingStatus = params?.data?.withdrawal_status;
+    if (incomingStatus === undefined || incomingStatus === null) {
+      // Update doesn't touch status. Nothing to validate; nothing to dispatch.
+      return;
+    }
+
+    const where = params?.where;
+    if (!where) {
+      // No identifying filter — let the core router error naturally.
+      return;
+    }
+
+    // Resolve the row(s) being updated. For the common single-id case this is
+    // O(1); for bulk updates we validate every matching row.
+    const candidates = await strapi.db.query('api::withdrawal-request.withdrawal-request').findMany({
+      where,
+      select: ['id', 'withdrawal_status'],
+    });
+
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      // Row doesn't exist; let the core router 404 it.
+      return;
+    }
+
+    for (const row of candidates) {
+      const previousStatus = row.withdrawal_status;
+      if (previousStatus === incomingStatus) continue;
+
+      const allowed = LEGAL_TRANSITIONS[previousStatus] || [];
+      if (!allowed.includes(incomingStatus)) {
+        const err = new Error(
+          `Illegal withdrawal status transition for request #${row.id}: ` +
+          `'${previousStatus}' → '${incomingStatus}' is not allowed. ` +
+          `From '${previousStatus}', allowed targets: ` +
+          `[${allowed.length ? allowed.join(', ') : 'none — terminal state'}]. ` +
+          `Use approveWithdrawal / denyWithdrawal / markAsPaidWithdrawal endpoints instead of editing status in CMS.`
+        );
+        // ValidationError name → Strapi surfaces in admin UI as a friendly toast
+        // and HTTP 400 on the API path.
+        err.name = 'ValidationError';
+        throw err;
+      }
+      // At least one candidate is a real transition; afterUpdate should dispatch.
+      event.state.statusChanged = true;
+      event.state.previousStatus = previousStatus;
     }
   },
-}; 
+
+  // Real-time push on creation so any other open tab / device for the
+  // requester sees the new pending request without a refresh.
+  async afterCreate(event) {
+    try {
+      const { result } = event;
+      if (!result?.id) return;
+      await strapi.service('api::withdrawal-request.withdrawal-request')
+        .emitWithdrawalStatusChanged(result, null, { lifecycle: 'afterCreate' });
+    } catch (err) {
+      strapi.log?.warn?.(`[Withdrawal lifecycle] afterCreate emit failed (non-fatal): ${err.message}`);
+    }
+  },
+
+  // Lifecycle hook that runs after a withdrawal request is updated.
+  async afterUpdate(event) {
+    const { result, state } = event;
+
+    // Audit Wave-4 — dispatch handlers ONLY on actual status transitions.
+    // Non-status updates (denial_reason edits, payment_notes etc.) no-op.
+    if (!state || !state.statusChanged) {
+      return;
+    }
+
+    if (result.withdrawal_status === 'approved') {
+      console.log(`[Lifecycle] Withdrawal request ${result.id} transitioned ${state.previousStatus} → approved`);
+      await handleApprovedWithdrawal(result);
+    } else if (result.withdrawal_status === 'paid') {
+      console.log(`[Lifecycle] Withdrawal request ${result.id} transitioned ${state.previousStatus} → paid - updating pendingWithdrawalBalance`);
+      await handlePaidWithdrawal(result);
+    } else if (result.withdrawal_status === 'denied') {
+      console.log(`[Lifecycle] Withdrawal request ${result.id} transitioned ${state.previousStatus} → denied - refunding to wallet`);
+      await handleDeniedWithdrawal(result);
+    }
+
+    // Real-time push to the requester. Best-effort — handler itself
+    // swallows errors, so a WS failure never breaks the status change.
+    try {
+      await strapi.service('api::withdrawal-request.withdrawal-request')
+        .emitWithdrawalStatusChanged(result, state.previousStatus, { lifecycle: 'afterUpdate' });
+    } catch (_) { /* swallowed in the service */ }
+  },
+};

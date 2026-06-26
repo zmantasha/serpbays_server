@@ -72,74 +72,76 @@ module.exports = {
     } catch (error) {
       console.error('Email confirmation error:', error);
       
-      // Return JSON error response
+      // Do NOT echo error.message — Strapi-internal errors would leak.
       return ctx.badRequest('Email verification failed', {
         error: 'verification_failed',
-        details: error.message
       });
     }
   },
 
+  // POST /auth/send-email-confirmation — anonymous "resend my verification
+  // email" endpoint. Hardened against:
+  //   - Account enumeration: pre-fix returned distinct error codes for
+  //     "user not found" vs "already confirmed" vs success. Attacker
+  //     could probe `{email: target@example.com}` to learn whether the
+  //     target was registered and whether their email was confirmed.
+  //     Now always returns the same `{ok: true}` response so the outside
+  //     cannot distinguish.
+  //   - Resend-cooldown: same email can only trigger a resend every
+  //     RESEND_COOLDOWN_MS. Pre-fix an attacker could spam-fill a
+  //     victim's inbox with verification emails. Cooldown is enforced
+  //     via `confirmationTokenCreatedAt` (set every time a token is
+  //     minted) — no schema change.
   async sendVerificationEmail(ctx) {
-    const { email } = ctx.request.body;
-    
-    if (!email) {
-      return ctx.badRequest('Email is required', {
-        error: 'missing_email',
-        details: 'Email parameter is required'
-      });
+    const { email } = ctx.request.body || {};
+    if (typeof email !== 'string' || !email.includes('@')) {
+      // Even malformed inputs get the generic response — don't
+      // differentiate "missing/invalid" vs "no such account".
+      return ctx.send({ ok: true });
     }
-    
+
     try {
-      // Find user by email
+      const normalized = email.toLowerCase().trim();
       const user = await strapi.db.query('plugin::users-permissions.user').findOne({
-        where: { email: email }
+        where: { email: normalized },
       });
 
-      if (!user) {
-        return ctx.badRequest('User not found', {
-          error: 'user_not_found',
-          details: 'No user found with this email address'
-        });
+      // Don't reveal "not found" or "already confirmed".
+      if (!user || user.confirmed) {
+        return ctx.send({ ok: true });
       }
 
-      if (user.confirmed) {
-        return ctx.badRequest('Email already verified', {
-          error: 'already_confirmed',
-          details: 'This email is already verified'
-        });
+      // Cooldown — prevent email-bomb. 60 seconds between resends per row.
+      const RESEND_COOLDOWN_MS = 60_000;
+      if (user.confirmationTokenCreatedAt) {
+        const age = Date.now() - new Date(user.confirmationTokenCreatedAt).getTime();
+        if (age < RESEND_COOLDOWN_MS) {
+          // Silently no-op — don't differentiate from success path.
+          return ctx.send({ ok: true });
+        }
       }
 
-      // Generate new verification token
       const customEmailService = strapi.service('api::auth.custom-email-verification');
       const verificationToken = customEmailService.generateVerificationToken();
 
-      // Update user with new token
       await strapi.db.query('plugin::users-permissions.user').update({
         where: { id: user.id },
         data: {
           confirmationToken: verificationToken,
-          confirmationTokenCreatedAt: new Date()
-        }
+          confirmationTokenCreatedAt: new Date(),
+        },
       });
 
-      // Send verification email
       await customEmailService.sendVerificationEmail(user, verificationToken);
+      strapi.log?.info?.(`[AUTH] Verification email sent (id=${user.id})`);
 
-      console.log(`✅ Verification email sent to ${user.email}`);
-      
-      return ctx.send({
-        success: true,
-        message: 'Verification email sent successfully'
-      });
-      
+      return ctx.send({ ok: true });
+
     } catch (error) {
-      console.error('Send verification email error:', error);
-      
-      return ctx.badRequest('Failed to send verification email', {
-        error: 'send_failed',
-        details: error.message
-      });
+      // Server-side log only. Response stays generic to prevent
+      // distinguishing real failures from already-confirmed/not-found.
+      strapi.log?.error?.('[AUTH] sendVerificationEmail failed', { error: error.message });
+      return ctx.send({ ok: true });
     }
   }
 };

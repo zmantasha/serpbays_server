@@ -13,57 +13,80 @@ module.exports = createCoreController('api::global.global', ({ strapi }) => ({
    * Webhook endpoint for incoming emails (e.g., from SendGrid, Mailgun, etc.)
    * POST /api/email/webhook
    */
+  // POST /api/email/webhook — inbound from SendGrid/Mailgun.
+  //
+  // CRITICAL pre-fix: the handler was anonymously reachable (`auth: false`)
+  // with NO signature verification and NO shared secret. The downstream
+  // service flow trusted `from` as the user identity:
+  //   parseEmailCommand(body.text, body.from)
+  //   → executeEmailCommand(cmd, entityId, senderEmail)
+  //   → strapi.db.query('users').findOne({ where: { email: senderEmail } })
+  // ...and then ran CONFIRM-PAYMENT / ACCEPT / REJECT / APPROVE / DISPUTE /
+  // DELIVER / COMPLETE under that user's identity. An attacker who knew an
+  // advertiser's email (purchase history, marketplace scraping, leaked
+  // contact) could POST:
+  //   { from: 'victim@example.com', text: 'CONFIRM-PAYMENT-<orderId>' }
+  // and trigger a paymentConfirmed=true write on the victim's order. Same
+  // shape lets the attacker mark an order REJECTed/DISPUTEd against the
+  // owner without any sign-in. The handler also dumped the full body to
+  // server logs.
+  //
+  // Fix: require a shared HMAC-Bearer secret on every inbound webhook
+  // call (configured at the email provider as a static header). Without
+  // the secret, refuse the request. The provider would normally sign
+  // each payload — this header-bearer approach is the minimum viable
+  // authentication while a per-provider signature scheme is wired up.
+  // Body log narrowed to non-PII identifiers only.
   async handleIncomingEmail(ctx) {
     try {
-      const { body } = ctx.request;
-      console.log('Received email webhook:', JSON.stringify(body, null, 2));
+      // Fail-closed authentication. EMAIL_WEBHOOK_SECRET must be set.
+      const expected = process.env.EMAIL_WEBHOOK_SECRET;
+      if (!expected || expected.length < 16) {
+        strapi.log?.error?.('[EMAIL WEBHOOK] EMAIL_WEBHOOK_SECRET not configured — refusing');
+        return ctx.internalServerError('Webhook not configured');
+      }
+      const headerSecret = ctx.request.headers['x-webhook-secret']
+        || (ctx.request.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      if (!headerSecret || headerSecret.length === 0) {
+        return ctx.unauthorized('Missing webhook secret');
+      }
+      // Timing-safe equality.
+      const crypto = require('crypto');
+      const a = Buffer.from(expected, 'utf8');
+      const b = Buffer.from(headerSecret, 'utf8');
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        strapi.log?.warn?.(`[EMAIL WEBHOOK] invalid secret from ip=${ctx.request.ip}`);
+        return ctx.unauthorized('Invalid webhook secret');
+      }
 
-      // Parse based on email service provider
+      const { body } = ctx.request;
+
       let emailData;
-      
-      // SendGrid webhook format
       if (body.to && body.from && body.text) {
-        emailData = {
-          to: body.to,
-          from: body.from,
-          subject: body.subject,
-          text: body.text,
-          html: body.html
-        };
-      }
-      // Mailgun webhook format
-      else if (body['recipient'] && body['sender'] && body['body-plain']) {
-        emailData = {
-          to: body['recipient'],
-          from: body['sender'],
-          subject: body['subject'],
-          text: body['body-plain'],
-          html: body['body-html']
-        };
-      }
-      // Generic format
-      else {
+        emailData = { to: body.to, from: body.from, subject: body.subject, text: body.text, html: body.html };
+      } else if (body['recipient'] && body['sender'] && body['body-plain']) {
+        emailData = { to: body['recipient'], from: body['sender'], subject: body['subject'], text: body['body-plain'], html: body['body-html'] };
+      } else {
         return ctx.badRequest('Invalid email webhook format');
       }
 
-      // Process the email command
+      // Lightweight log — no full body dump (was leaking PII / message content to log files).
+      strapi.log?.info?.(`[EMAIL WEBHOOK] from=${emailData.from} subject=${(emailData.subject || '').slice(0, 80)}`);
+
       const emailService = strapi.service('api::global.email-operations');
       const result = await emailService.parseEmailCommand(emailData.text, emailData.from);
 
-      // Log the result
-      console.log(`Email command result:`, result);
-
-      // Send confirmation email back to sender
       if (result.success) {
         await this.sendConfirmationEmail(emailData.from, result.message);
       } else {
         await this.sendErrorEmail(emailData.from, result.message);
       }
 
-      ctx.body = { success: true, result };
+      ctx.body = { success: true };
     } catch (error) {
-      console.error('Error handling incoming email:', error);
-      ctx.body = { success: false, error: error.message };
+      strapi.log?.error?.('[EMAIL WEBHOOK] handler failed', { error: error.message });
+      // Generic body — do not echo error.message back to a forged caller.
+      ctx.body = { success: false };
     }
   },
 
@@ -338,7 +361,7 @@ module.exports = createCoreController('api::global.global', ({ strapi }) => ({
       }
 
       // Check if user is admin or has special access
-      const isAdmin = (user.role && (user.role.type === 'admin' || user.role.name === 'Admin')) || user.email === 'mantasha@wordscloud.in';
+      const isAdmin = user.role && (user.role.type === 'admin' || user.role.type === 'super_admin');
       
       if (!isAdmin) {
         return ctx.forbidden('Admin access required');

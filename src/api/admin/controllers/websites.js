@@ -5,7 +5,7 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
-const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues } = require('../../../constants/website-options');
+const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues, normalizeCountries } = require('../../../constants/website-options');
 const { getPublisherCommissionRate } = require('../../../constants/commission');
 
 // In-memory storage for bulk import progress (since cache might not be available)
@@ -620,6 +620,37 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const isActivePublisherRow = (w) =>
         (w.submissionStatus || '').toLowerCase() === 'approved';
 
+      // Batched lookup: which of these websites have a pending update-request?
+      // Approved listings stay 'approved' while a publisher edit is in flight,
+      // so the list view needs an explicit "pending update" signal — otherwise
+      // an admin can't tell which approved rows have queued changes awaiting
+      // review. Keyed by publisher-website id, value = number of pending reqs
+      // (almost always 0 or 1; the publisher-controller supersedes older
+      // pendings on each new edit).
+      const websiteIds = websites.map((w) => w.id).filter((v) => v != null);
+      const pendingByWebsiteId = new Map();
+      if (websiteIds.length > 0) {
+        const pendingRows = await strapi.db
+          .query('api::website-update-request.website-update-request')
+          .findMany({
+            where: { publisherWebsite: { id: { $in: websiteIds } }, status: 'pending' },
+            populate: { publisherWebsite: { fields: ['id'] } },
+            orderBy: { submittedAt: 'desc' },
+          });
+        for (const r of pendingRows) {
+          const wid = r.publisherWebsite?.id;
+          if (!wid) continue;
+          const existing = pendingByWebsiteId.get(wid) || { count: 0, latestSubmittedAt: null, latestRequestId: null };
+          existing.count += 1;
+          if (!existing.latestSubmittedAt && r.submittedAt) {
+            // findMany is ordered DESC, so the first hit per website is latest.
+            existing.latestSubmittedAt = r.submittedAt;
+            existing.latestRequestId = r.id;
+          }
+          pendingByWebsiteId.set(wid, existing);
+        }
+      }
+
       // Transform data to match frontend expectations with comprehensive fields
       const transformedWebsites = websites.map(website => ({
         id: website.id,
@@ -629,6 +660,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         status: website.submissionStatus || 'pending',
         traffic: website.moz_da || 'N/A',
         addedDate: website.createdAt,
+        // Pending update flag — admins use this on the websites list to spot
+        // approved sites that have publisher edits queued for review. Stays
+        // 0/false when there is no open request.
+        hasPendingUpdate: (pendingByWebsiteId.get(website.id)?.count || 0) > 0,
+        pendingUpdateCount: pendingByWebsiteId.get(website.id)?.count || 0,
+        pendingUpdateSubmittedAt: pendingByWebsiteId.get(website.id)?.latestSubmittedAt || null,
         owner: {
           id: website.currentPublisherId?.id || website.originalPublisherId?.id || website.publisherId || 0,
           username: website.currentPublisherId?.username || website.originalPublisherId?.username || website.publisherName || 'Unknown',
@@ -915,6 +952,36 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         transformedWebsite.marketplaceId = null;
       }
 
+      // Attach the latest pending website-update-request, if any, so the
+      // admin detail page can render a "Pending Update" banner. An approved
+      // website with a pending request reads as "Approved" on its own —
+      // without this, the admin has no signal that changes are awaiting
+      // review.
+      try {
+        const pending = await strapi.db
+          .query('api::website-update-request.website-update-request')
+          .findOne({
+            where: { publisherWebsite: { id: website.id }, status: 'pending' },
+            orderBy: { submittedAt: 'desc' },
+          });
+        if (pending) {
+          const changedFields = pending.changes && typeof pending.changes === 'object'
+            ? Object.keys(pending.changes) : [];
+          transformedWebsite.pendingUpdate = {
+            id: pending.id,
+            submittedAt: pending.submittedAt,
+            submittedBy: pending.submittedBy,
+            changedFields,
+            changesCount: changedFields.length,
+          };
+        } else {
+          transformedWebsite.pendingUpdate = null;
+        }
+      } catch (pendingErr) {
+        console.warn('[ADMIN WEBSITE FIND ONE] pending-update lookup failed:', pendingErr.message);
+        transformedWebsite.pendingUpdate = null;
+      }
+
       console.log('[ADMIN WEBSITE FIND ONE]', {
         websiteId: id,
         originalWebsite: website,
@@ -942,6 +1009,35 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} approving website ${id}`);
+
+      // CRITICAL: refuse to approve a website with no pricing set. The
+      // marketplace-listing helper happily creates listings with all-NULL
+      // prices (which then get filtered out of the marketplace), leaving
+      // the website in a useless "approved-but-invisible" half-state.
+      // Require at least one price to be set before admin can approve.
+      const existing = await strapi.entityService.findOne(
+        'api::publisher-website.publisher-website',
+        id
+      );
+      if (!existing) {
+        return ctx.notFound(`Website ${id} not found`);
+      }
+      const priceFields = [
+        existing.generalGuestPostPrice,
+        existing.generalLinkInsertionPrice,
+        existing.casinoGuestPostPrice, existing.casinoLinkInsertionPrice,
+        existing.cryptoGuestPostPrice, existing.cryptoLinkInsertionPrice,
+        existing.cbdGuestPostPrice, existing.cbdLinkInsertionPrice,
+        existing.datingGuestPostPrice, existing.datingLinkInsertionPrice,
+      ];
+      if (!priceFields.some((p) => Number(p) > 0)) {
+        strapi.log.warn(
+          `[admin/websites.approve] Refused to approve website ${id} (${existing.url}) — no pricing set. Admin: ${ctx.state.user?.email}.`
+        );
+        return ctx.badRequest(
+          `Cannot approve website: at least one price must be set (general / casino / crypto / cbd / dating — guest post or link insertion). Ask the publisher to fill in pricing before approving.`
+        );
+      }
 
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
@@ -1253,6 +1349,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       const wasPreviouslyApproved = websiteBeforeUpdate.submissionStatus === 'approved';
       const websiteUrl = websiteBeforeUpdate.url;
+
+      // GUARD: "Reject" is for un-approved submissions only. Rejecting an
+      // already-approved (LIVE) website here set submissionStatus='rejected'
+      // while the marketplace stayed active, producing a "rejected-but-live"
+      // divergence. To reject a publisher's EDIT to a live site, use the
+      // Pending Updates queue (rejects only the update-request, keeps the site
+      // live). To take a live site down, pause/delist it instead.
+      if (wasPreviouslyApproved) {
+        return ctx.badRequest(
+          'This website is already live (approved). To reject a publisher’s pending edit, use Pending Updates. To take the live listing down, pause or delist it instead.'
+        );
+      }
 
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
@@ -2137,7 +2245,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // notification: sites submitted within the last 72 hours that haven't
       // been approved/rejected/finished yet. After 72h they fall out of the
       // badge but remain in the DB.
-      const [total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h] = await Promise.all([
+      const [total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h, livePendingUpdates] = await Promise.all([
         strapi.db.query('api::publisher-website.publisher-website').count(),
         strapi.db.query('api::publisher-website.publisher-website').count({
           where: { submissionStatus: 'approval_pending' }
@@ -2174,6 +2282,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             createdAt: { $gte: seventyTwoHoursAgo },
           },
         }),
+        // Live sites with at least one publisher edit awaiting admin review.
+        // Counts distinct approved publisher_websites that have ≥1 pending
+        // website-update-request — not the raw pending-request count, since
+        // (theoretically) a single site can have multiple stacked pendings
+        // and we want to count sites needing attention, not requests.
+        strapi.db.query('api::publisher-website.publisher-website').count({
+          where: {
+            submissionStatus: 'approved',
+            updateRequests: { status: 'pending' },
+          },
+        }),
       ]);
 
       console.log('[ADMIN WEBSITE STATS] Counts:', { total, pending, approved, rejected, live, ready, newlySubmittedLast72h, incompleteLast72h });
@@ -2200,6 +2319,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         readyWebsites: ready,
         newlySubmittedLast72h,
         incompleteLast72h,
+        livePendingUpdates,
         newThisMonth,
       };
 
@@ -3022,12 +3142,21 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return valid.length > 0 ? valid : ['General'];
       })(),
       countries: (() => {
-        if (!websiteData.countries) return ['United States'];
+        // Use the centralized normalizeCountries which accepts ISO 3166-1
+        // alpha-2 / alpha-3 codes (IN, US, UK, UAE, CZ, DE, ...) and common
+        // aliases (UK, UAE, Czechia, Burma, etc.) in addition to canonical
+        // names. Bulk-import CSVs that previously failed validation with
+        // ISO codes are now normalized to the canonical name automatically.
+        if (!websiteData.countries) return ['United States of America'];
         const parsed = Array.isArray(websiteData.countries)
-          ? websiteData.countries.map(c => c.trim())
-          : websiteData.countries.split(',').map(c => c.trim());
-        const { valid } = validateValues(parsed, COUNTRIES_MAP);
-        return valid.length > 0 ? valid : ['United States'];
+          ? websiteData.countries
+          : String(websiteData.countries).split(',');
+        const { valid, invalid } = normalizeCountries(parsed);
+        if (invalid.length > 0) {
+          // eslint-disable-next-line no-console
+          console.warn(`[BULK IMPORT] dropped invalid country values: ${invalid.join(', ')}`);
+        }
+        return valid.length > 0 ? valid : ['United States of America'];
       })(),
       language: (() => {
         if (!websiteData.language) return ['English'];
@@ -3613,6 +3742,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             errors.push({
               id,
               error: `Website "${website.url}" does not have required metrics (DA/DR). Please update metrics first.`
+            });
+            continue;
+          }
+
+          // Policy validation: at least one price must be set. Without this,
+          // approval creates a marketplace listing with all-NULL prices that
+          // gets filtered out — website ends up approved-but-invisible.
+          const bulkPriceFields = [
+            website.generalGuestPostPrice, website.generalLinkInsertionPrice,
+            website.casinoGuestPostPrice, website.casinoLinkInsertionPrice,
+            website.cryptoGuestPostPrice, website.cryptoLinkInsertionPrice,
+            website.cbdGuestPostPrice, website.cbdLinkInsertionPrice,
+            website.datingGuestPostPrice, website.datingLinkInsertionPrice,
+          ];
+          if (!bulkPriceFields.some((p) => Number(p) > 0)) {
+            errors.push({
+              id,
+              error: `Website "${website.url}" has no pricing set. Publisher must fill in at least one price before approval.`,
             });
             continue;
           }

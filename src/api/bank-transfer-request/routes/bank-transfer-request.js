@@ -1,7 +1,17 @@
 'use strict';
 
 /**
- * Bank Transfer Request Router
+ * Bank Transfer Request Router.
+ *
+ * SECURITY NOTE:
+ *   The previous routes used `auth.scope: ['admin']` for find/update.
+ *   `scope` is matched against permission *actions* in up_permissions,
+ *   not role names. No permission action named "admin" exists, so the
+ *   scope check failed for everyone — including super_admins. Functionally
+ *   the find/update endpoints were dead. We replace the broken scope
+ *   with the project's `global::is-admin` policy (role.type-based).
+ *   Create stays open to any authenticated user; the controller forces
+ *   userId from the JWT to defeat the prior impersonation vector.
  */
 
 module.exports = {
@@ -12,9 +22,9 @@ module.exports = {
       handler: 'bank-transfer-request.create',
       config: {
         auth: {
-          strategies: ['jwt']
-        }
-      }
+          strategies: ['jwt'],
+        },
+      },
     },
     {
       method: 'GET',
@@ -23,9 +33,9 @@ module.exports = {
       config: {
         auth: {
           strategies: ['jwt'],
-          scope: ['admin']
-        }
-      }
+        },
+        policies: ['global::is-admin'],
+      },
     },
     {
       method: 'PUT',
@@ -34,9 +44,9 @@ module.exports = {
       config: {
         auth: {
           strategies: ['jwt'],
-          scope: ['admin']
-        }
-      }
-    }
-  ]
+        },
+        policies: ['global::is-admin'],
+      },
+    },
+  ],
 };

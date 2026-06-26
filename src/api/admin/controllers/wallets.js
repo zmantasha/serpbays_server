@@ -398,6 +398,18 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         }
       }
 
+      // Real-time push: notify the TARGET user (not the admin) so any open
+      // session sees the corrected balance immediately. Best-effort.
+      try {
+        await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+          userId,
+          'admin_adjustment',
+          { adminId: ctx.state.user.id, walletId: wallet.id, mainDelta, promoDelta, reason: reason || null, adjustmentTxId: adjustmentTx?.id || null }
+        );
+      } catch (emitErr) {
+        console.error('[ADMIN WALLET] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+      }
+
       ctx.send({
         message: 'Wallet balance updated successfully',
         wallet: {
@@ -599,6 +611,31 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         });
       } catch (auditErr) {
         console.error('[ADMIN WALLET] Failed to write audit log:', auditErr.message);
+      }
+
+      // Real-time push: only when the wallet actually moved (settled rows).
+      // Pending / failed / etc. rows are recorded for audit but don't change
+      // the balance, so there's nothing for the client to refresh against.
+      if (isSettled) {
+        try {
+          await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
+            userId,
+            'admin_manual_transaction',
+            {
+              adminId: adminUser.id,
+              walletId: wallet.id,
+              type,
+              gateway,
+              fundSource,
+              amount: parsedAmount,
+              netAmount,
+              fee: parsedFee,
+              transactionId: result.transaction.id,
+            }
+          );
+        } catch (emitErr) {
+          console.error('[ADMIN WALLET] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+        }
       }
 
       // Notification email (best-effort — only credits that actually settled notify users)
@@ -963,6 +1000,48 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       }
 
       console.log(`[ADMIN WALLET OPERATION] Successfully completed ${type} operation on wallet ${walletId}`);
+
+      // Real-time push: every wallet that moved gets an event on its OWNER's
+      // channel. For transfers, that's both source and target users. The
+      // admin's own session is not a target — admin views read separately.
+      try {
+        const walletSvc = strapi.service('api::user-wallet.user-wallet');
+        const sourceUserId = wallet.users_permissions_user?.id;
+        const emitPromises = [];
+        if (sourceUserId) {
+          emitPromises.push(walletSvc.emitBalanceUpdate(
+            sourceUserId,
+            `admin_${type}`,
+            {
+              adminId: adminUser.id,
+              walletId,
+              operation: type,
+              fundSource,
+              amount,
+              transactionRecordId: result.transaction?.id || null,
+              ...(type === 'transfer_funds' ? { side: 'source', targetUserId } : {}),
+            }
+          ));
+        }
+        if (type === 'transfer_funds' && targetUserId) {
+          emitPromises.push(walletSvc.emitBalanceUpdate(
+            targetUserId,
+            `admin_${type}`,
+            {
+              adminId: adminUser.id,
+              walletId: result.targetWallet?.id || null,
+              operation: type,
+              fundSource,
+              amount,
+              side: 'target',
+              sourceUserId,
+            }
+          ));
+        }
+        await Promise.all(emitPromises);
+      } catch (emitErr) {
+        console.error('[ADMIN WALLET OPERATION] emitBalanceUpdate failed (non-fatal):', emitErr.message);
+      }
 
       ctx.body = {
         success: true,

@@ -70,13 +70,24 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
       return ctx.unauthorized('You must be logged in to view lists.');
     }
 
-    // Get all lists for the current user with populated marketplaces
+    // Get all lists for the current user with populated marketplaces.
+    // Pre-fix populated marketplaces with `true` (all columns), which
+    // returned publisher_*_pricing intake prices, gsc_permission_level,
+    // approvalStatus / blacklist_status / delistedReason / dataVersion,
+    // and the lastAhrefs/Moz/Semrush refresh-/export-at timestamps via
+    // every list response — Strapi's sanitizeOutput only strips the
+    // schema-declared private attributes (publisher_name / publisher_email
+    // / gsc_refresh_token). Narrowed to {id} only — the frontend uses the
+    // populated list solely for `marketplaces.length` and
+    // `marketplaces.map(m => m.id)`, so id is sufficient. Marketplace
+    // details are fetched separately via /api/marketplaces (which has its
+    // own sanitizePublisherData strip).
     const entities = await strapi.db.query('api::marketplace-list.marketplace-list').findMany({
       where: {
         owner: user.id,
       },
       populate: {
-        marketplaces: true,
+        marketplaces: { select: ['id'] },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -98,21 +109,25 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
       return ctx.unauthorized('You must be logged in to view lists.');
     }
 
+    // Same populate narrowing as find() — only the marketplace ids
+    // reach the response; richer marketplace data goes through
+    // /api/marketplaces which applies its own sanitizer.
+    const numericId = parseInt(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('List not found');
+    }
     const entity = await strapi.db.query('api::marketplace-list.marketplace-list').findOne({
       where: {
-        id: parseInt(id),
+        id: numericId,
         owner: user.id,
       },
       populate: {
-        marketplaces: true,
+        marketplaces: { select: ['id'] },
       },
     });
 
-    console.log('📋 Found entity:', entity ? { id: entity.id, name: entity.name } : null);
-
     if (!entity) {
-      console.log('❌ List not found or permission denied');
-      return ctx.notFound('List not found or you do not have permission to access it.');
+      return ctx.notFound('List not found');
     }
 
     const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
@@ -124,7 +139,10 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
     const { id } = ctx.params;
     const { name, marketplaces, description } = ctx.request.body.data;
 
-    console.log('📝 UPDATE request received:', { id, userId: user?.id, data: ctx.request.body.data });
+    // Pre-fix logged ctx.request.body.data (full update payload). Trimmed
+    // to id + user.id only so logs don't carry rich-text list names or
+    // free-form descriptions.
+    strapi.log?.info?.(`[marketplace-list] update id=${id} user=${user?.id}`);
 
     if (!user) {
       console.log('❌ User not authenticated');
@@ -196,13 +214,14 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
         console.log('✅ Marketplaces relation updated with', validMarketplaceIds.length, 'items');
       }
 
-      // Fetch the updated entity with populated relations
+      // Fetch the updated entity with id-only marketplace populate (see
+      // find() comment — frontend only needs ids).
       const entity = await strapi.db.query('api::marketplace-list.marketplace-list').findOne({
         where: {
           id: parseInt(id),
         },
         populate: {
-          marketplaces: true,
+          marketplaces: { select: ['id'] },
         },
       });
 
@@ -220,9 +239,10 @@ module.exports = createCoreController('api::marketplace-list.marketplace-list', 
       const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
       return this.transformResponse(sanitizedEntity);
     } catch (error) {
-      console.error('❌ Error updating list:', error);
-      console.error('❌ Error stack:', error.stack);
-      return ctx.internalServerError('Failed to update list: ' + error.message);
+      strapi.log?.error?.('[marketplace-list] update failed', { error: error.message });
+      // Do NOT include error.message in the response — Strapi-internal
+      // errors (DB constraint violations, etc.) would leak schema details.
+      return ctx.internalServerError('Failed to update list');
     }
   },
 

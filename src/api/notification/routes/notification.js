@@ -49,6 +49,18 @@ const customRoutes = {
       },
     },
     {
+      // Exposes the existing controller method that returns the authoritative
+      // unread count from the DB. Used by the navbar / layout to seed the
+      // bell badge on cold load before the first WS push lands.
+      method: 'GET',
+      path: '/notifications/unread-count',
+      handler: 'notification.getUnreadCount',
+      config: {
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
       method: 'POST',
       path: '/notifications/test-basic',
       handler: 'notification.testBasicNotification',

@@ -206,5 +206,26 @@ module.exports = {
       // Audit writes must never break the primary update.
       console.error('[marketplace lifecycle] failed to write update history:', err.message);
     }
+
+    // Real-time push to panel20 admins so the marketplace listing page
+    // updates without polling. Pass-11 — closes Gap 1 from the final
+    // coverage audit. Admin-only fan-out (no per-user channel) because
+    // marketplace mutations are admin-initiated; for publishers the
+    // matching publisher_website lifecycle handles per-user emits.
+    try {
+      if (typeof strapi.io?.emitToAdmins === 'function') {
+        strapi.io.emitToAdmins('admin:marketplace_event', {
+          type: 'marketplace:listing_changed',
+          marketplaceId: result.id,
+          url: result.url || null,
+          status: result.status || null,
+          changedFields,
+          source: audit.source || 'api',
+          occurredAt: new Date().toISOString(),
+        });
+      }
+    } catch (broadcastErr) {
+      strapi.log?.warn?.(`[marketplace lifecycle] admin broadcast failed (non-fatal): ${broadcastErr.message}`);
+    }
   },
 };

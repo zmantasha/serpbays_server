@@ -63,6 +63,34 @@ module.exports = createCoreController('api::shortlist.shortlist', ({ strapi }) =
     return this.transformResponse(sanitizedEntity);
   },
 
+  // Default core-router exposes GET /shortlists/:id and PUT /shortlists/:id.
+  // Authenticated has findOne + update permission. Without overrides, the
+  // default controllers would return / mutate any shortlist row across
+  // tenants. Force ownership.
+  async findOne(ctx) {
+    const { user } = ctx.state;
+    if (!user) return ctx.unauthorized();
+    const numericId = Number(ctx.params.id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      return ctx.notFound('Shortlist item not found');
+    }
+    const record = await strapi.db.query('api::shortlist.shortlist').findOne({
+      where: { id: numericId },
+      populate: { owner: { select: ['id'] } },
+    });
+    if (!record || record.owner?.id !== user.id) {
+      return ctx.notFound('Shortlist item not found');
+    }
+    const sanitized = await this.sanitizeOutput(record, ctx);
+    return this.transformResponse(sanitized);
+  },
+
+  async update(ctx) {
+    // No legitimate use case for partial-update of a shortlist row from
+    // the user side. Delete + re-add is the supported flow. Forbid here.
+    return ctx.forbidden('Shortlist items cannot be modified; delete and re-add instead');
+  },
+
   async find(ctx) {
     const { user } = ctx.state;
     if (!user) {

@@ -309,18 +309,26 @@ module.exports = createCoreController('api::website-update-request.website-updat
         }
       });
 
-      // Supersede other pending requests for the same marketplace listing
-      await strapi.db.query('api::website-update-request.website-update-request').updateMany({
+      // Supersede other pending requests for the same marketplace listing.
+      // updateMany can't filter on a relation directly in Strapi 5, so resolve
+      // the older pending IDs first, then update them by primary key.
+      const olderPending = await strapi.db.query('api::website-update-request.website-update-request').findMany({
         where: {
           id: { $ne: request.id },
           status: 'pending',
-          marketplace: marketplaceId
+          marketplace: { id: marketplaceId },
         },
-        data: {
-          status: 'superseded',
-          notes: 'Superseded because a newer request was approved'
-        }
+        select: ['id'],
       });
+      if (olderPending.length > 0) {
+        await strapi.db.query('api::website-update-request.website-update-request').updateMany({
+          where: { id: { $in: olderPending.map((r) => r.id) } },
+          data: {
+            status: 'superseded',
+            notes: 'Superseded because a newer request was approved'
+          }
+        });
+      }
 
       return ctx.send({
         message: 'Marketplace listing updated successfully',
@@ -343,13 +351,69 @@ module.exports = createCoreController('api::website-update-request.website-updat
         return ctx.unauthorized('Authentication required');
       }
 
-      const request = await strapi.entityService.findOne('api::website-update-request.website-update-request', id);
+      const request = await strapi.entityService.findOne('api::website-update-request.website-update-request', id, {
+        populate: ['publisherWebsite']
+      });
       if (!request) {
         return ctx.notFound('Update request not found');
       }
 
       if (request.status !== 'pending') {
         return ctx.badRequest('Only pending requests can be rejected');
+      }
+
+      // Revert publisher_websites to the baseSnapshot (= last approved values
+      // = what marketplace still shows). Without this, the publisher's "My
+      // Websites" page keeps showing their rejected edit even though the
+      // live listing was never updated, contradicting the rejection.
+      //
+      // baseSnapshot uses MARKETPLACE field names; map them back to
+      // publisher_websites field names + unit-transform where needed.
+      const REVERT_MAP = {
+        price: { field: 'generalGuestPostPrice' },
+        link_insertion_price: { field: 'generalLinkInsertionPrice' },
+        adv_casino_pricing: { field: 'casinoGuestPostPrice' },
+        adv_li_casino_pricing: { field: 'casinoLinkInsertionPrice' },
+        adv_crypto_pricing: { field: 'cryptoGuestPostPrice' },
+        adv_li_crypto_pricing: { field: 'cryptoLinkInsertionPrice' },
+        adv_cbd_pricing: { field: 'cbdGuestPostPrice' },
+        adv_li_cbd_pricing: { field: 'cbdLinkInsertionPrice' },
+        adv_dating_pricing: { field: 'datingGuestPostPrice' },
+        adv_li_dating_pricing: { field: 'datingLinkInsertionPrice' },
+        // marketplace stores days, publisher_websites stores hours.
+        tat: { field: 'expectedTATHours', transform: (v) => Number(v) * 24 },
+        min_word_count: { field: 'minWordCount' },
+        backlink_type: { field: 'backlinkType' },
+        backlink_validity: { field: 'backlinkValidity' },
+        countries: { field: 'countries' },
+        language: { field: 'language' },
+        category: { field: 'category' },
+        guidelines: { field: 'guidelines' },
+        description: { field: 'description' },
+        publication_location: { field: 'publicationLocation' },
+        sponsored: { field: 'sponsored' },
+        ugc: { field: 'ugc' },
+        publisher_writing_price: { field: 'copywritingPrice' },
+        // placement_speed is derived from tat — reverting tat is enough.
+      };
+
+      const baseSnapshot = (request.baseSnapshot && typeof request.baseSnapshot === 'object') ? request.baseSnapshot : {};
+      const revertData = {};
+      for (const [mktField, baseValue] of Object.entries(baseSnapshot)) {
+        const mapping = REVERT_MAP[mktField];
+        if (!mapping) continue;
+        revertData[mapping.field] = mapping.transform ? mapping.transform(baseValue) : baseValue;
+      }
+
+      const publisherWebsiteId = request.publisherWebsite?.id;
+      if (publisherWebsiteId && Object.keys(revertData).length > 0) {
+        // _skipMarketplaceSync because the publisher_websites afterUpdate
+        // lifecycle would otherwise re-sync to marketplace — pointless here
+        // (we're matching what marketplace already has) and noisy.
+        await strapi.entityService.update('api::publisher-website.publisher-website', publisherWebsiteId, {
+          data: { ...revertData, _skipMarketplaceSync: true }
+        });
+        strapi.log.info(`[WEBSITE UPDATE REQUEST] Reverted publisher_website ${publisherWebsiteId} (${Object.keys(revertData).length} fields) on reject of request ${id}`);
       }
 
       await strapi.entityService.update('api::website-update-request.website-update-request', id, {
@@ -361,7 +425,10 @@ module.exports = createCoreController('api::website-update-request.website-updat
         }
       });
 
-      return ctx.send({ message: 'Update request rejected' });
+      return ctx.send({
+        message: 'Update request rejected',
+        revertedFields: Object.keys(revertData),
+      });
     } catch (error) {
       strapi.log.error('[WEBSITE UPDATE REQUEST] Rejection failed', error);
       return ctx.internalServerError('Failed to reject update request');
