@@ -1,6 +1,6 @@
 'use strict';
 
-module.exports = ({ strapi }) => {
+module.exports = async ({ strapi }) => {
   // Initialize Socket.IO
   const io = require('socket.io')(strapi.server.httpServer, {
     cors: {
@@ -30,35 +30,64 @@ module.exports = ({ strapi }) => {
   // connected sockets in the room.
   //
   // Gated on REDIS_URL so single-pod dev (no Redis) keeps working unchanged.
-  // Failure to connect doesn't crash the boot — we log loudly and continue
-  // with the default in-memory adapter. Ops noticed by the log on every
-  // restart instead of silent multi-pod breakage.
+  //
+  // Crash-safety — Redis is treated as best-effort, never load-bearing:
+  //   • Error handlers are attached before connecting, so a failed connect
+  //     surfaces as a logged 'error' event, not an unhandled one that aborts
+  //     the process.
+  //   • maxRetriesPerRequest:null keeps commands queued (instead of rejecting)
+  //     while Redis is unreachable, so a mid-flight outage can't produce an
+  //     unhandled promise rejection from the adapter's publish() calls.
+  //   • retryStrategy backs off but keeps trying, so the adapter self-heals
+  //     when Redis returns.
+  //   • The boot connect is bounded by a timeout: if Redis is down at startup
+  //     we tear the clients down and fall back to the default in-memory
+  //     adapter (single-pod delivery) rather than hanging or crashing.
   // ─────────────────────────────────────────────────────────────────────────
   if (process.env.REDIS_URL) {
+    const Redis = require('ioredis');
+    const { createAdapter } = require('@socket.io/redis-adapter');
+    const REDIS_BOOT_TIMEOUT_MS = 5000;
+    const pubClient = new Redis(process.env.REDIS_URL, {
+      connectTimeout: REDIS_BOOT_TIMEOUT_MS,
+      // null = never fail a queued command just because Redis is down; it
+      // waits for reconnect. This is what stops a runtime outage from
+      // crashing the process via an unhandled rejection.
+      maxRetriesPerRequest: null,
+      // Keep retrying with capped exponential backoff so the adapter recovers
+      // on its own once Redis comes back.
+      retryStrategy: (times) => Math.min(times * 200, 5000),
+    });
+    const subClient = pubClient.duplicate();
+    const logErr = (label) => (err) => {
+      strapi.log?.error?.(`[WS][redis-adapter:${label}] ${err.message}`);
+    };
+    pubClient.on('error', logErr('pub'));
+    subClient.on('error', logErr('sub'));
+
+    // Resolve once both clients reach 'ready'; reject if that doesn't happen
+    // within the boot window (Redis down / unreachable). Either way the
+    // process stays up.
+    const ready = (client) => new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`not ready within ${REDIS_BOOT_TIMEOUT_MS}ms`)),
+        REDIS_BOOT_TIMEOUT_MS
+      );
+      client.once('ready', () => { clearTimeout(timer); resolve(); });
+    });
+
     try {
-      const { createAdapter } = require('@socket.io/redis-adapter');
-      const Redis = require('ioredis');
-      const pubClient = new Redis(process.env.REDIS_URL, {
-        // Cap reconnect attempts so a misconfigured URL doesn't burn CPU.
-        // After this many tries Socket.IO falls back to local-only emits.
-        maxRetriesPerRequest: 3,
-        // Short connect timeout — boot should fail fast, not hang.
-        connectTimeout: 5000,
-      });
-      const subClient = pubClient.duplicate();
-      const logErr = (label) => (err) => {
-        strapi.log?.error?.(`[WS][redis-adapter:${label}] ${err.message}`);
-      };
-      pubClient.on('error', logErr('pub'));
-      subClient.on('error', logErr('sub'));
+      await Promise.all([ready(pubClient), ready(subClient)]);
       io.adapter(createAdapter(pubClient, subClient));
       strapi.io_redis = { pubClient, subClient }; // exposed for seq counters
       console.log('[WS] Redis adapter attached — multi-pod fan-out enabled');
     } catch (err) {
-      // Don't crash the server — fall back to in-memory adapter and log.
-      // Production deployments running >1 pod will see staleness on the
-      // affected pod; the log line is the signal to investigate.
-      strapi.log?.error?.(`[WS] Redis adapter init failed — falling back to in-memory: ${err.message}`);
+      // Discard the clients so they stop reconnecting in the background, then
+      // continue on the default in-memory adapter. >1 pod will see staleness;
+      // the log line is the signal to investigate Redis.
+      strapi.log?.error?.(`[WS] Redis unavailable — falling back to in-memory adapter: ${err.message}`);
+      pubClient.disconnect();
+      subClient.disconnect();
     }
   } else {
     console.log('[WS] REDIS_URL not set — using default in-memory adapter (single-pod only)');
