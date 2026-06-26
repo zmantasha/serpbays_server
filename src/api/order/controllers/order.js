@@ -62,8 +62,10 @@ const WEBSITE_PUBLIC_FIELDS = [
   'sponsored', 'ugc', 'digital_pr', 'only_with_us', 'fast_placement_status',
   'isFeatured', 'isFeaturedGuestPost', 'isFeaturedLinkInsertion',
   'website_status',
-  // Timestamps
-  'createdAt', 'updatedAt', 'publishedAt',
+  // Timestamps. `publishedAt` is omitted — marketplace schema has
+  // draftAndPublish: false, so the attribute doesn't exist; including
+  // it would surface as `ValidationError: Invalid key publishedAt`.
+  'createdAt', 'updatedAt',
 ];
 
 // Snapshot fields captured on the order row at create-time. These mirror
@@ -75,6 +77,118 @@ const ORDER_SNAPSHOT_PUBLISHER_PRIVATE = [
   'websitePublisherName',
   'websitePublisherPrice',
 ];
+
+// Order scalar fields the user-facing UI consumes. Verified by grepping
+// every `order.<field>` reference across serpbays_client (2026-06-25).
+// EXCLUDED from this list — and therefore never returned by user-facing
+// list endpoints (find / findOne / getMyOrders / getAvailableOrders):
+//   - websitePublisherEmail / websitePublisherName     → publisher PII (typed but never rendered)
+//   - websitePublisherPrice                            → publisher intake price (business sensitive)
+//   - websiteSnapshot                                  → opaque JSON of marketplace row at order-time
+//   - metadata                                         → opaque JSON; gateway/internal use
+//   - websitePrice / websiteLinkInsertionPrice         → use totalAmount instead
+//   - websiteCategory / websiteLanguage / websiteCountries → JSON blobs, never rendered
+//   - websiteBacklinkType / websiteBacklinkValidity / websiteMinWordCount / websiteGuidelines
+//   - websiteDofollowLink / websiteFastPlacement
+//   - websiteAhrefsDr / websiteAhrefsTraffic / websiteMozDa → exposed via website populate instead
+//   - linkInsertionLanguage                            → never rendered
+//   - createdByAdminId / adminReason                   → admin-only audit fields
+//   - userConsentType / userConsentReference           → audit fields, not user-facing
+//   - warningNotificationSentAt / cancellationNotes    → admin-only
+//   - disputeDate                                      → not rendered (disputes use a separate flow)
+// The 3 PII snapshot fields are also fetched into the DB row for the
+// legacy snapshot-publisher auth fallback in `isCallerPublisherOfOrder`,
+// then stripped from the response before send.
+const ORDER_PUBLIC_FIELDS = [
+  'id', 'documentId',
+  'orderStatus', 'revisionStatus', 'revisionRequestedAt', 'revisionDeadline',
+  'orderDate', 'acceptedDate', 'deliveredDate', 'completedDate', 'rejectedDate',
+  'cancelledAt', 'cancelledBy', 'cancellationReason', 'rejectionReason',
+  'totalAmount', 'escrowHeld',
+  'description', 'deliveryProof', 'deliveryMessage',
+  'serviceType', 'specialCategory', 'isOutsourced',
+  'anchorText', 'landingPageUrl', 'existingPostUrl', 'linkInsertionDescription',
+  'websiteUrl', 'websiteTat',
+  // publishedAt removed 2026-06-25 — order schema has draftAndPublish:
+  // false, so this field doesn't exist on the entity. Same risk class
+  // as `balanceAfter` on the transaction allow-list: Strapi 5 throws
+  // ValidationError on unknown query keys.
+  'createdAt', 'updatedAt',
+];
+
+// What the DB layer fetches — public fields plus the 3 snapshot fields
+// the auth-fallback code still needs to read. `stripOrderForResponse()`
+// removes the snapshot fields before send so they never reach the wire.
+const ORDER_FETCH_FIELDS = [...ORDER_PUBLIC_FIELDS, ...ORDER_SNAPSHOT_PUBLISHER_PRIVATE];
+
+// Nested populate allow-list. Mirrors the order's own field discipline.
+// Every relation here is `fields: [...]` not `: true`, so a future schema
+// addition (a new PII column on orderContent/project/etc.) doesn't
+// silently auto-leak into the response.
+const ORDER_LIST_POPULATE = {
+  website:           { fields: WEBSITE_PUBLIC_FIELDS },
+  // Client reads only `.id` from `order.advertiser` / `order.publisher`
+  // (verified by grepping `.advertiser.X` / `.publisher.X` across the
+  // client repo, 2026-06-25). Dropping `username` to honor the user's
+  // "publisher username is PII" rule — re-add it only if a future UI
+  // surface legitimately needs to display the counterparty's handle.
+  advertiser:        { fields: ['id'] },
+  publisher:         { fields: ['id'] },
+  orderContent:      { fields: ['id', 'content', 'title', 'url', 'metaDescription', 'keywords', 'anchorText', 'links', 'minWordCount'] },
+  outsourcedContent: { fields: ['id', 'links', 'instructions'] },
+  project:           { fields: ['id', 'documentId', 'ProjectName', 'projectUrl', 'startDate', 'archived', 'status'] },
+  communications:    { fields: ['id', 'message', 'communicationStatus', 'isUnread', 'createdAt'] },
+};
+
+// Strip the snapshot publisher fields from a response row regardless of
+// the caller's role. The 3 fields are needed inside the controller for
+// the legacy auth fallback, but the UI never renders them — so they
+// never leave the server. Replaces the prior per-row `if (!isCallerPublisher)`
+// strip which kept the fields visible to the publisher themselves.
+function stripOrderForResponse(row) {
+  if (!row) return row;
+  for (const k of ORDER_SNAPSHOT_PUBLISHER_PRIVATE) {
+    if (k in row) delete row[k];
+  }
+  return row;
+}
+
+// Defense-in-depth response shaper. Many state-transition handlers
+// (create / accept / reject / deliver / complete / *-revision / cancel)
+// build their response by re-fetching the order with `populate:
+// ['website', 'advertiser', 'publisher', ...]` (broad form, no field
+// allow-list). That returns the FULL marketplace row — including the
+// denormalized `publisher_email` / `publisher_name` / `publisher_*`
+// intake-pricing columns — plus full user records for advertiser /
+// publisher. Rather than refactor every handler, we run every order
+// response through this shaper, which:
+//   1. Strips the 3 snapshot fields from the order itself
+//   2. If `order.website` is populated, replaces it with a whitelisted
+//      subset (intersection of WEBSITE_PUBLIC_FIELDS) — drops
+//      publisher_email, publisher_name, every publisher_*_pricing,
+//      gsc_refresh_token, etc.
+//   3. If `order.advertiser` / `order.publisher` is populated, replaces
+//      with `{ id }` — drops email, username, phone, password hash, etc.
+// This is a belt-and-braces layer on top of the read-endpoint allow-lists
+// (find / findOne / getMyOrders / getAvailableOrders); it catches any
+// future handler that forgets to allow-list.
+const WEBSITE_PUBLIC_FIELD_SET = new Set(WEBSITE_PUBLIC_FIELDS);
+function sanitizeOrderResponse(order) {
+  if (!order || typeof order !== 'object') return order;
+  stripOrderForResponse(order);
+  if (order.website && typeof order.website === 'object') {
+    for (const k of Object.keys(order.website)) {
+      if (!WEBSITE_PUBLIC_FIELD_SET.has(k)) delete order.website[k];
+    }
+  }
+  if (order.advertiser && typeof order.advertiser === 'object') {
+    order.advertiser = { id: order.advertiser.id };
+  }
+  if (order.publisher && typeof order.publisher === 'object') {
+    order.publisher = { id: order.publisher.id };
+  }
+  return order;
+}
 
 // Return true if the caller is the publisher of this specific order. Used
 // to gate visibility of snapshot publisher fields and (in the future) the
@@ -180,28 +294,17 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
       ctx.query = {
         ...ctx.query,
         filters: userFilters ? { $and: [userFilters, ownership] } : ownership,
-        populate: {
-          website: { fields: WEBSITE_PUBLIC_FIELDS },
-          advertiser: { fields: ['id', 'username'] },
-          publisher:  { fields: ['id', 'username'] },
-        },
+        fields: ORDER_FETCH_FIELDS,
+        populate: ORDER_LIST_POPULATE,
       };
       const ps = Number.parseInt(ctx.query?.pagination?.pageSize, 10);
       if (Number.isFinite(ps) && ps > 100) {
         ctx.query.pagination = { ...ctx.query.pagination, pageSize: 100 };
       }
       const result = await super.find(ctx);
-      // Strip snapshot publisher fields per row for non-publishers.
       const rows = result?.data;
       if (Array.isArray(rows)) {
-        for (const row of rows) {
-          const attrs = row?.attributes || row;
-          if (!isCallerPublisherOfOrder(attrs, ctx.state.user)) {
-            for (const k of ORDER_SNAPSHOT_PUBLISHER_PRIVATE) {
-              if (attrs && k in attrs) delete attrs[k];
-            }
-          }
-        }
+        for (const row of rows) sanitizeOrderResponse(row?.attributes || row);
       }
       return result;
     },
@@ -228,18 +331,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
        //                    UI ever needs it, compute it in a response
        //                    shaper, don't request it from the DB)
       const order = await strapi.entityService.findOne('api::order.order', numericId, {
-        fields: [
-          'id', 'documentId', 'orderStatus', 'websiteUrl',
-          'orderDate', 'acceptedDate', 'deliveredDate',
-          'completedDate', 'totalAmount',
-          'createdAt', 'updatedAt', 'publishedAt',
-          'websitePublisherEmail', 'websitePublisherName', 'websitePublisherPrice',
-        ],
-        populate: {
-          website: { fields: WEBSITE_PUBLIC_FIELDS },
-          advertiser: { fields: ['id', 'username'] },
-          publisher:  { fields: ['id', 'username'] },
-        },
+        fields: ORDER_FETCH_FIELDS,
+        populate: ORDER_LIST_POPULATE,
       });
       if (!order) return ctx.notFound('Order not found');
       const isAdvertiser = order.advertiser?.id === ctx.state.user.id;
@@ -252,14 +345,10 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // 404 not 403 — defeat order-id enumeration.
         return ctx.notFound('Order not found');
       }
-      // Strip snapshot publisher fields when the caller is NOT the publisher.
-      const safe = { ...order };
-      if (!isPublisherFK && !isSnapshotPublisher) {
-        for (const k of ORDER_SNAPSHOT_PUBLISHER_PRIVATE) {
-          if (k in safe) delete safe[k];
-        }
-      }
-      return { data: safe };
+      // Always sanitize before responding. The snapshot publisher fields
+      // are fetched only for the legacy auth fallback above; populated
+      // relations are clipped to their public allow-list as defense-in-depth.
+      return { data: sanitizeOrderResponse({ ...order }) };
     },
 
     async update(ctx) {
@@ -586,11 +675,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           console.log('Potential duplicate order detected, returning existing order');
           // Return the existing order instead of creating a duplicate
           const existingOrder = await strapi.entityService.findOne('api::order.order', recentOrders[0].id, {
-            populate: ['advertiser', 'publisher', 'website', 'orderContent'],
+            fields: ORDER_FETCH_FIELDS,
+            populate: ORDER_LIST_POPULATE,
           });
 
           return {
-            data: existingOrder,
+            data: sanitizeOrderResponse(existingOrder),
             meta: {
               message: 'Order already exists'
             }
@@ -862,9 +952,17 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         }
 
-        // Return the created order with populated relations
+        // Return the created order with allow-listed relations.
+        // The advertiser MUST NOT see publisher PII from the marketplace
+        // (`publisher_email`, `publisher_name`, publisher intake pricing) —
+        // those are the columns on the marketplace row that a broad
+        // `populate: ['website']` would return. ORDER_LIST_POPULATE caps
+        // the website populate at WEBSITE_PUBLIC_FIELDS, and the
+        // sanitizeOrderResponse() pass below strips any populated
+        // user/marketplace fields beyond the allow-list.
         const populatedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
-          populate: ['advertiser', 'publisher', 'website', 'orderContent'],
+          fields: ORDER_FETCH_FIELDS,
+          populate: ORDER_LIST_POPULATE,
         });
 
         // Create notification for publisher (website owner) using snapshot data
@@ -989,7 +1087,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         // ========== END AUTOSEND ==========
 
         return {
-          data: populatedOrder,
+          data: sanitizeOrderResponse(populatedOrder),
           meta: {
             message: 'Order created successfully with escrow hold'
           }
@@ -1222,48 +1320,28 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           filters: combinedFilters
         });
 
-        // Get paginated orders. The `website` populate uses an explicit
-        // field whitelist (WEBSITE_PUBLIC_FIELDS) — `website: true` would
-        // have returned publisher_email, publisher_*_pricing intake prices,
-        // gsc_refresh_token, and internal admin state. Allow-list is the
-        // primary defense; the post-fetch snapshot strip below is
-        // defense-in-depth for the denormalized fields on the order row.
+        // Allow-list both the order's own scalars (`fields`) and every
+        // nested relation. This is the primary PII defense — no
+        // denormalized `websitePublisher*` snapshot, no opaque
+        // `websiteSnapshot` JSON, no `metadata` blob, no admin-only audit
+        // columns (`createdByAdminId`, `adminReason`, `cancellationNotes`,
+        // user-consent fields), and no auto-populating of newly-added
+        // PII columns on nested types in the future.
         const orders = await strapi.entityService.findMany('api::order.order', {
           filters: combinedFilters,
-          populate: {
-            website: {
-              fields: WEBSITE_PUBLIC_FIELDS,
-            },
-            advertiser: {
-              fields: ['id', 'username'] // Only populate id and username, exclude email
-            },
-            publisher: {
-              fields: ['id', 'username'] // Only populate id and username, exclude email
-            },
-            orderContent: true,
-            outsourcedContent: true,
-            project: true,
-            communications: true
-          },
+          fields: ORDER_FETCH_FIELDS,
+          populate: ORDER_LIST_POPULATE,
           sort: sortOptions,
           start,
           limit
         });
 
-        // Snapshot-field strip: websitePublisherEmail / Name / Price are
-        // denormalized columns on the order row itself (captured at order
-        // create-time). They were leaking publisher PII + intake price to
-        // advertisers viewing their own orders. Strip per-row based on
-        // whether the caller is the publisher of THAT order — keeps the
-        // fields visible on a publisher's own orders for the publisher
-        // dashboard, strips them everywhere else.
-        for (const order of orders) {
-          if (!isCallerPublisherOfOrder(order, user)) {
-            for (const key of ORDER_SNAPSHOT_PUBLISHER_PRIVATE) {
-              delete order[key];
-            }
-          }
-        }
+        // Always sanitize each order before responding — strips the 3
+        // snapshot fields AND clips any populated `website`/`advertiser`/
+        // `publisher` relations to their public allow-list. Defense in
+        // depth in case a future schema change reintroduces a PII column
+        // that the populate would otherwise auto-expose.
+        for (const order of orders) sanitizeOrderResponse(order);
 
         // Calculate pagination info
         const totalPages = Math.ceil(totalCount / limit);
@@ -1464,7 +1542,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 }
               ]
             },
-            populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
+            fields: ORDER_FETCH_FIELDS,
+            populate: ORDER_LIST_POPULATE,
             sort: { orderDate: 'desc' }
           });
         }
@@ -1513,7 +1592,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                     }
                   ]
                 },
-                populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
+                fields: ORDER_FETCH_FIELDS,
+                populate: ORDER_LIST_POPULATE,
                 sort: { orderDate: 'desc' }
               });
 
@@ -1539,7 +1619,8 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
               }
             ]
           },
-          populate: ['website', 'advertiser', 'outsourcedContent', 'orderContent'],
+          fields: ORDER_FETCH_FIELDS,
+          populate: ORDER_LIST_POPULATE,
           sort: { orderDate: 'desc' }
         });
 
@@ -1592,6 +1673,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Log all order IDs for debugging
         console.log('Available order IDs:', orders.map(order => order.id).join(', '));
+
+        // Sanitize each order before responding — strips snapshot
+        // publisher fields AND clips populated relations to their
+        // public allow-list.
+        for (const order of orders) sanitizeOrderResponse(order);
 
         return {
           data: orders,
@@ -1675,7 +1761,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         return {
-          data: updatedOrder,
+          data: sanitizeOrderResponse(updatedOrder),
           meta: {
             message: 'Order accepted successfully'
           }
@@ -1800,7 +1886,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         }
 
         return {
-          data: updatedOrder,
+          data: sanitizeOrderResponse(updatedOrder),
           meta: {
             message: 'Order rejected successfully'
           }
@@ -2094,7 +2180,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         // Return the updated order
         return {
-          data: updatedOrder
+          data: sanitizeOrderResponse(updatedOrder)
         };
       } catch (error) {
         console.error('Error delivering order:', error);
@@ -2221,7 +2307,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
 
           return {
-            data: completedOrder,
+            data: sanitizeOrderResponse(completedOrder),
             meta: {
               message: 'Order completed successfully and marked for payment'
             }
@@ -2644,7 +2730,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         return {
           success: true,
-          data: updated
+          data: sanitizeOrderResponse(updated)
         };
       } catch (error) {
         console.error('Error requesting revision:', error);
@@ -2708,7 +2794,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         return {
           success: true,
-          data: updated
+          data: sanitizeOrderResponse(updated)
         };
       } catch (error) {
         console.error('Error starting revision:', error);
@@ -2823,7 +2909,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         return {
           success: true,
-          data: updated
+          data: sanitizeOrderResponse(updated)
         };
       } catch (error) {
         console.error('Error completing revision:', error);
@@ -3132,7 +3218,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
 
         return {
           data: {
-            order: result.order,
+            order: sanitizeOrderResponse(result.order),
             refundAmount: result.refundAmount,
             refundedTo: result.refundedTo,
           }
