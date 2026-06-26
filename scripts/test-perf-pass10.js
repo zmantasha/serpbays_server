@@ -55,14 +55,22 @@ assert(/DATABASE_POOL_MAX/.test(ENV_EX),
 assert(/REDIS_URL/.test(ENV_EX),
   '.env.example documents REDIS_URL');
 // Strip line comments before matching so the "was populate:'*'" comment
-// I added during the fix doesn't false-positive.
+// (and the later "KNOWN BROKEN" doc-blocks) don't false-positive.
 {
-  const stripped = PROJ_CTRL.replace(/\/\/.*$/gm, '');
+  const stripped = PROJ_CTRL.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
   assert(!/populate:\s*['"]\*['"]/.test(stripped),
     "project controller no longer uses populate: '*'");
+  // The original pass-10B assertion looked for `fields: ['description'`.
+  // That was added during pass-10B as an attempt to scope the template
+  // findOne, but the bogus-fields audit later proved the keys don't
+  // exist on the project schema — so they were removed entirely
+  // (commit b50c24e). The CORRECT post-fix invariant is: the project
+  // controller's createFromTemplate findOne uses neither populate:'*'
+  // NOR a bogus fields:[]. The previous assertion is now obsolete and
+  // would fire a false negative on the corrected code.
+  assert(!/fields:\s*\['description',\s*'category'/.test(stripped),
+    'project controller no longer has the bogus pass-10B fields[] (description/category etc. — not on schema; removed in b50c24e)');
 }
-assert(/fields:\s*\['description'/.test(PROJ_CTRL),
-  'project controller uses explicit fields populate');
 
 out('\n=== 10C: Chatroom broadcast → emitToUser ===');
 assert(!/strapi\.io\.emit\(`user_\$\{chatroom\./.test(CHAT_CTRL),
