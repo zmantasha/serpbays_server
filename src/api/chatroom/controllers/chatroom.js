@@ -16,11 +16,31 @@ const { createCoreController } = require('@strapi/strapi').factories;
 //     (advertiser/publisher relations populated = up_users PII leak)
 //   - GET /api/chatrooms/:N → read any chatroom metadata
 //   - PUT /api/chatrooms/:N → reassign / close / archive any chatroom
+// documentId removed 2026-06-25 — Strapi 5 internal handle, never used
+// by the client. Exposing it gives external callers a stable identifier
+// they can correlate across endpoints; for chatrooms we want the numeric
+// `id` to be the only public handle (lookups go through party-checked
+// routes, so id-enumeration is already 404'd for non-parties).
 const CHATROOM_PUBLIC_FIELDS = [
-  'id', 'documentId', 'status', 'lastActivity',
-  'createdAt', 'updatedAt', 'publishedAt',
+  'id', 'status', 'lastActivity',
+  'createdAt', 'updatedAt',
 ];
-const CHATROOM_USER_FIELDS = ['id', 'username'];
+
+// Sanitizer for any user-relation field on a chat-system response.
+// Reduces to { id } regardless of what the populate returned. Defense-
+// in-depth: even if a future code change passes a raw user record
+// through, this strip catches it before send.
+function sanitizeUserRef(u) {
+  if (!u || typeof u !== 'object') return u;
+  return { id: u.id };
+}
+// User reference fields exposed via chatroom populates. Reduced from
+// ['id','username'] to ['id'] on 2026-06-25 — the client UI never reads
+// .username from any chat-object (verified by grep across serpbays_client:
+// 0 references to otherParty.username / sender.username / advertiser.username
+// / publisher.username on chat pages). Username is PII under our PoLP
+// rule alongside email — both are dropped from chat responses.
+const CHATROOM_USER_FIELDS = ['id'];
 
 function buildChatroomOwnership(user) {
   if (!user || typeof user.id !== 'number') return null;
@@ -100,9 +120,16 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         return ctx.unauthorized('You must be logged in to access chatrooms');
       }
       
-      // Check if the order exists and user is associated with it
+      // Check if the order exists and user is associated with it.
+      // Only `.id` is read from advertiser/publisher (line 113-118 below);
+      // chatroom is needed as a reference handle only.
       const order = await strapi.entityService.findOne('api::order.order', orderId, {
-        populate: ['advertiser', 'publisher', 'chatroom'],
+        fields: ['id'],
+        populate: {
+          advertiser: { fields: ['id'] },
+          publisher:  { fields: ['id'] },
+          chatroom:   { fields: ['id'] },
+        },
       });
       
       if (!order) {
@@ -132,23 +159,25 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         });
       }
       
-      // Allow-listed populate — pre-fix returned full up_users rows for
-      // advertiser/publisher/communications.sender (password hash,
-      // withdrawalOtp, paypal_email, billing PII). Caller is already
-      // confirmed a party to this order (check at L113-118), so showing
-      // the other party's email is reasonable; the SPA also renders
-      // sender usernames. Other PII fields stay private.
+      // Tightened to { id } only on 2026-06-25 — prior version exposed
+      // username/email to every party fetching the chatroom, even though
+      // the SPA never reads them. PoLP: caller's party-ness was already
+      // verified at L113-118; that's the authorization signal — the
+      // identity of the OTHER party should not be re-leaked through
+      // this endpoint just because the caller is on the same order.
       const populatedChatroom = await strapi.entityService.findOne('api::chatroom.chatroom', chatroom.id, {
+        fields: CHATROOM_PUBLIC_FIELDS,
         populate: {
-          order: { fields: ['id', 'orderStatus'] },
-          advertiser: { fields: ['id', 'username', 'email'] },
-          publisher:  { fields: ['id', 'username', 'email'] },
+          order:      { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: CHATROOM_USER_FIELDS },
+          publisher:  { fields: CHATROOM_USER_FIELDS },
           communications: {
-            populate: { sender: { fields: ['id', 'username', 'email'] } },
+            fields: ['id', 'message', 'communicationStatus', 'isUnread', 'createdAt'],
+            populate: { sender: { fields: CHATROOM_USER_FIELDS } },
           },
         },
       });
-      
+
       return { data: populatedChatroom };
     } catch (error) {
       console.error('Error getting/creating chatroom:', error);
@@ -165,7 +194,13 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         return ctx.unauthorized('You must be logged in to view chatrooms');
       }
       
-      // Find all chatrooms where user is either advertiser or publisher
+      // Allow-listed populate — string-form populate (the old code) would
+      // return the full up_users row for advertiser/publisher AND every
+      // sender on every communication, including email/username/
+      // documentId/withdrawalOtp/paypal_email/billing PII. Even narrower
+      // than the read-endpoints `find`/`findOne`: this list view doesn't
+      // render party usernames either (verified — UI uses only counts
+      // + the latestMessage.message preview).
       const chatrooms = await strapi.entityService.findMany('api::chatroom.chatroom', {
         filters: {
           $or: [
@@ -173,13 +208,16 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
             { publisher: user.id }
           ]
         },
-        populate: [
-          'order', 
-          'advertiser', 
-          'publisher', 
-          'communications', 
-          'communications.sender'
-        ],
+        fields: CHATROOM_PUBLIC_FIELDS,
+        populate: {
+          order:      { fields: ['id', 'orderStatus', 'websiteUrl'] },
+          advertiser: { fields: CHATROOM_USER_FIELDS },
+          publisher:  { fields: CHATROOM_USER_FIELDS },
+          communications: {
+            fields: ['id', 'message', 'communicationStatus', 'isUnread', 'createdAt'],
+            populate: { sender: { fields: CHATROOM_USER_FIELDS } },
+          },
+        },
         sort: { lastActivity: 'desc' }
       });
       
@@ -195,11 +233,7 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
             orderTitle: chatroom.order?.websiteUrl ? 
               `• ${chatroom.order.websiteUrl}` : 
               `Order #${chatroom.order?.id}`,
-            otherParty: {
-              id: otherParty?.id,
-              username: otherParty?.username,
-              email: otherParty?.email
-            },
+            otherParty: sanitizeUserRef(otherParty),
             latestMessage: null,
             unreadCount: 0,
             totalMessages: 0,
@@ -228,15 +262,11 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
           orderTitle: chatroom.order?.websiteUrl ? 
             `• ${chatroom.order.websiteUrl}` : 
             `Order #${chatroom.order?.id}`,
-          otherParty: {
-            id: otherParty?.id,
-            username: otherParty?.username,
-            email: otherParty?.email
-          },
+          otherParty: sanitizeUserRef(otherParty),
           latestMessage: {
             id: latestMessage.id,
             message: latestMessage.message,
-            sender: latestMessage.sender,
+            sender: sanitizeUserRef(latestMessage.sender),
             createdAt: latestMessage.createdAt,
             communicationStatus: latestMessage.communicationStatus,
             isUnread: latestMessage.isUnread
@@ -279,9 +309,13 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         return ctx.unauthorized('You must be logged in to update chatroom status');
       }
       
-      // Check if the chatroom exists
+      // Check if the chatroom exists. Only `.id` is read below for the
+      // party check; never expose user PII here.
       const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', id, {
-        populate: ['advertiser', 'publisher'],
+        populate: {
+          advertiser: { fields: CHATROOM_USER_FIELDS },
+          publisher:  { fields: CHATROOM_USER_FIELDS },
+        },
       });
       
       if (!chatroom) {
@@ -331,16 +365,20 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
     }
 
     try {
-      // Allow-listed populate — id/username/email are the only user
-      // fields the transcript renderer below needs; password hash et al.
-      // never leave the DB.
+      // Allow-listed populate — only `.id` from each party (PoLP).
+      // The transcript renderer below uses role labels ("Advertiser:" /
+      // "Publisher:") derived from sender.id vs chatroom.advertiser.id,
+      // so usernames are not required. Password hash, billing PII,
+      // withdrawalOtp, paypal_email etc. never leave the DB.
       const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', numericId, {
+        fields: CHATROOM_PUBLIC_FIELDS,
         populate: {
-          order: { fields: ['id', 'orderStatus'] },
-          advertiser: { fields: ['id', 'username', 'email'] },
-          publisher:  { fields: ['id', 'username', 'email'] },
+          order:      { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: CHATROOM_USER_FIELDS },
+          publisher:  { fields: CHATROOM_USER_FIELDS },
           communications: {
-            populate: { sender: { fields: ['id', 'username', 'email'] } },
+            fields: ['id', 'message', 'communicationStatus', 'isUnread', 'createdAt'],
+            populate: { sender: { fields: CHATROOM_USER_FIELDS } },
           },
         },
       });
@@ -374,25 +412,17 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
           created: chatroom.createdAt,
           lastActivity: chatroom.lastActivity,
           participants: {
-            advertiser: {
-              id: chatroom.advertiser?.id,
-              username: chatroom.advertiser?.username,
-              email: chatroom.advertiser?.email
-            },
-            publisher: {
-              id: chatroom.publisher?.id,
-              username: chatroom.publisher?.username,
-              email: chatroom.publisher?.email
-            }
+            advertiser: sanitizeUserRef(chatroom.advertiser),
+            publisher:  sanitizeUserRef(chatroom.publisher),
           }
         },
         messages: sortedComms.map(comm => ({
           id: comm.id,
           message: comm.message,
+          // PoLP: only id + role label; transcript reader attributes
+          // messages by id-vs-role, no PII needed.
           sender: {
             id: comm.sender?.id,
-            username: comm.sender?.username,
-            email: comm.sender?.email,
             role: comm.sender?.id === chatroom.advertiser?.id ? 'Advertiser' : 'Publisher'
           },
           timestamp: comm.createdAt,
@@ -438,12 +468,14 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
 
     try {
       const chatroom = await strapi.entityService.findOne('api::chatroom.chatroom', numericId, {
+        fields: CHATROOM_PUBLIC_FIELDS,
         populate: {
-          order: { fields: ['id', 'orderStatus'] },
-          advertiser: { fields: ['id', 'username', 'email'] },
-          publisher:  { fields: ['id', 'username', 'email'] },
+          order:      { fields: ['id', 'orderStatus'] },
+          advertiser: { fields: CHATROOM_USER_FIELDS },
+          publisher:  { fields: CHATROOM_USER_FIELDS },
           communications: {
-            populate: { sender: { fields: ['id', 'username', 'email'] } },
+            fields: ['id', 'message', 'communicationStatus', 'isUnread', 'createdAt'],
+            populate: { sender: { fields: CHATROOM_USER_FIELDS } },
           },
         },
       });
@@ -486,10 +518,11 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         return {
           id: comm.id,
           message: message,
+          // PoLP: only id + role label. Role is derived from id, so the
+          // transcript reader can attribute messages without needing
+          // the sender's email or username.
           sender: {
             id: comm.sender?.id,
-            username: comm.sender?.username,
-            email: comm.sender?.email,
             role: comm.sender?.id === chatroom.advertiser?.id ? 'Advertiser' : 'Publisher'
           },
           timestamp: comm.createdAt,
@@ -510,16 +543,8 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
             created: chatroom.createdAt,
             lastActivity: chatroom.lastActivity,
             participants: {
-              advertiser: {
-                id: chatroom.advertiser?.id,
-                username: chatroom.advertiser?.username,
-                email: chatroom.advertiser?.email
-              },
-              publisher: {
-                id: chatroom.publisher?.id,
-                username: chatroom.publisher?.username,
-                email: chatroom.publisher?.email
-              }
+              advertiser: sanitizeUserRef(chatroom.advertiser),
+              publisher:  sanitizeUserRef(chatroom.publisher),
             }
           },
           messages: processedMessages,
@@ -1229,10 +1254,7 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         message: {
           id: message.id,
           content: message.message,
-          sender: {
-            id: message.sender?.id,
-            username: message.sender?.username
-          },
+          sender: sanitizeUserRef(message.sender),
           createdAt: message.createdAt,
           isUnread: true
         }
@@ -1291,10 +1313,7 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         message: {
           id: newMessage.id,
           content: newMessage.message,
-          sender: {
-            id: newMessage.sender.id,
-            username: newMessage.sender.username
-          },
+          sender: sanitizeUserRef(newMessage.sender),
           createdAt: newMessage.createdAt,
           isUnread: true
         }
@@ -1312,6 +1331,9 @@ module.exports = createCoreController('api::chatroom.chatroom', ({ strapi }) => 
         strapi.io.emitToUser(chatroom.publisher.id, event, notificationData);
       }
 
+      // sanitize the message before returning — newMessage.sender was
+      // populated above (full up_users row) and would otherwise leak.
+      if (newMessage?.sender) newMessage.sender = sanitizeUserRef(newMessage.sender);
       return {
         success: true,
         message: newMessage

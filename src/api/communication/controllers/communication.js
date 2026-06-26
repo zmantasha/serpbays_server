@@ -27,12 +27,18 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 
-const SENDER_PUBLIC_FIELDS = ['id', 'username'];
-const ORDER_PUBLIC_FIELDS_FOR_COMM = ['id', 'documentId', 'orderStatus', 'createdAt'];
+// Tightened 2026-06-25 (PoLP):
+//   * SENDER_PUBLIC_FIELDS: dropped 'username' — client UI reads only
+//     .sender.id (no username/email refs in serpbays_client chat pages).
+//   * COMM/ORDER docId: dropped 'documentId' — Strapi 5 internal handle,
+//     never used by the client; exposing it gives external callers a
+//     stable cross-endpoint identifier we don't intend to publish.
+const SENDER_PUBLIC_FIELDS = ['id'];
+const ORDER_PUBLIC_FIELDS_FOR_COMM = ['id', 'orderStatus', 'createdAt'];
 const COMM_PUBLIC_FIELDS = [
-  'id', 'documentId',
+  'id',
   'message', 'communicationStatus', 'isUnread',
-  'createdAt', 'updatedAt', 'publishedAt',
+  'createdAt', 'updatedAt',
 ];
 
 const VALID_STATUS = ['requested', 'acceptance', 'in_progress'];
@@ -123,10 +129,16 @@ module.exports = createCoreController('api::communication.communication', ({ str
     if (!Number.isInteger(numericId) || numericId <= 0) {
       return ctx.notFound('Communication not found');
     }
+    // `sender: true` would return the full up_users row (email, phone,
+    // password hash, withdrawalOtp, paypal_email, billing PII). The
+    // post-fetch `shapeForResponse` already strips most of it, but the
+    // intermediate row is held in memory uncensored until the strip
+    // runs — and a future logger/middleware that snapshots req objects
+    // would capture the PII. Allow-list at the query layer too.
     const row = await strapi.db.query('api::communication.communication').findOne({
       where: { id: numericId },
       populate: {
-        sender: true,
+        sender: { select: SENDER_PUBLIC_FIELDS },
         order: {
           populate: {
             advertiser: { select: ['id'] },
@@ -350,7 +362,7 @@ module.exports = createCoreController('api::communication.communication', ({ str
           message: {
             id: entity.id,
             content: message,
-            sender: { id: user.id, username: user.username },
+            sender: { id: user.id },
             createdAt: populated.createdAt,
             isUnread: true,
           },
