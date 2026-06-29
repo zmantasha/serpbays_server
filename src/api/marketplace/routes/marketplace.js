@@ -89,14 +89,21 @@ module.exports = {
         middlewares: [],
       },
     },
-    // Custom CSV upload route
+    // Custom CSV upload route — admin-gated (hotfix-v2, 2026-06-26).
+    // Pre-fix policy was `is-authenticated`, meaning any logged-in user
+    // (advertisers, publishers, anyone with a Strapi JWT) could mass-
+    // import marketplace listings via CSV. uploadCSV parses a CSV and
+    // creates marketplace.marketplace entries; bulk-import is an admin
+    // operation. Matched to the same pattern as the other 5 admin-jwt
+    // routes in `routes/custom.js`.
     {
       method: 'POST',
       path: '/marketplaces/upload-csv',
       handler: 'marketplace.uploadCSV',
       config: {
-        policies: ['global::is-authenticated'],
-        middlewares: [],
+        auth: false,
+        policies: ['global::is-admin'],
+        middlewares: ['global::admin-jwt-auth'],
       },
     },
     // TAT update route for specific website

@@ -9,6 +9,80 @@ const { parse } = require('csv-parse/sync');
 const fs = require('fs');
 const { normalizeUrl } = require('../../../utils/normalize-url');
 
+// ============================================================================
+// PII / IDOR allow-list for marketplace responses (hotfix-v2, 2026-06-26)
+// ============================================================================
+// `sanitizePublisherData` previously used a deny-list — any new column added
+// to the marketplace schema would leak by default until someone remembered to
+// add it to the deny list. Worse, the deny-list matched `publisher_*` but
+// NOT the populated `publisher` relation, so the full up_users row (email,
+// clerkId, password=null, resetPasswordToken=null, confirmationToken=null,
+// blocked, confirmed) was returned for every entry in /api/marketplaces to
+// every authenticated user — straightforward IDOR.
+//
+// New approach: explicit allow-list. Anything not in MARKETPLACE_PUBLIC_FIELDS
+// is dropped before sending. Owner gets a superset that adds intake pricing
+// + their own contact info. Both lists are derived from the schema and the
+// client UI's actual consumption (grep-verified 2026-06-26).
+const MARKETPLACE_PUBLIC_FIELDS = [
+  // Identity
+  'id', 'documentId', 'url',
+  // Advertiser-facing pricing — never publisher intake prices
+  'price', 'link_insertion_price',
+  'adv_casino_pricing', 'adv_cbd_pricing', 'adv_crypto_pricing', 'adv_dating_pricing',
+  'adv_li_casino_pricing', 'adv_li_cbd_pricing', 'adv_li_crypto_pricing', 'adv_li_dating_pricing',
+  // Site spec / content requirements
+  'tat', 'placement_speed', 'min_word_count',
+  'backlink_type', 'backlink_validity', 'dofollow_link',
+  'category', 'other_category', 'language', 'countries',
+  'guidelines', 'sample_post', 'sample_links',
+  'description', 'publication_location', 'domain_zone',
+  // Public SEO metrics
+  'ahrefs_dr', 'ahrefs_traffic', 'ahrefs_rank', 'ahrefs_referring_domain', 'ahrefs_keywords',
+  'moz_da', 'semrush_authority_score', 'semrush_traffic', 'spam_score', 'similarweb_traffic',
+  // Trust + feature flags
+  'gsc_verified',
+  'sponsored', 'ugc', 'digital_pr', 'only_with_us', 'fast_placement_status',
+  'isFeatured', 'isFeaturedGuestPost', 'isFeaturedLinkInsertion',
+  'website_status', 'status',
+  // Timestamps (marketplace draftAndPublish: false → no publishedAt)
+  'createdAt', 'updatedAt',
+];
+
+// Fields ONLY the owning publisher sees on their own listings.
+// Includes publisher PII (their own email/name), intake pricing (their cost
+// before our markup), and internal metric-refresh timestamps the publisher
+// dashboard surfaces. Non-owners NEVER see any of these.
+const MARKETPLACE_OWNER_EXTRA_FIELDS = [
+  // Publisher identity (their own — they're looking at their own listing)
+  'publisher_email', 'publisher_name',
+  // Intake pricing — what the publisher gets, before our markup. Business secret.
+  'publisher_price',
+  'publisher_link_insertion_price', 'publisher_writing_price',
+  'publisher_casino_pricing', 'publisher_cbd_pricing',
+  'publisher_crypto_pricing', 'publisher_dating_pricing',
+  'publisher_li_casino_pricing', 'publisher_li_cbd_pricing',
+  'publisher_li_crypto_pricing', 'publisher_li_dating_pricing',
+  'publisher_forbidden_gp_price', 'publisher_forbidden_li_price',
+  // GSC posture — useful for the owner, not for anyone else.
+  'gsc_permission_level',
+  // Internal operational state — owner's dashboard reads these for badges.
+  // Non-owners get NO view of moderation pipeline or third-party refresh cadence.
+  'approvalStatus', 'blacklist_status',
+  'delistedReason', 'delistedAt',
+  'dataVersion', 'bulkRefreshSkipTools',
+  'lastAhrefsRefreshAt', 'lastAhrefsExportAt',
+  'lastMozRefreshAt', 'lastMozExportAt',
+  'lastSemrushRefreshAt', 'lastSemrushExportAt',
+  'lastPriceUpdateAt', 'lastMetricUpdateAt',
+];
+
+// Fields that NEVER leave the server, even for owners or admins via this
+// sanitizer. gsc_refresh_token is a Google OAuth refresh token — its
+// exposure would let any holder impersonate the publisher against the
+// Search Console API indefinitely.
+const MARKETPLACE_NEVER_EXPOSE = ['gsc_refresh_token'];
+
 // Price-like columns. When sorting by any of these, both NULL and 0 are
 // treated as "no price" so they fall to the bottom of an ascending sort.
 const PRICE_LIKE_FIELDS = new Set([
@@ -291,65 +365,55 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     return sorted;
   },
 
-  // Helper function to sanitize publisher data for advertisers
+  // Helper: shape a marketplace entry for the response using the
+  // allow-list constants defined at the top of this file.
+  //
+  // For non-owners: return MARKETPLACE_PUBLIC_FIELDS only.
+  // For the owning publisher: return PUBLIC + OWNER_EXTRA (their own
+  //                            intake pricing, contact info, refresh ts).
+  // For all: never include MARKETPLACE_NEVER_EXPOSE (gsc_refresh_token).
+  // The `publisher` relation field is dropped from the response — only
+  // its id is needed for the ownership check, and that's done in this
+  // function before the entry is shaped.
   sanitizePublisherData(entries, user) {
-    // For advertisers and public users, hide sensitive publisher information
     const sanitize = (entry) => {
       if (!entry) return entry;
 
-      const sanitized = { ...entry };
-
-      // Always strip server-side secrets, regardless of ownership.
-      // gsc_refresh_token is a Google OAuth refresh token used server-side for
-      // Search Console API access — it must never appear in any API response.
-      delete sanitized.gsc_refresh_token;
-
-      // Check if this is the user's own website
-      // Check by userId (publisher relation) or email for legacy records
-      // Handle both cases: publisher might be just ID (number) or populated object
-      const publisherId = typeof entry.publisher === 'object' && entry.publisher !== null
+      // Determine ownership BEFORE shaping the response.
+      // publisher may arrive as a number (FK), as { id: N } (populated
+      // with fields:['id']), or as a full row (legacy code paths).
+      const publisherId = entry.publisher && typeof entry.publisher === 'object'
         ? entry.publisher.id
         : entry.publisher;
 
-      const isOwnWebsite = user && (
-        (publisherId && publisherId == user.id) ||  // Use == to handle string/number mismatch
-        (!publisherId && entry.publisher_email === user.email)
-      );
+      const isOwnWebsite = !!(user && (
+        (publisherId && publisherId == user.id) ||  // == handles string/number mismatch
+        (!publisherId && entry.publisher_email && entry.publisher_email === user.email)
+      ));
 
-      // Add ownership flag (safe to expose, doesn't reveal publisher identity)
-      sanitized.isOwnWebsite = isOwnWebsite;
+      const allowedFields = isOwnWebsite
+        ? [...MARKETPLACE_PUBLIC_FIELDS, ...MARKETPLACE_OWNER_EXTRA_FIELDS]
+        : MARKETPLACE_PUBLIC_FIELDS;
 
-      // If user is a publisher viewing their own listing, keep publisher data
-      if (isOwnWebsite) {
-        return sanitized;
+      // Build the response object explicitly from the allow-list. Anything
+      // not in the list — including the populated `publisher` user record,
+      // any future schema column, and the gsc_refresh_token — is dropped.
+      const out = {};
+      for (const k of allowedFields) {
+        if (entry[k] !== undefined) out[k] = entry[k];
       }
 
-      // For advertisers and public users, remove ALL publisher-related fields
-      Object.keys(sanitized).forEach(key => {
-        if (key.startsWith('publisher_') || key === 'publisher_email' || key === 'publisher_name') {
-          delete sanitized[key];
-        }
-      });
+      // Defense in depth: if a future allow-list update accidentally
+      // includes a NEVER_EXPOSE field, strip it here.
+      for (const k of MARKETPLACE_NEVER_EXPOSE) {
+        if (k in out) delete out[k];
+      }
 
-      // Non-owners must not see GSC permission level either (reveals publisher
-      // posture toward Google Search Console).
-      delete sanitized.gsc_permission_level;
+      // Computed flag — safe to expose; doesn't reveal publisher identity,
+      // just lets the UI render owner-only controls.
+      out.isOwnWebsite = isOwnWebsite;
 
-      // Internal admin / operational state — never exposed to non-admin
-      // consumers. The admin panel reads via /admin/marketplace/* which
-      // does not go through this sanitizer.
-      const INTERNAL_FIELDS = [
-        'approvalStatus', 'blacklist_status',
-        'delistedReason', 'delistedAt',
-        'dataVersion', 'bulkRefreshSkipTools',
-        'lastAhrefsRefreshAt', 'lastAhrefsExportAt',
-        'lastMozRefreshAt', 'lastMozExportAt',
-        'lastSemrushRefreshAt', 'lastSemrushExportAt',
-        'lastPriceUpdateAt', 'lastMetricUpdateAt',
-      ];
-      for (const k of INTERNAL_FIELDS) delete sanitized[k];
-
-      return sanitized;
+      return out;
     };
 
     // Handle both single entry and array of entries
@@ -534,7 +598,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     else {
       const existingEntry = await strapi.entityService.findOne('api::marketplace.marketplace', ctx.params.id, {
         fields: ['publisher_email'],
-        populate: ['publisher']
+        // Only need to know whether publisher FK is set — populate id only.
+        populate: { publisher: { fields: ['id'] } }
       });
       if (existingEntry && !existingEntry.publisher && existingEntry.publisher_email) {
         const publisherUser = await strapi.db.query('plugin::users-permissions.user').findOne({
@@ -1079,7 +1144,16 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         try {
           const results = await strapi.entityService.findPage('api::marketplace.marketplace', {
             filters: ctx.query.filters,
-            populate: ctx.query.populate || '*',
+            // Defense in depth: pre-fix this was
+            //   `populate: ctx.query.populate || '*'`
+            // which (a) accepted caller-controlled populate from the
+            // query string (`?populate=publisher` would pull the full
+            // up_users row) and (b) defaulted to `'*'` which populates
+            // EVERY relation. The sanitizer's new allow-list catches
+            // the response leak, but in-memory data is still amplified.
+            // Locking to the same publisher-id-only populate used in the
+            // primary path above.
+            populate: { publisher: { fields: ['id'] } },
             page,
             pageSize,
             orderBy: {
@@ -1139,7 +1213,13 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         orderBy: orderByArray,
         limit: pageSize,
         offset: (page - 1) * pageSize,
-        populate: ['publisher'],  // Required for isOwnWebsite check
+        // Only the publisher's id is needed for the isOwnWebsite check
+        // performed in sanitizePublisherData. Pre-fix this used the
+        // string-form `populate: ['publisher']` which returned the full
+        // up_users row (email, clerkId, password, resetPasswordToken,
+        // confirmationToken, blocked, confirmed) per entry — that's the
+        // IDOR / PII leak this hotfix closes.
+        populate: { publisher: { select: ['id'] } },
       });
 
       // Get total count for pagination
