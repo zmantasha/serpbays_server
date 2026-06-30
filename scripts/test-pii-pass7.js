@@ -89,7 +89,7 @@ out('\n=== D. Route rate limits lowered to 30/min ===');
 // path: '/marketplaces' (GET find, POST create, etc.) so the
 // path string alone is ambiguous.
 {
-  const block = MP_ROUTES.match(/handler:\s*['"]marketplace\.find['"][\s\S]{0,600}\},\s*\},/);
+  const block = MP_ROUTES.match(/handler:\s*['"]marketplace\.find['"][\s\S]{0,1200}\},\s*\},/);
   const body = block ? block[0] : '';
   assert(/max:\s*30\b/.test(body),
     '/marketplaces (find) rate limit max = 30 (was 100)');
