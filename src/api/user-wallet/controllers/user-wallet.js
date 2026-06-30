@@ -493,6 +493,28 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
         return ctx.unauthorized('Authentication required');
       }
 
+      // Brute-force protection. Reject before any DB read so an attacker
+      // can't drive load with high-frequency invalid attempts. The limiter
+      // tracks BOTH attempt rate (per user + per IP) and cumulative
+      // failures (which trigger a longer cooldown). See
+      // src/utils/promo-redeem-limiter.js for thresholds + env vars.
+      const promoLimiter = require('../../../utils/promo-redeem-limiter');
+      const ipAddress =
+        ctx.request.ip ||
+        ctx.request.header?.['x-forwarded-for']?.split(',')[0]?.trim() ||
+        null;
+      const gate = await promoLimiter.check(userId, ipAddress);
+      if (!gate.allowed) {
+        await transaction.rollback();
+        ctx.set('Retry-After', String(gate.retryAfterSeconds || 60));
+        // Generic 429; do NOT echo back the specific limit reason — that
+        // would let a tuned attacker pivot between per-user / per-IP /
+        // cooldown windows. Single response shape via ctx.throw — Koa
+        // doesn't ship a `ctx.tooManyRequests` helper, so we set status
+        // explicitly.
+        return ctx.throw(429, 'Too many redemption attempts. Please try again later.');
+      }
+
       const { promoCode } = ctx.request.body;
       if (!promoCode) {
         await transaction.rollback();
@@ -559,12 +581,14 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           console.log(`[VOUCHER] Found voucher code: ${promoCode}, id: ${codeData.id}, docId: ${codeData.documentId}, amount: $${codeData.amount}`);
         } else {
           await transaction.rollback();
+          await promoLimiter.recordFailure(userId);
           return ctx.badRequest('Invalid or expired code');
         }
       }
 
       if (!codeData) {
         await transaction.rollback();
+        await promoLimiter.recordFailure(userId);
         return ctx.badRequest('Invalid or expired code');
       }
 
@@ -963,8 +987,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       console.log(`Added ${amount} to promo balance for user ${userId}`);
 
-      // Real-time wallet update — covers redeemPromo + offer-engine bonus
-      // application (the legitimate consumers of this helper).
+      // Real-time wallet update — covers redeemPromo (the legitimate
+      // consumer of this helper).
       try {
         await strapi
           .service('api::user-wallet.user-wallet')

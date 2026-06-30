@@ -55,6 +55,52 @@ function sanitizeProjectResponse(project) {
 }
 
 module.exports = createCoreController('api::project.project', ({ strapi }) => ({
+  // ===== Default core-router override — CRITICAL ownership gating =====
+  //
+  // routes/project.js declares `handler: 'api::project.project.find'`
+  // gated only by `is-authenticated` (which checks login, NOT ownership).
+  // Without an override here, the default Strapi core controller's find
+  // applies — no row-level filter, full caller-controlled populate. A
+  // logged-in user could `GET /projects?populate=owner&populate=team`
+  // and receive every project on the platform with full up_users rows
+  // attached (email, phone, password hash, withdrawalOtp, paypal_email,
+  // billing PII).
+  //
+  // This handler mirrors getMyProjects's ownership logic — owner = me
+  // OR I'm a team member — so the default route can't widen scope past
+  // the current user's projects.
+  async find(ctx) {
+    if (!ctx.state.user) {
+      return ctx.unauthorized('You must be logged in to list projects');
+    }
+    const user = ctx.state.user;
+    const ownership = {
+      $or: [
+        { owner: user.id },
+        { team: { id: user.id } },
+      ],
+    };
+    const userFilters = ctx.query?.filters;
+    ctx.query = {
+      ...ctx.query,
+      filters: userFilters ? { $and: [userFilters, ownership] } : ownership,
+      fields: PROJECT_PUBLIC_FIELDS,
+      populate: PROJECT_LIST_POPULATE,
+    };
+    // Cap pageSize — defense against a hostile caller probing for projects
+    // outside their scope by walking pagination with a huge page size.
+    const ps = Number.parseInt(ctx.query?.pagination?.pageSize, 10);
+    if (Number.isFinite(ps) && ps > 100) {
+      ctx.query.pagination = { ...ctx.query.pagination, pageSize: 100 };
+    }
+    const result = await super.find(ctx);
+    const rows = result?.data;
+    if (Array.isArray(rows)) {
+      for (const row of rows) sanitizeProjectResponse(row?.attributes || row);
+    }
+    return result;
+  },
+
   // Create a new project
   async create(ctx) {
     try {
