@@ -85,21 +85,24 @@ out('\n=== C. find() uses the clamp at every pageSize site ===');
 out('\n=== D. Route rate limits lowered to 30/min ===');
 
 // D1. /marketplaces (find) — rate limit max is 30
+// Anchor on the handler name; there are multiple routes with
+// path: '/marketplaces' (GET find, POST create, etc.) so the
+// path string alone is ambiguous.
 {
-  const block = MP_ROUTES.match(/path:\s*['"]\/marketplaces['"][\s\S]{0,600}\},\s*\},/);
+  const block = MP_ROUTES.match(/handler:\s*['"]marketplace\.find['"][\s\S]{0,600}\},\s*\},/);
   const body = block ? block[0] : '';
   assert(/max:\s*30\b/.test(body),
-    '/marketplaces rate limit max = 30 (was 100)');
+    '/marketplaces (find) rate limit max = 30 (was 100)');
   assert(!/max:\s*100\b/.test(body),
-    '/marketplaces no longer has rate limit max = 100');
+    '/marketplaces (find) no longer has rate limit max = 100');
 }
 
 // D2. /marketplaces/:id (findOne) — rate limit max is 30
 {
-  const block = MP_ROUTES.match(/path:\s*['"]\/marketplaces\/:id['"][\s\S]{0,600}\},\s*\},/);
+  const block = MP_ROUTES.match(/handler:\s*['"]marketplace\.findOne['"][\s\S]{0,600}\},\s*\},/);
   const body = block ? block[0] : '';
   assert(/max:\s*30\b/.test(body),
-    '/marketplaces/:id rate limit max = 30 (was 100)');
+    '/marketplaces/:id (findOne) rate limit max = 30 (was 100)');
 }
 
 out('\n=== E. Threat-model math (documentation check) ===');
