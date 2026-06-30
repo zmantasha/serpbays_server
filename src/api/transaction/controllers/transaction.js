@@ -738,6 +738,15 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         strapi.log.warn(`[VERIFY-PAYPAL] emitBalanceUpdate failed (non-fatal): ${emitErr.message}`);
       }
 
+      // Fire-and-forget invoice creation via the centralized service. This
+      // verify path is the client-side callback from PayPal's checkout and
+      // is what credits most production deposits — must invoice here too,
+      // not only via the PAYMENT.CAPTURE.COMPLETED webhook. Idempotent on
+      // transactionId so a webhook + verify double-fire dedupes.
+      strapi.service('api::invoice.invoice')
+        .createInvoiceForTransaction(transaction, wallet.users_permissions_user)
+        .catch((invErr) => strapi.log.warn(`[VERIFY-PAYPAL] invoice creation failed (non-fatal): ${invErr.message}`));
+
       return ctx.send({
         success: true,
         message: 'Payment verified and wallet updated',

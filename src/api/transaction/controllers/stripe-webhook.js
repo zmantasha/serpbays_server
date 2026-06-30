@@ -505,15 +505,18 @@ async function handlePaymentSucceeded(paymentIntent) {
       }
     });
 
-    // Invoice creation runs OUTSIDE the locked block (fire-and-forget)
+    // Invoice creation runs OUTSIDE the locked block (fire-and-forget).
+    // Routed through the centralized invoice service so Stripe / PayPal /
+    // Razorpay deposits all produce the same shape of invoice. The service
+    // is idempotent on transactionId, so a webhook retry won't duplicate.
     if (invoiceTarget) {
-      createInvoiceForTransaction(invoiceTarget.transaction, invoiceTarget.user)
-        .then(() => {
-          console.log(`[STRIPE] ✅ Invoice created for transaction ${invoiceTarget.transaction.id}`);
+      strapi.service('api::invoice.invoice')
+        .createInvoiceForTransaction(invoiceTarget.transaction, invoiceTarget.user)
+        .then((inv) => {
+          if (inv) console.log(`[STRIPE] ✅ Invoice ${inv.invoiceNumber} created for tx ${invoiceTarget.transaction.id}`);
         })
         .catch((invoiceError) => {
-          console.error(`[STRIPE] ⚠️ Invoice creation failed for transaction ${invoiceTarget.transaction.id}:`, invoiceError);
-          // Don't throw error - invoice can be created later
+          console.error(`[STRIPE] ⚠️ Invoice creation failed for tx ${invoiceTarget.transaction.id}:`, invoiceError.message);
         });
     }
 
@@ -720,53 +723,6 @@ async function handleChargeRefunded(charge) {
 
   } catch (error) {
     console.error('[STRIPE] ❌ Error handling refund:', error);
-  }
-}
-
-/**
- * Create invoice for successful transaction
- */
-async function createInvoiceForTransaction(transaction, user) {
-  try {
-    const invoiceNumber = `INV-${Date.now()}-${transaction.id}`;
-
-    const invoice = await strapi.entityService.create('api::invoice.invoice', {
-      data: {
-        invoiceNumber,
-        invoiceDate: new Date(),
-        user: user?.id,
-        transactionId: transaction.id.toString(),
-        billingName: user?.username || 'Customer',
-        billingAddress: 'Address on file',
-        billingCity: 'City',
-        billingCountry: 'Country',
-        billingPincode: '000000',
-        lineItems: [{
-          description: 'Wallet Deposit via Stripe',
-          amount: transaction.amount,
-          quantity: 1
-        }],
-        subtotal: transaction.amount,
-        taxAmount: 0,
-        totalAmount: transaction.amount,
-        currency: transaction.currency || 'USD',
-        status: 'paid',
-        pdfUrl: `/invoices/${invoiceNumber}.pdf`,
-        notes: `Stripe payment - Transaction ${transaction.id}`,
-        publishedAt: new Date()
-      }
-    });
-
-    // Link invoice to transaction
-    await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-      data: { invoice: invoice.id }
-    });
-
-    console.log(`[STRIPE] ✅ Invoice created: ${invoice.invoiceNumber}`);
-    return invoice;
-  } catch (error) {
-    console.error('[STRIPE] ❌ Invoice creation failed:', error);
-    throw error;
   }
 }
 

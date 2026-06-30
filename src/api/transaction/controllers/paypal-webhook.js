@@ -260,7 +260,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       console.log(`[PAYPAL WEBHOOK] 💵 Updated wallet balance: Main=${currentMainBalance} + ${amountToCredit} = ${newMainBalance}, Total=${newTotalBalance}`);
 
       // Create transaction record
-      await strapi.entityService.create('api::transaction.transaction', {
+      const createdTx = await strapi.entityService.create('api::transaction.transaction', {
         data: {
           type: 'deposit',
           amount: amountToCredit, // Use baseAmount (amount to credit to wallet)
@@ -309,8 +309,34 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         console.warn('[PAYPAL WEBHOOK] emitBalanceUpdate failed (non-fatal):', emitErr.message);
       }
 
+      // Fire-and-forget invoice creation through the centralized service.
+      // Idempotent on transactionId — a webhook retry won't duplicate.
+      if (createdTx?.id) {
+        this._createDepositInvoice(createdTx.id).catch(() => {});
+      }
+
     } catch (error) {
       console.error('[PAYPAL WEBHOOK] Error handling payment completed:', error);
+    }
+  },
+
+  /**
+   * Look up the freshly-credited deposit transaction + its owner, then hand
+   * off to the centralized invoice service. Wrapped — a webhook never fails
+   * on invoice issues (wallet credit has already committed at this point).
+   */
+  async _createDepositInvoice(transactionId) {
+    try {
+      const tx = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { id: transactionId },
+        populate: { users_permissions_user: true },
+      });
+      if (!tx) return;
+      const user = tx.users_permissions_user;
+      if (!user) return;
+      await strapi.service('api::invoice.invoice').createInvoiceForTransaction(tx, user);
+    } catch (err) {
+      console.warn('[PAYPAL WEBHOOK] invoice creation failed (non-fatal):', err.message);
     }
   },
 

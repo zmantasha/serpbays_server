@@ -216,11 +216,37 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         } catch (emitErr) {
           console.warn('[RAZORPAY WEBHOOK] emitBalanceUpdate failed (non-fatal):', emitErr.message);
         }
+
+        // Fire-and-forget invoice creation through the centralized service.
+        // Idempotent on transactionId — webhook retries / order.paid + payment.captured
+        // double-fire will never produce a duplicate invoice.
+        this._createDepositInvoice(emitContext.transactionId).catch(() => {});
       }
 
     } catch (error) {
       console.error('[RAZORPAY WEBHOOK] Error in handlePaymentCaptured:', error);
       throw error;
+    }
+  },
+
+  /**
+   * Look up the freshly-credited deposit transaction + its owner, then hand
+   * off to the centralized invoice service. Wrapped in its own try/catch so
+   * a webhook never fails on invoice issues — the wallet credit has already
+   * committed at this point.
+   */
+  async _createDepositInvoice(transactionId) {
+    try {
+      const tx = await strapi.db.query('api::transaction.transaction').findOne({
+        where: { id: transactionId },
+        populate: { users_permissions_user: true },
+      });
+      if (!tx) return;
+      const user = tx.users_permissions_user;
+      if (!user) return;
+      await strapi.service('api::invoice.invoice').createInvoiceForTransaction(tx, user);
+    } catch (err) {
+      console.warn('[RAZORPAY WEBHOOK] invoice creation failed (non-fatal):', err.message);
     }
   },
 
@@ -404,6 +430,12 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         } catch (emitErr) {
           console.warn('[RAZORPAY WEBHOOK] emitBalanceUpdate failed (non-fatal):', emitErr.message);
         }
+
+        // Fire-and-forget invoice creation through the centralized service.
+        // Idempotent — payment.captured (which usually fires first) will have
+        // already produced the invoice; this is a no-op safety net for the
+        // rare case where order.paid arrives standalone.
+        this._createDepositInvoice(emitContext.transactionId).catch(() => {});
       }
 
     } catch (error) {
@@ -722,6 +754,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         } catch (emitErr) {
           console.warn('[RAZORPAY VERIFY] emitBalanceUpdate failed (non-fatal):', emitErr.message);
         }
+
+        // Fire-and-forget invoice creation. updateTransactionStatus is the
+        // single wallet-credit point for the client-callback verify path
+        // (/api/transactions/verify-razorpay) which the Razorpay checkout
+        // SDK triggers — most production credits arrive here, NOT via the
+        // signed webhook. Idempotent on transactionId.
+        this._createDepositInvoice(transaction.id).catch(() => {});
       } else if (status === 'success' && previousStatus === 'success') {
         console.log(`[RAZORPAY VERIFY] ⚠️ Transaction ${transaction.id} already successful - wallet already credited`);
       }
