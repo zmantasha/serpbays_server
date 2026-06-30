@@ -82,11 +82,14 @@ out('\n=== B. find() ignores caller-controlled populate ===');
 assert(!/populate:\s*ctx\.query\.populate/.test(SL_NO_COMMENTS),
   "no `populate: ctx.query.populate` pattern remains");
 
-// B2. find() uses the server-defined allow-list
+// B2. find() uses the server-defined allow-list. Strip JS comments
+// before matching so the function-body comment that quotes the old
+// pre-fix string `populate: ctx.query.populate || [...]` doesn't
+// false-positive against the negative checks elsewhere.
 {
-  const fn = SHORTLIST.match(/async find\(ctx\)[\s\S]*?^  \},/m);
+  const fn = SL_NO_COMMENTS.match(/async find\(ctx\)[\s\S]*?^  \},/m);
   const body = fn ? fn[0] : '';
-  assert(/populate:\s*\{\s*marketplace:\s*\{\s*fields:\s*SHORTLIST_MARKETPLACE_FIELDS\s*\}\s*\}/.test(body),
+  assert(/populate:\s*\{\s*marketplace:\s*\{\s*fields:\s*SHORTLIST_MARKETPLACE_FIELDS\s*\}\s*,?\s*\}/.test(body),
     'find() populate is { marketplace: { fields: SHORTLIST_MARKETPLACE_FIELDS } }');
 }
 
