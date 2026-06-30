@@ -57,8 +57,6 @@ module.exports = {
   //   POST /api/wallet/redeem-promo    → consumes a promo/voucher code,
   //                                     row-locked, idempotent, server-
   //                                     validated amount
-  //   offer-engine.applyOffers          → server-side bonus calculation
-  //                                     during gateway-verified deposits
   //
   // No frontend consumer of /api/wallet/add-promo-funds exists. Returns
   // HTTP 410 Gone + warn log so any caller surfaces in alerts.

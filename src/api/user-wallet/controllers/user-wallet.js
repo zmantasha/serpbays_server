@@ -987,8 +987,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
 
       console.log(`Added ${amount} to promo balance for user ${userId}`);
 
-      // Real-time wallet update — covers redeemPromo + offer-engine bonus
-      // application (the legitimate consumers of this helper).
+      // Real-time wallet update — covers redeemPromo (the legitimate
+      // consumer of this helper).
       try {
         await strapi
           .service('api::user-wallet.user-wallet')
