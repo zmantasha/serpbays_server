@@ -24,10 +24,16 @@ module.exports = {
       config: {
         policies: [
           {
+            // Anti-scraping rate limit (hotfix-v2, 2026-06-30). Pre-fix
+            // 100 req/min × unlimited pageSize allowed full-catalog
+            // extraction in seconds. Lowered to 30/min; combined with
+            // the controller-level pageSize≤50 + page≤100 caps, a
+            // scraper needs ~33 min to extract a 50K catalog. Legit
+            // UI users paginate <10 pages so the cap doesn't bite.
             name: 'global::simple-rate-limit',
             config: {
               interval: 60000,
-              max: 100,
+              max: 30,
             },
           },
         ],
@@ -41,10 +47,14 @@ module.exports = {
       config: {
         policies: [
           {
+            // Same anti-scraping cap as the list endpoint above. With
+            // 30/min, ID enumeration (`/marketplaces/1`, `/2`, ...) is
+            // bounded to 1800 IDs/hour per IP — far below catalog size
+            // at any reasonable scale.
             name: 'global::simple-rate-limit',
             config: {
               interval: 60000,
-              max: 100,
+              max: 30,
             },
           },
         ],

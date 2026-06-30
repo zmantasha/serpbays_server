@@ -83,6 +83,55 @@ const MARKETPLACE_OWNER_EXTRA_FIELDS = [
 // Search Console API indefinitely.
 const MARKETPLACE_NEVER_EXPOSE = ['gsc_refresh_token'];
 
+// ============================================================================
+// Anti-scraping caps for /api/marketplaces (hotfix-v2, 2026-06-30)
+// ============================================================================
+// The paywall gate above (MARKETPLACE_UNLOCK_MIN_USD, default $10) restricts
+// users below the deposit threshold to 10 curated preview rows. ANY user
+// past that threshold previously could:
+//   - request `?pagination[pageSize]=10000` → full-catalog dump in one call
+//   - paginate `?page=N` indefinitely → enumerate the whole inventory
+// $10 is a trivial barrier for a competitor wanting to scrape the
+// marketplace. These hard caps bound per-request and per-session
+// extraction even for unlocked accounts:
+//   - pageSize ≤ MARKETPLACE_MAX_PAGE_SIZE (default 50): forces N/50 calls
+//     to extract N entries — combined with the 30/min route rate limit,
+//     ~1000 calls / 33 min minimum for a 50K catalog
+//   - page ≤ MARKETPLACE_MAX_PAGE (default 100): only the first
+//     pageSize × max-page = 5000 entries reachable via direct pagination;
+//     deeper rows require filtered queries (also rate-limited)
+//
+// Legit UI users typically paginate <10 pages — the caps are well above
+// real browsing usage. Both values are env-tunable so ops can adjust
+// without a code deploy.
+const MARKETPLACE_MAX_PAGE_SIZE = (() => {
+  const v = parseInt(process.env.MARKETPLACE_MAX_PAGE_SIZE, 10);
+  return Number.isFinite(v) && v >= 1 && v <= 200 ? v : 50;
+})();
+const MARKETPLACE_MAX_PAGE = (() => {
+  const v = parseInt(process.env.MARKETPLACE_MAX_PAGE, 10);
+  return Number.isFinite(v) && v >= 1 && v <= 1000 ? v : 100;
+})();
+
+// Single source of truth for paginating /api/marketplaces. Clamps the
+// caller's pagination.page + pagination.pageSize into the safe range,
+// defaulting to {1, 25} on missing/invalid input. Used in BOTH the
+// Knex-metric-sort path and the standard db.query path so a request
+// that takes either branch lands in the same bounds.
+function clampMarketplacePagination(ctx) {
+  const rawPage = parseInt(ctx.query.pagination?.page, 10);
+  const rawPageSize = parseInt(ctx.query.pagination?.pageSize, 10);
+  const page = Math.min(
+    Math.max(Number.isFinite(rawPage) ? rawPage : 1, 1),
+    MARKETPLACE_MAX_PAGE
+  );
+  const pageSize = Math.min(
+    Math.max(Number.isFinite(rawPageSize) ? rawPageSize : 25, 1),
+    MARKETPLACE_MAX_PAGE_SIZE
+  );
+  return { page, pageSize };
+}
+
 // Price-like columns. When sorting by any of these, both NULL and 0 are
 // treated as "no price" so they fall to the bottom of an ascending sort.
 const PRICE_LIKE_FIELDS = new Set([
@@ -934,8 +983,10 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // For metric field sorting, use Knex with NULLS LAST for proper NULL/0 handling
     if (useRawSorting && rawSortField && rawSortDirection) {
       const { filters, pagination } = ctx.query;
-      const page = ctx.query.pagination?.page || 1;
-      const pageSize = ctx.query.pagination?.pageSize || 25;
+      // Anti-scraping clamp: see clampMarketplacePagination definition.
+      // Pre-clamp this read was `ctx.query.pagination?.pageSize || 25`
+      // with no upper bound — `?pageSize=10000` would dump 10k rows.
+      const { page, pageSize } = clampMarketplacePagination(ctx);
 
       try {
         // Get Strapi's Knex connection
@@ -1191,9 +1242,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // IMPORTANT: We need to fetch WITH private fields (publisher_email) for ownership checks
     // Then sanitize them ourselves in sanitizePublisherData
     try {
-      // Get pagination params
-      const page = ctx.query.pagination?.page || 1;
-      const pageSize = ctx.query.pagination?.pageSize || 25;
+      // Anti-scraping clamp — same bounds as the Knex path above.
+      const { page, pageSize } = clampMarketplacePagination(ctx);
 
       // Use db.query to get ALL fields including private ones
       // IMPORTANT: Populate publisher relation for ownership check in sanitizePublisherData
