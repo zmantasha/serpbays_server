@@ -758,9 +758,49 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       ctx.query.sort = 'default';
     }
 
-    const withGateMeta = (result) => {
+    // Per-user daily uniqueness quota. Applied to advertisers/regular
+    // users only — admins and publishers viewing their own listings
+    // are bypassed. The quota is the layer that actually prevents bulk
+    // catalog extraction: pageSize cap + rate limit bound the rate;
+    // this bounds the TOTAL unique listings any one user can see in
+    // 24h, regardless of how slowly they request.
+    const marketplaceQuota = require('../../../utils/marketplace-quota');
+    const isAdminUser = !!(user && user.role && (
+      user.role.type === 'admin' || user.role.type === 'super_admin'
+    ));
+    const quotaApplies = !!user && !isAdminUser && !isPublisherUser;
+
+    // Wrap every response path. Added `await` to existing return sites
+    // since the quota check is async (Redis SCARD/SADD round-trip).
+    const withGateMeta = async (result) => {
       if (!result || typeof result !== 'object') return result;
-      result.meta = { ...(result.meta || {}), gated, minDepositRequired };
+
+      let quotaMeta = {};
+      if (quotaApplies && Array.isArray(result.data) && result.data.length > 0) {
+        const ids = result.data.map((e) => (e && (e.id || e.attributes?.id))).filter(Boolean);
+        const { allowed, total, atQuota } = await marketplaceQuota.checkAndFilter(user.id, ids);
+        // Filter the response to the allowed IDs only. Already-seen
+        // IDs always pass through; new IDs over the cap are dropped.
+        if (atQuota || allowed.length < ids.length) {
+          const allowSet = new Set(allowed);
+          result.data = result.data.filter((e) => {
+            const id = e && (e.id || e.attributes?.id);
+            return id && allowSet.has(id);
+          });
+        }
+        quotaMeta = {
+          dailyBrowseUsed: total,
+          dailyBrowseCap: marketplaceQuota.getCap(),
+          atDailyBrowseCap: atQuota,
+        };
+      }
+
+      result.meta = {
+        ...(result.meta || {}),
+        gated,
+        minDepositRequired,
+        ...quotaMeta,
+      };
       return result;
     };
 
@@ -1169,7 +1209,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const sortedResults = this.applyPostFetchSorting(sanitizedResults, rawSortField, rawSortDirection, isDefaultSort);
 
         // Return in Strapi v4 format
-        return withGateMeta({
+        return await withGateMeta({
           data: sortedResults,
           meta: {
             pagination: {
@@ -1218,7 +1258,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             results.results = this.applyPostFetchSorting(results.results, rawSortField, rawSortDirection, isDefaultSort);
           }
 
-          return withGateMeta({
+          return await withGateMeta({
             data: results.results,
             meta: {
               pagination: results.pagination
@@ -1233,7 +1273,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             // Apply post-fetch sorting as final guarantee
             result.data = this.applyPostFetchSorting(result.data, rawSortField, rawSortDirection, isDefaultSort);
           }
-          return withGateMeta(result);
+          return await withGateMeta(result);
         }
       }
     }
@@ -1286,7 +1326,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       const sortDirection = postSortParts[1] || 'desc';
       const sortedEntries = this.applyPostFetchSorting(sanitizedEntries, sortField, sortDirection, isDefaultSort);
 
-      return withGateMeta({
+      return await withGateMeta({
         data: sortedEntries,
         meta: {
           pagination: {
@@ -1307,7 +1347,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         const sortParts = (ctx.query.sort || 'updatedAt:desc').split(':');
         result.data = this.applyPostFetchSorting(result.data, sortParts[0], sortParts[1] || 'desc', isDefaultSort);
       }
-      return withGateMeta(result);
+      return await withGateMeta(result);
     }
   },
 
