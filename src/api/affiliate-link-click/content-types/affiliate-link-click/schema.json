@@ -1,0 +1,68 @@
+{
+  "kind": "collectionType",
+  "collectionName": "affiliate_link_clicks",
+  "info": {
+    "singularName": "affiliate-link-click",
+    "pluralName": "affiliate-link-clicks",
+    "displayName": "Affiliate Link Click",
+    "description": "Raw click event on an affiliate link. Populated by the public /affiliate-tracking/click endpoint. Used later for last-touch attribution at signup time."
+  },
+  "options": {
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "ipHash",
+      "userAgent"
+    ]
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "referralCode": {
+      "type": "string",
+      "required": true,
+      "maxLength": 16,
+      "description": "The code as sent by the client. Not a relation — clicks on stale / rotated / unknown codes are still recorded (for fraud analytics) but the click's `affiliate` relation stays null."
+    },
+    "affiliate": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::affiliate-profile.affiliate-profile",
+      "description": "Denormalised — resolved at ingest so downstream queries don't have to join on the code string. Null when the code did not resolve to an active affiliate."
+    },
+    "clickedAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "ipHash": {
+      "type": "string",
+      "private": true,
+      "description": "SHA-256 of (IP + REFERRAL_IP_SALT). Raw IP is never stored. Used only for fraud clustering + rate-limit accounting, never exposed via any user-facing endpoint."
+    },
+    "country": {
+      "type": "string",
+      "maxLength": 2,
+      "description": "ISO-3166 alpha-2. Populated best-effort from x-vercel-ip-country / cf-ipcountry; null if not present."
+    },
+    "userAgent": {
+      "type": "string",
+      "private": true,
+      "maxLength": 512
+    },
+    "landingPath": {
+      "type": "string",
+      "maxLength": 512,
+      "description": "Path the user landed on. Query-string stripped on server-side to avoid storing PII / auth tokens that clients might accidentally forward."
+    },
+    "utmSource":   { "type": "string", "maxLength": 128 },
+    "utmMedium":   { "type": "string", "maxLength": 128 },
+    "utmCampaign": { "type": "string", "maxLength": 128 },
+    "attributedToSignup": {
+      "type": "boolean",
+      "default": false
+    },
+    "attributedToUser": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    }
+  }
+}

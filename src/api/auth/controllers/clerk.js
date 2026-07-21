@@ -81,7 +81,7 @@ module.exports = {
      * via an in-memory mutex and the DB unique constraint is a safety net.
      */
     async sync(ctx) {
-        const { clerkId, email, username, firstName, lastName, advertiser, publisher, clerkSessionToken } = ctx.request.body;
+        const { clerkId, email, username, firstName, lastName, advertiser, publisher, clerkSessionToken, referralCode } = ctx.request.body;
 
         if (!clerkId || !email) {
             return ctx.badRequest('Missing required fields: clerkId and email');
@@ -219,6 +219,32 @@ module.exports = {
                     });
 
                     strapi.log.info(`[CLERK SYNC] User created successfully: ${user.id} (Advertiser=${user.Advertiser}, Publisher=${user.Publisher})`);
+
+                    // Fire-and-forget affiliate attribution. Runs only on
+                    // fresh account creation (this branch), never on updates.
+                    // A referralCode absence, bad code, self-referral, or
+                    // any other rejection is silent — signup completes
+                    // regardless.
+                    if (referralCode) {
+                        try {
+                            const attributionSvc = require('../../affiliate-profile/services/affiliate-attribution');
+                            const signupIp = ctx.request?.ip
+                                || (ctx.request?.headers?.['x-forwarded-for'] || '').split(',')[0].trim()
+                                || null;
+                            await attributionSvc.attributeReferral({
+                                userId: user.id,
+                                userEmail: email,
+                                referralCode,
+                                signupIp,
+                                userAgent: ctx.request?.headers?.['user-agent'],
+                            });
+                        } catch (attrErr) {
+                            // Don't let attribution failure block the sync
+                            // — user must always get a JWT even if the
+                            // affiliate side hiccups.
+                            strapi.log.warn(`[CLERK SYNC] affiliate attribution failed (non-fatal): ${attrErr.message}`);
+                        }
+                    }
                 } catch (err) {
                     // Safety net: if create fails due to unique constraint (e.g. DB-level race),
                     // find the existing user instead of failing.

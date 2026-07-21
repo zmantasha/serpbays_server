@@ -1,0 +1,57 @@
+{
+  "kind": "collectionType",
+  "collectionName": "affiliate_referrals",
+  "info": {
+    "singularName": "affiliate-referral",
+    "pluralName": "affiliate-referrals",
+    "displayName": "Affiliate Referral",
+    "description": "The result of last-touch attribution when a referred user completes signup. One-shot: `referredUser` is unique, so a user cannot be re-attributed to a different affiliate after their account exists."
+  },
+  "options": {
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "attributionIpHash",
+      "adminNotes"
+    ]
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "affiliate": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::affiliate-profile.affiliate-profile",
+      "required": true
+    },
+    "referredUser": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "referralLinkClick": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::affiliate-link-click.affiliate-link-click",
+      "description": "The specific click row that won last-touch attribution. Audit trail."
+    },
+    "attributedAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "attributionIpHash": {
+      "type": "string",
+      "private": true,
+      "description": "IP hash at attribution time (signup). Never exposed. Used only for post-hoc fraud clustering."
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["active", "blocked", "churned"],
+      "default": "active",
+      "required": true,
+      "description": "active = normal. blocked = admin flagged the referral as fraudulent (no future commission would fire once commission engine ships). churned = referred user hasn't logged in for a long time (populated by a future cron)."
+    },
+    "adminNotes": {
+      "type": "text",
+      "private": true
+    }
+  }
+}

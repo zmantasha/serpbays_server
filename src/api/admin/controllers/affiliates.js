@@ -1,0 +1,254 @@
+'use strict';
+
+/**
+ * Admin controller for the affiliate program.
+ *
+ * All routes gated by `global::is-admin` + `global::admin-jwt-auth`.
+ * See src/api/admin/routes/affiliates.js.
+ *
+ * Handlers here return richer data than the user-facing controller —
+ * admin can see who is behind a code (email, name), disable reasons,
+ * fraud signals, etc. Still respects the schema's `privateAttributes` for
+ * `disabledReason` / `adminNotes` — those are text fields we allow admins
+ * to see but the Strapi sanitizer strips for anyone else who would query.
+ */
+
+const { generateUniqueCode } = require('../../../utils/referral-code');
+
+module.exports = {
+  /**
+   * GET /admin/affiliates
+   * Paginated list. Supports optional `?status=active|disabled|terminated`
+   * and `?search=<user email or referralCode fragment>`. pageSize capped
+   * at 200 for admin ops (higher than user list — pass-10 pattern).
+   */
+  async find(ctx) {
+    const rawSize = Number.parseInt(ctx.query?.pageSize, 10);
+    const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(rawSize, 200) : 50;
+    const rawPage = Number.parseInt(ctx.query?.page, 10);
+    const page = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
+
+    const filters = {};
+    if (typeof ctx.query?.status === 'string') {
+      if (['active', 'disabled', 'terminated'].includes(ctx.query.status)) {
+        filters.status = ctx.query.status;
+      }
+    }
+    if (typeof ctx.query?.search === 'string' && ctx.query.search.trim().length) {
+      const q = ctx.query.search.trim();
+      filters.$or = [
+        { referralCode: { $containsi: q } },
+        { user: { email: { $containsi: q } } },
+        { user: { username: { $containsi: q } } },
+      ];
+    }
+
+    const [rows, total] = await Promise.all([
+      strapi.entityService.findMany('api::affiliate-profile.affiliate-profile', {
+        filters,
+        fields: ['id', 'referralCode', 'status', 'disabledAt', 'lastCodeRotationAt', 'createdAt', 'updatedAt'],
+        populate: {
+          user:        { fields: ['id', 'email', 'username', 'firstName', 'lastName'] },
+          disabledBy:  { fields: ['id', 'email'] },
+        },
+        sort: { createdAt: 'desc' },
+        limit: pageSize,
+        start: (page - 1) * pageSize,
+      }),
+      strapi.entityService.count('api::affiliate-profile.affiliate-profile', { filters }),
+    ]);
+
+    return {
+      data: rows,
+      meta: { page, pageSize, total, pageCount: Math.ceil(total / pageSize) },
+    };
+  },
+
+  /**
+   * GET /admin/affiliates/:id
+   * Detail view for one affiliate. Includes derived counts (clicks / referrals)
+   * so the admin doesn't need N round-trips to build a profile page.
+   */
+  async findOne(ctx) {
+    const id = Number(ctx.params.id);
+    if (!Number.isInteger(id) || id <= 0) return ctx.notFound('Affiliate not found');
+
+    const row = await strapi.entityService.findOne('api::affiliate-profile.affiliate-profile', id, {
+      populate: {
+        user:       { fields: ['id', 'email', 'username', 'firstName', 'lastName', 'createdAt'] },
+        disabledBy: { fields: ['id', 'email'] },
+      },
+    });
+    if (!row) return ctx.notFound('Affiliate not found');
+
+    const [totalClicks, totalReferrals, blockedReferrals] = await Promise.all([
+      strapi.entityService.count('api::affiliate-link-click.affiliate-link-click', {
+        filters: { affiliate: { id } },
+      }),
+      strapi.entityService.count('api::affiliate-referral.affiliate-referral', {
+        filters: { affiliate: { id } },
+      }),
+      strapi.entityService.count('api::affiliate-referral.affiliate-referral', {
+        filters: { affiliate: { id }, status: 'blocked' },
+      }),
+    ]);
+
+    return {
+      data: { ...row, stats: { totalClicks, totalReferrals, blockedReferrals } },
+    };
+  },
+
+  /**
+   * PUT /admin/affiliates/:id/disable
+   * body: { reason?: string }
+   * Sets status='disabled'. New clicks against this code will NOT resolve
+   * (returns 204 like an invalid code). Existing referrals are preserved.
+   */
+  async disable(ctx) {
+    const id = Number(ctx.params.id);
+    if (!Number.isInteger(id) || id <= 0) return ctx.notFound('Affiliate not found');
+
+    const admin = ctx.state.user;
+    if (!admin) return ctx.unauthorized();
+
+    const reason = typeof ctx.request?.body?.reason === 'string' ? ctx.request.body.reason.trim().slice(0, 2000) : null;
+
+    const row = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({ where: { id } });
+    if (!row) return ctx.notFound('Affiliate not found');
+    if (row.status === 'terminated') return ctx.badRequest('Cannot disable a terminated affiliate.');
+
+    const updated = await strapi.entityService.update('api::affiliate-profile.affiliate-profile', id, {
+      data: {
+        status: 'disabled',
+        disabledAt: new Date(),
+        disabledBy: admin.id,
+        disabledReason: reason,
+      },
+    });
+    strapi.log.info(`[admin/affiliates] user=${admin.id} DISABLED affiliate=${id} reason=${reason || '(none)'}`);
+    return { data: updated };
+  },
+
+  /**
+   * PUT /admin/affiliates/:id/enable
+   * Sets status='active'. Only allowed from status='disabled' — terminated
+   * is permanent.
+   */
+  async enable(ctx) {
+    const id = Number(ctx.params.id);
+    if (!Number.isInteger(id) || id <= 0) return ctx.notFound('Affiliate not found');
+    const admin = ctx.state.user;
+    if (!admin) return ctx.unauthorized();
+
+    const row = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({ where: { id } });
+    if (!row) return ctx.notFound('Affiliate not found');
+    if (row.status === 'active') return { data: row }; // idempotent
+    if (row.status === 'terminated') return ctx.badRequest('Cannot re-enable a terminated affiliate.');
+
+    const updated = await strapi.entityService.update('api::affiliate-profile.affiliate-profile', id, {
+      data: {
+        status: 'active',
+        disabledAt: null,
+        disabledBy: null,
+        disabledReason: null,
+      },
+    });
+    strapi.log.info(`[admin/affiliates] user=${admin.id} ENABLED affiliate=${id}`);
+    return { data: updated };
+  },
+
+  /**
+   * PUT /admin/affiliates/:id/regenerate-code
+   * Rotates the affiliate's referralCode. No cooldown check — admin
+   * privilege overrides the self-service throttle.
+   */
+  async regenerateCode(ctx) {
+    const id = Number(ctx.params.id);
+    if (!Number.isInteger(id) || id <= 0) return ctx.notFound('Affiliate not found');
+    const admin = ctx.state.user;
+    if (!admin) return ctx.unauthorized();
+
+    const row = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({ where: { id } });
+    if (!row) return ctx.notFound('Affiliate not found');
+    if (row.status === 'terminated') return ctx.badRequest('Cannot rotate a terminated affiliate.');
+
+    const newCode = await generateUniqueCode(strapi);
+    const updated = await strapi.entityService.update('api::affiliate-profile.affiliate-profile', id, {
+      data: {
+        referralCode: newCode,
+        lastCodeRotationAt: new Date(),
+      },
+    });
+    strapi.log.info(`[admin/affiliates] user=${admin.id} rotated code for affiliate=${id}`);
+    return { data: updated };
+  },
+
+  /**
+   * PUT /admin/affiliates/:id/terminate
+   * body: { reason?: string }
+   * Permanent kill switch. Cannot be re-enabled. Existing referrals remain
+   * for audit; new clicks are ignored; self-service endpoints return
+   * "affiliate not active" style errors.
+   */
+  async terminate(ctx) {
+    const id = Number(ctx.params.id);
+    if (!Number.isInteger(id) || id <= 0) return ctx.notFound('Affiliate not found');
+    const admin = ctx.state.user;
+    if (!admin) return ctx.unauthorized();
+
+    const reason = typeof ctx.request?.body?.reason === 'string' ? ctx.request.body.reason.trim().slice(0, 2000) : null;
+
+    const row = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({ where: { id } });
+    if (!row) return ctx.notFound('Affiliate not found');
+
+    const updated = await strapi.entityService.update('api::affiliate-profile.affiliate-profile', id, {
+      data: {
+        status: 'terminated',
+        disabledAt: new Date(),
+        disabledBy: admin.id,
+        disabledReason: reason,
+      },
+    });
+    strapi.log.warn(`[admin/affiliates] user=${admin.id} TERMINATED affiliate=${id} reason=${reason || '(none)'}`);
+    return { data: updated };
+  },
+
+  /**
+   * GET /admin/affiliates/:id/referrals
+   * The full referral list under an affiliate — with the referred user's
+   * PII (email, username). Admin-only visibility.
+   */
+  async referrals(ctx) {
+    const id = Number(ctx.params.id);
+    if (!Number.isInteger(id) || id <= 0) return ctx.notFound('Affiliate not found');
+
+    const rawSize = Number.parseInt(ctx.query?.pageSize, 10);
+    const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(rawSize, 200) : 50;
+    const rawPage = Number.parseInt(ctx.query?.page, 10);
+    const page = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
+
+    const filters = { affiliate: { id } };
+    if (typeof ctx.query?.status === 'string' && ['active', 'blocked', 'churned'].includes(ctx.query.status)) {
+      filters.status = ctx.query.status;
+    }
+
+    const [rows, total] = await Promise.all([
+      strapi.entityService.findMany('api::affiliate-referral.affiliate-referral', {
+        filters,
+        populate: {
+          referredUser:      { fields: ['id', 'email', 'username', 'firstName', 'lastName', 'createdAt'] },
+          referralLinkClick: { fields: ['id', 'clickedAt', 'country', 'utmSource', 'utmCampaign'] },
+        },
+        sort: { attributedAt: 'desc' },
+        limit: pageSize,
+        start: (page - 1) * pageSize,
+      }),
+      strapi.entityService.count('api::affiliate-referral.affiliate-referral', { filters }),
+    ]);
+
+    return {
+      data: rows,
+      meta: { page, pageSize, total, pageCount: Math.ceil(total / pageSize) },
+    };
+  },
+};

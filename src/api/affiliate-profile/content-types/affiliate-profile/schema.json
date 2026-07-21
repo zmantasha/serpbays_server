@@ -1,0 +1,59 @@
+{
+  "kind": "collectionType",
+  "collectionName": "affiliate_profiles",
+  "info": {
+    "singularName": "affiliate-profile",
+    "pluralName": "affiliate-profiles",
+    "displayName": "Affiliate Profile",
+    "description": "One row per user who has opted in to the affiliate program. Owns the referralCode and its enable/disable lifecycle. Commission-related fields are intentionally NOT in this schema — they will be added in a later phase once commission rules are finalised."
+  },
+  "options": {
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "disabledReason",
+      "adminNotes"
+    ]
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "user": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "referralCode": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "minLength": 8,
+      "maxLength": 16,
+      "description": "URL-safe uppercase alphanumeric slug. Generated via crypto.randomBytes → Crockford's base32. Rotation on regenerate keeps history via the audit log; old code stops resolving immediately."
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["active", "disabled", "terminated"],
+      "default": "active",
+      "required": true,
+      "description": "active = code resolves + signup attribution live. disabled = code returns 404 at click endpoint + signup attribution ignored. terminated = same as disabled + never re-enable-able (soft-delete)."
+    },
+    "disabledAt": { "type": "datetime" },
+    "disabledBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "disabledReason": {
+      "type": "text",
+      "private": true,
+      "description": "Free-text admin note. Not exposed to the affiliate themselves."
+    },
+    "adminNotes": {
+      "type": "text",
+      "private": true
+    },
+    "lastCodeRotationAt": {
+      "type": "datetime",
+      "description": "Rate-limit signal — front-end can throttle the self-service regenerate button."
+    }
+  }
+}
