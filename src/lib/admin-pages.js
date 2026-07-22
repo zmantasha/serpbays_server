@@ -40,6 +40,10 @@ const ADMIN_PAGES = [
   { key: 'analytics',        label: 'Analytics',        hasCreate: false, hasDelete: false, hasSuspend: false },
   { key: 'settings',         label: 'Settings',         hasCreate: false, hasDelete: false, hasSuspend: false },
   { key: 'audit-logs',       label: 'Audit Logs',       hasCreate: false, hasDelete: false, hasSuspend: false },
+  // Affiliates — hasSuspend covers disable/enable/terminate; hasDelete
+  // covers terminate (soft delete). No create — enrolment is user-initiated
+  // via POST /affiliates/apply, not from admin.
+  { key: 'affiliates',       label: 'Affiliates',       hasCreate: false, hasDelete: true,  hasSuspend: true  },
 ];
 
 const ADMIN_PAGE_KEYS = ADMIN_PAGES.map((p) => p.key);
