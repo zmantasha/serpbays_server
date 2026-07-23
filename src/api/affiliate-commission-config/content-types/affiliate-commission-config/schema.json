@@ -1,0 +1,34 @@
+{
+  "kind": "singleType",
+  "collectionName": "affiliate_commission_configs",
+  "info": {
+    "singularName": "affiliate-commission-config",
+    "pluralName": "affiliate-commission-configs",
+    "displayName": "Affiliate Commission Config",
+    "description": "Singleton: global on/off toggle + default commission rate. Rate is snapshotted onto each accrued commission at deposit time, so changing the value here NEVER retroactively re-computes existing commissions — it only affects deposits confirmed after the change."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "required": true,
+      "description": "Global kill switch. When false, NO new commissions accrue for anyone. Previously accrued commissions remain intact and visible."
+    },
+    "defaultRatePercent": {
+      "type": "decimal",
+      "default": 5,
+      "required": true,
+      "min": 0,
+      "max": 100,
+      "description": "Default commission percentage applied to every qualifying deposit unless the affiliate has a per-affiliate override. Interpreted as a percent (5 = 5%)."
+    },
+    "updatedBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    }
+  }
+}

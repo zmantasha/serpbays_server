@@ -330,6 +330,21 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         }
       }
 
+      // Affiliate commission: award on non-success→success flip, reverse
+      // on success→non-success flip. Applies ONLY to deposits (the service
+      // gate-checks type internally, so a change on any other row is a no-op).
+      const commissionSvc = strapi.service('api::affiliate-commission.affiliate-commission');
+      if (wasSettled && !willBeSettled) {
+        commissionSvc.reverseOnRefund({
+          originalDepositTxId: id,
+          refundTxId: null,
+          reason: `Admin ${adminUser.username || adminUser.id} flipped tx ${id} to ${transactionStatus}`,
+        }).catch((e) => console.warn('[ADMIN TRANSACTION EDIT] reverseOnRefund failed (non-fatal):', e.message));
+      } else if (!wasSettled && willBeSettled) {
+        commissionSvc.awardOnDeposit({ depositTransactionId: id })
+          .catch((e) => console.warn('[ADMIN TRANSACTION EDIT] awardOnDeposit failed (non-fatal):', e.message));
+      }
+
       ctx.send({
         data: result.updatedTx,
         walletDelta,

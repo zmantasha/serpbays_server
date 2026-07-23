@@ -518,6 +518,12 @@ async function handlePaymentSucceeded(paymentIntent) {
         .catch((invoiceError) => {
           console.error(`[STRIPE] ⚠️ Invoice creation failed for tx ${invoiceTarget.transaction.id}:`, invoiceError.message);
         });
+
+      // Affiliate commission — idempotent, gated inside the service on
+      // type/gateway/status/fund_source + active referral + enabled config.
+      strapi.service('api::affiliate-commission.affiliate-commission')
+        .awardOnDeposit({ depositTransactionId: invoiceTarget.transaction.id })
+        .catch((e) => console.warn('[STRIPE] awardOnDeposit failed (non-fatal):', e.message));
     }
 
   } catch (error) {
@@ -719,6 +725,16 @@ async function handleChargeRefunded(charge) {
       } catch (emitErr) {
         console.warn('[STRIPE] emitBalanceUpdate (refund) failed (non-fatal):', emitErr.message);
       }
+
+      // Reverse affiliate commission on the ORIGINAL deposit (not on the
+      // refund row). Idempotent — a second refund event would be a no-op.
+      strapi.service('api::affiliate-commission.affiliate-commission')
+        .reverseOnRefund({
+          originalDepositTxId: transaction.id,
+          refundTxId: null,
+          reason: `Stripe refund charge=${charge.id} amount=${refundAmount}`,
+        })
+        .catch((e) => console.warn('[STRIPE] reverseOnRefund failed (non-fatal):', e.message));
     }
 
   } catch (error) {

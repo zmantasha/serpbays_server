@@ -43,5 +43,17 @@ module.exports = {
       handler: 'affiliate-profile.myStats',
       config: { policies: [], middlewares: [] },
     },
+    {
+      method: 'GET',
+      path: '/affiliates/me/commissions',
+      handler: 'affiliate-profile.myCommissions',
+      config: { policies: [], middlewares: [] },
+    },
+    {
+      method: 'GET',
+      path: '/affiliates/me/earnings',
+      handler: 'affiliate-profile.myEarnings',
+      config: { policies: [], middlewares: [] },
+    },
   ],
 };

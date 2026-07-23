@@ -124,6 +124,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       if (state === 'COMPLETED') {
         await this.updateWalletBalance(transaction.user_wallet.id, amount, transaction.currency);
         console.log(`[PHONEPE CALLBACK] ✅ Successfully processed payment for wallet ${transaction.user_wallet.id}`);
+
+        // Affiliate commission — idempotent by design.
+        strapi.service('api::affiliate-commission.affiliate-commission')
+          .awardOnDeposit({ depositTransactionId: transaction.id })
+          .catch((e) => console.warn('[PHONEPE CALLBACK] awardOnDeposit failed (non-fatal):', e.message));
       }
 
       return ctx.send({ success: true });
@@ -229,6 +234,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
         transactionStatus = 'success';
         console.log(`[PHONEPE STATUS] ✅ Updated transaction ${transaction.id} to success`);
+
+        // Affiliate commission — idempotent by design.
+        strapi.service('api::affiliate-commission.affiliate-commission')
+          .awardOnDeposit({ depositTransactionId: transaction.id })
+          .catch((e) => console.warn('[PHONEPE STATUS] awardOnDeposit failed (non-fatal):', e.message));
       } else if (statusResult.state === 'FAILED' && transactionStatus !== 'failed') {
         // Update to failed
         await strapi.entityService.update('api::transaction.transaction', transaction.id, {

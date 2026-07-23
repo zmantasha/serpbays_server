@@ -747,6 +747,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         .createInvoiceForTransaction(transaction, wallet.users_permissions_user)
         .catch((invErr) => strapi.log.warn(`[VERIFY-PAYPAL] invoice creation failed (non-fatal): ${invErr.message}`));
 
+      // Affiliate commission — idempotent by design.
+      strapi.service('api::affiliate-commission.affiliate-commission')
+        .awardOnDeposit({ depositTransactionId: transaction.id })
+        .catch((e) => strapi.log.warn(`[VERIFY-PAYPAL] awardOnDeposit failed (non-fatal): ${e.message}`));
+
       return ctx.send({
         success: true,
         message: 'Payment verified and wallet updated',

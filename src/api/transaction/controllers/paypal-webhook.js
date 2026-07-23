@@ -313,6 +313,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       // Idempotent on transactionId — a webhook retry won't duplicate.
       if (createdTx?.id) {
         this._createDepositInvoice(createdTx.id).catch(() => {});
+
+        // Affiliate commission — idempotent, gated inside the service.
+        strapi.service('api::affiliate-commission.affiliate-commission')
+          .awardOnDeposit({ depositTransactionId: createdTx.id })
+          .catch((e) => console.warn('[PAYPAL WEBHOOK] awardOnDeposit failed (non-fatal):', e.message));
       }
 
     } catch (error) {
@@ -548,6 +553,15 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           });
 
           console.log(`[PAYPAL WEBHOOK] ✅ Refund processed - Wallet ${wallet.id} updated with -$${refundAmount}`);
+
+          // Reverse affiliate commission on the ORIGINAL deposit — idempotent.
+          strapi.service('api::affiliate-commission.affiliate-commission')
+            .reverseOnRefund({
+              originalDepositTxId: originalTransaction.id,
+              refundTxId: null,
+              reason: `PayPal refund id=${refund.id} amount=${refundAmount}`,
+            })
+            .catch((e) => console.warn('[PAYPAL WEBHOOK] reverseOnRefund failed (non-fatal):', e.message));
         }
       }
     } catch (error) {

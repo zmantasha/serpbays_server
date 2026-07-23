@@ -22,7 +22,9 @@
         "withdrawal",
         "fee",
         "refund",
-        "payout"
+        "payout",
+        "affiliate_commission",
+        "affiliate_commission_reversal"
       ],
       "required": true
     },
@@ -55,7 +57,8 @@
         "promo",
         "voucher",
         "system",
-        "bank_transfer"
+        "bank_transfer",
+        "affiliate"
       ],
       "required": true
     },

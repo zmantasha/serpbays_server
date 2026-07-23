@@ -1,0 +1,97 @@
+{
+  "kind": "collectionType",
+  "collectionName": "affiliate_commissions",
+  "info": {
+    "singularName": "affiliate-commission",
+    "pluralName": "affiliate-commissions",
+    "displayName": "Affiliate Commission",
+    "description": "Immutable ledger row. ONE row per qualifying deposit. `sourceTransaction` is UNIQUE (raw-SQL constraint in the migration) — that's what makes accrual idempotent under duplicate webhook + verify-callback firings. `ratePercent` is a snapshot at the time of accrual; later changes to the config rate never mutate existing rows."
+  },
+  "options": {
+    "draftAndPublish": false,
+    "privateAttributes": [
+      "reversalReason"
+    ]
+  },
+  "attributes": {
+    "affiliate": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::affiliate-profile.affiliate-profile"
+    },
+    "referral": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::affiliate-referral.affiliate-referral"
+    },
+    "referredUser": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "sourceTransaction": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::transaction.transaction",
+      "description": "The confirmed deposit that this commission was accrued against. Unique — enforced at the DB layer by an idempotency-guard migration."
+    },
+    "walletTransaction": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::transaction.transaction",
+      "description": "The affiliate_commission credit that lives on the affiliate's wallet. This is what shows up in their transaction history."
+    },
+    "reversalTransaction": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::transaction.transaction",
+      "description": "Only set once status='reversed'. Points at the affiliate_commission_reversal debit that was booked against the affiliate's wallet."
+    },
+    "depositAmount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "depositCurrency": {
+      "type": "string",
+      "maxLength": 8,
+      "default": "USD"
+    },
+    "paymentGateway": {
+      "type": "string",
+      "maxLength": 32,
+      "description": "Denormalised copy of the source deposit's gateway (stripe / paypal / razorpay / bank_transfer / phonepe). Duplicated here so ledger queries don't have to join."
+    },
+    "ratePercent": {
+      "type": "decimal",
+      "required": true,
+      "min": 0,
+      "max": 100,
+      "description": "Snapshot of the percentage rate applied at accrual time. Never recomputed if the admin later changes the global default."
+    },
+    "commissionAmount": {
+      "type": "decimal",
+      "required": true,
+      "min": 0
+    },
+    "commissionCurrency": {
+      "type": "string",
+      "maxLength": 8,
+      "default": "USD"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "accrued",
+        "reversed"
+      ],
+      "default": "accrued",
+      "required": true
+    },
+    "reversedAt": { "type": "datetime" },
+    "reversalReason": {
+      "type": "text",
+      "private": true
+    }
+  }
+}

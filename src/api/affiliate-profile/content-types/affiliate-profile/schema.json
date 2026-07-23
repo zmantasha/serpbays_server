@@ -5,13 +5,14 @@
     "singularName": "affiliate-profile",
     "pluralName": "affiliate-profiles",
     "displayName": "Affiliate Profile",
-    "description": "One row per user who has opted in to the affiliate program. Owns the referralCode and its enable/disable lifecycle. Commission-related fields are intentionally NOT in this schema — they will be added in a later phase once commission rules are finalised."
+    "description": "One row per user who has opted in to the affiliate program. Owns the referralCode + its enable/disable lifecycle + the per-affiliate commission kill switch (commissionsEnabled)."
   },
   "options": {
     "draftAndPublish": false,
     "privateAttributes": [
       "disabledReason",
-      "adminNotes"
+      "adminNotes",
+      "commissionsDisabledReason"
     ]
   },
   "pluginOptions": {},
@@ -54,6 +55,23 @@
     "lastCodeRotationAt": {
       "type": "datetime",
       "description": "Rate-limit signal — front-end can throttle the self-service regenerate button."
+    },
+    "commissionsEnabled": {
+      "type": "boolean",
+      "default": true,
+      "required": true,
+      "description": "Per-affiliate commission kill switch. When false, new deposits by this affiliate's referrals do not accrue commission. Previously accrued rows remain intact."
+    },
+    "commissionsDisabledAt": { "type": "datetime" },
+    "commissionsDisabledBy": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "commissionsDisabledReason": {
+      "type": "text",
+      "private": true,
+      "description": "Admin-only note explaining why per-affiliate commissions were turned off."
     }
   }
 }

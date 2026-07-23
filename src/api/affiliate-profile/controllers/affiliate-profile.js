@@ -222,4 +222,75 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
       data: { totalClicks, totalReferrals, clicksLast30d, referralsLast30d },
     };
   },
+
+  /**
+   * GET /affiliates/me/commissions?page=1&pageSize=20&status=accrued|reversed
+   * The affiliate's own commission ledger. PII stays server-side — we
+   * only surface the deposit id, gateway, amount, rate snapshot, and
+   * commission amount. No referred-user email/name leaks.
+   */
+  async myCommissions(ctx) {
+    if (!ctx.state.user) return ctx.unauthorized('Authentication required');
+    const userId = ctx.state.user.id;
+
+    const profile = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({
+      where: { user: userId },
+      select: ['id'],
+    });
+    if (!profile) return ctx.notFound('Affiliate profile not found');
+
+    const svc = strapi.service('api::affiliate-commission.affiliate-commission');
+    const status = ['accrued', 'reversed'].includes(ctx.query?.status)
+      ? ctx.query.status
+      : undefined;
+    const list = await svc.listByAffiliate(profile.id, {
+      page: ctx.query?.page,
+      pageSize: ctx.query?.pageSize,
+      status,
+    });
+
+    // Redact the ledger rows — the affiliate should not see the referred
+    // user's email or username, only enough info to trust the number.
+    const redacted = (list.data || []).map((row) => ({
+      id: row.id,
+      status: row.status,
+      commissionAmount: Number(row.commissionAmount),
+      commissionCurrency: row.commissionCurrency,
+      depositAmount: Number(row.depositAmount),
+      depositCurrency: row.depositCurrency,
+      ratePercent: Number(row.ratePercent),
+      paymentGateway: row.paymentGateway,
+      referredUserId: row.referredUser?.id ?? null,
+      sourceTransactionId: row.sourceTransaction?.id ?? null,
+      reversedAt: row.reversedAt || null,
+      createdAt: row.createdAt,
+    }));
+
+    return { data: redacted, meta: list.meta };
+  },
+
+  /**
+   * GET /affiliates/me/earnings
+   * Lifetime + last-30d commission summary. Never returns referred-user PII.
+   */
+  async myEarnings(ctx) {
+    if (!ctx.state.user) return ctx.unauthorized('Authentication required');
+    const userId = ctx.state.user.id;
+
+    const profile = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({
+      where: { user: userId },
+      select: ['id', 'commissionsEnabled'],
+    });
+    if (!profile) return ctx.notFound('Affiliate profile not found');
+
+    const svc = strapi.service('api::affiliate-commission.affiliate-commission');
+    const stats = await svc.statsByAffiliate(profile.id);
+
+    return {
+      data: {
+        commissionsEnabled: !!profile.commissionsEnabled,
+        ...stats,
+      },
+    };
+  },
 }));

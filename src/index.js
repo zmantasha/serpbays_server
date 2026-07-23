@@ -112,6 +112,42 @@ module.exports = {
       }
     }
 
+    // Ensure UNIQUE constraint on affiliate_commissions.sourceTransaction FK.
+    // The Strapi schema declares the relation but Strapi does NOT enforce
+    // uniqueness on relation columns at the DB layer — we need this for the
+    // commission engine's idempotency guarantee under concurrent webhook +
+    // verify-callback firings. Wrapped in try/catch so a legacy row that
+    // somehow violates uniqueness (unlikely, but possible in staging) can't
+    // brick backend boot.
+    try {
+      const knex = strapi.db.connection;
+      // Table + column names follow Strapi's default link-table convention:
+      //   <parent-plural>_<relation-attr-snake_case>_lnk
+      //   <target-plural-singular>_id column
+      // Verified in migrations against other oneToOne relations.
+      const clientName = (
+        knex.client.config.client ||
+        knex.client.constructor.name ||
+        ''
+      ).toLowerCase();
+      const isPostgres = clientName.includes('pg') || clientName.includes('postgres');
+      const isSQLite = clientName.includes('sqlite');
+      if (isPostgres || isSQLite) {
+        await knex.raw(
+          'CREATE UNIQUE INDEX IF NOT EXISTS "affiliate_commissions_source_tx_unique" ' +
+          'ON "affiliate_commissions_source_transaction_lnk" ("transaction_id")'
+        ).catch((err) => {
+          strapi.log.warn(
+            `[BOOTSTRAP] Could not create affiliate_commissions_source_tx_unique: ${err.message}`
+          );
+        });
+      }
+    } catch (err) {
+      strapi.log.warn(
+        `[BOOTSTRAP] Skipped affiliate_commissions idempotency index: ${err.message}`
+      );
+    }
+
     // Initialize WebSocket after Strapi is ready
     await websocketBootstrap({ strapi });
 
@@ -133,7 +169,9 @@ module.exports = {
       require('./api/admin/routes/shared-lists'),
       require('./api/admin/routes/shared-list-templates'),
       require('./api/admin/routes/bulk-refresh'),
-      require('./api/admin/routes/bulk-price')
+      require('./api/admin/routes/bulk-price'),
+      require('./api/admin/routes/affiliates'),
+      require('./api/admin/routes/affiliate-commission-config')
     ];
 
     // Admin routes under src/api/admin/routes/* are auto-registered by Strapi's

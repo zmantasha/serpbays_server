@@ -221,6 +221,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         // Idempotent on transactionId — webhook retries / order.paid + payment.captured
         // double-fire will never produce a duplicate invoice.
         this._createDepositInvoice(emitContext.transactionId).catch(() => {});
+
+        // Affiliate commission — idempotent by design.
+        strapi.service('api::affiliate-commission.affiliate-commission')
+          .awardOnDeposit({ depositTransactionId: emitContext.transactionId })
+          .catch((e) => console.warn('[RAZORPAY WEBHOOK] awardOnDeposit failed (non-fatal):', e.message));
       }
 
     } catch (error) {
@@ -436,6 +441,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         // already produced the invoice; this is a no-op safety net for the
         // rare case where order.paid arrives standalone.
         this._createDepositInvoice(emitContext.transactionId).catch(() => {});
+
+        // Affiliate commission — idempotent by design.
+        strapi.service('api::affiliate-commission.affiliate-commission')
+          .awardOnDeposit({ depositTransactionId: emitContext.transactionId })
+          .catch((e) => console.warn('[RAZORPAY WEBHOOK] awardOnDeposit failed (non-fatal):', e.message));
       }
 
     } catch (error) {
@@ -761,6 +771,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         // SDK triggers — most production credits arrive here, NOT via the
         // signed webhook. Idempotent on transactionId.
         this._createDepositInvoice(transaction.id).catch(() => {});
+
+        // Award affiliate commission if the depositor was referred. Fully
+        // idempotent (UNIQUE on sourceTransaction + pre-insert check); safe
+        // to fire from both webhook and verify paths.
+        strapi.service('api::affiliate-commission.affiliate-commission')
+          .awardOnDeposit({ depositTransactionId: transaction.id })
+          .catch((e) => console.warn('[RAZORPAY VERIFY] awardOnDeposit failed (non-fatal):', e.message));
       } else if (status === 'success' && previousStatus === 'success') {
         console.log(`[RAZORPAY VERIFY] ⚠️ Transaction ${transaction.id} already successful - wallet already credited`);
       }

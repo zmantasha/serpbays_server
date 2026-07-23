@@ -251,4 +251,131 @@ module.exports = {
       meta: { page, pageSize, total, pageCount: Math.ceil(total / pageSize) },
     };
   },
+
+  // ── Per-affiliate commission controls ─────────────────────────────────
+  /**
+   * PUT /admin/affiliates/:id/commissions/disable
+   * Body: { reason?: string }
+   * Stops NEW commissions accruing for this affiliate. Previously accrued
+   * rows remain intact + visible on both dashboards.
+   */
+  async disableCommissions(ctx) {
+    const id = Number(ctx.params?.id);
+    if (!Number.isFinite(id) || id <= 0) return ctx.badRequest('Invalid affiliate id');
+    const adminUser = ctx.state.user;
+    const reason = String(ctx.request.body?.reason || '').trim().slice(0, 2000);
+
+    const existing = await strapi.entityService.findOne(
+      'api::affiliate-profile.affiliate-profile',
+      id,
+      { fields: ['id', 'commissionsEnabled'] }
+    );
+    if (!existing) return ctx.notFound('Affiliate not found');
+    if (existing.commissionsEnabled === false) {
+      return ctx.send({ data: existing, alreadyDisabled: true });
+    }
+
+    const updated = await strapi.entityService.update(
+      'api::affiliate-profile.affiliate-profile',
+      id,
+      {
+        data: {
+          commissionsEnabled: false,
+          commissionsDisabledAt: new Date(),
+          commissionsDisabledBy: adminUser?.id,
+          commissionsDisabledReason: reason || null,
+        },
+      }
+    );
+
+    try {
+      await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+        data: {
+          adminUser: adminUser?.id,
+          action: 'affiliate_commissions_disable',
+          details: { affiliateProfileId: id, reason: reason || null },
+          ipAddress: ctx.request.ip,
+          userAgent: ctx.request.headers['user-agent'],
+        },
+      });
+    } catch (_) { /* best-effort */ }
+
+    return ctx.send({ data: updated });
+  },
+
+  /**
+   * PUT /admin/affiliates/:id/commissions/enable
+   * Re-enables commission accrual for this affiliate.
+   */
+  async enableCommissions(ctx) {
+    const id = Number(ctx.params?.id);
+    if (!Number.isFinite(id) || id <= 0) return ctx.badRequest('Invalid affiliate id');
+    const adminUser = ctx.state.user;
+
+    const existing = await strapi.entityService.findOne(
+      'api::affiliate-profile.affiliate-profile',
+      id,
+      { fields: ['id', 'commissionsEnabled', 'status'] }
+    );
+    if (!existing) return ctx.notFound('Affiliate not found');
+    if (existing.status === 'terminated') {
+      return ctx.badRequest('Cannot enable commissions on a terminated affiliate');
+    }
+    if (existing.commissionsEnabled === true) {
+      return ctx.send({ data: existing, alreadyEnabled: true });
+    }
+
+    const updated = await strapi.entityService.update(
+      'api::affiliate-profile.affiliate-profile',
+      id,
+      {
+        data: {
+          commissionsEnabled: true,
+          commissionsDisabledAt: null,
+          commissionsDisabledBy: null,
+          commissionsDisabledReason: null,
+        },
+      }
+    );
+
+    try {
+      await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+        data: {
+          adminUser: adminUser?.id,
+          action: 'affiliate_commissions_enable',
+          details: { affiliateProfileId: id },
+          ipAddress: ctx.request.ip,
+          userAgent: ctx.request.headers['user-agent'],
+        },
+      });
+    } catch (_) { /* best-effort */ }
+
+    return ctx.send({ data: updated });
+  },
+
+  /**
+   * GET /admin/affiliates/:id/commissions?page=1&pageSize=20&status=accrued|reversed
+   * Paginated list of commission ledger rows + summary stats.
+   */
+  async commissions(ctx) {
+    const id = Number(ctx.params?.id);
+    if (!Number.isFinite(id) || id <= 0) return ctx.badRequest('Invalid affiliate id');
+
+    const exists = await strapi.entityService.findOne(
+      'api::affiliate-profile.affiliate-profile', id, { fields: ['id'] }
+    );
+    if (!exists) return ctx.notFound('Affiliate not found');
+
+    const svc = strapi.service('api::affiliate-commission.affiliate-commission');
+    const [list, stats] = await Promise.all([
+      svc.listByAffiliate(id, {
+        page: ctx.query?.page,
+        pageSize: ctx.query?.pageSize,
+        status: ['accrued', 'reversed'].includes(ctx.query?.status) ? ctx.query.status : undefined,
+      }),
+      svc.statsByAffiliate(id),
+    ]);
+
+    return ctx.send({ data: list.data, meta: list.meta, stats });
+  },
 };

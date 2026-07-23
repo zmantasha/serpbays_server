@@ -52,5 +52,24 @@ module.exports = {
       handler: 'affiliates.referrals',
       config: { policies: ['global::is-admin'], middlewares: ['global::admin-jwt-auth'] },
     },
+    // ── Commission controls (per-affiliate) ──────────────────────────
+    {
+      method: 'PUT',
+      path: '/admin/affiliates/:id/commissions/enable',
+      handler: 'affiliates.enableCommissions',
+      config: { policies: ['global::is-admin'], middlewares: ['global::admin-jwt-auth'] },
+    },
+    {
+      method: 'PUT',
+      path: '/admin/affiliates/:id/commissions/disable',
+      handler: 'affiliates.disableCommissions',
+      config: { policies: ['global::is-admin'], middlewares: ['global::admin-jwt-auth'] },
+    },
+    {
+      method: 'GET',
+      path: '/admin/affiliates/:id/commissions',
+      handler: 'affiliates.commissions',
+      config: { policies: ['global::is-admin'], middlewares: ['global::admin-jwt-auth'] },
+    },
   ],
 };

@@ -264,6 +264,7 @@ module.exports = {
         );
 
         let walletCredited = false;
+        let createdTxId = null;
         // Only credit on the SAME transition (pending|processing → completed),
         // never on a redundant completed → completed (idempotency above
         // already returned in that case).
@@ -280,7 +281,7 @@ module.exports = {
                 balance: newMain + parseFloat(wallet.promoBalance || 0),
               },
             });
-            await strapi.entityService.create('api::transaction.transaction', {
+            const btrTx = await strapi.entityService.create('api::transaction.transaction', {
               data: {
                 user_wallet: wallet.id,
                 type: 'bank_transfer',
@@ -293,12 +294,13 @@ module.exports = {
               },
             });
             walletCredited = true;
+            createdTxId = btrTx?.id ?? null;
           } else {
             strapi.log?.error?.(`[BANK TRANSFER] no wallet found for user_id=${request.user_id} on completion of btr ${request.id}`);
           }
         }
 
-        return { httpKind: 'ok', updated: updatedRequest, walletCredited, userId: request.user_id };
+        return { httpKind: 'ok', updated: updatedRequest, walletCredited, userId: request.user_id, createdTxId };
       });
 
       if (result.httpKind === 'notFound') {
@@ -322,6 +324,16 @@ module.exports = {
           );
         } catch (emitErr) {
           strapi.log?.warn?.(`[BANK TRANSFER] emitBalanceUpdate failed (non-fatal): ${emitErr.message}`);
+        }
+
+        // Affiliate commission — no-op today because the row above writes
+        // type='bank_transfer' (not in the transaction.type enum). Once the
+        // row is written correctly as type='deposit' + gateway='bank_transfer',
+        // this hook will start awarding commissions with no code change.
+        if (result.createdTxId) {
+          strapi.service('api::affiliate-commission.affiliate-commission')
+            .awardOnDeposit({ depositTransactionId: result.createdTxId })
+            .catch((e) => strapi.log?.warn?.(`[BANK TRANSFER] awardOnDeposit failed (non-fatal): ${e.message}`));
         }
       }
 
