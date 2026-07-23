@@ -44,6 +44,8 @@ const ADMIN_PAGES = [
   // covers terminate (soft delete). No create — enrolment is user-initiated
   // via POST /affiliates/apply, not from admin.
   { key: 'affiliates',       label: 'Affiliates',       hasCreate: false, hasDelete: true,  hasSuspend: true  },
+  // Global affiliate commission config (singleton). Edit-only.
+  { key: 'affiliate-settings', label: 'Affiliate Settings', hasCreate: false, hasDelete: false, hasSuspend: false },
 ];
 
 const ADMIN_PAGE_KEYS = ADMIN_PAGES.map((p) => p.key);
