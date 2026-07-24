@@ -129,6 +129,7 @@ async function attributeReferral(args) {
           attributedAt: new Date(),
           attributionIpHash: signupIpHash,
           status: 'blocked',
+          blockReason: 'self_referral_same_ip',
           adminNotes: 'auto-blocked: signup IP hash matched click IP hash (possible self-referral)',
         },
       });

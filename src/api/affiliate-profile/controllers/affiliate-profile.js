@@ -161,7 +161,7 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
 
     const rows = await strapi.entityService.findMany('api::affiliate-referral.affiliate-referral', {
       filters: { affiliate: { id: profile.id } },
-      fields: ['id', 'attributedAt', 'status'],
+      fields: ['id', 'attributedAt', 'status', 'blockReason'],
       populate: { referredUser: { fields: ['id'] } },  // id-only — no PII
       sort: { attributedAt: 'desc' },
       limit: pageSize,
@@ -172,6 +172,9 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
       id: r.id,
       attributedAt: r.attributedAt,
       status: r.status,
+      // Machine-readable reason a referral isn't earning. Never leaks PII
+      // (unlike adminNotes, which stays private-attribute + admin-only).
+      blockReason: r.blockReason || null,
       referredUserId: r.referredUser?.id || null,  // just the numeric id
     }));
 

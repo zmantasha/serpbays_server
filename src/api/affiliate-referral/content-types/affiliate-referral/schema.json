@@ -52,6 +52,17 @@
     "adminNotes": {
       "type": "text",
       "private": true
+    },
+    "blockReason": {
+      "type": "enumeration",
+      "enum": [
+        "self_referral_same_ip",
+        "self_referral_same_user",
+        "self_referral_same_email",
+        "admin_manual",
+        "fraud_detected"
+      ],
+      "description": "Machine-readable reason a referral is not active. Only set when status != 'active'. Public — surfaces on both affiliate + admin dashboards so blocked referrals never appear without an explanation."
     }
   }
 }
