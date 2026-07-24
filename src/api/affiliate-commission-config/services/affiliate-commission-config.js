@@ -31,7 +31,12 @@ module.exports = ({ strapi }) => ({
     });
   },
 
-  async set({ enabled, defaultRatePercent, updatedByUserId }) {
+  async set({ enabled, defaultRatePercent }) {
+    // NOTE: no `updatedBy` field on the config row. `updatedBy` is a reserved
+    // name in Strapi (auto-linked to admin::user by the admin panel plugin),
+    // and declaring our own relation with the same name collided at write
+    // time. The admin-audit-log entry from the controller captures WHO
+    // changed what — that's the authoritative record.
     const current = await this.get();
     const data = {};
     if (typeof enabled === 'boolean') data.enabled = enabled;
@@ -41,7 +46,6 @@ module.exports = ({ strapi }) => ({
       }
       data.defaultRatePercent = defaultRatePercent;
     }
-    if (updatedByUserId) data.updatedBy = updatedByUserId;
     return strapi.entityService.update(CONTENT_TYPE, current.id, { data });
   },
 });

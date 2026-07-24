@@ -50,7 +50,6 @@ module.exports = {
       ).set({
         enabled: patch.enabled,
         defaultRatePercent: patch.defaultRatePercent,
-        updatedByUserId: adminUser?.id,
       });
 
       try {

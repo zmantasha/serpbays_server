@@ -24,11 +24,6 @@
       "min": 0,
       "max": 100,
       "description": "Default commission percentage applied to every qualifying deposit unless the affiliate has a per-affiliate override. Interpreted as a percent (5 = 5%)."
-    },
-    "updatedBy": {
-      "type": "relation",
-      "relation": "manyToOne",
-      "target": "plugin::users-permissions.user"
     }
   }
 }
