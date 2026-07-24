@@ -53,6 +53,33 @@ function roundToCents(amount) {
   return Math.round(amount * 100) / 100;
 }
 
+/**
+ * Look up (or create) the user's wallet. Inlined here rather than reaching
+ * into user-wallet's helper because `getOrCreateWallet` lives on the
+ * user-wallet CONTROLLER, not the service — strapi.service('…').getOrCreateWallet
+ * throws "not a function" when invoked from another service. Duplicating the
+ * 4-line lookup here is the smaller sin than plumbing controllers into
+ * services.
+ */
+async function getOrCreateWallet(strapi, userId) {
+  let wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
+    where: { users_permissions_user: userId },
+  });
+  if (wallet) return wallet;
+  return strapi.db.query('api::user-wallet.user-wallet').create({
+    data: {
+      users_permissions_user: userId,
+      type: 'unified',
+      balance: 0,
+      mainBalance: 0,
+      promoBalance: 0,
+      escrowBalance: 0,
+      pendingWithdrawalBalance: 0,
+      currency: 'USD',
+    },
+  });
+}
+
 module.exports = ({ strapi }) => ({
   /**
    * Award commission for a confirmed deposit. Safe to call multiple times
@@ -132,9 +159,8 @@ module.exports = ({ strapi }) => ({
     // violation and roll back the wallet credit inside the same txn.
     try {
       return await strapi.db.transaction(async () => {
-        // Load or create the affiliate's wallet.
-        const wallet = await strapi.service('api::user-wallet.user-wallet')
-          .getOrCreateWallet(profile.user.id);
+        // Load or create the affiliate's wallet (inlined — see helper docstring).
+        const wallet = await getOrCreateWallet(strapi, profile.user.id);
         const currentMain = Number(wallet.mainBalance || 0);
         const currentTotal = Number(wallet.balance || 0);
         const newMain = roundToCents(currentMain + commissionAmount);
@@ -271,8 +297,7 @@ module.exports = ({ strapi }) => ({
         // Debit the affiliate's wallet — even if it takes them negative.
         // This mirrors how chargeback debits are handled elsewhere in the
         // codebase; operations can chase collection separately.
-        const wallet = await strapi.service('api::user-wallet.user-wallet')
-          .getOrCreateWallet(affiliateUserId);
+        const wallet = await getOrCreateWallet(strapi, affiliateUserId);
         const currentMain = Number(wallet.mainBalance || 0);
         const currentTotal = Number(wallet.balance || 0);
         const newMain = roundToCents(currentMain - commissionAmount);
