@@ -20,6 +20,7 @@ const CONTENT_TYPE = 'api::affiliate-commission-config.affiliate-commission-conf
 const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
   defaultRatePercent: 5,
+  holdPeriodDays: 15,
 });
 
 module.exports = ({ strapi }) => ({
@@ -31,7 +32,7 @@ module.exports = ({ strapi }) => ({
     });
   },
 
-  async set({ enabled, defaultRatePercent }) {
+  async set({ enabled, defaultRatePercent, holdPeriodDays }) {
     // NOTE: no `updatedBy` field on the config row. `updatedBy` is a reserved
     // name in Strapi (auto-linked to admin::user by the admin panel plugin),
     // and declaring our own relation with the same name collided at write
@@ -45,6 +46,13 @@ module.exports = ({ strapi }) => ({
         throw new Error('defaultRatePercent must be between 0 and 100');
       }
       data.defaultRatePercent = defaultRatePercent;
+    }
+    if (holdPeriodDays !== undefined && holdPeriodDays !== null) {
+      const n = Number(holdPeriodDays);
+      if (!Number.isInteger(n) || n < 0 || n > 365) {
+        throw new Error('holdPeriodDays must be an integer between 0 and 365');
+      }
+      data.holdPeriodDays = n;
     }
     return strapi.entityService.update(CONTENT_TYPE, current.id, { data });
   },

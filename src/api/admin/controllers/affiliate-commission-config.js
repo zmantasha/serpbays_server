@@ -16,6 +16,7 @@ module.exports = {
           id: config.id,
           enabled: !!config.enabled,
           defaultRatePercent: Number(config.defaultRatePercent),
+          holdPeriodDays: Number(config.holdPeriodDays ?? 15),
           updatedAt: config.updatedAt,
         },
       });
@@ -41,8 +42,20 @@ module.exports = {
         patch.defaultRatePercent = rate;
       }
 
-      if (patch.enabled === undefined && patch.defaultRatePercent === undefined) {
-        return ctx.badRequest('Provide at least one of {enabled, defaultRatePercent}');
+      if (body.holdPeriodDays !== undefined && body.holdPeriodDays !== null) {
+        const n = Number(body.holdPeriodDays);
+        if (!Number.isInteger(n) || n < 0 || n > 365) {
+          return ctx.badRequest('holdPeriodDays must be an integer between 0 and 365');
+        }
+        patch.holdPeriodDays = n;
+      }
+
+      if (
+        patch.enabled === undefined &&
+        patch.defaultRatePercent === undefined &&
+        patch.holdPeriodDays === undefined
+      ) {
+        return ctx.badRequest('Provide at least one of {enabled, defaultRatePercent, holdPeriodDays}');
       }
 
       const updated = await strapi.service(
@@ -50,6 +63,7 @@ module.exports = {
       ).set({
         enabled: patch.enabled,
         defaultRatePercent: patch.defaultRatePercent,
+        holdPeriodDays: patch.holdPeriodDays,
       });
 
       try {
@@ -71,6 +85,7 @@ module.exports = {
           id: updated.id,
           enabled: !!updated.enabled,
           defaultRatePercent: Number(updated.defaultRatePercent),
+          holdPeriodDays: Number(updated.holdPeriodDays ?? 15),
           updatedAt: updated.updatedAt,
         },
       });

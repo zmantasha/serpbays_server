@@ -82,13 +82,35 @@
     "status": {
       "type": "enumeration",
       "enum": [
-        "accrued",
-        "reversed"
+        "pending",
+        "approved",
+        "cancelled",
+        "reversed",
+        "accrued"
       ],
-      "default": "accrued",
-      "required": true
+      "default": "pending",
+      "required": true,
+      "description": "pending = created, waiting for hold period to elapse (not withdrawable, no wallet credit yet). approved = matured; wallet credited, withdrawable. cancelled = source deposit refunded during the hold period (no wallet movement needed). reversed = source deposit refunded AFTER approval (wallet debited). accrued = legacy status from pre-holdback rows, treated as approved."
+    },
+    "holdReleaseAt": {
+      "type": "datetime",
+      "description": "When this pending row becomes eligible for automatic approval. NULL for legacy 'accrued' rows and immediately-approved rows (config.holdPeriodDays=0)."
+    },
+    "heldForDays": {
+      "type": "integer",
+      "default": 0,
+      "min": 0,
+      "description": "Snapshot of config.holdPeriodDays at accrual time. Immutable per row — config changes never mutate in-flight rows."
+    },
+    "approvedAt": {
+      "type": "datetime",
+      "description": "When the row transitioned pending -> approved. Set by the cron worker or by the immediate-approval path when holdPeriodDays=0."
     },
     "reversedAt": { "type": "datetime" },
+    "cancelledAt": {
+      "type": "datetime",
+      "description": "When the row transitioned pending -> cancelled (source deposit refunded during hold). No wallet movement is booked for cancellations."
+    },
     "reversalReason": {
       "type": "text",
       "private": true

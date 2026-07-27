@@ -543,6 +543,11 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
       sourceTransactionId: row.sourceTransaction?.id ?? null,
       reversedAt: row.reversedAt || null,
       createdAt: row.createdAt,
+      // Phase 4: hold-period visibility so the client can render countdowns.
+      holdReleaseAt: row.holdReleaseAt || null,
+      heldForDays: row.heldForDays ?? null,
+      approvedAt: row.approvedAt || null,
+      cancelledAt: row.cancelledAt || null,
     }));
 
     return { data: redacted, meta: list.meta };

@@ -24,6 +24,14 @@
       "min": 0,
       "max": 100,
       "description": "Default commission percentage applied to every qualifying deposit unless the affiliate has a per-affiliate override. Interpreted as a percent (5 = 5%)."
+    },
+    "holdPeriodDays": {
+      "type": "integer",
+      "default": 15,
+      "required": true,
+      "min": 0,
+      "max": 365,
+      "description": "Days a new commission stays in 'pending' state before it becomes withdrawable ('approved'). If the source deposit is refunded / reversed / charged back during this window, the pending commission is cancelled with no wallet movement. Setting to 0 disables holdback (immediate approval). Snapshot on each ledger row at accrual — changing this value never mutates rows already in flight."
     }
   }
 }

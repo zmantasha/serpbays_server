@@ -254,6 +254,53 @@ module.exports = {
       strapi.log.warn(`[BOOTSTRAP] Could not auto-grant admin route permissions: ${err.message}`);
     }
 
+    // ── Approve matured affiliate commissions ──────────────────────────
+    // Every N minutes: walk pending ledger rows whose holdReleaseAt has
+    // passed and transition them to `approved` (credit wallet + emit).
+    // Runs single-instance — safe under Redis pm2 setups; if you ever go
+    // multi-instance, wrap this in a distributed lock.
+    const APPROVE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+    try {
+      // First pass on boot so anything that matured while Strapi was down
+      // gets picked up immediately. Wrapped in a setTimeout so boot doesn't
+      // wait for the query.
+      setTimeout(() => {
+        strapi.service('api::affiliate-commission.affiliate-commission')
+          .approveMaturedCommissions()
+          .catch((e) => strapi.log.warn(`[cron] approveMaturedCommissions (boot) failed: ${e.message}`));
+      }, 5000);
+
+      setInterval(() => {
+        strapi.service('api::affiliate-commission.affiliate-commission')
+          .approveMaturedCommissions()
+          .catch((e) => strapi.log.warn(`[cron] approveMaturedCommissions failed: ${e.message}`));
+      }, APPROVE_INTERVAL_MS);
+      strapi.log.info(`[BOOTSTRAP] Affiliate commission approval cron scheduled every ${APPROVE_INTERVAL_MS / 60000} min`);
+    } catch (err) {
+      strapi.log.warn(`[BOOTSTRAP] Could not schedule commission approval cron: ${err.message}`);
+    }
+
+    // ── Backfill legacy 'accrued' commission rows to 'approved' ────────
+    // Phase 4 introduces the pending → approved → reversed/cancelled state
+    // machine. Rows created before this migration have status='accrued' +
+    // a wallet transaction already booked; semantically these are already
+    // approved. Migrate them once. Idempotent.
+    try {
+      const knex = strapi.db.connection;
+      const res = await knex('affiliate_commissions')
+        .where({ status: 'accrued' })
+        .update({
+          status: 'approved',
+          approved_at: knex.raw('COALESCE(approved_at, created_at)'),
+          held_for_days: 0,
+        });
+      if (res > 0) {
+        strapi.log.info(`[BOOTSTRAP] Migrated ${res} legacy 'accrued' commission(s) to 'approved'`);
+      }
+    } catch (err) {
+      strapi.log.warn(`[BOOTSTRAP] Could not backfill accrued -> approved: ${err.message}`);
+    }
+
     // ── Grant every /affiliates/me/* route to the authenticated role ────
     // The affiliate self-service endpoints live under api::affiliate-profile
     // and expect authenticated (but non-admin) users to call them. Phase 1
