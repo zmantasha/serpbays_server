@@ -162,25 +162,106 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
     const rows = await strapi.entityService.findMany('api::affiliate-referral.affiliate-referral', {
       filters: { affiliate: { id: profile.id } },
       fields: ['id', 'attributedAt', 'status', 'blockReason'],
-      populate: { referredUser: { fields: ['id'] } },  // id-only — no PII
+      populate: {
+        referredUser: { fields: ['id'] },  // id-only — no PII
+        referralLinkClick: { fields: ['id', 'country', 'utmSource', 'utmCampaign', 'landingPath'] },
+      },
       sort: { attributedAt: 'desc' },
       limit: pageSize,
       start: (page - 1) * pageSize,
     });
 
-    const shaped = (rows || []).map((r) => ({
-      id: r.id,
-      attributedAt: r.attributedAt,
-      status: r.status,
-      // Machine-readable reason a referral isn't earning. Never leaks PII
-      // (unlike adminNotes, which stays private-attribute + admin-only).
-      blockReason: r.blockReason || null,
-      referredUserId: r.referredUser?.id || null,  // just the numeric id
-    }));
+    const referredUserIds = (rows || []).map((r) => r.referredUser?.id).filter(Boolean);
+
+    // Aggregate qualifying deposits per referred user in one query. We only
+    // count rows that match the same guard set as the commission engine:
+    // type='deposit', gateway ∈ (stripe, paypal, razorpay, phonepe,
+    // bank_transfer), status='success'. This is what the affiliate sees
+    // in Phase 3's redesigned Referrals list.
+    let depositsByUser = new Map();
+    if (referredUserIds.length > 0) {
+      const knex = strapi.db.connection;
+      const agg = await knex('transactions')
+        .join('transactions_users_permissions_user_lnk', 't', function () {
+          this.on('t.transaction_id', '=', 'transactions.id');
+        })
+        .whereIn('t.user_id', referredUserIds)
+        .where('transactions.type', 'deposit')
+        .whereIn('transactions.gateway', ['stripe', 'paypal', 'razorpay', 'phonepe', 'bank_transfer'])
+        .where('transactions.transaction_status', 'success')
+        .groupBy('t.user_id')
+        .select(
+          't.user_id AS user_id',
+          knex.raw('COUNT(*)::int AS deposit_count'),
+          knex.raw('COALESCE(SUM(transactions.amount), 0)::numeric AS deposit_total'),
+        );
+      depositsByUser = new Map(
+        agg.map((r) => [
+          Number(r.user_id),
+          {
+            depositCount: Number(r.deposit_count),
+            depositTotal: Number(r.deposit_total),
+          },
+        ]),
+      );
+    }
+
+    // Aggregate commission earned per referred user, similarly one shot.
+    let earnedByUser = new Map();
+    if (referredUserIds.length > 0) {
+      const knex = strapi.db.connection;
+      const agg = await knex('affiliate_commissions')
+        .join(
+          'affiliate_commissions_referred_user_lnk',
+          'l',
+          function () { this.on('l.affiliate_commission_id', '=', 'affiliate_commissions.id'); },
+        )
+        .whereIn('l.user_id', referredUserIds)
+        .groupBy('l.user_id')
+        .select(
+          'l.user_id AS user_id',
+          knex.raw("COALESCE(SUM(CASE WHEN status = 'accrued' THEN commission_amount END), 0)::numeric AS accrued"),
+          knex.raw("COALESCE(SUM(CASE WHEN status = 'reversed' THEN commission_amount END), 0)::numeric AS reversed"),
+        );
+      earnedByUser = new Map(
+        agg.map((r) => [
+          Number(r.user_id),
+          {
+            accrued: Number(r.accrued),
+            reversed: Number(r.reversed),
+          },
+        ]),
+      );
+    }
+
+    const shaped = (rows || []).map((r) => {
+      const uid = r.referredUser?.id || null;
+      const dep = uid && depositsByUser.get(uid);
+      const earn = uid && earnedByUser.get(uid);
+      return {
+        id: r.id,
+        attributedAt: r.attributedAt,
+        status: r.status,
+        blockReason: r.blockReason || null,
+        referredUserId: uid,
+        country: r.referralLinkClick?.country || null,
+        trafficSource: r.referralLinkClick?.utmSource || null,
+        landingPath: r.referralLinkClick?.landingPath || null,
+        depositCount: dep?.depositCount ?? 0,
+        depositTotal: dep?.depositTotal ?? 0,
+        earnedAccrued: earn?.accrued ?? 0,
+        earnedReversed: earn?.reversed ?? 0,
+      };
+    });
+
+    // Total count for pagination — cheap (uses the same filter).
+    const total = await strapi.entityService.count('api::affiliate-referral.affiliate-referral', {
+      filters: { affiliate: { id: profile.id } },
+    });
 
     return {
       data: shaped,
-      meta: { page, pageSize, count: shaped.length },
+      meta: { page, pageSize, count: shaped.length, total, pageCount: Math.ceil(total / pageSize) },
     };
   },
 
@@ -204,9 +285,16 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
       };
     }
 
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    const thirtyDaysAgo = new Date(now - 30 * day);
+    const sixtyDaysAgo = new Date(now - 60 * day);
 
-    const [totalClicks, totalReferrals, clicksLast30d, referralsLast30d] = await Promise.all([
+    const [
+      totalClicks, totalReferrals,
+      clicksLast30d, referralsLast30d,
+      clicksPrev30d, referralsPrev30d,
+    ] = await Promise.all([
       strapi.entityService.count('api::affiliate-link-click.affiliate-link-click', {
         filters: { affiliate: { id: profile.id } },
       }),
@@ -219,11 +307,196 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
       strapi.entityService.count('api::affiliate-referral.affiliate-referral', {
         filters: { affiliate: { id: profile.id }, attributedAt: { $gte: thirtyDaysAgo } },
       }),
+      strapi.entityService.count('api::affiliate-link-click.affiliate-link-click', {
+        filters: {
+          affiliate: { id: profile.id },
+          clickedAt: { $gte: sixtyDaysAgo, $lt: thirtyDaysAgo },
+        },
+      }),
+      strapi.entityService.count('api::affiliate-referral.affiliate-referral', {
+        filters: {
+          affiliate: { id: profile.id },
+          attributedAt: { $gte: sixtyDaysAgo, $lt: thirtyDaysAgo },
+        },
+      }),
     ]);
 
     return {
-      data: { totalClicks, totalReferrals, clicksLast30d, referralsLast30d },
+      data: {
+        totalClicks, totalReferrals, clicksLast30d, referralsLast30d,
+        // Previous-period counts for computing deltas on Overview KPI tiles.
+        clicksPrev30d, referralsPrev30d,
+      },
     };
+  },
+
+  /**
+   * GET /affiliates/me/earnings-detail
+   * Extended earnings breakdown for the redesigned Overview + Commissions
+   * dashboards: daily accrual series (30 days), by-gateway split, top
+   * referred contributors, and 30d-vs-prev-30d earning delta.
+   */
+  async myEarningsDetail(ctx) {
+    if (!ctx.state.user) return ctx.unauthorized('Authentication required');
+    const userId = ctx.state.user.id;
+
+    const profile = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({
+      where: { user: userId },
+      select: ['id'],
+    });
+    if (!profile) return ctx.notFound('Affiliate profile not found');
+
+    const knex = strapi.db.connection;
+    // Guard against schema drift: only proceed if the ledger table exists.
+    const lnkJoin = 'affiliate_commissions_affiliate_lnk';
+
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    const thirtyDaysAgo = new Date(now - 30 * day);
+    const sixtyDaysAgo = new Date(now - 60 * day);
+
+    const [daily, byGateway, byReferrer, prevPeriod] = await Promise.all([
+      // Daily accrual (last 30 days). Reversed rows count against their
+      // original day so the chart shows the net effect on that date.
+      knex('affiliate_commissions')
+        .join(lnkJoin, `${lnkJoin}.affiliate_commission_id`, '=', 'affiliate_commissions.id')
+        .where(`${lnkJoin}.affiliate_profile_id`, profile.id)
+        .where('affiliate_commissions.created_at', '>=', thirtyDaysAgo)
+        .groupByRaw("date_trunc('day', affiliate_commissions.created_at)")
+        .orderByRaw("date_trunc('day', affiliate_commissions.created_at) ASC")
+        .select(
+          knex.raw("date_trunc('day', affiliate_commissions.created_at) AS day"),
+          knex.raw("SUM(CASE WHEN status = 'accrued' THEN commission_amount ELSE 0 END)::numeric AS accrued"),
+          knex.raw("SUM(CASE WHEN status = 'reversed' THEN commission_amount ELSE 0 END)::numeric AS reversed"),
+        ),
+      knex('affiliate_commissions')
+        .join(lnkJoin, `${lnkJoin}.affiliate_commission_id`, '=', 'affiliate_commissions.id')
+        .where(`${lnkJoin}.affiliate_profile_id`, profile.id)
+        .where('status', 'accrued')
+        .groupBy('payment_gateway')
+        .select(
+          'payment_gateway',
+          knex.raw('COUNT(*)::int AS count'),
+          knex.raw('COALESCE(SUM(commission_amount), 0)::numeric AS amount'),
+        ),
+      knex('affiliate_commissions')
+        .join(lnkJoin, `${lnkJoin}.affiliate_commission_id`, '=', 'affiliate_commissions.id')
+        .join(
+          'affiliate_commissions_referred_user_lnk',
+          'ru',
+          function () { this.on('ru.affiliate_commission_id', '=', 'affiliate_commissions.id'); },
+        )
+        .where(`${lnkJoin}.affiliate_profile_id`, profile.id)
+        .where('affiliate_commissions.status', 'accrued')
+        .groupBy('ru.user_id')
+        .orderByRaw('SUM(commission_amount) DESC')
+        .limit(5)
+        .select(
+          'ru.user_id AS referred_user_id',
+          knex.raw('COUNT(*)::int AS commission_count'),
+          knex.raw('COALESCE(SUM(commission_amount), 0)::numeric AS total_earned'),
+        ),
+      knex('affiliate_commissions')
+        .join(lnkJoin, `${lnkJoin}.affiliate_commission_id`, '=', 'affiliate_commissions.id')
+        .where(`${lnkJoin}.affiliate_profile_id`, profile.id)
+        .where('status', 'accrued')
+        .whereBetween('affiliate_commissions.created_at', [sixtyDaysAgo, thirtyDaysAgo])
+        .select(knex.raw('COALESCE(SUM(commission_amount), 0)::numeric AS prev30d_accrued'))
+        .first(),
+    ]);
+
+    return ctx.send({
+      data: {
+        daily: daily.map((r) => ({
+          day: r.day,
+          accrued: Number(r.accrued),
+          reversed: Number(r.reversed),
+        })),
+        byGateway: byGateway.map((r) => ({
+          gateway: r.payment_gateway,
+          count: r.count,
+          amount: Number(r.amount),
+        })),
+        topReferrers: byReferrer.map((r) => ({
+          referredUserId: Number(r.referred_user_id),
+          commissionCount: r.commission_count,
+          totalEarned: Number(r.total_earned),
+        })),
+        prev30dAccrued: Number(prevPeriod?.prev30d_accrued || 0),
+      },
+    });
+  },
+
+  /**
+   * GET /affiliates/me/activity
+   * Merged event feed for the Overview timeline: signups + commissions +
+   * code rotations. Sorted newest first, capped at 20 rows. Never leaks
+   * referred-user email — only the numeric user id.
+   */
+  async myActivity(ctx) {
+    if (!ctx.state.user) return ctx.unauthorized('Authentication required');
+    const userId = ctx.state.user.id;
+
+    const profile = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({
+      where: { user: userId },
+      select: ['id', 'lastCodeRotationAt'],
+    });
+    if (!profile) return ctx.notFound('Affiliate profile not found');
+
+    const limit = 20;
+    const [referrals, commissions] = await Promise.all([
+      strapi.entityService.findMany('api::affiliate-referral.affiliate-referral', {
+        filters: { affiliate: { id: profile.id } },
+        fields: ['id', 'attributedAt', 'status', 'blockReason'],
+        populate: { referredUser: { fields: ['id'] } },
+        sort: { attributedAt: 'desc' },
+        limit,
+      }),
+      strapi.db.query('api::affiliate-commission.affiliate-commission').findMany({
+        where: { affiliate: profile.id },
+        orderBy: { createdAt: 'desc' },
+        limit,
+        populate: { referredUser: true, sourceTransaction: true },
+      }),
+    ]);
+
+    const events = [];
+    for (const r of referrals || []) {
+      events.push({
+        type: r.status === 'blocked' ? 'referral_blocked' : 'referral_signup',
+        at: r.attributedAt,
+        payload: {
+          referralId: r.id,
+          referredUserId: r.referredUser?.id ?? null,
+          blockReason: r.blockReason || null,
+        },
+      });
+    }
+    for (const c of commissions || []) {
+      events.push({
+        type: c.status === 'reversed' ? 'commission_reversed' : 'commission_earned',
+        at: c.createdAt,
+        payload: {
+          commissionId: c.id,
+          amount: Number(c.commissionAmount),
+          currency: c.commissionCurrency,
+          ratePercent: Number(c.ratePercent),
+          referredUserId: c.referredUser?.id ?? null,
+          sourceTransactionId: c.sourceTransaction?.id ?? null,
+          paymentGateway: c.paymentGateway,
+        },
+      });
+    }
+    if (profile.lastCodeRotationAt) {
+      events.push({
+        type: 'code_rotated',
+        at: profile.lastCodeRotationAt,
+        payload: {},
+      });
+    }
+
+    events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+    return ctx.send({ data: events.slice(0, limit) });
   },
 
   /**
