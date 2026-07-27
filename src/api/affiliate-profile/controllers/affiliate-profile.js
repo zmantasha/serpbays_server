@@ -181,10 +181,15 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
     let depositsByUser = new Map();
     if (referredUserIds.length > 0) {
       const knex = strapi.db.connection;
+      // Knex join alias goes INSIDE the table string ('table as alias'),
+      // not as a positional second arg. The earlier three-arg form
+      // ("table", "t", fn) hit an internal event-emitter path and threw
+      // "The 'listener' argument must be of type function".
       const agg = await knex('transactions')
-        .join('transactions_users_permissions_user_lnk', 't', function () {
-          this.on('t.transaction_id', '=', 'transactions.id');
-        })
+        .join(
+          'transactions_users_permissions_user_lnk as t',
+          't.transaction_id', '=', 'transactions.id'
+        )
         .whereIn('t.user_id', referredUserIds)
         .where('transactions.type', 'deposit')
         .whereIn('transactions.gateway', ['stripe', 'paypal', 'razorpay', 'phonepe', 'bank_transfer'])
@@ -212,9 +217,8 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
       const knex = strapi.db.connection;
       const agg = await knex('affiliate_commissions')
         .join(
-          'affiliate_commissions_referred_user_lnk',
-          'l',
-          function () { this.on('l.affiliate_commission_id', '=', 'affiliate_commissions.id'); },
+          'affiliate_commissions_referred_user_lnk as l',
+          'l.affiliate_commission_id', '=', 'affiliate_commissions.id'
         )
         .whereIn('l.user_id', referredUserIds)
         .groupBy('l.user_id')
@@ -382,9 +386,8 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
       knex('affiliate_commissions')
         .join(lnkJoin, `${lnkJoin}.affiliate_commission_id`, '=', 'affiliate_commissions.id')
         .join(
-          'affiliate_commissions_referred_user_lnk',
-          'ru',
-          function () { this.on('ru.affiliate_commission_id', '=', 'affiliate_commissions.id'); },
+          'affiliate_commissions_referred_user_lnk as ru',
+          'ru.affiliate_commission_id', '=', 'affiliate_commissions.id'
         )
         .where(`${lnkJoin}.affiliate_profile_id`, profile.id)
         .where('affiliate_commissions.status', 'accrued')

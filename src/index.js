@@ -254,6 +254,52 @@ module.exports = {
       strapi.log.warn(`[BOOTSTRAP] Could not auto-grant admin route permissions: ${err.message}`);
     }
 
+    // ── Grant every /affiliates/me/* route to the authenticated role ────
+    // The affiliate self-service endpoints live under api::affiliate-profile
+    // and expect authenticated (but non-admin) users to call them. Phase 1
+    // granted a handful manually via the admin panel; every new endpoint
+    // added since (Phase 2C: earnings + commissions; Phase 3: earnings-detail
+    // + activity) shipped without a matching permission row and returned
+    // 403 in production. Auto-grant here so any new controller method under
+    // affiliate-profile is available to authenticated users on the next
+    // boot without a manual step. Idempotent.
+    try {
+      const affiliateProfileRoutes = require('./api/affiliate-profile/routes/affiliate-profile');
+      const authRole = await strapi.db
+        .query('plugin::users-permissions.role')
+        .findOne({ where: { type: 'authenticated' } });
+      if (authRole) {
+        const actions = new Set();
+        for (const route of (affiliateProfileRoutes.routes || [])) {
+          const [controller, method] = String(route.handler || '').split('.');
+          if (controller && method) {
+            actions.add(`api::affiliate-profile.${controller}.${method}`);
+          }
+        }
+        let grantedAffiliate = 0;
+        for (const action of actions) {
+          const existing = await strapi.db
+            .query('plugin::users-permissions.permission')
+            .findOne({ where: { action, role: authRole.id } });
+          if (!existing) {
+            await strapi.db
+              .query('plugin::users-permissions.permission')
+              .create({ data: { action, role: authRole.id } });
+            grantedAffiliate++;
+          }
+        }
+        if (grantedAffiliate > 0) {
+          strapi.log.info(
+            `[BOOTSTRAP] Granted ${grantedAffiliate} affiliate-profile permission(s) to authenticated role`
+          );
+        }
+      }
+    } catch (err) {
+      strapi.log.warn(
+        `[BOOTSTRAP] Could not auto-grant /affiliates/me/* permissions: ${err.message}`
+      );
+    }
+
     // ── Grant marketplace update-history route to admin roles ───────────
     // The /api/marketplaces/:id/history route lives on the public-side
     // marketplace API (not under api::admin), so the loop above doesn't
