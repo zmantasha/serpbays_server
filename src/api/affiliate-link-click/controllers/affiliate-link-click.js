@@ -18,6 +18,7 @@ const { createCoreController } = require('@strapi/strapi').factories;
 const crypto = require('crypto');
 const { normaliseCode } = require('../../../utils/referral-code');
 const limiter = require('../../../utils/affiliate-click-limiter');
+const { getClientIp, getClientIpOrFallback } = require('../../../utils/get-client-ip');
 
 const IP_HASH_SALT = () =>
   process.env.AFFILIATE_IP_HASH_SALT || process.env.APP_KEYS?.split(',')[0] || 'change-me-in-env';
@@ -62,10 +63,13 @@ module.exports = createCoreController('api::affiliate-link-click.affiliate-link-
     const rawCode = body.code || body.referralCode || body.ref;
     const code = normaliseCode(rawCode);
 
-    const ipAddress =
-      ctx.request?.ip ||
-      (ctx.request?.headers?.['x-forwarded-for'] || '').split(',')[0].trim() ||
-      null;
+    // Real client IP, tolerant of the CF → nginx → node chain. Falls back
+    // to any non-empty candidate (including loopback) for rate-limiting.
+    const ipAddress = getClientIpOrFallback(ctx);
+    // Trusted IP — null when we couldn't resolve past loopback. Only the
+    // trusted value goes into the ipHash used for anti-self-referral checks;
+    // storing hashed loopback would false-positive every future signup.
+    const trustedIp = getClientIp(ctx);
 
     // Rate-limit BEFORE any DB work — cheap for an attacker to burn a socket,
     // expensive to have every burst hit the DB. Check both per-IP and per-code
@@ -101,7 +105,7 @@ module.exports = createCoreController('api::affiliate-link-click.affiliate-link-
           referralCode: code,
           affiliate: affiliate ? affiliate.id : null,
           clickedAt: new Date(),
-          ipHash: hashIp(ipAddress),
+          ipHash: hashIp(trustedIp),
           country: readCountry(ctx),
           userAgent: clampString(ctx.request?.headers?.['user-agent'], 512),
           landingPath: cleanPath(body.landingPath),

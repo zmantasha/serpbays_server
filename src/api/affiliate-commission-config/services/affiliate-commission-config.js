@@ -26,7 +26,18 @@ const DEFAULT_CONFIG = Object.freeze({
 module.exports = ({ strapi }) => ({
   async get() {
     const existing = await strapi.entityService.findMany(CONTENT_TYPE, {});
-    if (existing) return existing;
+    if (existing) {
+      // Older rows can have null holdPeriodDays (column added after row
+      // creation, schema default never applied). Auto-heal on first read so
+      // every consumer downstream sees a real integer, not null coerced
+      // through Number() into 0.
+      if (existing.holdPeriodDays === null || existing.holdPeriodDays === undefined) {
+        return strapi.entityService.update(CONTENT_TYPE, existing.id, {
+          data: { holdPeriodDays: DEFAULT_CONFIG.holdPeriodDays },
+        });
+      }
+      return existing;
+    }
     return strapi.entityService.create(CONTENT_TYPE, {
       data: { ...DEFAULT_CONFIG },
     });

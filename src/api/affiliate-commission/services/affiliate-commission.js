@@ -209,7 +209,11 @@ module.exports = ({ strapi }) => {
 
       // Snapshot the hold period at accrual time. Immutable per row —
       // admin config changes after accrual never affect in-flight commissions.
-      const rawHold = Number(config.holdPeriodDays);
+      // Note: Number(null) === 0, so we can't just Number() the config value.
+      // A config row created before the holdPeriodDays column existed has
+      // holdPeriodDays=null; treat that as the schema default (15), not 0.
+      const cfgHold = config.holdPeriodDays;
+      const rawHold = cfgHold === null || cfgHold === undefined ? 15 : Number(cfgHold);
       const heldForDays = Number.isFinite(rawHold) && rawHold >= 0 ? Math.min(rawHold, 365) : 15;
 
       const depositAmount = Number(deposit.amount);

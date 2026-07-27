@@ -228,9 +228,13 @@ module.exports = {
                     if (referralCode) {
                         try {
                             const attributionSvc = require('../../affiliate-profile/services/affiliate-attribution');
-                            const signupIp = ctx.request?.ip
-                                || (ctx.request?.headers?.['x-forwarded-for'] || '').split(',')[0].trim()
-                                || null;
+                            const { getClientIp } = require('../../../utils/get-client-ip');
+                            // Real client IP (Cloudflare → nginx → node chain
+                            // aware). Returns null if we can only resolve to
+                            // loopback — in that case the attribution service
+                            // skips its IP-based self-referral check rather
+                            // than false-positive-blocking every signup.
+                            const signupIp = getClientIp(ctx);
                             await attributionSvc.attributeReferral({
                                 userId: user.id,
                                 userEmail: email,
