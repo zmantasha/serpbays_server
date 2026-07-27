@@ -378,4 +378,107 @@ module.exports = {
 
     return ctx.send({ data: list.data, meta: list.meta, stats });
   },
+
+  /**
+   * PUT /admin/affiliates/:id/referrals/:referralId/status
+   * Body: { status: 'active' | 'pending_review' | 'blocked' | 'churned', reason?: string }
+   *
+   * The admin's review action on a soft-flagged (or manually-flagged)
+   * referral. Typical transitions:
+   *   pending_review → active   (false positive on shared network etc.)
+   *   pending_review → blocked  (confirmed suspicious pattern)
+   *   blocked        → active   (unblock — legit referral was hard-blocked)
+   *   active         → blocked  (retroactive block after finding fraud)
+   *
+   * Commission accrual is gated on referral.status='active' in the
+   * commission engine — flipping to active does NOT retroactively
+   * generate commissions for past deposits; a separate backfill script
+   * handles that if needed.
+   */
+  async setReferralStatus(ctx) {
+    const affiliateId = Number(ctx.params?.id);
+    const referralId = Number(ctx.params?.referralId);
+    if (!Number.isFinite(affiliateId) || affiliateId <= 0) {
+      return ctx.badRequest('Invalid affiliate id');
+    }
+    if (!Number.isFinite(referralId) || referralId <= 0) {
+      return ctx.badRequest('Invalid referral id');
+    }
+
+    const body = ctx.request.body || {};
+    const nextStatus = String(body.status || '').trim();
+    const ALLOWED = ['active', 'pending_review', 'blocked', 'churned'];
+    if (!ALLOWED.includes(nextStatus)) {
+      return ctx.badRequest(`status must be one of ${ALLOWED.join(', ')}`);
+    }
+    const reason = typeof body.reason === 'string'
+      ? body.reason.trim().slice(0, 2000)
+      : null;
+
+    // Confirm the referral belongs to this affiliate (defense-in-depth
+    // against a stale URL that mismatches the id pair).
+    const existing = await strapi.db.query('api::affiliate-referral.affiliate-referral').findOne({
+      where: { id: referralId },
+      populate: { affiliate: true },
+    });
+    if (!existing) return ctx.notFound('Referral not found');
+    if (existing.affiliate?.id !== affiliateId) {
+      return ctx.badRequest('Referral does not belong to this affiliate');
+    }
+
+    if (existing.status === nextStatus) {
+      return ctx.send({ data: existing, unchanged: true });
+    }
+
+    const admin = ctx.state.user;
+    const timestamp = new Date().toISOString();
+    const historyLine = `[${timestamp}] admin=${admin?.username || admin?.id} ${existing.status} -> ${nextStatus}${reason ? ` — ${reason}` : ''}`;
+    const nextAdminNotes = existing.adminNotes
+      ? `${existing.adminNotes}\n${historyLine}`
+      : historyLine;
+
+    // Clear blockReason when moving to 'active' — the referral is no
+    // longer flagged. Keep it when moving to/staying in a non-active
+    // state so history is preserved.
+    const patch = {
+      status: nextStatus,
+      adminNotes: nextAdminNotes,
+    };
+    if (nextStatus === 'active') {
+      patch.blockReason = null;
+    } else if (nextStatus === 'blocked' && existing.blockReason == null) {
+      // Manually-confirmed block with no earlier auto-flag reason.
+      patch.blockReason = 'admin_manual';
+    }
+
+    const updated = await strapi.entityService.update(
+      'api::affiliate-referral.affiliate-referral',
+      referralId,
+      { data: patch },
+    );
+
+    try {
+      await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+        data: {
+          adminUser: admin?.id,
+          action: 'affiliate_referral_status_change',
+          details: {
+            affiliateId,
+            referralId,
+            prevStatus: existing.status,
+            nextStatus,
+            reason: reason || null,
+          },
+          ipAddress: ctx.request.ip,
+          userAgent: ctx.request.headers['user-agent'],
+        },
+      });
+    } catch (_) { /* best-effort */ }
+
+    strapi.log.info(
+      `[admin/affiliates] user=${admin?.id} referral=${referralId} ${existing.status} -> ${nextStatus} reason=${reason || '(none)'}`,
+    );
+
+    return ctx.send({ data: updated });
+  },
 };

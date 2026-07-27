@@ -113,13 +113,20 @@ async function attributeReferral(args) {
     // still attribute against the code alone, but record the referral with
     // a null referralLinkClick FK so downstream fraud checks can flag it.
 
-    // 5. Self-referral guard — IP hash. Even if the emails differ, matching
-    //    IP within a small window is a strong self-referral signal.
+    // 5. Weak self-referral signal — matching IP alone.
+    //    Policy: shared IP by itself is NOT enough to block (roommates,
+    //    office WiFi, mobile hotspot, hostel, coffee shop all share IPs).
+    //    We soft-flag as pending_review so an admin can look at the
+    //    fuller context (device, email, deposit patterns) before
+    //    approving or confirming a block. Commissions still don't
+    //    accrue until status='active' — the commission engine's
+    //    referral.status guard handles that.
+    //
+    //    HARD blocks that DO short-circuit above without creating a row:
+    //      - referredUser.id === affiliate.user.id  (§2, above)
+    //      - referredUser.email === affiliate.user.email (case-insensitive, §2)
     const signupIpHash = hashIp(signupIp);
     if (winningClick && winningClick.ipHash && signupIpHash && winningClick.ipHash === signupIpHash) {
-      // Not a hard block — could be legitimate (roommate signup on shared
-      // WiFi). Just record the referral with status='blocked' so an admin
-      // can review before any downstream commission engine acts on it.
       strapi.log.warn(`[affiliate-attribution] ip_hash match — flagging referral for review (code=${code} user=${userId})`);
       const ref = await strapi.entityService.create('api::affiliate-referral.affiliate-referral', {
         data: {
@@ -128,9 +135,9 @@ async function attributeReferral(args) {
           referralLinkClick: winningClick ? winningClick.id : null,
           attributedAt: new Date(),
           attributionIpHash: signupIpHash,
-          status: 'blocked',
+          status: 'pending_review',
           blockReason: 'self_referral_same_ip',
-          adminNotes: 'auto-blocked: signup IP hash matched click IP hash (possible self-referral)',
+          adminNotes: 'auto-flagged for review: signup IP hash matched click IP hash (shared network — could be legitimate roommates / office / hostel / mobile hotspot; admin should verify device + email + deposit pattern before deciding)',
         },
       });
       if (winningClick) {

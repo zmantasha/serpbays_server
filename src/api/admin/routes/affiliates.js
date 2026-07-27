@@ -71,5 +71,12 @@ module.exports = {
       handler: 'affiliates.commissions',
       config: { policies: ['global::is-admin'], middlewares: ['global::admin-jwt-auth'] },
     },
+    // ── Individual referral status change (approve / block review) ────
+    {
+      method: 'PUT',
+      path: '/admin/affiliates/:id/referrals/:referralId/status',
+      handler: 'affiliates.setReferralStatus',
+      config: { policies: ['global::is-admin'], middlewares: ['global::admin-jwt-auth'] },
+    },
   ],
 };

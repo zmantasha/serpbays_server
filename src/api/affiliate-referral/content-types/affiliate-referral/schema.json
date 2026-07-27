@@ -44,10 +44,10 @@
     },
     "status": {
       "type": "enumeration",
-      "enum": ["active", "blocked", "churned"],
+      "enum": ["active", "pending_review", "blocked", "churned"],
       "default": "active",
       "required": true,
-      "description": "active = normal. blocked = admin flagged the referral as fraudulent (no future commission would fire once commission engine ships). churned = referred user hasn't logged in for a long time (populated by a future cron)."
+      "description": "active = commissions accrue normally. pending_review = soft-flagged for admin review — weak signal like a shared IP; NO commissions until an admin approves. blocked = confirmed fraud or hard signal (same email/user id); commissions never accrue. churned = referred user inactive for a long time."
     },
     "adminNotes": {
       "type": "text",
