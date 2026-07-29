@@ -26,9 +26,9 @@
       "type": "string",
       "required": true,
       "unique": true,
-      "minLength": 8,
+      "minLength": 4,
       "maxLength": 16,
-      "description": "URL-safe uppercase alphanumeric slug. Generated via crypto.randomBytes → Crockford's base32. Rotation on regenerate keeps history via the audit log; old code stops resolving immediately."
+      "description": "URL-safe uppercase alphanumeric slug. Auto-generated codes are 10 chars via crypto.randomBytes → Crockford's base32. Custom user-chosen codes range 4-16 chars; both paths run through the same normalisation (O→0, I→1, L→1, U→V) so lookups never diverge. Old code stops resolving immediately on rotation."
     },
     "status": {
       "type": "enumeration",

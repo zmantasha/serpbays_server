@@ -32,6 +32,12 @@ module.exports = {
       config: { policies: [], middlewares: [] },
     },
     {
+      method: 'POST',
+      path: '/affiliates/me/custom-code',
+      handler: 'affiliate-profile.setCustomCode',
+      config: { policies: [], middlewares: [] },
+    },
+    {
       method: 'GET',
       path: '/affiliates/me/referrals',
       handler: 'affiliate-profile.myReferrals',

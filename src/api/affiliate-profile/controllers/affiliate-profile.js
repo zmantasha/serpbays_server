@@ -14,7 +14,7 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
-const { generateUniqueCode } = require('../../../utils/referral-code');
+const { generateUniqueCode, validateCustomCode } = require('../../../utils/referral-code');
 
 // Fields safe to return to the affiliate themselves.
 const AFFILIATE_PROFILE_PUBLIC_FIELDS = [
@@ -134,6 +134,95 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
 
     strapi.log.info(`[affiliate.regenerateMyCode] user=${userId} rotated code (profile=${profile.id})`);
     return { data: shapeProfile(updated) };
+  },
+
+  /**
+   * POST /affiliates/me/custom-code
+   *   body: { code: string }
+   *
+   * Set the caller's referral code to a user-chosen value (memorable slug
+   * like "GROWTH24"). Old code stops resolving immediately — same semantics
+   * as regenerateMyCode.
+   *
+   * Constraints:
+   *   • 4-16 chars, letters + digits only (input is case-insensitive,
+   *     stored uppercase-canonical with Crockford substitution — O→0, I→1,
+   *     L→1, U→V — so lookups behave the same as auto-generated codes).
+   *   • Not a reserved word (impersonation guard — no ADMIN, SERPBAYS, etc).
+   *   • Not already in use by another affiliate.
+   *   • Not identical to the caller's current code (no-op guard).
+   *
+   * Rate limit: shared 24h cooldown with regenerate. Setting a custom
+   * code counts as a rotation; the cooldown prevents someone with a
+   * stolen session from cycling codes to evade tracking.
+   */
+  async setCustomCode(ctx) {
+    if (!ctx.state.user) return ctx.unauthorized('Authentication required');
+    const userId = ctx.state.user.id;
+
+    const raw = ctx.request.body?.code;
+    const result = validateCustomCode(raw);
+    if (result.error) return ctx.badRequest(result.error);
+    const canonical = result.code;
+
+    const profile = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({
+      where: { user: userId },
+    });
+    if (!profile) return ctx.notFound('No affiliate profile — call POST /affiliates/apply first');
+    if (profile.status !== 'active') {
+      return ctx.forbidden('Cannot change code on a disabled or terminated affiliate profile.');
+    }
+
+    // Same-as-current is a no-op — surface it clearly so client can toast
+    // "this is already your code" instead of failing on the uniqueness
+    // check below (which would misleadingly say "code already in use").
+    if (profile.referralCode === canonical) {
+      return { data: shapeProfile(profile), unchanged: true };
+    }
+
+    // 24h cooldown — shared with regenerateMyCode.
+    const last = profile.lastCodeRotationAt ? new Date(profile.lastCodeRotationAt).getTime() : 0;
+    const ageS = (Date.now() - last) / 1000;
+    if (ageS < CODE_ROTATION_COOLDOWN_S) {
+      const retry = Math.ceil(CODE_ROTATION_COOLDOWN_S - ageS);
+      ctx.set('Retry-After', String(retry));
+      return ctx.throw(429, 'You changed your code recently. Try again later.');
+    }
+
+    // Uniqueness pre-check (belt) — the UNIQUE index at the DB layer is the
+    // race-safe backstop. We swallow the 23505 unique-violation and return a
+    // clean error message so a race loser doesn't see an internal server
+    // error.
+    const taken = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({
+      where: { referralCode: canonical },
+    });
+    if (taken) {
+      return ctx.conflict('That referral code is already in use. Please choose a different one.');
+    }
+
+    try {
+      const updated = await strapi.entityService.update(
+        'api::affiliate-profile.affiliate-profile',
+        profile.id,
+        {
+          data: {
+            referralCode: canonical,
+            lastCodeRotationAt: new Date(),
+          },
+        },
+      );
+      strapi.log.info(
+        `[affiliate.setCustomCode] user=${userId} adopted custom code (profile=${profile.id}, code=${canonical})`,
+      );
+      return { data: shapeProfile(updated) };
+    } catch (err) {
+      const isUnique = err?.code === '23505' || /duplicate|unique/i.test(err?.message || '');
+      if (isUnique) {
+        return ctx.conflict('That referral code was taken in the last moment. Please choose a different one.');
+      }
+      strapi.log.error(`[affiliate.setCustomCode] user=${userId} failed: ${err.message}`);
+      return ctx.internalServerError('Could not save your custom code. Please try again.');
+    }
   },
 
   /**

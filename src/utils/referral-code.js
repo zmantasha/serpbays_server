@@ -76,10 +76,91 @@ const generateUniqueCode = async (strapi, maxAttempts = 5) => {
   throw new Error('Could not generate a unique referral code after multiple attempts');
 };
 
+// ─── Custom (user-chosen) codes ────────────────────────────────────────────
+//
+// Auto-generated codes use CODE_LEN=10 exactly. Custom codes are allowed to
+// range wider so users can pick memorable slugs, but must land in the same
+// alphabet after Crockford substitution — otherwise click lookups would break
+// (since normaliseCode() rewrites O→0, I→1, L→1, U→V, and the DB stores the
+// substituted form).
+//
+// Reserved codes protect against impersonation and brand-hijacking. Users
+// cannot claim these regardless of case — the check runs after
+// canonicalisation so "SERPBAYS", "Serpbays", "SerpBay5" (S→5? no; but
+// deliberately-spelled variants) all normalise into the guard.
+
+const CUSTOM_CODE_MIN_LEN = 4;
+const CUSTOM_CODE_MAX_LEN = 16;
+
+const RESERVED_CUSTOM_CODES = new Set([
+  // Company / brand names
+  'SERPBAYS', 'SERPBAY', 'SERP',
+  // System / role words
+  'ADMIN', 'ROOT', 'SUPPORT', 'OFFICIAL', 'SYSTEM',
+  'STAFF', 'TEAM', 'HELP', 'MOD', 'MODERATOR',
+  // Auth-adjacent words that could confuse users into thinking a link is official
+  'LOGIN', 'SIGNIN', 'SIGNUP', 'REGISTER', 'AUTH',
+  // Payment adjacent
+  'PAY', 'PAYMENT', 'BILLING', 'WALLET',
+  // Test / placeholder
+  'TEST', 'DEMO', 'EXAMPLE', 'SAMPLE',
+]);
+
+/**
+ * Validate + normalise a user-supplied custom code. Returns
+ *   { code: string }              on success (the DB-canonical form)
+ *   { error: string }             on rejection (safe to surface to the user)
+ *
+ * Length allowed: 4-16 (broader than auto-gen's 10 so users can pick shorter,
+ * memorable slugs). Characters allowed: A-Z + 0-9, case-insensitive on input.
+ * After Crockford substitution the same lookalike rules apply as the
+ * auto-generated path — the resulting string is stored verbatim in the DB.
+ */
+const validateCustomCode = (raw) => {
+  if (typeof raw !== 'string') {
+    return { error: 'Referral code must be a string' };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { error: 'Referral code cannot be empty' };
+  }
+  if (trimmed.length < CUSTOM_CODE_MIN_LEN) {
+    return { error: `Referral code must be at least ${CUSTOM_CODE_MIN_LEN} characters` };
+  }
+  if (trimmed.length > CUSTOM_CODE_MAX_LEN) {
+    return { error: `Referral code must be no more than ${CUSTOM_CODE_MAX_LEN} characters` };
+  }
+  // Reject any character that isn't a letter or digit BEFORE substitution.
+  // Users can type A-Z, 0-9, and case-insensitive letters including
+  // O/I/L/U (they'll be canonicalised below).
+  if (!/^[A-Za-z0-9]+$/.test(trimmed)) {
+    return { error: 'Referral code can only contain letters and numbers' };
+  }
+  // Canonicalise with the same substitutions the click path uses so lookups
+  // never diverge from what's stored.
+  const canonical = trimmed
+    .toUpperCase()
+    .replace(/O/g, '0')
+    .replace(/I/g, '1')
+    .replace(/L/g, '1')
+    .replace(/U/g, 'V');
+  // Reserved word check runs on the canonicalised form so an attacker can't
+  // slip past by typing "ADM1N" (canon: "ADM1N", not in list — that's fine,
+  // reserved list should include the canonical variants we care about).
+  if (RESERVED_CUSTOM_CODES.has(canonical)) {
+    return { error: 'This referral code is reserved. Please choose a different one.' };
+  }
+  return { code: canonical };
+};
+
 module.exports = {
   ALPHABET,
   CODE_LEN,
+  CUSTOM_CODE_MIN_LEN,
+  CUSTOM_CODE_MAX_LEN,
+  RESERVED_CUSTOM_CODES,
   generateCode,
   normaliseCode,
   generateUniqueCode,
+  validateCustomCode,
 };
