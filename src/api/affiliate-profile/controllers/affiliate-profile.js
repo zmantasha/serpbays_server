@@ -15,6 +15,8 @@
 
 const { createCoreController } = require('@strapi/strapi').factories;
 const { generateUniqueCode, validateCustomCode } = require('../../../utils/referral-code');
+const { updateAffiliateActivityIp } = require('../services/affiliate-attribution');
+const { getClientIp } = require('../../../utils/get-client-ip');
 
 // Fields safe to return to the affiliate themselves.
 const AFFILIATE_PROFILE_PUBLIC_FIELDS = [
@@ -92,6 +94,11 @@ module.exports = createCoreController('api::affiliate-profile.affiliate-profile'
       where: { user: userId },
     });
     if (!profile) return ctx.notFound('No affiliate profile — call POST /affiliates/apply first');
+
+    // Refresh the affiliate's last-known IP hash. Used by attribute-referral
+    // to detect self-referral (signup IP == affiliate's recent IP). Cheap,
+    // no-op if unchanged.
+    updateAffiliateActivityIp(strapi, userId, getClientIp(ctx));
 
     return { data: shapeProfile(profile) };
   },

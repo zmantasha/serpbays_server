@@ -72,6 +72,17 @@
       "type": "text",
       "private": true,
       "description": "Admin-only note explaining why per-affiliate commissions were turned off."
+    },
+    "lastActivityIpHash": {
+      "type": "string",
+      "private": true,
+      "maxLength": 128,
+      "description": "SHA-256 hash of the affiliate's most recent authenticated public IP. Used ONLY for self-referral detection — the signup IP hash of a new referral is compared against this. Never leaves the server. Refreshed opportunistically on any /affiliates/me/* endpoint hit."
+    },
+    "lastActivityAt": {
+      "type": "datetime",
+      "private": true,
+      "description": "When lastActivityIpHash was last updated. Self-referral check requires this to be within a 24h window — stale IPs (dynamic ISPs, changed carriers) don't false-positive-block future legitimate referrals."
     }
   }
 }

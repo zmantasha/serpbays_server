@@ -15,9 +15,25 @@
  *     treated identically to non-existent codes (no oracle for existence).
  *   - The referral is created ONCE — `referredUser` is unique on the
  *     content type, so a re-run cannot double-attribute or re-attribute.
- *   - Self-referral fraud: reject if the referred user's clerkId / email
- *     matches the affiliate's, OR if the ipHash on the winning click
- *     matches the ipHash on the signup.
+ *   - Self-referral fraud detection:
+ *       (a) HARD block if referredUser.id === affiliate.user.id
+ *       (b) HARD block if referredUser.email === affiliate.user.email (ci)
+ *       (c) SOFT flag (pending_review) if signup IP hash matches the
+ *           affiliate's OWN recent activity IP hash (see below).
+ *
+ *     Note: the older design compared the referred user's click IP hash
+ *     to their own signup IP hash. Every legitimate single-device signup
+ *     matches — the user clicks a link on their phone, fills the form
+ *     on the same phone, so of course both requests share an IP. That
+ *     produced a 100% false-positive rate. The corrected check compares
+ *     the signup IP against the AFFILIATE's last known IP (see
+ *     `updateAffiliateActivityIp` in this file), which is the actual
+ *     self-referral signal: is the affiliate logged in on the same
+ *     device as the "new" signup?
+ *
+ *   - 24h staleness window on the affiliate's IP hash — an affiliate
+ *     who was last active a month ago shouldn't false-positive-flag a
+ *     legit signup that happens to come from a similar carrier NAT.
  *   - Stale-click window: only clicks within the last N days are eligible
  *     (default 30). Config via AFFILIATE_ATTRIBUTION_WINDOW_DAYS.
  */
@@ -32,6 +48,12 @@ const num = (name, def) => {
 
 const ATTRIBUTION_WINDOW_DAYS = () => num('AFFILIATE_ATTRIBUTION_WINDOW_DAYS', 30);
 
+// How recent must the affiliate's own activity be for a same-IP match to
+// count as a self-referral signal? Beyond this, IPs are unreliable (dynamic
+// ISPs, mobile carrier switches, roaming) and comparing would false-flag.
+const AFFILIATE_ACTIVITY_STALENESS_MS = () =>
+  num('AFFILIATE_SELF_REFERRAL_STALENESS_HOURS', 24) * 60 * 60 * 1000;
+
 const IP_HASH_SALT = () =>
   process.env.AFFILIATE_IP_HASH_SALT || process.env.APP_KEYS?.split(',')[0] || 'change-me-in-env';
 
@@ -39,6 +61,39 @@ const hashIp = (ip) => {
   if (!ip) return null;
   return crypto.createHash('sha256').update(String(ip) + '|' + IP_HASH_SALT()).digest('hex');
 };
+
+/**
+ * Opportunistically refresh the affiliate's last-known IP hash. Called
+ * from every /affiliates/me/* endpoint that an authenticated affiliate
+ * hits. One tiny UPDATE per dashboard visit; keeps the anti-self-referral
+ * check honest without polluting hot paths.
+ *
+ * Silently swallows every failure — the affiliate must not experience an
+ * error from this bookkeeping-only write.
+ */
+async function updateAffiliateActivityIp(strapi, userId, ip) {
+  try {
+    if (!Number.isInteger(userId) || userId <= 0) return;
+    const ipHash = hashIp(ip);
+    if (!ipHash) return;
+    const profile = await strapi.db.query('api::affiliate-profile.affiliate-profile').findOne({
+      where: { user: userId },
+      select: ['id', 'lastActivityIpHash'],
+    });
+    if (!profile) return;
+    // Skip the write if the hash hasn't changed — most requests hit this
+    // path with an unchanged IP. Also skip if it's within the last 5 min
+    // (avoids one DB write per API call under active dashboard use).
+    if (profile.lastActivityIpHash === ipHash) return;
+    await strapi.entityService.update(
+      'api::affiliate-profile.affiliate-profile',
+      profile.id,
+      { data: { lastActivityIpHash: ipHash, lastActivityAt: new Date() } },
+    );
+  } catch (err) {
+    strapi.log?.warn?.(`[affiliate-attribution] updateAffiliateActivityIp swallowed: ${err.message}`);
+  }
+}
 
 /**
  * Attribute a newly-created user to an affiliate.
@@ -113,21 +168,44 @@ async function attributeReferral(args) {
     // still attribute against the code alone, but record the referral with
     // a null referralLinkClick FK so downstream fraud checks can flag it.
 
-    // 5. Weak self-referral signal — matching IP alone.
-    //    Policy: shared IP by itself is NOT enough to block (roommates,
-    //    office WiFi, mobile hotspot, hostel, coffee shop all share IPs).
-    //    We soft-flag as pending_review so an admin can look at the
-    //    fuller context (device, email, deposit patterns) before
-    //    approving or confirming a block. Commissions still don't
-    //    accrue until status='active' — the commission engine's
-    //    referral.status guard handles that.
+    // 5. Self-referral signal — signup IP matches the AFFILIATE'S recent
+    //    activity IP.
     //
-    //    HARD blocks that DO short-circuit above without creating a row:
+    //    The intent is to catch "affiliate is logged in on this device
+    //    right now, and someone from the same IP is signing up as a
+    //    'referred user'." That's the genuine self-referral pattern.
+    //
+    //    We used to compare click.ipHash to signup.ipHash — but that was
+    //    the SAME PERSON's click and signup, so it always matched (a user
+    //    clicking a link on their phone then filling the form on the same
+    //    phone is exactly what a legitimate referral looks like).
+    //    Result was a 100% false-positive rate on staging (users 968,
+    //    971, 974, 982, 984 all pending_review). Removed.
+    //
+    //    Precondition: affiliate must have been active within the
+    //    staleness window (24h default). Older IPs are unreliable —
+    //    mobile carriers, ISP DHCP renewals, etc.
+    //
+    //    HARD blocks that short-circuit above without creating a row:
     //      - referredUser.id === affiliate.user.id  (§2, above)
     //      - referredUser.email === affiliate.user.email (case-insensitive, §2)
     const signupIpHash = hashIp(signupIp);
-    if (winningClick && winningClick.ipHash && signupIpHash && winningClick.ipHash === signupIpHash) {
-      strapi.log.warn(`[affiliate-attribution] ip_hash match — flagging referral for review (code=${code} user=${userId})`);
+    const stalenessMs = AFFILIATE_ACTIVITY_STALENESS_MS();
+    const affiliateActivityAgeMs = affiliate.lastActivityAt
+      ? Date.now() - new Date(affiliate.lastActivityAt).getTime()
+      : Infinity;
+    const affiliateActivityFresh = affiliateActivityAgeMs <= stalenessMs;
+    const affiliateIpMatchesSignup = Boolean(
+      signupIpHash &&
+      affiliate.lastActivityIpHash &&
+      affiliate.lastActivityIpHash === signupIpHash &&
+      affiliateActivityFresh,
+    );
+
+    if (affiliateIpMatchesSignup) {
+      strapi.log.warn(
+        `[affiliate-attribution] SELF-REFERRAL signal: signup IP matches affiliate's own recent activity IP — flagging for review (code=${code} user=${userId} affiliate=${affiliate.id})`,
+      );
       const ref = await strapi.entityService.create('api::affiliate-referral.affiliate-referral', {
         data: {
           affiliate: affiliate.id,
@@ -137,7 +215,7 @@ async function attributeReferral(args) {
           attributionIpHash: signupIpHash,
           status: 'pending_review',
           blockReason: 'self_referral_same_ip',
-          adminNotes: 'auto-flagged for review: signup IP hash matched click IP hash (shared network — could be legitimate roommates / office / hostel / mobile hotspot; admin should verify device + email + deposit pattern before deciding)',
+          adminNotes: `auto-flagged for review: signup IP hash matches the affiliate's own recent activity IP hash (affiliate active ${Math.round(affiliateActivityAgeMs / 60000)}m ago from same IP). Could be legit (family / office / same-device sharing) — verify email + device + deposit pattern before approving.`,
         },
       });
       if (winningClick) {
@@ -174,6 +252,7 @@ async function attributeReferral(args) {
 
 module.exports = {
   attributeReferral,
+  updateAffiliateActivityIp,
   hashIp,
   ATTRIBUTION_WINDOW_DAYS,
 };
