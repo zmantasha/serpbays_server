@@ -77,75 +77,183 @@ async function getOrCreateWallet(strapi, userId) {
   });
 }
 
+// Which gateways represent EXTERNAL money coming onto the platform (as
+// opposed to `gateway=system` deposits, which are internal — publisher
+// order earnings credited to the seller's wallet).
+const EXTERNAL_DEPOSIT_GATEWAYS = new Set([
+  'stripe', 'paypal', 'razorpay', 'phonepe', 'bank_transfer',
+]);
+
+// Transaction outflow statuses that count against retention. Pending,
+// success, paid, approved all imply the money has left (or is committed
+// to leaving) the platform. Failed/cancelled/denied/rejected mean the
+// outflow never happened.
+const ACTIVE_OUTFLOW_STATUSES = new Set([
+  'pending', 'success', 'paid', 'approved',
+]);
+
 /**
- * Wash-cycle guard: since the source deposit landed, how much of the
- * referred user's inflow have they withdrawn back off the platform?
+ * Fund-provenance-aware wash-cycle guard.
  *
- * Returns `{ cancel: boolean, retentionRatio, inflow, outflow }`.
- * Cancel decision is made against `retentionThreshold` (fraction 0..1).
+ * The naive "aggregate deposits vs aggregate withdrawals" formula is
+ * wrong: publisher order earnings are recorded as `type=deposit,
+ * gateway=system` in this codebase (see order.js:376), which the
+ * aggregate reads as new deposits. And withdrawals aren't tagged by
+ * fund source. Result: an established publisher who happens to deposit
+ * $50 and later withdraw $50 of prior earnings would look like a
+ * wash-cycle attack.
  *
- *   inflow  = Σ successful deposits by the referred user since the
- *             source deposit (inclusive)
- *   outflow = Σ withdrawals / refunds / payouts by the referred user
- *             since the source deposit (any status EXCEPT rejected/denied/
- *             failed — pending outflows count because the intent to
- *             remove is unambiguous)
+ * Correct semantic: retention should track ONLY withdrawals attributable
+ * to deposit funds. Order spend, refunds moving on-platform, and
+ * withdrawals of earnings shouldn't reduce retention.
  *
- * retention = (inflow − outflow) / sourceDepositAmount
+ * Approach: simulate a two-bucket wallet from the ledger.
  *
- * The formula uses the SOURCE deposit's amount as the denominator so the
- * check reads as: "did the user retain at least X% of what this
- * commission was based on?" Additional deposits after the source push
- * retention up (fair — more real activity). Additional withdrawals push
- * it down (fair — money left the platform). Order spend does NOT
- * appear in outflow because it stays on the platform.
+ *   depositPool  = un-consumed money that entered as an external gateway
+ *                  deposit (stripe/paypal/razorpay/phonepe/bank_transfer)
+ *   earningsPool = un-consumed money that entered as publisher earnings,
+ *                  affiliate commission approvals, or refunds
  *
- * Runs a single grouped SQL query — cheap even at scale.
+ * On each outflow (order payment OR withdrawal), drain earnings FIRST,
+ * deposits SECOND. Order spend is separate from withdrawal in the ledger
+ * (type=payment vs type=withdrawal), and only the WITHDRAWAL portion
+ * attributed to deposits counts against retention — order spend keeps
+ * the money on-platform.
+ *
+ * Retention = 1 − min(depositWithdrawn_since_source, source_amount) / source_amount
+ *
+ * Runs a single indexed scan of the user's transactions. Cheap in
+ * practice — most referred users have few transactions in their history.
+ * If this ever becomes hot, cache per (userId, sourceDepositId) or
+ * bound the lookback window.
+ *
+ * Returns { cancel, retentionRatio, depositWithdrawn, sourceAmount }.
  */
-async function checkNetOutflowExceedsThreshold({
+async function computeDepositRetention({
   referredUserId,
   sourceDepositCreatedAt,
   sourceDepositAmount,
   retentionThreshold,
   strapi,
 }) {
-  const nullResult = { cancel: false, retentionRatio: 1, inflow: 0, outflow: 0 };
+  const nullResult = {
+    cancel: false,
+    retentionRatio: 1,
+    depositWithdrawn: 0,
+    sourceAmount: sourceDepositAmount || 0,
+  };
   if (!referredUserId || !sourceDepositCreatedAt || !(sourceDepositAmount > 0)) {
     return nullResult;
   }
   try {
     const knex = strapi.db.connection;
-    const [row] = await knex('transactions')
+    // Full ledger for this user, chronological. Amount is decimal in
+    // the DB — cast to numeric to avoid string-coercion surprises.
+    const rows = await knex('transactions')
       .join(
         'transactions_users_permissions_user_lnk as tul',
         'tul.transaction_id', '=', 'transactions.id',
       )
       .where('tul.user_id', referredUserId)
-      .where('transactions.created_at', '>=', sourceDepositCreatedAt)
+      .orderBy('transactions.created_at', 'asc')
+      .orderBy('transactions.id', 'asc')
       .select(
-        knex.raw(
-          "COALESCE(SUM(CASE WHEN type='deposit' AND transaction_status='success' " +
-          "THEN amount ELSE 0 END), 0)::numeric AS inflow"
-        ),
-        knex.raw(
-          "COALESCE(SUM(CASE WHEN type IN ('withdrawal','refund','payout') " +
-          "AND transaction_status NOT IN ('failed','cancelled','denied','rejected') " +
-          "THEN amount ELSE 0 END), 0)::numeric AS outflow"
-        ),
+        'transactions.id',
+        'transactions.type',
+        'transactions.gateway',
+        'transactions.fund_source',
+        'transactions.transaction_status as status',
+        knex.raw('transactions.amount::numeric AS amount'),
+        'transactions.created_at as created_at',
       );
-    const inflow = Number(row?.inflow || 0);
-    const outflow = Number(row?.outflow || 0);
-    const net = inflow - outflow;
-    const retentionRatio = net / sourceDepositAmount;
+
+    let depositPool = 0;
+    let earningsPool = 0;
+    let depositWithdrawnSinceSource = 0;
+    const sourceTime = new Date(sourceDepositCreatedAt).getTime();
+
+    const drainOutflow = (amount, allocatesToWithdrawn, isSinceSource) => {
+      // Earnings drained first — attributes outflows to earned funds
+      // before deposit funds. This is the pro-affiliate default (a user
+      // with earnings can withdraw them without hurting retention).
+      const fromEarnings = Math.min(amount, earningsPool);
+      earningsPool -= fromEarnings;
+      let fromDeposits = amount - fromEarnings;
+      if (fromDeposits > depositPool) {
+        // Wallet drained past deposit funds — happens when the ledger
+        // includes escrow/fee moves we don't model, or after admin
+        // adjustments. Cap at depositPool so the counter never goes
+        // negative; the excess is effectively a no-op.
+        fromDeposits = depositPool;
+      }
+      depositPool -= fromDeposits;
+      if (allocatesToWithdrawn && isSinceSource) {
+        depositWithdrawnSinceSource += fromDeposits;
+      }
+    };
+
+    for (const r of rows) {
+      const amount = Number(r.amount) || 0;
+      if (amount <= 0) continue;
+      // Promo funds live in a separate wallet bucket, don't affect retention.
+      if (r.fund_source === 'promo_fund') continue;
+
+      const status = r.status;
+      const type = r.type;
+      const gateway = r.gateway;
+      const isSinceSource = new Date(r.created_at).getTime() >= sourceTime;
+
+      if (type === 'deposit' && status === 'success') {
+        if (EXTERNAL_DEPOSIT_GATEWAYS.has(gateway)) {
+          depositPool += amount;
+        } else if (gateway === 'system') {
+          // Publisher order earnings, credited via order.js:376.
+          earningsPool += amount;
+        } else {
+          // Unknown gateway — treat conservatively as earnings so we
+          // never inflate depositPool with something we can't attribute.
+          earningsPool += amount;
+        }
+      } else if (type === 'affiliate_commission' && status === 'success') {
+        earningsPool += amount;
+      } else if (type === 'refund' && status === 'success') {
+        // Refunds credit back to wallet in this codebase (order.js). Treat
+        // as earnings — the money is coming BACK, not a new external deposit.
+        earningsPool += amount;
+      } else if (type === 'payment' && status === 'success') {
+        // Order spend. Drains wallet but MONEY STAYS ON-PLATFORM (goes to
+        // escrow, then publisher). NOT counted against retention.
+        drainOutflow(amount, /*allocatesToWithdrawn*/ false, isSinceSource);
+      } else if (
+        (type === 'withdrawal' || type === 'payout') &&
+        ACTIVE_OUTFLOW_STATUSES.has(status)
+      ) {
+        // Money leaving the platform. Deposit-portion counts, but ONLY
+        // if the outflow happened after the source deposit landed.
+        drainOutflow(amount, /*allocatesToWithdrawn*/ true, isSinceSource);
+      }
+      // escrow_hold, escrow_release, fee, promo, affiliate_commission_reversal:
+      // skip. escrow moves are internal-only from the user's mainBalance
+      // perspective (payment already captured the debit). fee rows are
+      // platform-side accounting. commission_reversal debits the affiliate,
+      // not the referred user.
+    }
+
+    const cappedWithdrawn = Math.min(
+      depositWithdrawnSinceSource,
+      sourceDepositAmount,
+    );
+    const retentionRatio = 1 - cappedWithdrawn / sourceDepositAmount;
+
     return {
       cancel: retentionRatio < retentionThreshold,
       retentionRatio,
-      inflow,
-      outflow,
+      depositWithdrawn: depositWithdrawnSinceSource,
+      sourceAmount: sourceDepositAmount,
     };
   } catch (err) {
     strapi.log?.warn?.(
-      `[affiliate-commission] wash-cycle check errored for user ${referredUserId} — proceeding with approval: ${err.message}`,
+      `[affiliate-commission] retention check errored for user ${referredUserId} — proceeding with approval: ${err.message}`,
     );
     return nullResult;
   }
@@ -416,29 +524,32 @@ module.exports = ({ strapi }) => {
               Number(ledger.depositAmount) ||
               Number(ledger.sourceTransaction?.amount) ||
               0;
-            const shouldCancel = await checkNetOutflowExceedsThreshold({
+            const decision = await computeDepositRetention({
               referredUserId: ledger.referredUser?.id,
               sourceDepositCreatedAt: ledger.sourceTransaction?.createdAt,
               sourceDepositAmount,
               retentionThreshold,
               strapi,
             });
-            if (shouldCancel.cancel) {
+            if (decision.cancel) {
               await strapi.entityService.update(COMMISSION_TYPE, ledger.id, {
                 data: {
                   status: 'cancelled',
                   cancelledAt: new Date(),
                   reversalReason:
-                    `Wash-cycle guard: referred user withdrew ${shouldCancel.outflow} back from the platform` +
-                    ` (deposits since=$${shouldCancel.inflow}, outflows since=$${shouldCancel.outflow},` +
-                    ` retention ${(shouldCancel.retentionRatio * 100).toFixed(1)}% < threshold ${(retentionThreshold * 100).toFixed(0)}%).` +
-                    ' No wallet debit — this pending commission was never credited.',
+                    `Wash-cycle guard: referred user withdrew $${decision.depositWithdrawn.toFixed(2)}` +
+                    ` of the source deposit ($${sourceDepositAmount.toFixed(2)}) off the platform` +
+                    ` — retention ${(decision.retentionRatio * 100).toFixed(1)}%` +
+                    ` < threshold ${(retentionThreshold * 100).toFixed(0)}%.` +
+                    ' Order spend, refunds, and earnings-withdrawals were excluded from this calculation.' +
+                    ' No wallet debit — pending commission was never credited.',
                 },
               });
               cancelled++;
               strapi.log.info(
                 `[affiliate-commission] Wash-cycle cancel: ledger ${ledger.id} — ` +
-                `deposit=$${sourceDepositAmount} outflow=$${shouldCancel.outflow} retention=${(shouldCancel.retentionRatio * 100).toFixed(1)}%`,
+                `source=$${sourceDepositAmount} depositWithdrawn=$${decision.depositWithdrawn.toFixed(2)} ` +
+                `retention=${(decision.retentionRatio * 100).toFixed(1)}%`,
               );
               continue;
             }
