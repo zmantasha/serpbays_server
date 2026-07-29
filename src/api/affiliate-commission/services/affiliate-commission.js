@@ -77,6 +77,80 @@ async function getOrCreateWallet(strapi, userId) {
   });
 }
 
+/**
+ * Wash-cycle guard: since the source deposit landed, how much of the
+ * referred user's inflow have they withdrawn back off the platform?
+ *
+ * Returns `{ cancel: boolean, retentionRatio, inflow, outflow }`.
+ * Cancel decision is made against `retentionThreshold` (fraction 0..1).
+ *
+ *   inflow  = Σ successful deposits by the referred user since the
+ *             source deposit (inclusive)
+ *   outflow = Σ withdrawals / refunds / payouts by the referred user
+ *             since the source deposit (any status EXCEPT rejected/denied/
+ *             failed — pending outflows count because the intent to
+ *             remove is unambiguous)
+ *
+ * retention = (inflow − outflow) / sourceDepositAmount
+ *
+ * The formula uses the SOURCE deposit's amount as the denominator so the
+ * check reads as: "did the user retain at least X% of what this
+ * commission was based on?" Additional deposits after the source push
+ * retention up (fair — more real activity). Additional withdrawals push
+ * it down (fair — money left the platform). Order spend does NOT
+ * appear in outflow because it stays on the platform.
+ *
+ * Runs a single grouped SQL query — cheap even at scale.
+ */
+async function checkNetOutflowExceedsThreshold({
+  referredUserId,
+  sourceDepositCreatedAt,
+  sourceDepositAmount,
+  retentionThreshold,
+  strapi,
+}) {
+  const nullResult = { cancel: false, retentionRatio: 1, inflow: 0, outflow: 0 };
+  if (!referredUserId || !sourceDepositCreatedAt || !(sourceDepositAmount > 0)) {
+    return nullResult;
+  }
+  try {
+    const knex = strapi.db.connection;
+    const [row] = await knex('transactions')
+      .join(
+        'transactions_users_permissions_user_lnk as tul',
+        'tul.transaction_id', '=', 'transactions.id',
+      )
+      .where('tul.user_id', referredUserId)
+      .where('transactions.created_at', '>=', sourceDepositCreatedAt)
+      .select(
+        knex.raw(
+          "COALESCE(SUM(CASE WHEN type='deposit' AND transaction_status='success' " +
+          "THEN amount ELSE 0 END), 0)::numeric AS inflow"
+        ),
+        knex.raw(
+          "COALESCE(SUM(CASE WHEN type IN ('withdrawal','refund','payout') " +
+          "AND transaction_status NOT IN ('failed','cancelled','denied','rejected') " +
+          "THEN amount ELSE 0 END), 0)::numeric AS outflow"
+        ),
+      );
+    const inflow = Number(row?.inflow || 0);
+    const outflow = Number(row?.outflow || 0);
+    const net = inflow - outflow;
+    const retentionRatio = net / sourceDepositAmount;
+    return {
+      cancel: retentionRatio < retentionThreshold,
+      retentionRatio,
+      inflow,
+      outflow,
+    };
+  } catch (err) {
+    strapi.log?.warn?.(
+      `[affiliate-commission] wash-cycle check errored for user ${referredUserId} — proceeding with approval: ${err.message}`,
+    );
+    return nullResult;
+  }
+}
+
 module.exports = ({ strapi }) => {
   /**
    * Book the wallet-credit side of an approval. Extracted so both the
@@ -308,16 +382,68 @@ module.exports = ({ strapi }) => {
         populate: {
           affiliate: { populate: { user: true } },
           referral: true,
+          referredUser: true,
           sourceTransaction: true,
         },
         limit: 500,
       });
-      if (matured.length === 0) return { approved: 0, failed: 0 };
+      if (matured.length === 0) return { approved: 0, failed: 0, cancelled: 0 };
+
+      // Load global config ONCE for the batch — the retention threshold is
+      // the same for every row processed in this tick. Value is applied
+      // per-commission at check time; changing it later doesn't retroactively
+      // affect already-approved rows.
+      const cfg = await strapi.service(CONFIG_SERVICE).get();
+      const rawRetention = cfg?.depositRetentionThresholdPct;
+      const retentionCheckEnabled =
+        rawRetention !== null && rawRetention !== undefined && Number(rawRetention) > 0;
+      const retentionThreshold = retentionCheckEnabled ? Number(rawRetention) / 100 : 0;
 
       let approved = 0;
       let failed = 0;
+      let cancelled = 0;
       for (const ledger of matured) {
         try {
+          // Anti-wash-cycle check: since the source deposit landed, has the
+          // referred user withdrawn/refunded most of what they deposited?
+          // If yes, cancel — the platform didn't actually see net inflow
+          // and the affiliate shouldn't earn commission on a round-trip.
+          //
+          // Runs OUTSIDE the approval transaction so its read isn't
+          // affected by the write we're about to attempt.
+          if (retentionCheckEnabled) {
+            const sourceDepositAmount =
+              Number(ledger.depositAmount) ||
+              Number(ledger.sourceTransaction?.amount) ||
+              0;
+            const shouldCancel = await checkNetOutflowExceedsThreshold({
+              referredUserId: ledger.referredUser?.id,
+              sourceDepositCreatedAt: ledger.sourceTransaction?.createdAt,
+              sourceDepositAmount,
+              retentionThreshold,
+              strapi,
+            });
+            if (shouldCancel.cancel) {
+              await strapi.entityService.update(COMMISSION_TYPE, ledger.id, {
+                data: {
+                  status: 'cancelled',
+                  cancelledAt: new Date(),
+                  reversalReason:
+                    `Wash-cycle guard: referred user withdrew ${shouldCancel.outflow} back from the platform` +
+                    ` (deposits since=$${shouldCancel.inflow}, outflows since=$${shouldCancel.outflow},` +
+                    ` retention ${(shouldCancel.retentionRatio * 100).toFixed(1)}% < threshold ${(retentionThreshold * 100).toFixed(0)}%).` +
+                    ' No wallet debit — this pending commission was never credited.',
+                },
+              });
+              cancelled++;
+              strapi.log.info(
+                `[affiliate-commission] Wash-cycle cancel: ledger ${ledger.id} — ` +
+                `deposit=$${sourceDepositAmount} outflow=$${shouldCancel.outflow} retention=${(shouldCancel.retentionRatio * 100).toFixed(1)}%`,
+              );
+              continue;
+            }
+          }
+
           await strapi.db.transaction(async () => {
             // Re-read under the tx to avoid double-approval race with a
             // concurrent invocation (rare — cron runs single-instance —
@@ -359,12 +485,12 @@ module.exports = ({ strapi }) => {
         }
       }
 
-      if (approved > 0) {
+      if (approved > 0 || cancelled > 0 || failed > 0) {
         strapi.log.info(
-          `[affiliate-commission] cron: ${approved} matured commission(s) approved${failed > 0 ? ` (${failed} failed)` : ''}`,
+          `[affiliate-commission] cron: ${approved} approved, ${cancelled} cancelled (wash-cycle), ${failed} failed`,
         );
       }
-      return { approved, failed };
+      return { approved, failed, cancelled };
     },
 
     /**

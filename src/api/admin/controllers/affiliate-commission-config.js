@@ -17,6 +17,7 @@ module.exports = {
           enabled: !!config.enabled,
           defaultRatePercent: Number(config.defaultRatePercent),
           holdPeriodDays: Number(config.holdPeriodDays ?? 15),
+          depositRetentionThresholdPct: Number(config.depositRetentionThresholdPct ?? 5),
           updatedAt: config.updatedAt,
         },
       });
@@ -50,12 +51,21 @@ module.exports = {
         patch.holdPeriodDays = n;
       }
 
+      if (body.depositRetentionThresholdPct !== undefined && body.depositRetentionThresholdPct !== null) {
+        const n = Number(body.depositRetentionThresholdPct);
+        if (!Number.isInteger(n) || n < 0 || n > 100) {
+          return ctx.badRequest('depositRetentionThresholdPct must be an integer between 0 and 100');
+        }
+        patch.depositRetentionThresholdPct = n;
+      }
+
       if (
         patch.enabled === undefined &&
         patch.defaultRatePercent === undefined &&
-        patch.holdPeriodDays === undefined
+        patch.holdPeriodDays === undefined &&
+        patch.depositRetentionThresholdPct === undefined
       ) {
-        return ctx.badRequest('Provide at least one of {enabled, defaultRatePercent, holdPeriodDays}');
+        return ctx.badRequest('Provide at least one of {enabled, defaultRatePercent, holdPeriodDays, depositRetentionThresholdPct}');
       }
 
       const updated = await strapi.service(
@@ -64,6 +74,7 @@ module.exports = {
         enabled: patch.enabled,
         defaultRatePercent: patch.defaultRatePercent,
         holdPeriodDays: patch.holdPeriodDays,
+        depositRetentionThresholdPct: patch.depositRetentionThresholdPct,
       });
 
       try {
@@ -86,6 +97,7 @@ module.exports = {
           enabled: !!updated.enabled,
           defaultRatePercent: Number(updated.defaultRatePercent),
           holdPeriodDays: Number(updated.holdPeriodDays ?? 15),
+          depositRetentionThresholdPct: Number(updated.depositRetentionThresholdPct ?? 5),
           updatedAt: updated.updatedAt,
         },
       });

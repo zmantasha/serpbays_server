@@ -21,20 +21,29 @@ const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
   defaultRatePercent: 5,
   holdPeriodDays: 15,
+  depositRetentionThresholdPct: 5,
 });
 
 module.exports = ({ strapi }) => ({
   async get() {
     const existing = await strapi.entityService.findMany(CONTENT_TYPE, {});
     if (existing) {
-      // Older rows can have null holdPeriodDays (column added after row
-      // creation, schema default never applied). Auto-heal on first read so
-      // every consumer downstream sees a real integer, not null coerced
-      // through Number() into 0.
+      // Older rows can have null holdPeriodDays / depositRetentionThresholdPct
+      // (column added after row creation, schema default never applied).
+      // Auto-heal on first read so every consumer downstream sees a real
+      // integer, not null coerced through Number() into 0.
+      const patch = {};
       if (existing.holdPeriodDays === null || existing.holdPeriodDays === undefined) {
-        return strapi.entityService.update(CONTENT_TYPE, existing.id, {
-          data: { holdPeriodDays: DEFAULT_CONFIG.holdPeriodDays },
-        });
+        patch.holdPeriodDays = DEFAULT_CONFIG.holdPeriodDays;
+      }
+      if (
+        existing.depositRetentionThresholdPct === null ||
+        existing.depositRetentionThresholdPct === undefined
+      ) {
+        patch.depositRetentionThresholdPct = DEFAULT_CONFIG.depositRetentionThresholdPct;
+      }
+      if (Object.keys(patch).length > 0) {
+        return strapi.entityService.update(CONTENT_TYPE, existing.id, { data: patch });
       }
       return existing;
     }
@@ -43,7 +52,7 @@ module.exports = ({ strapi }) => ({
     });
   },
 
-  async set({ enabled, defaultRatePercent, holdPeriodDays }) {
+  async set({ enabled, defaultRatePercent, holdPeriodDays, depositRetentionThresholdPct }) {
     // NOTE: no `updatedBy` field on the config row. `updatedBy` is a reserved
     // name in Strapi (auto-linked to admin::user by the admin panel plugin),
     // and declaring our own relation with the same name collided at write
@@ -64,6 +73,13 @@ module.exports = ({ strapi }) => ({
         throw new Error('holdPeriodDays must be an integer between 0 and 365');
       }
       data.holdPeriodDays = n;
+    }
+    if (depositRetentionThresholdPct !== undefined && depositRetentionThresholdPct !== null) {
+      const n = Number(depositRetentionThresholdPct);
+      if (!Number.isInteger(n) || n < 0 || n > 100) {
+        throw new Error('depositRetentionThresholdPct must be an integer between 0 and 100');
+      }
+      data.depositRetentionThresholdPct = n;
     }
     return strapi.entityService.update(CONTENT_TYPE, current.id, { data });
   },
