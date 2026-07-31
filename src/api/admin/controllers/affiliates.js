@@ -58,8 +58,37 @@ module.exports = {
       strapi.entityService.count('api::affiliate-profile.affiliate-profile', { filters }),
     ]);
 
+    // Bulk-fetch pending_review referral counts for the page's affiliates in
+    // ONE query — avoids N round-trips per row. Keys the map by profile id so
+    // rows without any pending_review referrals default to 0 client-side.
+    const pageAffiliateIds = rows.map((r) => r.id).filter(Boolean);
+    let pendingReviewByAffiliate = new Map();
+    if (pageAffiliateIds.length > 0) {
+      const knex = strapi.db.connection;
+      const agg = await knex('affiliate_referrals')
+        .join(
+          'affiliate_referrals_affiliate_lnk as lnk',
+          'lnk.affiliate_referral_id', '=', 'affiliate_referrals.id',
+        )
+        .whereIn('lnk.affiliate_profile_id', pageAffiliateIds)
+        .where('affiliate_referrals.status', 'pending_review')
+        .groupBy('lnk.affiliate_profile_id')
+        .select(
+          'lnk.affiliate_profile_id AS affiliate_profile_id',
+          knex.raw('COUNT(*)::int AS pending_review_count'),
+        );
+      pendingReviewByAffiliate = new Map(
+        agg.map((r) => [Number(r.affiliate_profile_id), Number(r.pending_review_count)]),
+      );
+    }
+
+    const shaped = rows.map((r) => ({
+      ...r,
+      pendingReviewCount: pendingReviewByAffiliate.get(r.id) || 0,
+    }));
+
     return {
-      data: rows,
+      data: shaped,
       meta: { page, pageSize, total, pageCount: Math.ceil(total / pageSize) },
     };
   },
