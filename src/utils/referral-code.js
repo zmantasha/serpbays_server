@@ -44,7 +44,12 @@ const generateCode = () => {
  *   - Uppercase
  *   - Map common ambiguous chars back to their canonical form (I→1, O→0)
  *     so a user typing "IO" into a form doesn't miss a code containing "10".
- *   - Reject anything with characters outside the alphabet or wrong length.
+ *   - Reject anything with characters outside the alphabet.
+ *   - Reject anything outside the length range that setCustomCode accepts
+ *     (4-16). Auto-generated codes are always 10, but custom user-chosen
+ *     codes range wider — click + attribution lookups must accept the SAME
+ *     range or a signup with a valid custom code silently drops the referral.
+ *
  * Returns null if the input is invalid — callers should treat that as
  * "code not found" without leaking whether the invalid one exists.
  */
@@ -53,7 +58,7 @@ const normaliseCode = (raw) => {
   let s = raw.trim().toUpperCase();
   // De-ambiguation — Crockford's convention.
   s = s.replace(/O/g, '0').replace(/I/g, '1').replace(/L/g, '1').replace(/U/g, 'V');
-  if (s.length !== CODE_LEN) return null;
+  if (s.length < CUSTOM_CODE_MIN_LEN || s.length > CUSTOM_CODE_MAX_LEN) return null;
   for (let i = 0; i < s.length; i++) {
     if (ALPHABET.indexOf(s[i]) === -1) return null;
   }
