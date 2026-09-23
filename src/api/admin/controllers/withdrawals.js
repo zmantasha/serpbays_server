@@ -1,4 +1,5 @@
 'use strict';
+const { getPlatformFeeRate } = require('../../../constants/commission');
 
 /**
  * Admin Withdrawals Management Controller
@@ -90,7 +91,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       // user's net payout in `amount`; the linked transaction stores the actual
       // fee/gross. Use the transaction when present, otherwise recompute with
       // the same 20% formula used at request time.
-      const PLATFORM_FEE_RATE = 0.20;
+      const PLATFORM_FEE_RATE = getPlatformFeeRate();
       const netAmount = parseFloat(withdrawal.amount) || 0;
       let platformFee = Math.round((netAmount / (1 - PLATFORM_FEE_RATE)) * PLATFORM_FEE_RATE * 100) / 100;
       let grossAmount = Math.round((netAmount + platformFee) * 100) / 100;

@@ -1,4 +1,5 @@
 'use strict';
+const { getPlatformFeeRate } = require('../../../constants/commission');
 
 /**
  * withdrawal-request controller
@@ -463,7 +464,7 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
       });
 
       // Calculate 20% platform fee
-      const PLATFORM_FEE_RATE = 0.20;
+      const PLATFORM_FEE_RATE = getPlatformFeeRate();
       const platformFee = Math.round((requestAmount / (1 - PLATFORM_FEE_RATE)) * PLATFORM_FEE_RATE * 100) / 100;
       const totalDeduction = Math.round((requestAmount + platformFee) * 100) / 100;
 

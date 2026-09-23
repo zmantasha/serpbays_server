@@ -1,4 +1,5 @@
 'use strict';
+const { getPlatformFeeRate } = require('../../../../constants/commission');
 
 // Handle paid withdrawal
 async function handlePaidWithdrawal(result) {
@@ -154,7 +155,7 @@ async function handleDeniedWithdrawal(result) {
     }
 
       // Refund the full amount (withdrawal + 20% platform fee) back to wallet
-      const PLATFORM_FEE_RATE = 0.20;
+      const PLATFORM_FEE_RATE = getPlatformFeeRate();
       const withdrawalAmount = parseFloat(withdrawalRequest.amount);
       const platformFee = Math.round((withdrawalAmount / (1 - PLATFORM_FEE_RATE)) * PLATFORM_FEE_RATE * 100) / 100;
       const totalRefund = Math.round((withdrawalAmount + platformFee) * 100) / 100;
