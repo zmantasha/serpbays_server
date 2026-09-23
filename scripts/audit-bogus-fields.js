@@ -34,10 +34,16 @@
  * Exit 0 if zero bogus keys, 1 otherwise.
  */
 'use strict';
-process.chdir('/var/www/serpbays/serpbays_server');
 
 const fs = require('fs');
 const path = require('path');
+
+// Run from the repo root, wherever that is. This was previously a hardcoded
+// '/var/www/serpbays/serpbays_server', which does not exist on the production
+// host (the repo lives at /var/www/serpbays-app-server). The chdir threw
+// ENOENT, the audit never ran, and the pre-commit hook read the crash as
+// "bogus fields detected" — silently blocking every commit touching src/api/.
+process.chdir(path.resolve(__dirname, '..'));
 
 // Strapi adds these attributes to every content type implicitly.
 const STRAPI_IMPLICIT = new Set([
