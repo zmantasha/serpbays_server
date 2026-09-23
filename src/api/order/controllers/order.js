@@ -577,6 +577,66 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           }
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        // SERVER-AUTHORITATIVE PRICE (2026-09-23)
+        //
+        // `totalAmount` arrives in the request body and used to be taken on
+        // trust: the balance check, the escrow hold and the publisher payout
+        // all derive from it, so any authenticated client could buy any
+        // listing at any price. Verified in production: order #52 bought a
+        // $36 listing for $1. It stays on ALLOWED_ORDER_CREATE_FIELDS so
+        // existing clients keep working, but the value is recomputed here
+        // and overwritten — the client's number is now advisory only.
+        //
+        // Mirrors getPriceForCategory() in the client (marketplace/utils/
+        // pricingHelpers.tsx) so special-category and link-insertion pricing
+        // stay in step. Those columns are exactly why a naive
+        // `marketplace.price` comparison would overcharge CBD / Casino /
+        // Crypto / Dating orders, which legitimately bill off their own
+        // column (see orders #7, #9, #11, #12, #26).
+        if (!marketplace) {
+          return ctx.badRequest('Could not resolve the website for this order. Please try again.');
+        }
+        {
+          const isLi = serviceType === 'link_insertion';
+          const num = (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) && n > 0 ? n : null;
+          };
+          const CATEGORY_PRICE_COLUMNS = {
+            CBD:    ['adv_cbd_pricing',    'adv_li_cbd_pricing'],
+            Casino: ['adv_casino_pricing', 'adv_li_casino_pricing'],
+            Crypto: ['adv_crypto_pricing', 'adv_li_crypto_pricing'],
+            Dating: ['adv_dating_pricing', 'adv_li_dating_pricing'],
+          };
+          const category = orderData.specialCategory || null;
+          const cols = (category && CATEGORY_PRICE_COLUMNS[category]) || ['price', 'link_insertion_price'];
+
+          // Category column first, then the base column — same fallback the
+          // client applies, so a listing with no category price still sells.
+          let expected = num(marketplace[cols[isLi ? 1 : 0]]);
+          if (expected === null) expected = num(marketplace[isLi ? 'link_insertion_price' : 'price']);
+
+          if (expected === null) {
+            return ctx.badRequest('This listing is not currently priced for the selected service.');
+          }
+
+          // Outsourced copywriting is billed on top, guest posts only.
+          if (isOutsourced && !isLi) expected += num(marketplace.publisher_writing_price) || 0;
+
+          const submitted = Number(orderData.totalAmount);
+          if (!Number.isFinite(submitted) || Math.abs(submitted - expected) > 0.01) {
+            strapi.log.warn(
+              `[order.create] PRICE MISMATCH user=${user.id} (${user.email}) ` +
+              `listing=${marketplace.id} (${marketplace.url}) ` +
+              `serviceType=${serviceType || 'guest_post'} category=${category || 'none'} ` +
+              `outsourced=${isOutsourced} submitted=${orderData.totalAmount} expected=${expected} ` +
+              `— overriding with server price`
+            );
+          }
+          orderData.totalAmount = expected;
+        }
+
         // Create marketplace snapshot to preserve historical data
         if (marketplace) {
           console.log('Creating marketplace snapshot for order');
@@ -1493,113 +1553,123 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           return ctx.unauthorized('Authentication required');
         }
 
-        // Get publisher's websites by matching ID or fallback to email
-        // For available orders, we ONLY want active websites they currently own
-        const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
-          where: {
-            $or: [
-              { publisher: user.id },
-              { publisher_email: user.email }
-            ],
-            status: { $in: ['active', 'delisted'] } // Include delisted websites so pending orders remain visible after admin rejection
-          }
-        });
-
-        console.log(`[Available Orders] User ${user.id} (${user.email}) found ${publisherWebsites.length} websites:`);
-        publisherWebsites.forEach(website => {
-          console.log(`  - Website ${website.id}: ${website.url} (status: ${website.status}, delisted reason: ${website.delistedReason || 'N/A'})`);
-        });
-
-
         let orders = [];
 
-        // Don't early-return on zero marketplaces. The snapshot-based
-        // source below (source #3) still needs to run so that users
-        // who became active publishers via ownership transfer — but
-        // whose marketplace.publisher pointer hasn't caught up yet —
-        // can still see orders that were correctly snapshotted to
-        // their email at creation time.
-        const websiteIds = publisherWebsites.map(website => website.id);
-        if (websiteIds.length > 0) {
-          console.log(`[Available Orders] Looking for orders in websites: [${websiteIds.join(', ')}]`);
-        }
-
-        // Get orders for currently owned websites
+        // Source #1 — orders on websites this publisher currently owns.
+        //
+        // PERF (2026-07-06): INVERTED the lookup. The previous version fetched
+        // EVERY marketplace this publisher owns just to build a website-id list
+        // for the order filter. For a bulk-seeded account that is ~42k rows and
+        // an ~8s request. Instead, fetch the (tiny) set of pending candidate
+        // orders first, then confirm ownership ONLY for those orders' websites
+        // (a handful), not the whole catalog. Result set is identical: an order
+        // qualifies iff it is pending, not placed by this user, unassigned-or-
+        // assigned-to-this-user, AND its website is one this user owns and that
+        // is active/delisted.
         let currentWebsiteOrders = [];
-        if (websiteIds.length > 0) {
-          currentWebsiteOrders = await strapi.entityService.findMany('api::order.order', {
-            filters: {
-              $and: [
-                { website: { id: { $in: websiteIds } } },
-                { orderStatus: 'pending' },
-                { advertiser: { id: { $ne: user.id } } }, // Exclude orders placed by this user as advertiser
-                // Show orders that are unassigned OR assigned to this user
-                {
-                  $or: [
-                    { publisher: { $null: true } },
-                    { publisher: { id: user.id } }
-                  ]
-                }
-              ]
+        const pendingCandidates = await strapi.entityService.findMany('api::order.order', {
+          filters: {
+            $and: [
+              { orderStatus: 'pending' },
+              { advertiser: { id: { $ne: user.id } } }, // Exclude orders placed by this user as advertiser
+              // Unassigned OR assigned to this user
+              {
+                $or: [
+                  { publisher: { $null: true } },
+                  { publisher: { id: user.id } }
+                ]
+              }
+            ]
+          },
+          fields: ORDER_FETCH_FIELDS,
+          populate: ORDER_LIST_POPULATE,
+          sort: { orderDate: 'desc' }
+        });
+
+        // Confirm ownership only for the candidate orders' websites. Include
+        // delisted so pending orders stay visible after an admin rejection.
+        const candidateWebsiteIds = [...new Set(
+          pendingCandidates.map(o => o.website?.id).filter(Boolean)
+        )];
+        if (candidateWebsiteIds.length > 0) {
+          const ownedRows = await strapi.db.query('api::marketplace.marketplace').findMany({
+            where: {
+              id: { $in: candidateWebsiteIds },
+              $or: [
+                { publisher: user.id },
+                { publisher_email: user.email }
+              ],
+              status: { $in: ['active', 'delisted'] }
             },
-            fields: ORDER_FETCH_FIELDS,
-            populate: ORDER_LIST_POPULATE,
-            sort: { orderDate: 'desc' }
+            select: ['id']
           });
+          const ownedSet = new Set(ownedRows.map(m => m.id));
+          currentWebsiteOrders = pendingCandidates.filter(
+            o => o.website?.id && ownedSet.has(o.website.id)
+          );
         }
 
         // ALSO get orders for websites that were transferred FROM this user
         // These are orders that were already visible to them before the transfer
+        // Source #2 — orders that were visible to this user BEFORE they
+        // transferred a website away. PERF (2026-07-06): batched the former
+        // per-website N+1 (2 queries x up to ~83 transferred sites = the
+        // dominant ~1.5s cost) into 3 set-based queries. Equivalent: an order
+        // qualifies iff its website has an ACTIVE listing whose URL this user
+        // transferred, it is pending / not-self-advertised / unassigned-or-
+        // self-assigned, and it predates that URL's transfer date.
         const transferredWebsites = await strapi.db.query('api::publisher-website.publisher-website').findMany({
           where: {
             publisherEmail: user.email,
             submissionStatus: 'ownership_transferred'
-          }
+          },
+          select: ['url', 'ownershipTransferredAt']
         });
 
-        console.log(`[Debug] User ${user.email} has ${transferredWebsites.length} transferred websites`);
-
         let historicalOrders = [];
-        if (transferredWebsites.length > 0) {
-          console.log(`[Available Orders] Found ${transferredWebsites.length} transferred websites for user ${user.id}`);
-
-          for (const transferredWebsite of transferredWebsites) {
-            // Find the current marketplace listing for this URL
-            const currentMarketplaceListing = await strapi.db.query('api::marketplace.marketplace').findOne({
-              where: { url: transferredWebsite.url, status: 'active' }
+        // URL -> latest transfer cutoff. If a URL was transferred more than
+        // once, MAX(date) is the union of each "orderDate < cutoff" window,
+        // matching the old concat-per-website behavior.
+        const urlToCutoff = new Map();
+        for (const tw of transferredWebsites) {
+          if (!tw.ownershipTransferredAt) continue;
+          const prev = urlToCutoff.get(tw.url);
+          if (prev === undefined || new Date(tw.ownershipTransferredAt) > new Date(prev)) {
+            urlToCutoff.set(tw.url, tw.ownershipTransferredAt);
+          }
+        }
+        if (urlToCutoff.size > 0) {
+          const cutoffUrls = [...urlToCutoff.keys()];
+          const activeListings = await strapi.db.query('api::marketplace.marketplace').findMany({
+            where: { url: { $in: cutoffUrls }, status: 'active' },
+            select: ['id', 'url']
+          });
+          const mktIdToUrl = new Map(activeListings.map(m => [m.id, m.url]));
+          const listingIds = activeListings.map(m => m.id);
+          if (listingIds.length > 0) {
+            const preTransferCandidates = await strapi.entityService.findMany('api::order.order', {
+              filters: {
+                $and: [
+                  { website: { id: { $in: listingIds } } },
+                  { orderStatus: 'pending' },
+                  { advertiser: { id: { $ne: user.id } } },
+                  {
+                    $or: [
+                      { publisher: { $null: true } },
+                      { publisher: { id: user.id } }
+                    ]
+                  }
+                ]
+              },
+              fields: ORDER_FETCH_FIELDS,
+              populate: ORDER_LIST_POPULATE,
+              sort: { orderDate: 'desc' }
             });
-
-            if (currentMarketplaceListing && transferredWebsite.ownershipTransferredAt) {
-              // Get pending orders placed BEFORE the transfer date.
-              // Match orders that were either unassigned OR already
-              // assigned to this user — the previous owner. The order
-              // create flow stamps the active publisher onto the order
-              // when it's placed, so pre-transfer orders for this URL
-              // typically carry publisher = user.id, not null. The old
-              // restriction (publisher: null) silently dropped them.
-              const preTransferOrders = await strapi.entityService.findMany('api::order.order', {
-                filters: {
-                  $and: [
-                    { website: { id: currentMarketplaceListing.id } },
-                    { orderStatus: 'pending' },
-                    { orderDate: { $lt: transferredWebsite.ownershipTransferredAt } },
-                    { advertiser: { id: { $ne: user.id } } },
-                    {
-                      $or: [
-                        { publisher: { $null: true } },
-                        { publisher: { id: user.id } }
-                      ]
-                    }
-                  ]
-                },
-                fields: ORDER_FETCH_FIELDS,
-                populate: ORDER_LIST_POPULATE,
-                sort: { orderDate: 'desc' }
-              });
-
-              console.log(`[Available Orders] Found ${preTransferOrders.length} pre-transfer orders for ${transferredWebsite.url}`);
-              historicalOrders = historicalOrders.concat(preTransferOrders);
-            }
+            historicalOrders = preTransferCandidates.filter(o => {
+              const url = mktIdToUrl.get(o.website?.id);
+              const cutoff = url ? urlToCutoff.get(url) : undefined;
+              return cutoff && new Date(o.orderDate) < new Date(cutoff);
+            });
           }
         }
 
