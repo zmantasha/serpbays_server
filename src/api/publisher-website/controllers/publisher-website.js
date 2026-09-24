@@ -333,8 +333,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Populate is id-only on purpose: pre-fix populated the full up_users
       // row (password hash, withdrawalOtp, paypal_email, ...). Caller is the
       // owner — only the id is needed for downstream checks.
+      // Opt-in dashboard stats (2026-09-24): `?withStats=1` adds
+      // meta.stats with the six numbers the publisher dashboard card
+      // shows. The card used to derive them from the first 20 rows of this
+      // list (the default page size), so a publisher with 43k sites saw
+      // "20 total / 18 live". One grouped query over the owner link
+      // table instead: ~80 ms for the house account, sub-ms for anyone
+      // else. Definitions mirror the client's exactly.
+      const wantStats = ctx.query.withStats === '1' || ctx.query.withStats === 'true';
+      const statsQuery = wantStats
+        ? strapi.db.connection('publisher_websites as pw')
+            .join('publisher_websites_current_publisher_id_lnk as l', 'l.publisher_website_id', 'pw.id')
+            .where('l.user_id', user.id)
+            .select('pw.submission_status as status', 'pw.gsc_verified as gsc', 'pw.added_by_reseller as reseller')
+            .count('* as c')
+            .groupBy('pw.submission_status', 'pw.gsc_verified', 'pw.added_by_reseller')
+        : Promise.resolve(null);
+
       const pwq = strapi.db.query('api::publisher-website.publisher-website');
-      const [total, approvedCount, submissions] = await Promise.all([
+      const [total, approvedCount, submissions, statsRows] = await Promise.all([
         pwq.count({ where: filters }),
         pwq.count({ where: baseOwnershipFilters }),
         pwq.findMany({
@@ -347,7 +364,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             originalPublisherId: { select: ['id'] },
           },
         }),
+        statsQuery,
       ]);
+
+      let stats = null;
+      if (statsRows) {
+        stats = { totalWebsites: 0, liveOnMarketplace: 0, pendingVerification: 0, pendingApproval: 0, gscVerified: 0, resellerVerified: 0, listingPaused: 0, rejected: 0 };
+        for (const r of statsRows) {
+          const c = Number(r.c) || 0;
+          stats.totalWebsites += c;
+          if (r.status === 'approved') stats.liveOnMarketplace += c;
+          if (r.status === 'pending_verification') stats.pendingVerification += c;
+          if (r.status === 'approval_pending' || r.status === 'pending_final_submission') stats.pendingApproval += c;
+          if (r.status === 'listing_paused') stats.listingPaused += c;
+          if (r.status === 'rejected') stats.rejected += c;
+          if (r.gsc === true) stats.gscVerified += c;
+          if (r.reseller === true && r.gsc !== true) stats.resellerVerified += c;
+        }
+      }
 
       // Attach the latest open/decided update-request per website so the
       // publisher UI can show "Update pending review" / "Update rejected: <reason>"
@@ -521,7 +555,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             pageCount: pageCount,
             total: total
           },
-          approvedCount: approvedCount
+          approvedCount: approvedCount,
+          ...(stats ? { stats } : {})
         }
       };
     } catch (error) {

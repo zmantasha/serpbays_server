@@ -140,6 +140,19 @@ const ORDER_LIST_POPULATE = {
   communications:    { fields: ['id', 'message', 'communicationStatus', 'isUnread', 'createdAt'] },
 };
 
+// List projection for /orders/my-orders (2026-09-24). Identical to
+// ORDER_LIST_POPULATE except orderContent.content is dropped. That field
+// holds the full article HTML -- with base64-embedded images -- and a
+// single order carried 1.85 MB of it; twenty orders for one publisher came
+// to 4.1 MB, most of a dashboard load. Nothing that consumes my-orders
+// renders the article (only the order-detail and available-orders pages
+// do, and both keep ORDER_LIST_POPULATE). Verified by grepping every read
+// of `orderContent.content` in the client repo.
+const ORDER_LIST_POPULATE_LEAN = {
+  ...ORDER_LIST_POPULATE,
+  orderContent: { fields: ['id', 'title', 'url', 'metaDescription', 'keywords', 'anchorText', 'links', 'minWordCount'] },
+};
+
 // Strip the snapshot publisher fields from a response row regardless of
 // the caller's role. The 3 fields are needed inside the controller for
 // the legacy auth fallback, but the UI never renders them — so they
@@ -1410,7 +1423,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
         const orders = await strapi.entityService.findMany('api::order.order', {
           filters: combinedFilters,
           fields: ORDER_FETCH_FIELDS,
-          populate: ORDER_LIST_POPULATE,
+          populate: ORDER_LIST_POPULATE_LEAN,
           sort: sortOptions,
           start,
           limit
@@ -1464,97 +1477,71 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
     async getCounts(ctx) {
       try {
         const user = ctx.state.user;
-
         if (!user) {
           return ctx.unauthorized('Authentication required');
         }
 
-        // --- Available orders count ---
-        // Get publisher's active marketplace websites
-        const publisherWebsites = await strapi.db.query('api::marketplace.marketplace').findMany({
-          where: {
-            $or: [
-              { publisher: user.id },
-              { publisher_email: user.email }
-            ],
-            status: { $in: ['active', 'delisted'] }
-          },
-          select: ['id']
-        });
+        // 2026-09-24: this used to load EVERY marketplace id the publisher
+        // owns (42k for the house account) and send them to Postgres as a
+        // 42,000-element IN (...) list -- twice. ~300 ms for a 49-byte
+        // answer. The three counts now filter through the link tables with
+        // EXISTS instead, so the id list never leaves the database. Same
+        // definitions as before, verified identical on live data:
+        //   available  = pending orders on a site I own (active/delisted),
+        //                not placed by me, unassigned or assigned to me
+        //   snapshot   = pending orders carrying my email whose site I do
+        //                NOT own (legacy rows), same other conditions
+        //   inProgress = accepted, or delivered with a revision requested,
+        //                on orders assigned to me or carrying my email
+        const knex = strapi.db.connection;
+        const ownsSite = (q) => q.whereExists(
+          knex('orders_website_lnk as ow')
+            .join('marketplaces as m', 'm.id', 'ow.marketplace_id')
+            .whereRaw('ow.order_id = o.id')
+            .whereIn('m.status', ['active', 'delisted'])
+            .where((w) => w
+              .whereExists(knex('marketplaces_publisher_lnk as mp').whereRaw('mp.marketplace_id = m.id').where('mp.user_id', user.id))
+              .orWhere('m.publisher_email', user.email))
+        );
+        const notOwnSite = (q) => q.whereNotExists(
+          knex('orders_website_lnk as ow')
+            .join('marketplaces as m', 'm.id', 'ow.marketplace_id')
+            .whereRaw('ow.order_id = o.id')
+            .whereIn('m.status', ['active', 'delisted'])
+            .where((w) => w
+              .whereExists(knex('marketplaces_publisher_lnk as mp').whereRaw('mp.marketplace_id = m.id').where('mp.user_id', user.id))
+              .orWhere('m.publisher_email', user.email))
+        );
+        const notPlacedByMe = (q) => q.whereNotExists(
+          knex('orders_advertiser_lnk as oa').whereRaw('oa.order_id = o.id').where('oa.user_id', user.id)
+        );
+        const unassignedOrMine = (q) => q.where((w) => w
+          .whereNotExists(knex('orders_publisher_lnk as op').whereRaw('op.order_id = o.id'))
+          .orWhereExists(knex('orders_publisher_lnk as op').whereRaw('op.order_id = o.id').where('op.user_id', user.id))
+        );
+        const assignedToMeOrMyEmail = (q) => q.where((w) => w
+          .whereExists(knex('orders_publisher_lnk as op').whereRaw('op.order_id = o.id').where('op.user_id', user.id))
+          .orWhere('o.website_publisher_email', user.email)
+        );
+        const count = async (build) => {
+          const row = await build(knex('orders as o').count('* as c')).first();
+          return Number(row?.c || 0);
+        };
 
-        const websiteIds = publisherWebsites.map(w => w.id);
-
-        let availableCount = 0;
-        if (websiteIds.length > 0) {
-          // Count pending orders for publisher's websites
-          availableCount = await strapi.db.query('api::order.order').count({
-            where: {
-              $and: [
-                { website: { $in: websiteIds } },
-                { orderStatus: 'pending' },
-                { advertiser: { $ne: user.id } },
-                {
-                  $or: [
-                    { publisher: null },
-                    { publisher: user.id }
-                  ]
-                }
-              ]
-            }
-          });
-        }
-
-        // Also count orders assigned via snapshot email
-        const snapshotCount = await strapi.db.query('api::order.order').count({
-          where: {
-            $and: [
-              { websitePublisherEmail: user.email },
-              { orderStatus: 'pending' },
-              { advertiser: { $ne: user.id } },
-              {
-                $or: [
-                  { publisher: null },
-                  { publisher: user.id }
-                ]
-              },
-              // Exclude orders already counted via websiteIds
-              ...(websiteIds.length > 0 ? [{ website: { $notIn: websiteIds } }] : [])
-            ]
-          }
-        });
-
-        const totalAvailableCount = availableCount + snapshotCount;
-
-        // --- In-progress orders count ---
-        // Count orders where publisher has accepted but not completed
-        const inProgressCount = await strapi.db.query('api::order.order').count({
-          where: {
-            $and: [
-              {
-                $or: [
-                  { publisher: user.id },
-                  { websitePublisherEmail: user.email }
-                ]
-              },
-              { advertiser: { $ne: user.id } },
-              {
-                $or: [
-                  { orderStatus: 'accepted' },
-                  {
-                    $and: [
-                      { orderStatus: 'delivered' },
-                      { revisionStatus: 'requested' }
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        });
+        const [availableCount, snapshotCount, inProgressCount] = await Promise.all([
+          count((q) => unassignedOrMine(notPlacedByMe(ownsSite(q.where('o.order_status', 'pending'))))),
+          count((q) => unassignedOrMine(notPlacedByMe(notOwnSite(
+            q.where('o.website_publisher_email', user.email).where('o.order_status', 'pending')
+          )))),
+          count((q) => notPlacedByMe(assignedToMeOrMyEmail(q)).where((w) => w
+            .where('o.order_status', 'accepted')
+            .orWhere((d) => d.where('o.order_status', 'delivered').where('o.revision_status', 'requested'))
+          )),
+        ]);
 
         return {
           data: {
-            availableCount: totalAvailableCount,
+            availableCount: availableCount + snapshotCount,
             inProgressCount: inProgressCount
           }
         };
