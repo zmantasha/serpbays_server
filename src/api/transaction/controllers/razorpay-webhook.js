@@ -493,6 +493,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         return ctx.badRequest('Missing required parameter: order_id');
       }
 
+      // Hardened 2026-09-24 (Issue A). Public route - reject anything that is
+      // not shaped like a Razorpay order id before it reaches the database.
+      if (typeof order_id !== 'string' || !/^order_[A-Za-z0-9]{10,30}$/.test(order_id)) {
+        strapi.log.warn(`[RAZORPAY VERIFY] rejected malformed order_id from ${ctx.request.ip}`);
+        return ctx.badRequest('Invalid order_id');
+      }
+
       console.log(`[RAZORPAY VERIFY] Checking payment status for order: ${order_id}`);
 
       // Find the transaction
@@ -516,6 +523,37 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       if (currentAttempts >= MAX_VERIFICATION_ATTEMPTS) {
         console.warn(`[RAZORPAY VERIFY] ⚠️ Maximum verification attempts (${MAX_VERIFICATION_ATTEMPTS}) reached for order ${order_id}`);
+
+        // Hardened 2026-09-24 (Issue A). This route is public, so the attempt
+        // counter alone must never flip a payment to 'failed': an
+        // unauthenticated caller could burn the counter deliberately, and a
+        // genuinely captured payment that settled slowly would otherwise be
+        // written off and never credited. Ask Razorpay first.
+        let cappedCaptured = null;
+        try {
+          const capPayments = await razorpay.orders.fetchPayments(order_id);
+          cappedCaptured = (capPayments.items || []).find(p => p.status === 'captured') || null;
+        } catch (capErr) {
+          console.error(`[RAZORPAY VERIFY] attempt-cap Razorpay lookup failed: ${capErr.message}`);
+          return ctx.send({
+            verified: false,
+            message: `Maximum verification attempts (${MAX_VERIFICATION_ATTEMPTS}) exceeded and payment status could not be confirmed.`,
+            transactionStatus: transaction.transactionStatus,
+            isProcessed: false
+          });
+        }
+
+        if (cappedCaptured) {
+          console.warn(`[RAZORPAY VERIFY] attempt cap hit but payment ${cappedCaptured.id} IS captured - crediting instead of failing`);
+          await this.updateTransactionStatus(transaction, 'success', cappedCaptured.id, '', cappedCaptured);
+          return ctx.send({
+            verified: true,
+            message: 'Payment successful',
+            transactionStatus: 'success',
+            paymentId: cappedCaptured.id,
+            isProcessed: true
+          });
+        }
 
         // Mark as failed after max attempts
         if (transaction.transactionStatus === 'pending') {
@@ -607,7 +645,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         // Prioritize successful payment (handles retry scenario)
         if (successfulPayment) {
           console.log(`[RAZORPAY VERIFY] ✅ Found successful payment ${successfulPayment.id} - updating transaction`);
-          await this.updateTransactionStatus(transaction, 'success', successfulPayment.id);
+          await this.updateTransactionStatus(transaction, 'success', successfulPayment.id, '', successfulPayment);
 
           return ctx.send({
             verified: true,
@@ -701,46 +739,136 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
   /**
    * Simple method to update transaction status
    */
-  async updateTransactionStatus(transaction, status, paymentId = '', errorDescription = '') {
+  /**
+   * Apply a verified Razorpay result to a transaction.
+   *
+   * Hardened 2026-09-24 (Issue A). This is the credit path used by the
+   * browser-side /api/transactions/verify-razorpay callback, which is a
+   * PUBLIC route. It previously read the row, checked `previousStatus`
+   * from that stale copy and credited `transaction.amount` with:
+   *   - no row lock, so this call and the signed webhook could both see
+   *     'pending' and both credit the same wallet (double credit), and
+   *   - no cross-check of what Razorpay actually captured.
+   * Both guards already existed in handlePaymentCaptured; this brings the
+   * verify path to parity.
+   */
+  async updateTransactionStatus(transaction, status, paymentId = '', errorDescription = '', razorpayPayment = null) {
     try {
-      const previousStatus = transaction.transactionStatus;
-      console.log(`[RAZORPAY VERIFY] Updating transaction ${transaction.id} from ${previousStatus} to ${status}`);
+      let creditContext = null;
 
-      // Prepare update data
-      const updateData = {
-        transactionStatus: status,
-        updatedAt: new Date()
-      };
+      await strapi.db.transaction(async ({ trx }) => {
+        // Row-level lock. If the signed webhook is mid-credit for this same
+        // order, we block here until it commits and then read its result.
+        const knex = strapi.db.connection;
+        const lockedRows = await knex('transactions')
+          .where('id', transaction.id)
+          .forUpdate()
+          .transacting(trx);
 
-      // Add payment ID if provided
-      if (paymentId && paymentId.trim() !== '') {
-        updateData.external_transaction_id = paymentId;
-      }
+        if (!lockedRows || lockedRows.length === 0) {
+          strapi.log.warn(`[RAZORPAY VERIFY] transaction ${transaction.id} disappeared before lock - skipping`);
+          return;
+        }
 
-      // Add error description if provided (for failed payments)
-      if (errorDescription && errorDescription.trim() !== '') {
-        updateData.payment_notes = errorDescription;
-      }
+        // Authoritative status, read under the lock - not the caller's copy.
+        const previousStatus = lockedRows[0].transaction_status;
+        console.log(`[RAZORPAY VERIFY] Updating transaction ${transaction.id} from ${previousStatus} to ${status}`);
 
-      // Clear error notes if payment is now successful after retry
-      if (status === 'success' && previousStatus === 'failed') {
-        updateData.payment_notes = 'Payment successful after retry';
-      }
+        const willCredit = status === 'success' && previousStatus !== 'success' && transaction.user_wallet;
 
-      // Update transaction status
-      await strapi.entityService.update('api::transaction.transaction', transaction.id, {
-        data: updateData
+        // ─────────────────────────────────────────────────────────────
+        // Amount cross-check, mirroring handlePaymentCaptured.
+        // expectedChargeCents (smallest currency unit) is stashed at
+        // create time by createPayment. Refuse the credit if Razorpay's
+        // captured amount does not match it.
+        // ─────────────────────────────────────────────────────────────
+        if (willCredit) {
+          const expectedChargeCents = Number(transaction.metadata?.expectedChargeCents);
+          const actualChargeCents = razorpayPayment ? Number(razorpayPayment.amount) : null;
+          const GRACE_PERIOD_END = new Date('2026-07-16T00:00:00Z');
+          let refuseReason = null;
+
+          if (Number.isFinite(expectedChargeCents) && expectedChargeCents > 0) {
+            if (actualChargeCents === null || !Number.isFinite(actualChargeCents)) {
+              refuseReason = 'no_razorpay_amount';
+            } else if (Math.abs(actualChargeCents - expectedChargeCents) > 1) {
+              refuseReason = 'amount_mismatch';
+            }
+          } else if (new Date() > GRACE_PERIOD_END) {
+            refuseReason = 'missing_expected_amount';
+          } else {
+            strapi.log.warn(`[RAZORPAY VERIFY] legacy pending tx missing expectedChargeCents (grace period); tx=${transaction.id}`);
+          }
+
+          if (refuseReason) {
+            strapi.log.error(
+              `[RAZORPAY VERIFY] ${refuseReason} — REFUSING wallet credit. ` +
+              `actual=${actualChargeCents}p expected=${expectedChargeCents}p tx=${transaction.id}`
+            );
+            await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+              data: {
+                transactionStatus: 'failed',
+                external_transaction_id: paymentId || undefined,
+                payment_notes: `Razorpay verify refused: ${refuseReason}`,
+                metadata: {
+                  ...transaction.metadata,
+                  error: refuseReason,
+                  actualChargeCents,
+                  expectedChargeCents,
+                  processedAt: new Date().toISOString(),
+                },
+              },
+            });
+            return;
+          }
+        }
+
+        // Prepare update data
+        const updateData = {
+          transactionStatus: status,
+          updatedAt: new Date()
+        };
+
+        // Add payment ID if provided
+        if (paymentId && paymentId.trim() !== '') {
+          updateData.external_transaction_id = paymentId;
+        }
+
+        // Add error description if provided (for failed payments)
+        if (errorDescription && errorDescription.trim() !== '') {
+          updateData.payment_notes = errorDescription;
+        }
+
+        // Clear error notes if payment is now successful after retry
+        if (status === 'success' && previousStatus === 'failed') {
+          updateData.payment_notes = 'Payment successful after retry';
+        }
+
+        // Update transaction status
+        await strapi.entityService.update('api::transaction.transaction', transaction.id, {
+          data: updateData
+        });
+
+        // Update wallet balance ONLY for successful payments AND only if not already successful
+        if (willCredit) {
+          const amount = transaction.amount;
+          const currency = transaction.currency;
+          await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
+          console.log(`[RAZORPAY VERIFY] ✅ Updated wallet balance +${amount} ${currency} for transaction ${transaction.id}`);
+          creditContext = { walletId: transaction.user_wallet.id, amount };
+        } else if (status === 'success' && previousStatus === 'success') {
+          console.log(`[RAZORPAY VERIFY] ⚠️ Transaction ${transaction.id} already successful - wallet already credited`);
+        }
+
+        console.log(`[RAZORPAY VERIFY] ✅ Successfully updated transaction ${transaction.id} to ${status}`);
       });
 
-      // Update wallet balance ONLY for successful payments AND only if not already successful
-      if (status === 'success' && previousStatus !== 'success' && transaction.user_wallet) {
-        const amount = transaction.amount;
-        const currency = transaction.currency;
-        await this.updateWalletBalance(transaction.user_wallet.id, amount, currency);
-        console.log(`[RAZORPAY VERIFY] ✅ Updated wallet balance +${amount} ${currency} for transaction ${transaction.id}`);
+      // Post-commit side effects. Kept outside the lock so a slow socket
+      // emit or invoice render can never hold the transactions row.
+      if (creditContext) {
         try {
           const w = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-            where: { id: transaction.user_wallet.id },
+            where: { id: creditContext.walletId },
             populate: ['users_permissions_user'],
           });
           const uid = w?.users_permissions_user?.id;
@@ -748,24 +876,21 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
             await strapi.service('api::user-wallet.user-wallet').emitBalanceUpdate(
               uid,
               'razorpay_deposit',
-              { transactionId: transaction.id, walletId: transaction.user_wallet.id, amount, paymentId: paymentId || null }
+              {
+                transactionId: transaction.id,
+                walletId: creditContext.walletId,
+                amount: creditContext.amount,
+                paymentId: paymentId || null
+              }
             );
           }
         } catch (emitErr) {
           console.warn('[RAZORPAY VERIFY] emitBalanceUpdate failed (non-fatal):', emitErr.message);
         }
 
-        // Fire-and-forget invoice creation. updateTransactionStatus is the
-        // single wallet-credit point for the client-callback verify path
-        // (/api/transactions/verify-razorpay) which the Razorpay checkout
-        // SDK triggers — most production credits arrive here, NOT via the
-        // signed webhook. Idempotent on transactionId.
+        // Fire-and-forget invoice creation. Idempotent on transactionId.
         this._createDepositInvoice(transaction.id).catch(() => {});
-      } else if (status === 'success' && previousStatus === 'success') {
-        console.log(`[RAZORPAY VERIFY] ⚠️ Transaction ${transaction.id} already successful - wallet already credited`);
       }
-
-      console.log(`[RAZORPAY VERIFY] ✅ Successfully updated transaction ${transaction.id} to ${status}`);
     } catch (error) {
       console.error(`[RAZORPAY VERIFY] Error updating transaction to ${status}:`, error);
       throw error;
@@ -825,7 +950,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
             if (hasSuccess) {
               // Should have been marked as success - update now
-              await this.updateTransactionStatus(transaction, 'success', payments.items[0].id);
+              await this.updateTransactionStatus(transaction, 'success', payments.items[0].id, '', payments.items[0]);
               cleanedCount++;
               console.log(`[RAZORPAY CLEANUP] Marked transaction ${transaction.id} as success (found successful payment)`);
             } else if (hasFailed) {
