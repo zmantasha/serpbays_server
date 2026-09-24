@@ -44,6 +44,14 @@ const MARKETPLACE_PUBLIC_FIELDS = [
   'gsc_verified',
   'sponsored', 'ugc', 'digital_pr', 'only_with_us', 'fast_placement_status',
   'isFeatured', 'isFeaturedGuestPost', 'isFeaturedLinkInsertion',
+  // Same three flags as the raw-Knex fast path returns them (snake_case
+  // column names). Without these the allow-list stripped the flags, and
+  // applyPostFetchSorting -- which runs AFTER sanitisation -- could no
+  // longer see which rows were featured, so it re-sorted the page by the
+  // metric alone and sank featured listings to the bottom of page 1 in
+  // the default view. Verified 2026-09-24: featured row 41760 came out of
+  // the DB at position 2 and out of the API at position 20.
+  'is_featured', 'is_featured_guest_post', 'is_featured_link_insertion',
   'website_status', 'status',
   // Timestamps (marketplace draftAndPublish: false → no publishedAt)
   'createdAt', 'updatedAt',
