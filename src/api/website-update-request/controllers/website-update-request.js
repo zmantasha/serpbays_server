@@ -518,6 +518,10 @@ module.exports = createCoreController('api::website-update-request.website-updat
           params: { id: id },
           state: ctx.state,
           request: { body: action === 'approve' ? { data: { notes: notes } } : { reason: notes } },
+          // approve() and reject() both finish with `return ctx.send({...})`.
+          // Without this the success path threw TypeError and every applied
+          // change was reported as a failure (succeeded: 0 on every run).
+          send: function (body) { return body; },
           badRequest: function (m) { failure = { message: m }; return failure; },
           notFound: function (m) { failure = { message: m }; return failure; },
           unauthorized: function (m) { failure = { message: m }; return failure; },

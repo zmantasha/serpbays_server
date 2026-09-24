@@ -299,10 +299,35 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
   /**
    * Update user (admin can update any field)
    */
+  // Fields an admin may change on another user's profile. Deliberately tight:
+  // it is exactly what the admin panel's edit sheet sends.
+  //
+  // PRIVILEGE ESCALATION FIX (2026-09-24). This handler previously passed
+  // ctx.request.body straight into entityService.update with no filtering and
+  // no self-edit guard. An admin holding only `users.edit` could therefore
+  // PUT their own id with {"role": <super_admin id>} or
+  // {"pagePermissions": {...all true}} and promote themselves. Role changes
+  // belong to /admin/admins/:id/permissions and /admin/roles (super-admin
+  // only); block/confirm have their own dedicated endpoints.
   async update(ctx) {
     try {
       const { id } = ctx.params;
-      const updateData = ctx.request.body;
+      const ALLOWED = new Set(['email', 'firstName', 'lastName', 'phoneNumber', 'username', 'businessName']);
+      const raw = ctx.request.body || {};
+      const updateData = {};
+      const dropped = [];
+      for (const k of Object.keys(raw)) {
+        if (ALLOWED.has(k)) updateData[k] = raw[k];
+        else dropped.push(k);
+      }
+      if (dropped.length > 0) {
+        strapi.log.warn(
+          `[ADMIN ACTION] Admin ${ctx.state.user.id} tried to set restricted fields on user ${id}, dropped: ${dropped.join(', ')}`
+        );
+      }
+      if (Object.keys(updateData).length === 0) {
+        return ctx.badRequest('No editable fields supplied.');
+      }
 
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} updating user ${id}`);

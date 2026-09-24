@@ -1298,6 +1298,26 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           ];
 
           console.log(`[Order Filter] User ${user.id} - filtering by direct relationships and order snapshot`);
+        } else {
+          // FAIL-CLOSED DEFAULT (2026-09-24).
+          //
+          // This chain previously had no `else`. `type` is destructured with a
+          // default of 'all', but a default only applies when the value is
+          // UNDEFINED -- so `?type=` (empty string) or any unrecognised value
+          // fell through every branch, left baseFilters as {}, and returned
+          // EVERY order on the platform. The response populates orderContent
+          // (content, title, anchorText, links), so that exposed the full
+          // article body and target links of every advertiser's paid work to
+          // any authenticated caller.
+          //
+          // Any unrecognised type is now scoped exactly like 'all' -- the
+          // caller's own orders, nothing else.
+          baseFilters.$or = [
+            { advertiser: user.id },
+            { publisher: user.id },
+            { websitePublisherEmail: user.email }
+          ];
+          strapi.log.warn(`[Order Filter] User ${user.id} sent unrecognised type='${type}' - defaulting to own-orders scope`);
         }
 
         // Add search filters
