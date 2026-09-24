@@ -26,8 +26,31 @@
 // (clerk.js, admin/admin.js) are updated to await.
 // =============================================================================
 
+// Latched once when Postgres reports the column is absent (SQLSTATE 42703).
+//
+// 2026-09-24: this feature shipped without its schema change. The
+// tokenVersion attribute was never added to the user content-type, so
+// `token_version` does not exist in the database. Two consequences, both
+// fixed here:
+//
+//   1. The old `return 0` fallback made "I could not read it" look exactly
+//      like "it is genuinely 0". beforeUpdate therefore believed it held a
+//      real value, injected `data.tokenVersion` into the UPDATE, hit the
+//      missing column and aborted the whole statement. That is why
+//      PUT /admin/users/:id/block and .../confirm returned 500, and why no
+//      user could be suspended or verified from the admin panel.
+//   2. Every authenticated request re-ran the doomed query: a wasted DB
+//      round-trip each time plus ~2k identical warnings burying real errors.
+//
+// Absence is now explicit. Callers receive null for "unknown" and each
+// decides what that means; all three fail open, which is the behaviour that
+// was already in effect. Revocation stays inactive until the column exists,
+// at which point this file needs no further change.
+let tokenVersionColumnMissing = false;
+
 const lookupTokenVersion = async (strapi, userId) => {
   if (userId == null) return 0;
+  if (tokenVersionColumnMissing) return null;
   try {
     const u = await strapi.db.query('plugin::users-permissions.user').findOne({
       where: { id: userId },
@@ -38,8 +61,25 @@ const lookupTokenVersion = async (strapi, userId) => {
     // Failing the lookup must NOT lock out a legitimate user — fall back to
     // 0 and log. The signed value being 0 still matches the default DB row
     // value for unbumped users.
-    strapi.log.warn(`[jwt.tokenVersion] lookup failed for user ${userId}: ${e && e.message}`);
-    return 0;
+    const msg = (e && e.message) || '';
+    // 42703 = undefined_column. Safe to latch: the column cannot appear
+    // without a schema change, and that needs a restart, which clears this.
+    if ((e && e.code === '42703') || /column .*tokenversion.* does not exist/i.test(msg)) {
+      if (!tokenVersionColumnMissing) {
+        tokenVersionColumnMissing = true;
+        strapi.log.warn(
+          '[jwt.tokenVersion] column absent - JWT revocation is INACTIVE. ' +
+          'Logged once per process; further lookups are skipped. Adding the ' +
+          'tokenVersion attribute to the user schema switches it back on.'
+        );
+      }
+      return null;
+    }
+    // Any other failure (transient DB trouble) must NOT lock out a
+    // legitimate user. null = unknown = fail open, matching the previous
+    // `return 0` behaviour.
+    strapi.log.warn(`[jwt.tokenVersion] lookup failed for user ${userId}: ${msg}`);
+    return null;
   }
 };
 
@@ -492,7 +532,10 @@ module.exports = (plugin) => {
       async issueWithTokenVersion(payload, jwtOptions) {
         const enriched = { ...(payload || {}) };
         if (enriched.id != null && enriched.tokenVersion === undefined) {
-          enriched.tokenVersion = await lookupTokenVersion(strapi, enriched.id);
+          const tv = await lookupTokenVersion(strapi, enriched.id);
+          // Unknown -> omit the claim rather than stamp a wrong number.
+          // verify() reads a missing claim as 0, the same fail-open path.
+          if (tv != null) enriched.tokenVersion = tv;
         }
         return base.issue(enriched, jwtOptions);
       },
@@ -507,7 +550,10 @@ module.exports = (plugin) => {
         if (!payload || payload.id == null) return payload;
         const claimTv = payload.tokenVersion ?? 0;
         const userTv = await lookupTokenVersion(strapi, payload.id);
-        if (claimTv < userTv) {
+        // null = could not read the version. Fail OPEN, exactly what the old
+        // `return 0` fallback did, so no existing session changes state
+        // because of this change.
+        if (userTv != null && claimTv < userTv) {
           // Mirror the upstream error shape so the strategy treats this
           // as a normal invalid-token failure (401, not 500).
           throw new Error('Invalid token.');
@@ -539,6 +585,13 @@ module.exports = (plugin) => {
     // concurrent writers a transient stale-read is fine — the only effect
     // is one extra invalidation generation, never a missed revocation.
     const currentTv = await lookupTokenVersion(strapi, whereId);
+    if (currentTv == null) {
+      // Cannot bump what we cannot read. Writing tokenVersion while the
+      // column is absent poisoned the entire UPDATE, which is what made
+      // block and confirm return 500. Skip the bump and let the
+      // role/blocked/confirmed change itself go through.
+      return;
+    }
     data.tokenVersion = currentTv + 1;
     strapi.log.info(`[jwt.tokenVersion] beforeUpdate bumping user=${whereId} reason=field-change touched=${Object.keys(data).filter(k => TOKEN_REVOKING_FIELDS.has(k)).join(',')}`);
   };
