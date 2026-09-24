@@ -63,13 +63,20 @@ module.exports = {
       }
     },
     // Custom download route
+    //
+    // Fixed 2026-09-24. The scope used to name `invoice.find`, a permission
+    // the `authenticated` role does not hold (and must not — core find is
+    // not user-scoped, so granting it would expose every customer's
+    // invoices). The role DOES hold `invoice.download`, so every customer
+    // hitting their own invoice got a 403 "Access Denied" and no PDF.
+    // The handler does its own ownership check and 404s on cross-tenant.
     {
       method: 'GET',
       path: '/api/invoices/:id/download',
       handler: 'api::invoice.invoice.download',
       config: {
         auth: {
-          scope: ['api::invoice.invoice.find']
+          scope: ['api::invoice.invoice.download']
         },
         policies: []
       }
