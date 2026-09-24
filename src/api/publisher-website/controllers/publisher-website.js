@@ -261,6 +261,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
       if (outcome.action === 'idempotent') {
         strapi.log.info(`[publisher-website.create] User ${user.id} POSTed duplicate URL for pre-approval row ${outcome.existing.id} url=${filteredData.url} status=${outcome.existingStatus} — returning existing without changes`);
+        if (outcome.existing && typeof outcome.existing === 'object') delete outcome.existing.gscRefreshToken;
         return { data: outcome.existing, alreadyExists: true };
       }
 
@@ -269,6 +270,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // pending_final_submission). The "Submitted for Moderation" email is
       // fired by the lifecycle hook when the status actually transitions to
       // approval_pending via the client's Submit for Review action.
+      if (outcome.row && typeof outcome.row === 'object') delete outcome.row.gscRefreshToken;
       return { data: outcome.row };
     } catch (error) {
       console.error('Error creating publisher website submission:', error);
@@ -395,13 +397,23 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             { publisher_email: user.email }
           ]
         },
-        fields: ['id', 'url']
+        fields: ['id', 'url', 'price', 'link_insertion_price']
       });
 
       // Create a map of URL to marketplace ID for quick lookup
       const urlToMarketplaceMap = new Map();
+      // LIVE PRICE (2026-09-23): `marketplaces` holds the approved, buyer-facing
+      // price. `publisher_websites` can hold a newer value whose update request
+      // is still awaiting review, so rendering the publisher record as "your
+      // price" tells publishers a change is live when it is only queued.
+      // Surface the real live price so the UI can show both.
+      const urlToLivePrice = new Map();
       marketplaces.forEach(m => {
         urlToMarketplaceMap.set(m.url, m.id);
+        urlToLivePrice.set(m.url, {
+          price: m.price ?? null,
+          linkInsertionPrice: m.link_insertion_price ?? null,
+        });
       });
 
       // Batch fetch all orders for all marketplaces at once
@@ -483,10 +495,20 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // Attach the latest update-request (pending/rejected) to each website so
       // the publisher sees their requested-change status separately from the
       // live/approved listing status.
-      const submissionsWithMeta = submissionsWithOrders.map((w) => ({
-        ...w,
-        updateRequest: latestUpdateByWebsite.get(w.id) || null,
-      }));
+      const submissionsWithMeta = submissionsWithOrders.map((w) => {
+        // SECURITY (2026-07-06): never return the Google OAuth refresh token to
+        // the client (schema marks it private, but this list bypasses the REST
+        // sanitizer). Strip it from every row.
+        const { gscRefreshToken, ...safe } = w;
+        const live = urlToLivePrice.get(w.url) || null;
+        return {
+          ...safe,
+          updateRequest: latestUpdateByWebsite.get(w.id) || null,
+          // Approved, buyer-facing price. Null when the site has no live listing.
+          livePrice: live ? live.price : null,
+          liveLinkInsertionPrice: live ? live.linkInsertionPrice : null,
+        };
+      });
 
       // Calculate pagination metadata
       const pageCount = Math.ceil(total / pageSize);
@@ -541,6 +563,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         return ctx.notFound('Website not found');
       }
 
+      // SECURITY (2026-07-06): entityService bypasses the REST private-field
+      // sanitizer, so the schema-`private` Google OAuth refresh token would
+      // otherwise reach the client. Strip it from the response.
+      if (website && typeof website === 'object') delete website.gscRefreshToken;
       return { data: website };
     } catch (error) {
       console.error('Error fetching publisher website:', error);
