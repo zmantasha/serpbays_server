@@ -235,6 +235,19 @@ module.exports = {
                 }
             }
 
+            // Ownership backfill (2026-09-24). Websites added on this
+            // publisher's behalf before they had an account carry only their
+            // email. Link them now (existing-user, new-user and recovery
+            // branches all land here) so publisher-website.find() can use a
+            // single indexed owner lookup instead of an email OR per page
+            // load. Non-fatal: a failure here must never block login.
+            try {
+                await strapi.service('api::publisher-website.publisher-website')
+                    .linkOwnerlessWebsitesByEmail(user.id, user.email);
+            } catch (linkErr) {
+                strapi.log.warn(`[CLERK SYNC] ownerless-website link skipped for user ${user.id}: ${linkErr.message}`);
+            }
+
             // Generate JWT token
             const jwt = strapi.plugins['users-permissions'].services.jwt.issue({
                 id: user.id,

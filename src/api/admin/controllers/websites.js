@@ -1481,6 +1481,22 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} creating new website`, websiteData);
 
 
+      // Owner resolution (2026-09-24). When the admin does not pick a user,
+      // link by email if that publisher already has an account, so a row is
+      // never ownerless for a known user (the read path no longer falls back
+      // to email; see ownedByUserFilter). Unknown emails stay unlinked and
+      // are picked up at that publisher's first login. The placeholder
+      // 'admin@serpbays.com' is never resolved.
+      const requestedEmail = (websiteData.publisherEmail || '').toLowerCase().trim();
+      let resolvedOwnerId = websiteData.selectedUserId ? parseInt(websiteData.selectedUserId) : null;
+      if (!resolvedOwnerId && requestedEmail && requestedEmail !== 'admin@serpbays.com') {
+        const byEmail = await strapi.db.query('plugin::users-permissions.user').findOne({
+          where: { email: requestedEmail },
+          select: ['id'],
+        });
+        if (byEmail) resolvedOwnerId = byEmail.id;
+      }
+
       // Prepare the data with proper defaults and transformations
       const preparedData = {
         url: websiteData.url,
@@ -1495,8 +1511,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         gscVerified: websiteData.publisherType === 'gsc-verified',
         gscVerifiedAt: websiteData.publisherType === 'gsc-verified' ? new Date() : null,
         // Set publisher relations if selectedUserId is provided
-        currentPublisherId: websiteData.selectedUserId ? parseInt(websiteData.selectedUserId) : null,
-        originalPublisherId: websiteData.selectedUserId ? parseInt(websiteData.selectedUserId) : null,
+        currentPublisherId: resolvedOwnerId,
+        originalPublisherId: resolvedOwnerId,
         generalGuestPostPrice: parseInt(websiteData.generalGuestPostPrice) || 0,
         generalLinkInsertionPrice: parseInt(websiteData.generalLinkInsertionPrice) || 0,
         expectedTATHours: parseInt(websiteData.expectedTATHours) || 168,

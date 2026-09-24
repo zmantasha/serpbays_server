@@ -104,15 +104,17 @@ function isPublisherWebsiteOwner(row, user) {
 // $or fragment for find()/findMany Strapi queries. Same semantics:
 // rows owned via currentPublisherId, OR legacy unlinked rows matching email.
 function ownedByUserFilter(user) {
-  return {
-    $or: [
-      { currentPublisherId: user.id },
-      { $and: [
-        { currentPublisherId: { $null: true } },
-        { publisherEmail: user.email },
-      ] },
-    ],
-  };
+  // 2026-09-24: single indexed leg. The former email OR ("no owner AND
+  // email is mine") covered websites added on a publisher's behalf before
+  // they registered; it spanned a relation and a column, so Postgres could
+  // not use an index and full-scanned publisher_websites + its link table
+  // on every count and page fetch (~0.45s per My Websites load for every
+  // publisher, 5 sites or 43k). Those rows are now linked to the owner at
+  // login (clerk.js -> linkOwnerlessWebsitesByEmail) and, for known
+  // emails, at admin creation time, so the read path no longer needs the
+  // email leg. Same visibility rule as before: a row linked to another
+  // user is never shown by email.
+  return { currentPublisherId: user.id };
 }
 
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
@@ -319,36 +321,33 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const [sortField, sortDirection] = sortParam.split(':');
       const sort = { [sortField]: sortDirection === 'asc' ? 'asc' : 'desc' };
 
-      // Get total count for pagination (before fetching data)
-      const total = await strapi.db.query('api::publisher-website.publisher-website').count({
-        where: filters
-      });
-
-      // Get approved count across ALL pages (using base user ownership
-      // filters, ignoring search/status filters). Same strict ownership rule
-      // as the main `filters` above — finding #5.
+      // Approved count across ALL pages (base ownership only, ignoring
+      // search/status filters). Same strict ownership rule as `filters`.
       const baseOwnershipFilters = {
         ...ownedByUserFilter(user),
         submissionStatus: 'approved'
       };
-      const approvedCount = await strapi.db.query('api::publisher-website.publisher-website').count({
-        where: baseOwnershipFilters
-      });
 
-      // Fetch paginated submissions using database query API for better performance
-      // Pre-fix populated currentPublisherId + originalPublisherId as string-array
-      // → full up_users row leak (password hash, withdrawalOtp, paypal_email, ...).
-      // Caller is the owner — only the id is needed for downstream checks.
-      const submissions = await strapi.db.query('api::publisher-website.publisher-website').findMany({
-        where: filters,
-        orderBy: sort,
-        limit: pageSize,
-        offset: offset,
-        populate: {
-          currentPublisherId: { select: ['id'] },
-          originalPublisherId: { select: ['id'] },
-        },
-      });
+      // Total, approved count and the page itself are independent reads;
+      // run them concurrently (2026-09-24) instead of one after another.
+      // Populate is id-only on purpose: pre-fix populated the full up_users
+      // row (password hash, withdrawalOtp, paypal_email, ...). Caller is the
+      // owner — only the id is needed for downstream checks.
+      const pwq = strapi.db.query('api::publisher-website.publisher-website');
+      const [total, approvedCount, submissions] = await Promise.all([
+        pwq.count({ where: filters }),
+        pwq.count({ where: baseOwnershipFilters }),
+        pwq.findMany({
+          where: filters,
+          orderBy: sort,
+          limit: pageSize,
+          offset: offset,
+          populate: {
+            currentPublisherId: { select: ['id'] },
+            originalPublisherId: { select: ['id'] },
+          },
+        }),
+      ]);
 
       // Attach the latest open/decided update-request per website so the
       // publisher UI can show "Update pending review" / "Update rejected: <reason>"
