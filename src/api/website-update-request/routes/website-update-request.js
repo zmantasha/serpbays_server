@@ -19,6 +19,16 @@ module.exports = {
     },
     {
       method: 'POST',
+      path: '/website-update-requests/bulk-process',
+      handler: 'website-update-request.bulkProcess',
+      config: {
+        auth: false,
+        policies: ['global::is-admin-with-jwt'],
+        middlewares: [],
+      },
+    },
+    {
+      method: 'POST',
       path: '/website-update-requests/:id/approve',
       handler: 'website-update-request.approve',
       config: {

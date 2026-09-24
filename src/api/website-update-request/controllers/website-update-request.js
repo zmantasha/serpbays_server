@@ -369,6 +369,20 @@ module.exports = createCoreController('api::website-update-request.website-updat
       //
       // baseSnapshot uses MARKETPLACE field names; map them back to
       // publisher_websites field names + unit-transform where needed.
+      const VALID_BACKLINK_VALIDITY = new Set(['one_year', 'three_years', 'five_years', 'lifetime']);
+      const normaliseBacklinkValidity = (v) => {
+        if (v === null || v === undefined) return undefined;
+        const raw = String(v).trim().toLowerCase().replace(/[\s-]+/g, '_');
+        if (VALID_BACKLINK_VALIDITY.has(raw)) return raw;
+        const legacy = {
+          '1_year': 'one_year', '1_years': 'one_year',
+          '3_year': 'three_years', '3_years': 'three_years',
+          '5_year': 'five_years', '5_years': 'five_years',
+          'life_time': 'lifetime', 'permanent': 'lifetime',
+        };
+        return legacy[raw];  // undefined when unmappable -> field is skipped
+      };
+
       const REVERT_MAP = {
         price: { field: 'generalGuestPostPrice' },
         link_insertion_price: { field: 'generalLinkInsertionPrice' },
@@ -384,7 +398,14 @@ module.exports = createCoreController('api::website-update-request.website-updat
         tat: { field: 'expectedTATHours', transform: (v) => Number(v) * 24 },
         min_word_count: { field: 'minWordCount' },
         backlink_type: { field: 'backlinkType' },
-        backlink_validity: { field: 'backlinkValidity' },
+        // backlink_validity: snapshots taken before the enum was normalised hold
+        // DISPLAY values ("Lifetime", "1 Year") that the schema enum rejects
+        // (one_year | three_years | five_years | lifetime). Writing them back
+        // raw made reject() throw a ValidationError and return 500 — so an
+        // admin could approve a request but never reject one. 2,709 stored
+        // snapshots carry such a value. Normalise on the way back; if a value
+        // cannot be mapped, drop the field rather than fail the whole revert.
+        backlink_validity: { field: 'backlinkValidity', transform: (v) => normaliseBacklinkValidity(v) },
         countries: { field: 'countries' },
         language: { field: 'language' },
         category: { field: 'category' },
@@ -402,7 +423,14 @@ module.exports = createCoreController('api::website-update-request.website-updat
       for (const [mktField, baseValue] of Object.entries(baseSnapshot)) {
         const mapping = REVERT_MAP[mktField];
         if (!mapping) continue;
-        revertData[mapping.field] = mapping.transform ? mapping.transform(baseValue) : baseValue;
+        const reverted = mapping.transform ? mapping.transform(baseValue) : baseValue;
+        // A transform returning undefined means "cannot map this safely" —
+        // skip the field instead of writing a value the schema will reject.
+        if (reverted === undefined) {
+          strapi.log.warn(`[WEBSITE UPDATE REQUEST] Skipping unmappable ${mktField}="${baseValue}" while reverting request ${id}`);
+          continue;
+        }
+        revertData[mapping.field] = reverted;
       }
 
       const publisherWebsiteId = request.publisherWebsite?.id;
@@ -432,6 +460,92 @@ module.exports = createCoreController('api::website-update-request.website-updat
     } catch (error) {
       strapi.log.error('[WEBSITE UPDATE REQUEST] Rejection failed', error);
       return ctx.internalServerError('Failed to reject update request');
+    }
+  },
+
+  /**
+   * Bulk approve / reject update requests.
+   *
+   * Added 2026-09-23. Until now the only way to clear the queue was
+   * POST /website-update-requests/:id/approve, one at a time. A backlog of
+   * 2,001 requests from one publisher sat unactioned for four months because
+   * clearing it by hand meant 2,001 clicks.
+   *
+   * Delegates to the existing approve()/reject() handlers rather than
+   * duplicating their logic, so the marketplace write, publisher_websites
+   * revert, audit fields and notifications stay identical to the single-item
+   * path. Each id is processed independently: one failure does not abort the
+   * batch, and every outcome is reported per id.
+   *
+   * Body: { requestIds: number[], action: 'approve' | 'reject', notes?: string }
+   */
+  async bulkProcess(ctx) {
+    try {
+      const adminUser = ctx.state.user;
+      if (!adminUser) return ctx.unauthorized('Authentication required');
+
+      const body = (ctx.request.body && ctx.request.body.data) || ctx.request.body || {};
+      const { requestIds, action } = body;
+      const notes = body.notes || body.reason || '';
+
+      if (!Array.isArray(requestIds) || requestIds.length === 0) {
+        return ctx.badRequest('requestIds must be a non-empty array');
+      }
+      if (!['approve', 'reject'].includes(action)) {
+        return ctx.badRequest("action must be either 'approve' or 'reject'");
+      }
+      if (action === 'reject' && !notes) {
+        return ctx.badRequest('A reason is required when rejecting');
+      }
+      const MAX_BATCH = 2500;
+      if (requestIds.length > MAX_BATCH) {
+        return ctx.badRequest('Too many ids in one call (max ' + MAX_BATCH + ')');
+      }
+
+      const self = strapi.controller('api::website-update-request.website-update-request');
+      const results = [];
+      let succeeded = 0;
+      let failed = 0;
+
+      for (const rawId of requestIds) {
+        const id = String(rawId);
+        // Minimal ctx shim: the single-item handlers only read params.id,
+        // request.body and state.user, and signal failure through these
+        // helpers. Capturing them turns an HTTP error into a per-item result
+        // instead of aborting the batch.
+        let failure = null;
+        const shim = {
+          params: { id: id },
+          state: ctx.state,
+          request: { body: action === 'approve' ? { data: { notes: notes } } : { reason: notes } },
+          badRequest: function (m) { failure = { message: m }; return failure; },
+          notFound: function (m) { failure = { message: m }; return failure; },
+          unauthorized: function (m) { failure = { message: m }; return failure; },
+          internalServerError: function (m) { failure = { message: m }; return failure; },
+        };
+
+        try {
+          const out = await self[action](shim);
+          if (failure) {
+            failed += 1;
+            results.push({ id: rawId, ok: false, error: failure.message });
+          } else {
+            succeeded += 1;
+            results.push({ id: rawId, ok: true, message: (out && out.message) || 'done' });
+          }
+        } catch (err) {
+          failed += 1;
+          results.push({ id: rawId, ok: false, error: err.message || 'Unhandled error' });
+          strapi.log.error('[BULK ' + action + '] request ' + id + ' failed: ' + err.message);
+        }
+      }
+
+      strapi.log.info('[BULK ' + action + '] ' + (adminUser.email || adminUser.id) + ': ' +
+        succeeded + ' succeeded, ' + failed + ' failed of ' + requestIds.length);
+      return { data: { action: action, total: requestIds.length, succeeded: succeeded, failed: failed, results: results } };
+    } catch (error) {
+      strapi.log.error('[BULK PROCESS] Unexpected failure:', error.message);
+      return ctx.internalServerError('Bulk processing failed');
     }
   }
 }));
