@@ -1039,6 +1039,40 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         // Convert Strapi filters to Knex where clauses
         const applyFilters = (query, filters) => {
           if (!filters) return query;
+        // ── jsonb-safe $containsi ────────────────────────────────────
+        // `countries`, `category`, `language` etc. are jsonb. Postgres has no
+        // lower(jsonb), so `LOWER(??) LIKE ?` threw `function lower(jsonb)
+        // does not exist` and dumped the whole fast path into the fallback on
+        // every country-filtered marketplace search. Cast to text and use
+        // ILIKE for those columns; text columns keep LOWER()+lowercased value
+        // so the pg_trgm index on lower(url) is still usable.
+        const JSONB_COLUMNS = new Set([
+          'category', 'other_category', 'countries', 'language', 'bulk_refresh_skip_tools',
+        ]);
+        const containsiSql = (col) =>
+          JSONB_COLUMNS.has(col) ? 'CAST(?? AS text) ILIKE ?' : 'LOWER(??) LIKE ?';
+        const containsiArg = (col, v) =>
+          JSONB_COLUMNS.has(col) ? `%${String(v)}%` : `%${String(v).toLowerCase()}%`;
+
+        // ── relation filters ─────────────────────────────────────────────
+        // `publisher` is a relation held in marketplaces_publisher_lnk, not a
+        // column on marketplaces. The publisher-mode filter injected at the
+        // top of find() sends `{ publisher: user.id }`, which produced
+        // `where "publisher" = $1` and `column "publisher" does not exist`.
+        // Resolve it through the link table instead. Returns true when it
+        // handled the key, so callers fall through to plain where() otherwise.
+        const RELATION_LINK_TABLES = {
+          publisher: { table: 'marketplaces_publisher_lnk', fk: 'user_id' },
+        };
+        const applyRelationEq = (builder, field, value, mode) => {
+          const rel = RELATION_LINK_TABLES[field];
+          if (!rel) return false;
+          const sub = knex(rel.table).select('marketplace_id').where(rel.fk, value);
+          if (mode === 'or') builder.orWhereIn('marketplaces.id', sub);
+          else builder.whereIn('marketplaces.id', sub);
+          return true;
+        };
+
 
           Object.entries(filters).forEach(([key, value]) => {
             if (key === '$and' && Array.isArray(value)) {
@@ -1062,9 +1096,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                                 else if (operator === '$null') orBuilder.orWhereNull(orField);
                                 else if (operator === '$notNull') orBuilder.orWhereNotNull(orField);
                                 else if (operator === '$contains') orBuilder.orWhere(orField, 'like', `%${opValue}%`);
-                                else if (operator === '$containsi') orBuilder.orWhereRaw('LOWER(??) LIKE ?', [orField, `%${String(opValue).toLowerCase()}%`]);
+                                else if (operator === '$containsi') orBuilder.orWhereRaw(containsiSql(orField), [orField, containsiArg(orField, opValue)]);
                               });
-                            } else {
+                            } else if (!applyRelationEq(orBuilder, orField, orValue, 'or')) {
                               orBuilder.orWhere(orField, orValue);
                             }
                           });
@@ -1082,9 +1116,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                         else if (operator === '$null') builder.whereNull(field);
                         else if (operator === '$notNull') builder.whereNotNull(field);
                         else if (operator === '$contains') builder.where(field, 'like', `%${opValue}%`);
-                        else if (operator === '$containsi') builder.whereRaw('LOWER(??) LIKE ?', [field, `%${String(opValue).toLowerCase()}%`]);
+                        else if (operator === '$containsi') builder.whereRaw(containsiSql(field), [field, containsiArg(field, opValue)]);
                       });
-                    } else {
+                    } else if (!applyRelationEq(builder, field, fieldValue, 'and')) {
                       builder.where(field, fieldValue);
                     }
                   });
@@ -1097,7 +1131,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                   Object.entries(orCondition).forEach(([orField, orValue]) => {
                     if (typeof orValue === 'object' && orValue !== null) {
                       Object.entries(orValue).forEach(([operator, opVal]) => {
-                        if (operator === '$containsi') builder.orWhereRaw('LOWER(??) LIKE ?', [orField, `%${String(opVal).toLowerCase()}%`]);
+                        if (operator === '$containsi') builder.orWhereRaw(containsiSql(orField), [orField, containsiArg(orField, opVal)]);
                         else if (operator === '$contains') builder.orWhere(orField, 'like', `%${opVal}%`);
                         else if (operator === '$eq') builder.orWhere(orField, '=', opVal);
                         else if (operator === '$gt') builder.orWhere(orField, '>', opVal);
@@ -1109,7 +1143,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                         else if (operator === '$endsWith') builder.orWhere(orField, 'like', `%${opVal}`);
                         else if (operator === '$in' && Array.isArray(opVal)) builder.orWhereIn(orField, opVal);
                       });
-                    } else {
+                    } else if (!applyRelationEq(builder, orField, orValue, 'or')) {
                       builder.orWhere(orField, orValue);
                     }
                   });
@@ -1127,12 +1161,12 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                 else if (operator === '$null') query.whereNull(key);
                 else if (operator === '$notNull') query.whereNotNull(key);
                 else if (operator === '$contains') query.where(key, 'like', `%${opValue}%`);
-                else if (operator === '$containsi') query.whereRaw('LOWER(??) LIKE ?', [key, `%${String(opValue).toLowerCase()}%`]);
+                else if (operator === '$containsi') query.whereRaw(containsiSql(key), [key, containsiArg(key, opValue)]);
                 else if (operator === '$endsWith') query.where(key, 'like', `%${opValue}`);
                 else if (operator === '$startsWith') query.where(key, 'like', `${opValue}%`);
                 else if (operator === '$in' && Array.isArray(opValue)) query.whereIn(key, opValue);
               });
-            } else {
+            } else if (!applyRelationEq(query, key, value, 'and')) {
               query.where(key, value);
             }
           });
