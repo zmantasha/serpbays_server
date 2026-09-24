@@ -3,6 +3,15 @@
 /**
  * Admin Codes Routes
  * Routes for managing codes from admin panel
+ *
+ * Hardened 2026-09-24 (Issue B). Every route here used to carry
+ * `is-admin-with-jwt` alone, which only proves "you hold an admin JWT".
+ * It never consulted pagePermissions, so any admin account — including one
+ * with no permissions granted at all — could list, mint, edit and delete
+ * codes, i.e. create spendable wallet credit. The codes page has always
+ * been declared gateable in src/lib/admin-pages.js (hasCreate + hasDelete);
+ * the routes simply never enforced it. Now they do, matching every other
+ * admin route file.
  */
 
 module.exports = {
@@ -14,11 +23,14 @@ module.exports = {
       handler: 'codes.find',
       config: {
         auth: false,
-        policies: ['global::is-admin-with-jwt'],
-        middlewares: []
+        policies: [
+          'global::is-admin-with-jwt',
+          { name: 'global::requires-view', config: { pageKey: 'codes' } }
+        ],
+        middlewares: ['global::admin-logger']
       }
     },
-    
+
     // Get code statistics
     {
       method: 'GET',
@@ -26,11 +38,14 @@ module.exports = {
       handler: 'codes.getStats',
       config: {
         auth: false,
-        policies: ['global::is-admin-with-jwt'],
-        middlewares: []
+        policies: [
+          'global::is-admin-with-jwt',
+          { name: 'global::requires-view', config: { pageKey: 'codes' } }
+        ],
+        middlewares: ['global::admin-logger']
       }
     },
-    
+
     // Generate a new code
     {
       method: 'POST',
@@ -38,11 +53,14 @@ module.exports = {
       handler: 'codes.generateCode',
       config: {
         auth: false,
-        policies: ['global::is-admin-with-jwt'],
-        middlewares: []
+        policies: [
+          'global::is-admin-with-jwt',
+          { name: 'global::requires-create', config: { pageKey: 'codes' } }
+        ],
+        middlewares: ['global::admin-logger']
       }
     },
-    
+
     // Bulk generate codes
     {
       method: 'POST',
@@ -50,11 +68,14 @@ module.exports = {
       handler: 'codes.bulkGenerateCodes',
       config: {
         auth: false,
-        policies: ['global::is-admin-with-jwt'],
-        middlewares: []
+        policies: [
+          'global::is-admin-with-jwt',
+          { name: 'global::requires-create', config: { pageKey: 'codes' } }
+        ],
+        middlewares: ['global::admin-logger']
       }
     },
-    
+
     // Update code status
     {
       method: 'PUT',
@@ -62,11 +83,14 @@ module.exports = {
       handler: 'codes.updateStatus',
       config: {
         auth: false,
-        policies: ['global::is-admin-with-jwt'],
-        middlewares: []
+        policies: [
+          'global::is-admin-with-jwt',
+          { name: 'global::requires-edit', config: { pageKey: 'codes' } }
+        ],
+        middlewares: ['global::admin-logger']
       }
     },
-    
+
     // Delete a code
     {
       method: 'DELETE',
@@ -74,8 +98,11 @@ module.exports = {
       handler: 'codes.deleteCode',
       config: {
         auth: false,
-        policies: ['global::is-admin-with-jwt'],
-        middlewares: []
+        policies: [
+          'global::is-admin-with-jwt',
+          { name: 'global::requires-delete', config: { pageKey: 'codes' } }
+        ],
+        middlewares: ['global::admin-logger']
       }
     }
   ]
