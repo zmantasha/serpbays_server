@@ -5,6 +5,12 @@
  */
 
 const { createCoreController } = require('@strapi/strapi').factories;
+
+// Marketplace-wide insight numbers are identical for every advertiser and
+// change slowly (sites are added in batches, days apart). Cached in-process
+// for 10 minutes so the grouped queries in getStats run once, not per user.
+const MARKETPLACE_STATS_TTL_MS = 10 * 60 * 1000;
+let marketplaceStatsCache = null; // { at: number, value: object }
 const { parse } = require('csv-parse/sync');
 const fs = require('fs');
 const { normalizeUrl } = require('../../../utils/normalize-url');
@@ -1756,93 +1762,88 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
    */
   async getStats(ctx) {
     try {
-      const user = ctx.state.user;
+      const now = Date.now();
+      if (marketplaceStatsCache && now - marketplaceStatsCache.at < MARKETPLACE_STATS_TTL_MS) {
+        return marketplaceStatsCache.value;
+      }
 
-      // Calculate date 15 days ago
-      const fifteenDaysAgo = new Date();
-      fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+      // 2026-09-25: rewritten. The old version returned five counts and the
+      // widget ADDED guest-post and link-insertion sites to get a "total"
+      // (84,763) -- but 90% of sites offer both, so the real number is
+      // 44,607. Now: a distinct site count plus the breakdowns a buyer
+      // actually filters on (DR, price, category, country, language),
+      // each one grouped query over the same active-listing set.
+      // Definitions of the five original figures are unchanged.
+      const knex = strapi.db.connection;
+      const ACTIVE = "(m.status = 'active' or m.status is null or m.status = '')";
+      const fifteenDaysAgo = new Date(now - 15 * 24 * 60 * 60 * 1000);
 
-      // 1. New Sites Count (last 15 days)
-      const newSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
-        where: {
-          createdAt: { $gte: fifteenDaysAgo },
-          $or: [
-            { status: 'active' },
-            { status: { $null: true } },
-            { status: '' }
-          ]
-        }
-      });
+      const top = (col, limit) => knex.raw(
+        `select trim(both from regexp_replace(v, '\\s*&\\s*', ' & ', 'g')) as name, count(*)::int as c
+           from marketplaces m,
+                jsonb_array_elements_text(case when jsonb_typeof(m.${col}::jsonb) = 'array' then m.${col}::jsonb else '[]'::jsonb end) v
+          where ${ACTIVE}
+          group by 1 order by 2 desc limit ?`, [limit]);
 
-      // 2. Guest Post Sites (price > 0)
-      const gpSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
-        where: {
-          price: { $gt: 0 },
-          $or: [
-            { status: 'active' },
-            { status: { $null: true } },
-            { status: '' }
-          ]
-        }
-      });
+      const [countsRes, mediansRes, drRes, priceRes, catRes, countryRes, langRes] = await Promise.all([
+        knex.raw(`select
+            count(*)::int as total,
+            count(*) filter (where m.created_at >= ?)::int as new_sites,
+            count(*) filter (where coalesce(m.price,0) > 0)::int as gp,
+            count(*) filter (where coalesce(m.link_insertion_price,0) > 0)::int as li,
+            count(*) filter (where coalesce(m.price,0) > 0 and coalesce(m.link_insertion_price,0) > 0)::int as both_services,
+            count(*) filter (where m.ahrefs_traffic > 10000)::int as high_traffic,
+            count(*) filter (where coalesce(m.adv_casino_pricing,0) > 0 or coalesce(m.adv_li_casino_pricing,0) > 0
+                              or coalesce(m.adv_crypto_pricing,0) > 0 or coalesce(m.adv_li_crypto_pricing,0) > 0
+                              or coalesce(m.adv_cbd_pricing,0) > 0 or coalesce(m.adv_li_cbd_pricing,0) > 0
+                              or coalesce(m.adv_dating_pricing,0) > 0 or coalesce(m.adv_li_dating_pricing,0) > 0)::int as sensitive,
+            count(*) filter (where m.dofollow_link::text in ('true','t','1'))::int as dofollow
+          from marketplaces m where ${ACTIVE}`, [fifteenDaysAgo]),
+        knex.raw(`select
+            round(percentile_cont(0.5) within group (order by nullif(m.price,0))::numeric) as gp,
+            round(percentile_cont(0.5) within group (order by nullif(m.link_insertion_price,0))::numeric) as li
+          from marketplaces m where ${ACTIVE}`),
+        knex.raw(`select case when m.ahrefs_dr >= 70 then '70+' when m.ahrefs_dr >= 50 then '50-69'
+                              when m.ahrefs_dr >= 30 then '30-49' when m.ahrefs_dr >= 10 then '10-29'
+                              when m.ahrefs_dr is null then 'unknown' else '<10' end as label, count(*)::int as c
+          from marketplaces m where ${ACTIVE} group by 1`),
+        knex.raw(`select case when m.price < 50 then '<$50' when m.price < 100 then '$50-99' when m.price < 250 then '$100-249'
+                              when m.price < 500 then '$250-499' else '$500+' end as label, count(*)::int as c
+          from marketplaces m where ${ACTIVE} and coalesce(m.price,0) > 0 group by 1`),
+        top('category', 8),
+        top('countries', 6),
+        top('language', 5),
+      ]);
 
-      // 3. Link Insertion Sites (link_insertion_price > 0)
-      const liSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
-        where: {
-          link_insertion_price: { $gt: 0 },
-          $or: [
-            { status: 'active' },
-            { status: { $null: true } },
-            { status: '' }
-          ]
-        }
-      });
+      const counts = countsRes.rows[0] || {};
+      const medians = mediansRes.rows[0] || {};
+      const ordered = (rows, order) => order
+        .map((label) => ({ label, count: Number((rows.find((r) => r.label === label) || {}).c || 0) }))
+        .filter((b) => b.count > 0);
 
-      // 4. High Traffic Sites (ahrefs_traffic > 10000)
-      const highTrafficCount = await strapi.db.query('api::marketplace.marketplace').count({
-        where: {
-          ahrefs_traffic: { $gt: 10000 },
-          $or: [
-            { status: 'active' },
-            { status: { $null: true } },
-            { status: '' }
-          ]
-        }
-      });
-
-      // 5. Sensitive Niche Sites (Any sensitive price > 0)
-      const sensitiveSitesCount = await strapi.db.query('api::marketplace.marketplace').count({
-        where: {
-          $or: [
-            { adv_casino_pricing: { $gt: 0 } },
-            { adv_li_casino_pricing: { $gt: 0 } },
-            { adv_crypto_pricing: { $gt: 0 } },
-            { adv_li_crypto_pricing: { $gt: 0 } },
-            { adv_cbd_pricing: { $gt: 0 } },
-            { adv_li_cbd_pricing: { $gt: 0 } },
-            { adv_dating_pricing: { $gt: 0 } },
-            { adv_li_dating_pricing: { $gt: 0 } }
-          ],
-          $and: [
-            {
-              $or: [
-                { status: 'active' },
-                { status: { $null: true } },
-                { status: '' }
-              ]
-            }
-          ]
-        }
-      });
-
-      return {
-        newSites: newSitesCount,
-        guestPostSites: gpSitesCount,
-        linkInsertionSites: liSitesCount,
-        highTrafficSites: highTrafficCount,
-        sensitiveSites: sensitiveSitesCount
+      const value = {
+        // original five, same definitions as before
+        newSites: Number(counts.new_sites || 0),
+        guestPostSites: Number(counts.gp || 0),
+        linkInsertionSites: Number(counts.li || 0),
+        highTrafficSites: Number(counts.high_traffic || 0),
+        sensitiveSites: Number(counts.sensitive || 0),
+        // new
+        totalSites: Number(counts.total || 0),
+        bothServicesSites: Number(counts.both_services || 0),
+        dofollowPct: counts.total ? Math.round((100 * Number(counts.dofollow || 0)) / Number(counts.total)) : 0,
+        medianGuestPostPrice: medians.gp == null ? null : Number(medians.gp),
+        medianLinkInsertionPrice: medians.li == null ? null : Number(medians.li),
+        drBuckets: ordered(drRes.rows, ['70+', '50-69', '30-49', '10-29', '<10', 'unknown']),
+        priceBuckets: ordered(priceRes.rows, ['<$50', '$50-99', '$100-249', '$250-499', '$500+']),
+        topCategories: catRes.rows.map((r) => ({ name: r.name, count: Number(r.c) })),
+        topCountries: countryRes.rows.map((r) => ({ name: r.name, count: Number(r.c) })),
+        topLanguages: langRes.rows.map((r) => ({ name: r.name, count: Number(r.c) })),
+        generatedAt: new Date(now).toISOString(),
       };
 
+      marketplaceStatsCache = { at: now, value };
+      return value;
     } catch (error) {
       console.error('Error fetching marketplace stats:', error);
       return ctx.internalServerError('Failed to fetch marketplace stats');
