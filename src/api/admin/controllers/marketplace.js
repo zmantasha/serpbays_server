@@ -1204,6 +1204,52 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       console.error('[ADMIN MARKETPLACE BULK DELETE ERROR]', error);
       return ctx.internalServerError('Failed to bulk delete marketplace websites');
     }
+  },
+
+  // ── Featured management (2026-09-25) ────────────────────────────────────
+  // Three boolean flags on marketplaces decide featured placement
+  // (is_featured, is_featured_guest_post, is_featured_link_insertion).
+  // Written directly through knex: a flag flip has no lifecycle side
+  // effects to preserve, and publisher_websites carries no mirror of
+  // these columns.
+  featuredWhere(q) {
+    return q.where('is_featured', true).orWhere('is_featured_guest_post', true).orWhere('is_featured_link_insertion', true);
+  },
+
+  async getFeaturedCount(ctx) {
+    try {
+      const row = await strapi.db.connection('marketplaces')
+        .where((q) => this.featuredWhere(q))
+        .count('* as c')
+        .first();
+      return { data: { featuredCount: Number(row?.c || 0) } };
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE FEATURED COUNT ERROR]', error);
+      return ctx.internalServerError('Failed to count featured listings');
+    }
+  },
+
+  async unfeatureAll(ctx) {
+    try {
+      const { confirm } = ctx.request.body || {};
+      if (confirm !== true) {
+        return ctx.badRequest('Pass { confirm: true } to clear every featured flag');
+      }
+      const rows = await strapi.db.connection('marketplaces')
+        .where((q) => this.featuredWhere(q))
+        .update({
+          is_featured: false,
+          is_featured_guest_post: false,
+          is_featured_link_insertion: false,
+          updated_at: new Date(),
+        })
+        .returning('id');
+      const ids = rows.map((r) => (r && typeof r === 'object' ? r.id : r));
+      strapi.log.warn(`[ADMIN ACTION] Admin ${ctx.state.user.id} (${ctx.state.user.email}) cleared featured on ${ids.length} listing(s)${ids.length ? ': ' + ids.join(',') : ''}`);
+      return { data: { cleared: ids.length, ids } };
+    } catch (error) {
+      console.error('[ADMIN MARKETPLACE UNFEATURE ALL ERROR]', error);
+      return ctx.internalServerError('Failed to clear featured listings');
+    }
   }
 }));
-

@@ -25,6 +25,16 @@ module.exports = {
         middlewares: ['global::admin-logger']
       }
     },
+    // Featured management (2026-09-25): how many listings carry a featured flag.
+    {
+      method: 'GET',
+      path: '/admin/marketplace/featured-count',
+      handler: 'marketplace.getFeaturedCount',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'marketplace' } }],
+        middlewares: ['global::admin-logger']
+      }
+    },
     {
       method: 'GET',
       path: '/admin/marketplace/:id',
@@ -85,6 +95,16 @@ module.exports = {
       handler: 'marketplace.bulkDelete',
       config: {
         policies: ['global::is-admin', { name: 'global::requires-delete', config: { pageKey: 'marketplace' } }],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    // Featured management (2026-09-25): clear every featured flag in one action.
+    {
+      method: 'POST',
+      path: '/admin/marketplace/unfeature-all',
+      handler: 'marketplace.unfeatureAll',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
         middlewares: ['global::admin-logger']
       }
     }
