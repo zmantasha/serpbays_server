@@ -565,6 +565,95 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
     }
   },
 
+  /**
+   * GET /publisher-websites/attention  (2026-09-25)
+   *
+   * Everything a publisher needs to act on, as counts, for the dashboard
+   * "Needs your attention" card. One round of parallel grouped queries on
+   * tables that already exist; the client hides zero rows and shows an
+   * all-clear line when the total is zero.
+   *
+   * Order semantics mirror order.getCounts: an order is "mine" when I am
+   * its publisher or it carries my email as the website publisher, and I
+   * am not its advertiser.
+   */
+  async attention(ctx) {
+    try {
+      const user = ctx.state.user;
+      if (!user) return ctx.unauthorized('You must be logged in.');
+      const knex = strapi.db.connection;
+      const uid = user.id;
+      const email = user.email;
+
+      const mine = (q) => q
+        .where((w) => w
+          .whereExists(knex('orders_publisher_lnk as op').whereRaw('op.order_id = o.id').where('op.user_id', uid))
+          .orWhere('o.website_publisher_email', email))
+        .whereNotExists(knex('orders_advertiser_lnk as oa').whereRaw('oa.order_id = o.id').where('oa.user_id', uid));
+      const ownedSites = (q) => q.whereExists(
+        knex('publisher_websites_current_publisher_id_lnk as l').whereRaw('l.publisher_website_id = pw.id').where('l.user_id', uid)
+      );
+
+      const [orderCounts, inProgressOrders, withdrawals, siteCounts, oldest, topReason, priceUpdates] = await Promise.all([
+        mine(knex('orders as o')).select(
+          knex.raw("count(*) filter (where o.order_status = 'pending')::int as new_orders"),
+          knex.raw("count(*) filter (where o.order_status = 'accepted')::int as in_progress"),
+          knex.raw("count(*) filter (where o.order_status = 'delivered')::int as delivered"),
+          knex.raw("count(*) filter (where o.revision_status = 'requested')::int as revisions"),
+        ).first(),
+        mine(knex('orders as o')).where('o.order_status', 'accepted')
+          .select('o.id', 'o.website_url', 'o.total_amount', 'o.updated_at').orderBy('o.updated_at', 'desc').limit(3),
+        knex('withdrawal_requests as w')
+          .join('withdrawal_requests_publisher_lnk as wp', 'wp.withdrawal_request_id', 'w.id')
+          .where('wp.user_id', uid).whereIn('w.withdrawal_status', ['pending', 'processing', 'requested'])
+          .count('* as c').first(),
+        ownedSites(knex('publisher_websites as pw')).select(
+          knex.raw("count(*) filter (where pw.submission_status in ('approval_pending','pending_final_submission'))::int as in_moderation"),
+          knex.raw("count(*) filter (where pw.submission_status = 'rejected')::int as rejected"),
+          knex.raw("count(*) filter (where pw.submission_status = 'listing_paused')::int as paused"),
+          knex.raw("count(*) filter (where pw.submission_status = 'pending_verification')::int as unverified"),
+        ).first(),
+        ownedSites(knex('publisher_websites as pw')).whereIn('pw.submission_status', ['approval_pending', 'pending_final_submission'])
+          .select(knex.raw('min(pw.created_at) as oldest')).first(),
+        ownedSites(knex('publisher_websites as pw')).where('pw.submission_status', 'rejected')
+          .select(knex.raw("left(trim(coalesce(nullif(pw.rejection_reason, ''), pw.review_notes, '')), 80) as reason"))
+          .count('* as c').groupBy('reason').orderBy('c', 'desc').first(),
+        knex('website_update_requests as r')
+          .join('website_update_requests_publisher_website_lnk as rl', 'rl.website_update_request_id', 'r.id')
+          .join('publisher_websites_current_publisher_id_lnk as l', 'l.publisher_website_id', 'rl.publisher_website_id')
+          .where('l.user_id', uid).where('r.status', 'pending').count('* as c').first(),
+      ]);
+
+      const n = (v) => Number(v || 0);
+      const oldestDays = oldest && oldest.oldest
+        ? Math.max(0, Math.floor((Date.now() - new Date(oldest.oldest).getTime()) / 86400000))
+        : null;
+      const data = {
+        newOrders: n(orderCounts.new_orders),
+        revisionsRequested: n(orderCounts.revisions),
+        inProgress: n(orderCounts.in_progress),
+        inProgressOrders: (inProgressOrders || []).map((o) => ({
+          id: o.id, websiteUrl: o.website_url, totalAmount: o.total_amount == null ? null : Number(o.total_amount), updatedAt: o.updated_at,
+        })),
+        deliveredAwaitingApproval: n(orderCounts.delivered),
+        withdrawalsPending: n(withdrawals && withdrawals.c),
+        inModeration: n(siteCounts.in_moderation),
+        oldestModerationDays: oldestDays,
+        rejected: n(siteCounts.rejected),
+        topRejectReason: topReason && topReason.reason ? topReason.reason : null,
+        paused: n(siteCounts.paused),
+        unverified: n(siteCounts.unverified),
+        priceUpdatesPending: n(priceUpdates && priceUpdates.c),
+      };
+      data.total = data.newOrders + data.revisionsRequested + data.inProgress + data.deliveredAwaitingApproval
+        + data.withdrawalsPending + data.inModeration + data.rejected + data.paused + data.unverified + data.priceUpdatesPending;
+      return { data };
+    } catch (error) {
+      console.error('[publisher-website.attention] failed:', error);
+      return ctx.internalServerError('Failed to load attention items');
+    }
+  },
+
   // Get single publisher website by ID
   async findOne(ctx) {
     try {

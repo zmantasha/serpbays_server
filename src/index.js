@@ -250,6 +250,33 @@ module.exports = {
       );
     }
 
+    // ── Grant publisher-website.attention (dashboard card) ──────────────
+    // Same shape as the block above: a custom action on a public-side API
+    // that the admin auto-grant loop does not cover. Idempotent.
+    try {
+      const roles = await strapi.db
+        .query('plugin::users-permissions.role')
+        .findMany({ where: { type: { $in: ['super_admin', 'admin', 'authenticated'] } } });
+      const action = 'api::publisher-website.publisher-website.attention';
+      let grantedAttention = 0;
+      for (const role of roles) {
+        const existing = await strapi.db
+          .query('plugin::users-permissions.permission')
+          .findOne({ where: { action, role: role.id } });
+        if (!existing) {
+          await strapi.db
+            .query('plugin::users-permissions.permission')
+            .create({ data: { action, role: role.id } });
+          grantedAttention++;
+        }
+      }
+      if (grantedAttention > 0) {
+        strapi.log.info(`[BOOTSTRAP] Granted publisher-website.attention to ${grantedAttention} role(s)`);
+      }
+    } catch (err) {
+      strapi.log.warn(`[BOOTSTRAP] Could not grant publisher-website.attention: ${err.message}`);
+    }
+
     // Add request debugging middleware
     strapi.server.use(async (ctx, next) => {
       // Log the request details for debugging
