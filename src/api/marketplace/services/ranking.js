@@ -15,7 +15,7 @@
  * + W.reliability · publisher completion rate (Bayesian, m = 5)
  * × 0.88 when nofollow · − 3 per extra site of the same root domain (max −12)
  * authenticity: DR ≥ 40 with < 100 visits or < 200 keywords → ×0.35; < 2,000 visits or < 1,000 keywords → ×0.65; spam > 30 → ×0.6; > 60 → ×0.3
- * value_score: the value term alone, only for sites passing the quality floor (DR ≥ 40, ≥ 10k visits, ≥ 3k keywords, EN/major market, dofollow, credible).
+ * value_score: the value term (ties broken by score/100), only for sites passing the quality floor (DR ≥ 40, ≥ 10k visits, ≥ 3k keywords, EN/major market, dofollow, credible).
  * Weights live in Global Config `rankingWeights` (JSON) so they can be tuned without a deploy.
  */
 
@@ -34,6 +34,9 @@ module.exports = ({ strapi }) => ({
     const w = await this.weights();
     const started = Date.now();
     await knex.transaction(async (trx) => {
+      // weights are validated finite numbers (see weights()); inlined because knex would
+      // read the `::numeric` casts as named bindings if a bindings object were passed.
+      const W = (k) => String(w[k]);
       await trx.raw(`
 CREATE TEMP TABLE tmp_rank ON COMMIT DROP AS
 WITH pub AS (SELECT op.user_id, count(*) AS n, count(*) FILTER (WHERE o.order_status IN ('completed','approved')) AS done FROM orders o JOIN orders_publisher_lnk op ON op.order_id=o.id WHERE o.order_status IN ('completed','approved','rejected','cancelled') GROUP BY 1),
@@ -63,13 +66,13 @@ terms AS (
     (coalesce(pu.done,0) + 5*(SELECT p FROM prior)) / (coalesce(pu.n,0) + 5) AS t_reliability,
     (coalesce(dr,0)>=40 AND (traffic<100 OR kw<200)) OR coalesce(spam,0)>30 AS low_confidence
   FROM base b LEFT JOIN peers p ON p.dr_band=b.dr_band AND p.tr_band=b.tr_band LEFT JOIN peers_dr pd ON pd.dr_band=b.dr_band LEFT JOIN pub pu ON pu.user_id=b.publisher_id),
-scored AS (SELECT *, (:authority*raw_authority*auth_mult + :organic*t_organic + :market*t_market + :value*t_value + :trust*t_trust + :verified*t_verified + :fresh*t_fresh + :reliability*t_reliability) * (CASE WHEN dofollow THEN 1 ELSE :nofollowMultiplier END) AS s0 FROM terms),
+scored AS (SELECT *, (${W('authority')}*raw_authority*auth_mult + ${W('organic')}*t_organic + ${W('market')}*t_market + ${W('value')}*t_value + ${W('trust')}*t_trust + ${W('verified')}*t_verified + ${W('fresh')}*t_fresh + ${W('reliability')}*t_reliability) * (CASE WHEN dofollow THEN 1 ELSE ${W('nofollowMultiplier')} END) AS s0 FROM terms),
 netdecay AS (SELECT *, row_number() OVER (PARTITION BY root ORDER BY s0 DESC) AS k FROM scored)
 SELECT id,
-  round(greatest(0, s0 - least(:networkDecayMax, :networkDecayPerSite*(k-1)))::numeric,1) AS score,
-  CASE WHEN kw>=3000 AND traffic>=10000 AND coalesce(dr,0)>=40 AND ((english AND NOT south_asia_only) OR major) AND NOT low_confidence AND dofollow THEN round((100*t_value)::numeric,1) END AS value_score,
+  round(greatest(0, s0 - least(${W('networkDecayMax')}, ${W('networkDecayPerSite')}*(k-1)))::numeric,1) AS score,
+  CASE WHEN kw>=3000 AND traffic>=10000 AND coalesce(dr,0)>=40 AND ((english AND NOT south_asia_only) OR major) AND NOT low_confidence AND dofollow THEN round((100*t_value + greatest(0, s0 - least(${W('networkDecayMax')}, ${W('networkDecayPerSite')}*(k-1)))/100)::numeric,2) END AS value_score,
   to_jsonb(array_remove(ARRAY[CASE WHEN gsc THEN 'verified_owner' END, CASE WHEN t_value>=0.75 AND kw>=1000 AND NOT low_confidence THEN 'great_value' END, CASE WHEN traffic>=10000 THEN 'high_traffic' END, CASE WHEN tat<=3 THEN 'fast_delivery' END, CASE WHEN NOT dofollow THEN 'nofollow' END, CASE WHEN low_confidence THEN 'low_confidence' END], NULL)) AS badges
-FROM netdecay`, w);
+FROM netdecay`);
       await trx.raw(`UPDATE marketplaces m SET rank_score = t.score, value_score = t.value_score, rank_badges = t.badges, rank_computed_at = now() FROM tmp_rank t WHERE m.id = t.id`);
       // listings that are paused / unpriced / unpublished carry no score
       await trx.raw(`UPDATE marketplaces m SET rank_score = NULL, value_score = NULL, rank_badges = NULL WHERE m.rank_score IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tmp_rank t WHERE t.id = m.id)`);
