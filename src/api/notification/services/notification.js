@@ -217,11 +217,21 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
   // Create communication-related notifications
   async createCommunicationNotification(recipientId, senderId, orderId, action = 'message_received') {
     try {
-      const sender = await strapi.entityService.findOne('plugin::users-permissions.user', senderId);
+      // 2026-09-27: never reveal the other party's identity. Advertisers and
+      // publishers only ever see each other's ROLE plus the order/site context
+      // (same rule the chat UI and the email template already follow).
+      const order = await strapi.db.query('api::order.order').findOne({
+        where: { id: Number(orderId) }, select: ['id', 'websiteUrl'],
+        populate: { advertiser: { select: ['id'] }, publisher: { select: ['id'] } },
+      });
+      const senderRole = Number(order?.publisher?.id) === Number(senderId) ? 'the publisher'
+        : Number(order?.advertiser?.id) === Number(senderId) ? 'the advertiser' : 'the other party';
+      const site = (order?.websiteUrl || '').replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/.*$/, '');
+      const where = `Order #${orderId}${site ? ` (${site})` : ''}`;
 
       return await this.createNotification({
         title: 'New Message',
-        message: `You have received a new message from ${sender.username || sender.email}.`,
+        message: `New message from ${senderRole} on ${where}.`,
         type: 'communication',
         action,
         recipientId,
