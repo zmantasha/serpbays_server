@@ -1162,7 +1162,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
             
             <p>Alternatively, you can log into your dashboard to complete the payment.</p>
             
-            <p>Thank you for using SerpBays!</p>
+            <p>Thank you for using Serpbays!</p>
           </div>
         </div>
       </body>

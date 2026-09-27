@@ -9,11 +9,11 @@
  * invoice (Stripe / Linear) rather than a stock template.
  *
  * Sections (top-to-bottom):
- *   1. Header        — "SerpBays" wordmark (coral S + navy erpBays),
+ *   1. Header        — "Serpbays" wordmark (coral S + navy erpBays),
  *                      tagline, INVOICE title, invoice-number pill
  *   2. Top info row  — Issue Date / Status / Payment Method / TX ID
  *   3. Bill To card  — navy header, customer billing details w/ icons
- *      From card    — coral header, SerpBays contact details w/ icons
+ *      From card    — coral header, Serpbays contact details w/ icons
  *   4. Items table   — hairline borders, no fills
  *   5. Totals        — premium total box (coral border, light coral fill)
  *   6. Payment Sum.  — full payment-summary card (navy header)
@@ -64,7 +64,7 @@ const titleCase = (s) => {
 };
 
 const gatewayName = (g) => {
-  const m = { stripe: 'Stripe', paypal: 'PayPal', razorpay: 'Razorpay', system: 'SerpBays' };
+  const m = { stripe: 'Stripe', paypal: 'PayPal', razorpay: 'Razorpay', system: 'Serpbays' };
   return m[String(g || '').toLowerCase()] || titleCase(g) || '—';
 };
 
@@ -112,7 +112,7 @@ const formatDateTime = (raw) => {
 };
 
 // Render date / time in the invoice display timezone (default IST since
-// SerpBays' primary billing flows are India-based — GST, Razorpay INR).
+// Serpbays' primary billing flows are India-based — GST, Razorpay INR).
 // Override via INVOICE_TIMEZONE + INVOICE_TIMEZONE_LABEL env vars.
 const INVOICE_TZ       = process.env.INVOICE_TIMEZONE       || 'Asia/Kolkata';
 const INVOICE_TZ_LABEL = process.env.INVOICE_TIMEZONE_LABEL || 'IST';
@@ -231,7 +231,7 @@ const renderPdf = (doc, invoice, transaction) => {
   // ─── 1. HEADER ──────────────────────────────────────────────────────
   const headerY = MARGIN;
 
-  // Left: SerpBays wordmark — coral "S" inline with navy "erpBays".
+  // Left: Serpbays wordmark — coral "S" inline with navy "erpBays".
   doc.font('Helvetica-Bold').fontSize(28).fillColor(COLORS.coral)
      .text('S', MARGIN, headerY, { continued: true });
   doc.fillColor(COLORS.navy)
@@ -349,7 +349,7 @@ const renderPdf = (doc, invoice, transaction) => {
 
   let fY = cardsY + cardHeaderH + 12;
   doc.font('Helvetica-Bold').fontSize(11).fillColor(COLORS.navy)
-     .text('SerpBays', fromX + 14, fY);
+     .text('Serpbays', fromX + 14, fY);
   fY += 18;
 
   iconEmail(doc, fromX + 14, fY + 1);

@@ -295,14 +295,14 @@ module.exports = createCoreController('api::shared-list.shared-list', ({ strapi 
         <a href="${shareUrl}" style="display:inline-block;padding:10px 18px;background:#FFB088;color:#1a1a1a;text-decoration:none;border-radius:6px;font-weight:600">Open the list</a>
       </p>
       <p style="color:#888;font-size:12px;word-break:break-all">${shareUrl}</p>
-      <p style="color:#888;font-size:12px">— SerpBays</p>
+      <p style="color:#888;font-size:12px">— Serpbays</p>
     `;
     const text = [
       `Hi,`,
       `Here is the curated website list "${list.name}" we put together for you.`,
       note ? `\n${note}\n` : '',
       `Open the list: ${shareUrl}`,
-      `— SerpBays`,
+      `— Serpbays`,
     ].filter(Boolean).join('\n\n');
 
     const autosend = strapi.service('api::global.autosend-service');

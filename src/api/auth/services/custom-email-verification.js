@@ -26,23 +26,23 @@ module.exports = ({ strapi }) => ({
       const emailTemplate = {
         to: user.email,
         from: {
-          name: 'SerpBays',
+          name: 'Serpbays',
           email: process.env.EMAIL_FROM || 'noreply@serpbays.com'
         },
         replyTo: process.env.EMAIL_REPLY_TO || 'support@serpbays.com',
-        subject: 'Welcome to SerpBays - Please Verify Your Email',
+        subject: 'Welcome to Serpbays - Please Verify Your Email',
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; padding: 20px;">
             <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
               <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="color: #3b82f6; margin: 0;">SerpBays</h1>
+                <h1 style="color: #3b82f6; margin: 0;">Serpbays</h1>
                 <p style="color: #6b7280; margin: 10px 0 0 0;">Email Verification</p>
               </div>
               
               <h2 style="color: #374151; margin-bottom: 20px;">Welcome ${user.username || user.email}!</h2>
               
               <p style="color: #6b7280; line-height: 1.6; margin-bottom: 25px;">
-                Thank you for joining SerpBays! To complete your registration and secure your account, 
+                Thank you for joining Serpbays! To complete your registration and secure your account, 
                 please verify your email address by clicking the button below:
               </p>
               
@@ -56,7 +56,7 @@ module.exports = ({ strapi }) => ({
               </div>
               
               <p style="color: #6b7280; line-height: 1.6; margin-bottom: 20px;">
-                Once verified, you'll be able to access all SerpBays features including our marketplace,
+                Once verified, you'll be able to access all Serpbays features including our marketplace,
                 content creation tools, and more.
               </p>
               

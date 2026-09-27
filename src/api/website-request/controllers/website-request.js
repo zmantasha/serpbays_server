@@ -180,7 +180,7 @@ function generateEmailTemplate(request, user) {
       </div>
 
       <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 12px;">
-        <p>This is an automated notification from SerpBays Website Request System</p>
+        <p>This is an automated notification from Serpbays Website Request System</p>
       </div>
     </div>
   `;

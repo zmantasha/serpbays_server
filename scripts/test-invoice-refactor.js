@@ -9,7 +9,7 @@
  *   C. Razorpay webhook calls the service from both success paths.
  *   D. PayPal webhook calls the service from its success path.
  *   E. Order / escrow / refund flows are untouched (no new invoice calls).
- *   F. PDF download template uses the SerpBays brand palette.
+ *   F. PDF download template uses the Serpbays brand palette.
  *
  * Static checks only — runs offline against the source tree.
  *
@@ -195,8 +195,8 @@ assert(/\bFROM\b/.test(CTRL),
   'download template has FROM (issuer) section');
 assert(/PAYMENT SUMMARY/.test(CTRL),
   'download template has PAYMENT SUMMARY card');
-assert(/SerpBays/.test(CTRL),
-  'download template wordmark / footer mentions SerpBays');
+assert(/Serpbays/.test(CTRL),
+  'download template wordmark / footer mentions Serpbays');
 assert(/erpBays/.test(CTRL),
   'wordmark splits S (coral) + erpBays (navy)');
 assert(/system-generated and is valid without a signature/.test(CTRL),

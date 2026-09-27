@@ -31,7 +31,7 @@ module.exports = createCoreService(UID, ({ strapi }) => ({
     const editUrl = `${appUrl()}${editPath}`;
     const who = openCount > 1 ? `${openCount} buyers have` : 'A buyer has';
     await this.notify(publisher.id, `Sample requested for ${marketplace.url}`, `${who} asked to see a sample post before ordering. Add a sample link to the listing — buyers are notified automatically when you do.`, editPath);
-    this.email(publisher.email, `A buyer wants to see a sample from ${marketplace.url}`, `<p>Hi ${publisher.firstName || ''},</p><p>${who} asked for a sample post on <b>${marketplace.url}</b> before placing an order.</p><p><a href="${editUrl}">Add a sample link to the listing</a> — it takes a minute, and every buyer who asked is notified automatically once it's there.</p><p>— SerpBays</p>`);
+    this.email(publisher.email, `A buyer wants to see a sample from ${marketplace.url}`, `<p>Hi ${publisher.firstName || ''},</p><p>${who} asked for a sample post on <b>${marketplace.url}</b> before placing an order.</p><p><a href="${editUrl}">Add a sample link to the listing</a> — it takes a minute, and every buyer who asked is notified automatically once it's there.</p><p>— Serpbays</p>`);
     return true;
   },
 
@@ -45,7 +45,7 @@ module.exports = createCoreService(UID, ({ strapi }) => ({
       if (!r.requester) continue;
       const url = r.marketplace?.url || 'the site you asked about';
       await this.notify(r.requester.id, `Sample added for ${url}`, `The publisher added a sample post to ${url}. Open the listing to review it.`, `/marketplace?search=${encodeURIComponent(url)}`);
-      this.email(r.requester.email, `Sample added for ${url}`, `<p>Hi ${r.requester.firstName || ''},</p><p>Good news — the publisher added a sample post to <b>${url}</b>, which you asked to see.</p><p><a href="${appUrl()}/marketplace?search=${encodeURIComponent(url)}">Open the listing</a></p><p>— SerpBays</p>`);
+      this.email(r.requester.email, `Sample added for ${url}`, `<p>Hi ${r.requester.firstName || ''},</p><p>Good news — the publisher added a sample post to <b>${url}</b>, which you asked to see.</p><p><a href="${appUrl()}/marketplace?search=${encodeURIComponent(url)}">Open the listing</a></p><p>— Serpbays</p>`);
     }
     strapi.log.info(`[sample-request] ${open.length} request(s) fulfilled for marketplace ${marketplaceId}`);
     return open.length;

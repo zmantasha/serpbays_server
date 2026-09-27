@@ -23,19 +23,19 @@ async function testEmail() {
         to: testEmail,
         from: process.env.EMAIL_FROM || 'noreply@serpbays.com',
         replyTo: process.env.EMAIL_REPLY_TO || 'support@serpbays.com',
-        subject: 'SerpBays Email Test',
+        subject: 'Serpbays Email Test',
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; padding: 20px;">
             <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
               <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="color: #3b82f6; margin: 0;">SerpBays</h1>
+                <h1 style="color: #3b82f6; margin: 0;">Serpbays</h1>
                 <p style="color: #6b7280; margin: 10px 0 0 0;">Email Test</p>
               </div>
               
               <h2 style="color: #374151; margin-bottom: 20px;">Email Configuration Test</h2>
               
               <p style="color: #6b7280; line-height: 1.6; margin-bottom: 25px;">
-                If you're reading this email, your SerpBays email configuration is working correctly!
+                If you're reading this email, your Serpbays email configuration is working correctly!
               </p>
               
               <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 15px; margin: 20px 0;">
@@ -58,7 +58,7 @@ async function testEmail() {
               <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
               
               <p style="color: #9ca3af; font-size: 14px; text-align: center;">
-                This is an automated test email from SerpBays.
+                This is an automated test email from Serpbays.
               </p>
             </div>
           </div>

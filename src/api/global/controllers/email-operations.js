@@ -253,7 +253,7 @@ module.exports = createCoreController('api::global.global', ({ strapi }) => ({
     try {
       const emailData = {
         to: userEmail,
-        subject: '✅ Command Processed Successfully - SerpBays',
+        subject: '✅ Command Processed Successfully - Serpbays',
         html: `
           <!DOCTYPE html>
           <html>
@@ -277,7 +277,7 @@ module.exports = createCoreController('api::global.global', ({ strapi }) => ({
                   ${message}
                 </div>
                 <p>Your email command has been processed successfully.</p>
-                <p>Thank you for using SerpBays!</p>
+                <p>Thank you for using Serpbays!</p>
               </div>
             </div>
           </body>
@@ -299,7 +299,7 @@ module.exports = createCoreController('api::global.global', ({ strapi }) => ({
     try {
       const emailData = {
         to: userEmail,
-        subject: '❌ Command Error - SerpBays',
+        subject: '❌ Command Error - Serpbays',
         html: `
           <!DOCTYPE html>
           <html>

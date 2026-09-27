@@ -37,22 +37,22 @@ async function setupEmailVerification() {
         icon: 'sync',
         options: {
           from: {
-            name: 'SerpBays',
+            name: 'Serpbays',
             email: process.env.EMAIL_FROM || 'noreply@serpbays.com'
           },
           response_email: process.env.EMAIL_REPLY_TO || 'support@serpbays.com',
-          object: 'Reset Your SerpBays Password',
+          object: 'Reset Your Serpbays Password',
           message: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; padding: 20px;">
             <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
               <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="color: #3b82f6; margin: 0;">SerpBays</h1>
+                <h1 style="color: #3b82f6; margin: 0;">Serpbays</h1>
                 <p style="color: #6b7280; margin: 10px 0 0 0;">Reset Your Password</p>
               </div>
               
               <h2 style="color: #374151; margin-bottom: 20px;">Hello <%= USER.username || USER.email %>!</h2>
               
               <p style="color: #6b7280; line-height: 1.6; margin-bottom: 25px;">
-                We received a request to reset your password for your SerpBays account. 
+                We received a request to reset your password for your Serpbays account. 
                 Click the button below to create a new password:
               </p>
               
@@ -89,22 +89,22 @@ async function setupEmailVerification() {
         icon: 'check-square',
         options: {
           from: {
-            name: 'SerpBays',
+            name: 'Serpbays',
             email: process.env.EMAIL_FROM || 'noreply@serpbays.com'
           },
           response_email: process.env.EMAIL_REPLY_TO || 'support@serpbays.com',
-          object: 'Welcome to SerpBays - Please Verify Your Email',
+          object: 'Welcome to Serpbays - Please Verify Your Email',
           message: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; padding: 20px;">
             <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
               <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="color: #3b82f6; margin: 0;">SerpBays</h1>
+                <h1 style="color: #3b82f6; margin: 0;">Serpbays</h1>
                 <p style="color: #6b7280; margin: 10px 0 0 0;">Email Verification</p>
               </div>
               
               <h2 style="color: #374151; margin-bottom: 20px;">Welcome <%= USER.username || USER.email %>!</h2>
               
               <p style="color: #6b7280; line-height: 1.6; margin-bottom: 25px;">
-                Thank you for joining SerpBays! To complete your registration and secure your account, 
+                Thank you for joining Serpbays! To complete your registration and secure your account, 
                 please verify your email address by clicking the button below:
               </p>
               
@@ -118,7 +118,7 @@ async function setupEmailVerification() {
               </div>
               
               <p style="color: #6b7280; line-height: 1.6; margin-bottom: 20px;">
-                Once verified, you'll be able to access all SerpBays features including our marketplace,
+                Once verified, you'll be able to access all Serpbays features including our marketplace,
                 content creation tools, and more.
               </p>
               
@@ -147,7 +147,7 @@ async function setupEmailVerification() {
     });
 
     console.log('✅ Email verification has been enabled successfully!');
-    console.log('✅ Email templates have been configured with SerpBays branding!');
+    console.log('✅ Email templates have been configured with Serpbays branding!');
     console.log('✅ Settings updated:');
     console.log('   - Email confirmation: enabled');
     console.log(`   - Confirmation redirect: ${process.env.CLIENT_URL || 'http://localhost:3000'}/email-verification`);

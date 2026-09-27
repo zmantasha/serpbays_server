@@ -42,18 +42,18 @@ async function sendTestEmail() {
             to: {
                 email: testEmail
             },
-            subject: 'Test Email from SerpBays - AutoSend Integration',
+            subject: 'Test Email from Serpbays - AutoSend Integration',
             html: `
         <h1>✅ AutoSend Integration Test</h1>
-        <p>This is a test email sent from your SerpBays application using AutoSend.</p>
+        <p>This is a test email sent from your Serpbays application using AutoSend.</p>
         <p><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
         <p>If you received this email, your AutoSend integration is working correctly!</p>
         <hr>
         <p style="color: #666; font-size: 12px;">
-          This is an automated test email from SerpBays AutoSend integration.
+          This is an automated test email from Serpbays AutoSend integration.
         </p>
       `,
-            text: `AutoSend Integration Test\n\nThis is a test email from SerpBays.\nTimestamp: ${new Date().toLocaleString()}\n\nIf you received this, AutoSend is working!`,
+            text: `AutoSend Integration Test\n\nThis is a test email from Serpbays.\nTimestamp: ${new Date().toLocaleString()}\n\nIf you received this, AutoSend is working!`,
             tags: ['test', 'serpbays', 'integration-test']
         };
 
