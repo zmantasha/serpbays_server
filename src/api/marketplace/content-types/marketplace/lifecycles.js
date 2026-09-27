@@ -30,6 +30,7 @@ const TRACKED_PRICE_FIELDS = [
 ];
 
 const TRACKED_METRIC_FIELDS = [
+  'sample_links', // 2026-09-27: needed so afterUpdate can see samples appear (sample requests)
   'ahrefs_dr',
   'ahrefs_traffic',
   'ahrefs_rank',
@@ -166,6 +167,12 @@ module.exports = {
 
     const previous = event.state?.previous;
     if (!previous || !result) return;
+    // Sample requests (2026-09-27): a listing that just gained sample links
+    // closes any open buyer requests and notifies those buyers.
+    try {
+      const svc = strapi.service('api::sample-request.sample-request');
+      if (svc && svc.hasSamples(result.sample_links) && !svc.hasSamples(previous.sample_links)) await svc.fulfil(result.id);
+    } catch (e) { strapi.log?.warn?.(`[marketplace lifecycle] sample-request fulfil failed: ${e.message}`); }
 
     const changes = {};
     const changedFields = [];

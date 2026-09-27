@@ -605,7 +605,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         knex('publisher_websites_current_publisher_id_lnk as l').whereRaw('l.publisher_website_id = pw.id').where('l.user_id', uid)
       );
 
-      const [orderCounts, inProgressOrders, withdrawals, siteCounts, oldest, topReason, priceUpdates] = await Promise.all([
+      const [orderCounts, inProgressOrders, withdrawals, siteCounts, oldest, topReason, priceUpdates, sampleReqs] = await Promise.all([
         mine(knex('orders as o')).select(
           knex.raw("count(*) filter (where o.order_status = 'pending')::int as new_orders"),
           knex.raw("count(*) filter (where o.order_status = 'accepted')::int as in_progress"),
@@ -639,6 +639,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           .join('website_update_requests_publisher_website_lnk as rl', 'rl.website_update_request_id', 'r.id')
           .join('publisher_websites_current_publisher_id_lnk as l', 'l.publisher_website_id', 'rl.publisher_website_id')
           .where('l.user_id', uid).where('r.status', 'pending').count('* as c').first(),
+        knex('sample_requests as s').join('sample_requests_publisher_lnk as sp', 'sp.sample_request_id', 's.id').join('sample_requests_marketplace_lnk as sm', 'sm.sample_request_id', 's.id')
+          .where('sp.user_id', uid).where('s.status', 'open').countDistinct('sm.marketplace_id as c').first(),
       ]);
 
       const n = (v) => Number(v || 0);
@@ -661,9 +663,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         paused: n(siteCounts.paused),
         unverified: n(siteCounts.unverified),
         priceUpdatesPending: n(priceUpdates && priceUpdates.c),
+        samplesRequested: n(sampleReqs && sampleReqs.c),
       };
       data.total = data.newOrders + data.revisionsRequested + data.inProgress + data.deliveredAwaitingApproval
-        + data.withdrawalsPending + data.inModeration + data.rejected + data.paused + data.unverified + data.priceUpdatesPending;
+        + data.withdrawalsPending + data.inModeration + data.rejected + data.paused + data.unverified + data.priceUpdatesPending + data.samplesRequested;
       return { data };
     } catch (error) {
       console.error('[publisher-website.attention] failed:', error);

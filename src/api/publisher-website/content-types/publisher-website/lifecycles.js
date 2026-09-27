@@ -309,7 +309,7 @@ module.exports = {
 
       const dataUpdated = params?.data || {};
       const anyMetricsChanged = metricsFields.some((f) => Object.prototype.hasOwnProperty.call(dataUpdated, f));
-      const anyPricingChanged = pricingFields.some((f) => Object.prototype.hasOwnProperty.call(dataUpdated, f));
+      const anyPricingChanged = pricingFields.some((f) => Object.prototype.hasOwnProperty.call(dataUpdated, f)) || Object.prototype.hasOwnProperty.call(dataUpdated, 'samplePosts');
 
       if (result?.submissionStatus === 'approved' && (anyMetricsChanged || anyPricingChanged) && result?.url) {
         const COMMISSION_RATE = getPublisherCommissionRate();
@@ -357,6 +357,8 @@ module.exports = {
             // update fails validation. Visibility filter uses $gt:0, so a 0
             // here still hides the row as a GP option but lets LI > 0
             // surface it.
+            // Sample posts (2026-09-27): keep the marketplace copy in sync so requested samples show up
+            ...(Object.prototype.hasOwnProperty.call(dataUpdated, 'samplePosts') ? { sample_links: JSON.stringify((Array.isArray(dataUpdated.samplePosts) ? dataUpdated.samplePosts : []).filter((s) => typeof s === 'string' && s.trim())) } : {}),
             price: dataUpdated.generalGuestPostPrice ?? result.generalGuestPostPrice ?? 0,
             link_insertion_price: dataUpdated.generalLinkInsertionPrice ?? result.generalLinkInsertionPrice ?? null,
             adv_casino_pricing: dataUpdated.casinoGuestPostPrice ?? result.casinoGuestPostPrice ?? null,

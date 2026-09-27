@@ -38,6 +38,9 @@ const ADMIN_PAGES = [
   { key: 'codes',            label: 'Codes',            hasCreate: true,  hasDelete: true,  hasSuspend: false },
 
   { key: 'reseller-applications',            label: 'Reseller Applications',            hasCreate: false,  hasDelete: false,  hasSuspend: false },
+
+
+  { key: 'sample-requests',            label: 'Sample Requests',            hasCreate: false,  hasDelete: false,  hasSuspend: false },
   { key: 'offers',           label: 'Offers',           hasCreate: true,  hasDelete: true,  hasSuspend: false },
   { key: 'analytics',        label: 'Analytics',        hasCreate: false, hasDelete: false, hasSuspend: false },
   { key: 'settings',         label: 'Settings',         hasCreate: false, hasDelete: false, hasSuspend: false },

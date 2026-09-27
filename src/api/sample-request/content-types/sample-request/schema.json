@@ -1,0 +1,14 @@
+{
+  "kind": "collectionType",
+  "collectionName": "sample_requests",
+  "info": { "singularName": "sample-request", "pluralName": "sample-requests", "displayName": "Sample Request", "description": "A buyer asked a publisher to add a sample post to a listing (2026-09-27)" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "marketplace": { "type": "relation", "relation": "manyToOne", "target": "api::marketplace.marketplace" },
+    "requester": { "type": "relation", "relation": "manyToOne", "target": "plugin::users-permissions.user" },
+    "publisher": { "type": "relation", "relation": "manyToOne", "target": "plugin::users-permissions.user" },
+    "status": { "type": "enumeration", "enum": ["open", "fulfilled", "expired"], "default": "open", "required": true },
+    "publisherNotifiedAt": { "type": "datetime" },
+    "fulfilledAt": { "type": "datetime" }
+  }
+}

@@ -258,7 +258,7 @@ module.exports = {
     try {
       const roles = await strapi.db.query('plugin::users-permissions.role').findMany({ where: { type: { $in: ['super_admin', 'admin', 'authenticated'] } } });
       let granted = 0;
-      for (const action of ['api::reseller-application.reseller-application.submit', 'api::reseller-application.reseller-application.me']) {
+      for (const action of ['api::reseller-application.reseller-application.submit', 'api::reseller-application.reseller-application.me', 'api::sample-request.sample-request.submit', 'api::sample-request.sample-request.mine']) {
         for (const role of roles) {
           const existing = await strapi.db.query('plugin::users-permissions.permission').findOne({ where: { action, role: role.id } });
           if (!existing) { await strapi.db.query('plugin::users-permissions.permission').create({ data: { action, role: role.id } }); granted++; }
@@ -269,9 +269,9 @@ module.exports = {
       let keyed = 0;
       for (const u of admins) {
         const pp = u.pagePermissions && typeof u.pagePermissions === 'object' ? u.pagePermissions : null;
-        if (!pp || !pp.codes || pp['reseller-applications']) continue;
+        if (!pp || !pp.codes || (pp['reseller-applications'] && pp['sample-requests'])) continue;
         const c = pp.codes;
-        await strapi.db.query('plugin::users-permissions.user').update({ where: { id: u.id }, data: { pagePermissions: { ...pp, 'reseller-applications': { view: !!c.view, edit: !!c.edit, create: false, delete: false, suspend: false } } } });
+        await strapi.db.query('plugin::users-permissions.user').update({ where: { id: u.id }, data: { pagePermissions: { ...pp, 'reseller-applications': pp['reseller-applications'] || { view: !!c.view, edit: !!c.edit, create: false, delete: false, suspend: false }, 'sample-requests': pp['sample-requests'] || { view: !!c.view, edit: !!c.edit, create: false, delete: false, suspend: false } } } });
         keyed++;
       }
       if (keyed > 0) strapi.log.info(`[BOOTSTRAP] Added reseller-applications page key to ${keyed} admin user(s)`);

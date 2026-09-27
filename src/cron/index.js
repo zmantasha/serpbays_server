@@ -6,6 +6,7 @@ const autosendMarketing = require('./autosend-marketing');
 const resellerRefunds = require('./reseller-refunds');
 const orderAutoApprove = require('./order-auto-approve');
 const marketplaceRanking = require('./marketplace-ranking');
+const sampleRequestExpiry = require('./sample-request-expiry');
 
 module.exports = {
     ...tatUpdater,
@@ -14,4 +15,5 @@ module.exports = {
     ...resellerRefunds,
     ...orderAutoApprove,
     ...marketplaceRanking,
+    ...sampleRequestExpiry,
 };
