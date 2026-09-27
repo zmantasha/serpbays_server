@@ -9,7 +9,7 @@
  * invoice (Stripe / Linear) rather than a stock template.
  *
  * Sections (top-to-bottom):
- *   1. Header        — "Serpbays" wordmark (coral S + navy erpBays),
+ *   1. Header        — "Serpbays" wordmark (coral S + navy erpbays),
  *                      tagline, INVOICE title, invoice-number pill
  *   2. Top info row  — Issue Date / Status / Payment Method / TX ID
  *   3. Bill To card  — navy header, customer billing details w/ icons
@@ -231,11 +231,11 @@ const renderPdf = (doc, invoice, transaction) => {
   // ─── 1. HEADER ──────────────────────────────────────────────────────
   const headerY = MARGIN;
 
-  // Left: Serpbays wordmark — coral "S" inline with navy "erpBays".
+  // Left: Serpbays wordmark — coral "S" inline with navy "erpbays".
   doc.font('Helvetica-Bold').fontSize(28).fillColor(COLORS.coral)
      .text('S', MARGIN, headerY, { continued: true });
   doc.fillColor(COLORS.navy)
-     .text('erpBays', { continued: false });
+     .text('erpbays', { continued: false });
 
   // Tagline below the wordmark.
   doc.font('Helvetica').fontSize(8).fillColor(COLORS.navy)
@@ -550,7 +550,7 @@ const renderPdf = (doc, invoice, transaction) => {
   doc.font('Helvetica-Bold').fontSize(8).fillColor(COLORS.coral)
      .text('S', MARGIN, footerY + 12, { continued: true });
   doc.fillColor(COLORS.navy)
-     .text('erpBays', { continued: true });
+     .text('erpbays', { continued: true });
   doc.fillColor(COLORS.textSubtle)
      .text(`  ·  © ${year}  ·  ${COMPANY_SITE}`, { continued: false });
 };
