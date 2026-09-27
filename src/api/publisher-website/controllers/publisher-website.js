@@ -117,6 +117,17 @@ function ownedByUserFilter(user) {
   return { currentPublisherId: user.id };
 }
 
+// Shorten a rejection reason for the dashboard card: whole first sentence when
+// it fits, otherwise cut at a word boundary (never mid-word) and add an ellipsis.
+function trimReason(text, max = 90) {
+  const t = String(text).replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const sentence = t.match(/^[^.!?]{10,}?[.!?](\s|$)/);
+  if (sentence && sentence[0].trim().length <= max) return sentence[0].trim();
+  const cut = t.slice(0, max);
+  return cut.slice(0, cut.lastIndexOf(' ') > 40 ? cut.lastIndexOf(' ') : max).replace(/[,;:\-]$/, '') + '…';
+}
+
 module.exports = createCoreController('api::publisher-website.publisher-website', ({ strapi }) => ({
   // Create new publisher website submission
   async create(ctx) {
@@ -615,8 +626,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         ).first(),
         ownedSites(knex('publisher_websites as pw')).whereIn('pw.submission_status', ['approval_pending', 'pending_final_submission'])
           .select(knex.raw('min(pw.created_at) as oldest')).first(),
+        // Most common real reason: skip empty/placeholder values an admin
+        // never filled in ("N/A", the bulk-reject prompt text) so they are
+        // never shown to the publisher as if they were feedback.
         ownedSites(knex('publisher_websites as pw')).where('pw.submission_status', 'rejected')
-          .select(knex.raw("left(trim(coalesce(nullif(pw.rejection_reason, ''), pw.review_notes, '')), 80) as reason"))
+          .select(knex.raw("left(trim(coalesce(nullif(pw.rejection_reason, ''), pw.review_notes, '')), 160) as reason"))
+          .whereRaw("length(trim(coalesce(nullif(pw.rejection_reason, ''), pw.review_notes, ''))) > 3")
+          .whereRaw("lower(trim(coalesce(nullif(pw.rejection_reason, ''), pw.review_notes, ''))) not in ('n/a', 'na', 'none', 'null', '-')")
+          .whereRaw("lower(coalesce(pw.rejection_reason, '')) not like 'please provide a reason%'")
           .count('* as c').groupBy('reason').orderBy('c', 'desc').first(),
         knex('website_update_requests as r')
           .join('website_update_requests_publisher_website_lnk as rl', 'rl.website_update_request_id', 'r.id')
@@ -640,7 +657,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         inModeration: n(siteCounts.in_moderation),
         oldestModerationDays: oldestDays,
         rejected: n(siteCounts.rejected),
-        topRejectReason: topReason && topReason.reason ? topReason.reason : null,
+        topRejectReason: topReason && topReason.reason ? trimReason(topReason.reason) : null,
         paused: n(siteCounts.paused),
         unverified: n(siteCounts.unverified),
         priceUpdatesPending: n(priceUpdates && priceUpdates.c),
