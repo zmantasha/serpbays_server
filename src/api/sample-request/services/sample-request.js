@@ -15,8 +15,8 @@ module.exports = createCoreService(UID, ({ strapi }) => ({
     try { await strapi.service('api::global.autosend-service').send({ to, subject, html, tags: ['transactional', 'sample-request'] }); return true; }
     catch (e) { strapi.log.warn(`[sample-request] email "${subject}" to ${to} not delivered: ${e.message}`); return false; }
   },
-  async notify(userId, title, message) {
-    try { await strapi.service('api::notification.notification').createNotification({ recipientId: userId, type: 'system', action: 'system_update', title, message }); }
+  async notify(userId, title, message, url) {
+    try { await strapi.service('api::notification.notification').createNotification({ recipientId: userId, type: 'system', action: 'system_update', title, message, data: url ? { url } : null }); }
     catch (e) { strapi.log.warn(`[sample-request] notification failed: ${e.message}`); }
   },
 
@@ -27,9 +27,10 @@ module.exports = createCoreService(UID, ({ strapi }) => ({
     const recent = await strapi.db.query(UID).findOne({ where: { marketplace: marketplace.id, status: 'open', publisherNotifiedAt: { $gt: new Date(Date.now() - 86400000) } } });
     if (recent) return false;
     const pw = await strapi.db.connection('publisher_websites').where('marketplace_id', marketplace.id).select('id').first();
-    const editUrl = pw ? `${appUrl()}/publisher/add-website?edit=${pw.id}` : `${appUrl()}/publisher/my-websites`;
+    const editPath = pw ? `/publisher/add-website?edit=${pw.id}` : '/publisher/my-websites';
+    const editUrl = `${appUrl()}${editPath}`;
     const who = openCount > 1 ? `${openCount} buyers have` : 'A buyer has';
-    await this.notify(publisher.id, `Sample requested for ${marketplace.url}`, `${who} asked to see a sample post before ordering. Add a sample link to the listing — buyers are notified automatically when you do.`);
+    await this.notify(publisher.id, `Sample requested for ${marketplace.url}`, `${who} asked to see a sample post before ordering. Add a sample link to the listing — buyers are notified automatically when you do.`, editPath);
     this.email(publisher.email, `A buyer wants to see a sample from ${marketplace.url}`, `<p>Hi ${publisher.firstName || ''},</p><p>${who} asked for a sample post on <b>${marketplace.url}</b> before placing an order.</p><p><a href="${editUrl}">Add a sample link to the listing</a> — it takes a minute, and every buyer who asked is notified automatically once it's there.</p><p>— SerpBays</p>`);
     return true;
   },
@@ -43,7 +44,7 @@ module.exports = createCoreService(UID, ({ strapi }) => ({
     for (const r of open) {
       if (!r.requester) continue;
       const url = r.marketplace?.url || 'the site you asked about';
-      await this.notify(r.requester.id, `Sample added for ${url}`, `The publisher added a sample post to ${url}. Open the listing to review it.`);
+      await this.notify(r.requester.id, `Sample added for ${url}`, `The publisher added a sample post to ${url}. Open the listing to review it.`, `/marketplace?search=${encodeURIComponent(url)}`);
       this.email(r.requester.email, `Sample added for ${url}`, `<p>Hi ${r.requester.firstName || ''},</p><p>Good news — the publisher added a sample post to <b>${url}</b>, which you asked to see.</p><p><a href="${appUrl()}/marketplace?search=${encodeURIComponent(url)}">Open the listing</a></p><p>— SerpBays</p>`);
     }
     strapi.log.info(`[sample-request] ${open.length} request(s) fulfilled for marketplace ${marketplaceId}`);

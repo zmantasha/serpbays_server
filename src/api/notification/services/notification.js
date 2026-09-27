@@ -48,12 +48,24 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
           recipient: data.recipientId,
           relatedOrderId: data.relatedOrderId,
           relatedUserId: data.relatedUserId,
+          data: data.data && typeof data.data === 'object' ? data.data : null,
           isRead: false
         }
       });
 
       console.log(`[NotificationService] Notification created successfully: ${notification.id} for user ${data.recipientId} - Action: ${data.action}`);
-      return notification;
+
+      // Real-time (2026-09-27): push the row and the fresh unread count to the
+      // recipient's socket room. The app already listens on this channel
+      // (notification-bell.tsx / notifications page) — nothing ever sent to it.
+      try {
+        if (strapi.io && typeof strapi.io.emitToUser === 'function') {
+          const channel = `user_${data.recipientId}_notification`;
+          strapi.io.emitToUser(data.recipientId, channel, { type: 'notification', data: notification });
+          const unreadCount = await strapi.db.query('api::notification.notification').count({ where: { recipient: data.recipientId, isRead: false } });
+          strapi.io.emitToUser(data.recipientId, channel, { type: 'notification_count', data: { unreadCount } });
+        }
+      } catch (e) { console.warn('[NotificationService] socket push failed (non-fatal):', e.message); }      return notification;
     } catch (error) {
       console.error('[NotificationService] Error creating notification:', error);
       console.error('[NotificationService] Data that failed:', JSON.stringify(data, null, 2));

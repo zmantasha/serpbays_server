@@ -16,7 +16,7 @@ const shape = (a) => ({
 const POP = ['applicant', 'feeTransaction', 'issuedCode', 'reviewedBy'];
 
 async function notify(strapi, userId, title, message) {
-  try { await strapi.service('api::notification.notification').createNotification({ recipientId: userId, type: 'system', action: 'system_update', title, message }); }
+  try { await strapi.service('api::notification.notification').createNotification({ recipientId: userId, type: 'system', action: 'system_update', title, message, data: { url: '/publisher/reseller-application' } }); }
   catch (e) { strapi.log.warn(`[reseller-applications] notification failed: ${e.message}`); }
 }
 
