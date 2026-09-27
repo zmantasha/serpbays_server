@@ -3,14 +3,13 @@
 const { createCoreService } = require('@strapi/strapi').factories;
 
 const UID = 'api::sample-request.sample-request';
-const HOUSE_ACCOUNT_ID = 42; // Sakshi's house listings — worked from the admin queue, not per-request notifications
 const MAX_OPEN_PER_BUYER = 20;
 const EXPIRE_DAYS = 30;
 const appUrl = () => (process.env.CLIENT_URL || 'https://app.serpbays.com').replace(/\/$/, '');
 const hasSamples = (v) => { if (!v) return false; if (Array.isArray(v)) return v.some((x) => typeof x === 'string' && x.trim()); if (typeof v === 'string') { try { const a = JSON.parse(v); return Array.isArray(a) ? a.some((x) => typeof x === 'string' && x.trim()) : v.trim().length > 0; } catch { return v.trim().length > 0; } } return false; };
 
 module.exports = createCoreService(UID, ({ strapi }) => ({
-  MAX_OPEN_PER_BUYER, EXPIRE_DAYS, HOUSE_ACCOUNT_ID, hasSamples,
+  MAX_OPEN_PER_BUYER, EXPIRE_DAYS, hasSamples,
 
   async email(to, subject, html) {
     try { await strapi.service('api::global.autosend-service').send({ to, subject, html, tags: ['transactional', 'sample-request'] }); return true; }
@@ -23,7 +22,8 @@ module.exports = createCoreService(UID, ({ strapi }) => ({
 
   /** Tell the publisher (once per site per 24 h) that buyers want a sample. */
   async notifyPublisher(marketplace, publisher, openCount) {
-    if (!publisher || publisher.id === HOUSE_ACCOUNT_ID) return false;
+    // Every publisher is notified — including Sakshi's account, which is a normal publisher account.
+    if (!publisher) return false;
     const recent = await strapi.db.query(UID).findOne({ where: { marketplace: marketplace.id, status: 'open', publisherNotifiedAt: { $gt: new Date(Date.now() - 86400000) } } });
     if (recent) return false;
     const pw = await strapi.db.connection('publisher_websites').where('marketplace_id', marketplace.id).select('id').first();

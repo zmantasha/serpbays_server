@@ -17,6 +17,6 @@ module.exports = {
         knex.raw('count(*)::int as requests'), knex.raw('min(r.created_at) as first_requested'), knex.raw('max(r.created_at) as last_requested'), knex.raw('max(r.publisher_notified_at) as publisher_notified_at'))
       .orderBy([{ column: 'requests', order: 'desc' }, { column: 'first_requested', order: 'asc' }]).limit(500);
     const totals = await knex('sample_requests').select('status').count('* as c').groupBy('status');
-    ctx.body = { data: rows.map((r) => ({ ...r, houseListing: r.publisherId === 42, hasSamples: !!(r.sampleLinks && !['[]', 'null', ''].includes(String(r.sampleLinks).trim())) })), meta: { byStatus: Object.fromEntries(totals.map((t) => [t.status, Number(t.c)])) } };
+    ctx.body = { data: rows.map((r) => ({ ...r, hasSamples: !!(r.sampleLinks && !['[]', 'null', ''].includes(String(r.sampleLinks).trim())) })), meta: { byStatus: Object.fromEntries(totals.map((t) => [t.status, Number(t.c)])) } };
   },
 };
