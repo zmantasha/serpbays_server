@@ -250,6 +250,32 @@ module.exports = createCoreController('api::notification.notification', ({ strap
     }
   },
 
+  // Per-type + unread totals for the notifications page filter chips (2026-09-27).
+  async getCounts(ctx) {
+    try {
+      if (!ctx.state.user) return ctx.unauthorized('Authentication required');
+      const knex = strapi.db.connection;
+      const rows = await knex('notifications as n')
+        .join('notifications_recipient_lnk as l', 'l.notification_id', 'n.id')
+        .where('l.user_id', ctx.state.user.id)
+        .select('n.type')
+        .count('* as c')
+        .sum({ unread: knex.raw('case when n.is_read = false then 1 else 0 end') })
+        .groupBy('n.type');
+      const out = { all: 0, unread: 0, order: 0, payment: 0, communication: 0, system: 0 };
+      for (const r of rows) {
+        const c = Number(r.c) || 0;
+        out.all += c;
+        out.unread += Number(r.unread) || 0;
+        if (Object.prototype.hasOwnProperty.call(out, r.type)) out[r.type] += c;
+      }
+      return { data: out };
+    } catch (error) {
+      console.error('Error getting notification counts:', error);
+      return ctx.internalServerError('An error occurred while getting notification counts');
+    }
+  },
+
   // Create a test notification (for development)
   async createTestNotification(ctx) {
     try {

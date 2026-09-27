@@ -61,6 +61,15 @@ const customRoutes = {
       },
     },
     {
+      method: 'GET',
+      path: '/notifications/counts',
+      handler: 'notification.getCounts',
+      config: {
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
       method: 'POST',
       path: '/notifications/test-basic',
       handler: 'notification.testBasicNotification',

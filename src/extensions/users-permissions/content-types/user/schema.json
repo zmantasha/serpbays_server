@@ -273,6 +273,26 @@
       "type": "json",
       "configurable": false,
       "private": false
+    },
+    "signupCountry": {
+      "type": "string",
+      "maxLength": 2,
+      "configurable": false
+    },
+    "signupIp": {
+      "type": "string",
+      "maxLength": 64,
+      "configurable": false,
+      "private": true
+    },
+    "lastLoginCountry": {
+      "type": "string",
+      "maxLength": 2,
+      "configurable": false
+    },
+    "lastLoginAt": {
+      "type": "datetime",
+      "configurable": false
     }
   }
 }

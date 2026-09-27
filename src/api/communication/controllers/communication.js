@@ -314,7 +314,7 @@ module.exports = createCoreController('api::communication.communication', ({ str
             user.id,
             order.id,
             'message_received',
-            { communicationId: entity.id }
+            { communicationId: entity.id, preview: String(message).slice(0, 140) }
           );
         } catch (notificationError) {
           strapi.log?.error?.('[communication] notification failed', { error: notificationError.message });

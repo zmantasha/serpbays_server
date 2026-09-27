@@ -29,7 +29,7 @@ function aggSql(where = 'true') {
     with base as (
       select u.id, u.username, u.email, u.first_name, u.last_name, u.business_name, u.country, u.phone_number,
              coalesce(u.advertiser,false) advertiser, coalesce(u.publisher,false) publisher, coalesce(u.confirmed,false) confirmed, coalesce(u.blocked,false) blocked,
-             u.marketplace_unlocked, u.marketplace_unlock_reason, u.created_at, u.onboarding_state,
+             u.marketplace_unlocked, u.marketplace_unlock_reason, u.created_at, u.onboarding_state, u.signup_country, u.last_login_country, u.last_login_at,
              coalesce(w.balance,0) wallet, coalesce(w.main_balance,0) main_balance, coalesce(w.promo_balance,0) promo, coalesce(w.escrow_balance,0) escrow, coalesce(w.pending_withdrawal_balance,0) pending_wd,
              coalesce(o.orders,0) orders, coalesce(o.completed,0) completed, coalesce(o.spend,0) spend, o.last_order,
              coalesce(d.deposits,0) deposits, coalesce(d.deposit_count,0) deposit_count, d.last_deposit,
@@ -75,7 +75,7 @@ function rowOut(r) {
   return {
     id: r.id, username: r.username, email: r.email,
     name: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.business_name || r.username,
-    business: r.business_name || '', country: r.country || '', phone: r.phone_number || '',
+    business: r.business_name || '', country: r.country || '', signupCountry: r.signup_country || null, lastLoginCountry: r.last_login_country || null, lastLoginAt: r.last_login_at || null, phone: r.phone_number || '',
     type: r.type, stage: r.stage, confirmed: !!r.confirmed, blocked: !!r.blocked, marketplaceUnlocked: r.marketplace_unlocked === true, marketplaceUnlockReason: r.marketplace_unlock_reason || null,
     wallet: money(r.wallet), mainBalance: money(r.main_balance), promo: money(r.promo), escrow: money(r.escrow), pendingWithdrawal: money(r.pending_wd),
     orders: n(r.orders), completed: n(r.completed), spend: money(r.spend), lastOrder: r.last_order,
@@ -114,7 +114,8 @@ module.exports = {
     if (q) { conds.push(`(username ilike ? or email ilike ? or coalesce(first_name,'') ilike ? or coalesce(last_name,'') ilike ? or coalesce(business_name,'') ilike ?)`); for (let i = 0; i < 5; i++) binds.push(`%${q}%`); }
     if (['buyer', 'publisher', 'both', 'unset'].includes(qs.type)) { conds.push('type = ?'); binds.push(qs.type); }
     if (STAGES.includes(qs.stage)) { conds.push('stage = ?'); binds.push(qs.stage); }
-    if (qs.country) { conds.push('coalesce(country,\'\') = ?'); binds.push(qs.country === 'unknown' ? '' : qs.country); }
+    if (qs.country === 'unknown') conds.push("coalesce(country,'') = '' and signup_country is null");
+    else if (qs.country) { conds.push('(coalesce(country,\'\') = ? or signup_country = ?)'); binds.push(qs.country, qs.country); }
     if (qs.funded === '1') conds.push('wallet > 0');
     if (qs.hasOrders === '1') conds.push('orders > 0');
     if (['7', '30', '90'].includes(String(qs.signedUp))) { conds.push(`created_at > now() - (? || ' days')::interval`); binds.push(String(qs.signedUp)); }
@@ -157,7 +158,7 @@ module.exports = {
         count(*)::int total
       from agg`, AGG_BINDINGS);
     const st = (statsR.rows || statsR)[0] || {};
-    const countriesR = await knex.raw(`select coalesce(nullif(country,''),'unknown') country, count(*)::int count from up_users group by 1 order by 2 desc limit 30`);
+    const countriesR = await knex.raw(`select c as country, count(*)::int count from (select coalesce(nullif(signup_country,''), nullif(country,''), 'unknown') c from up_users) x group by 1 order by 2 desc limit 40`);
 
     ctx.send({
       data: rows.map(rowOut),

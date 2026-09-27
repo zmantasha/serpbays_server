@@ -55,6 +55,20 @@ const _locks = new Map();
  * this will wait until it completes before proceeding.
  * Returns a release function that MUST be called when done.
  */
+/**
+ * Country + IP of the person calling sync. Cloudflare adds CF-IPCountry on
+ * every proxied request; the customer app may also forward the browser's
+ * value as X-User-Country when it calls sync server-side. "XX"/"T1" mean
+ * unknown / Tor.
+ */
+function requestGeo(ctx) {
+    const h = ctx.request.headers || {};
+    const raw = String(h['x-user-country'] || h['cf-ipcountry'] || '').trim().toUpperCase();
+    const country = /^[A-Z]{2}$/.test(raw) && raw !== 'XX' && raw !== 'T1' ? raw : null;
+    const ip = String(h['x-user-ip'] || h['cf-connecting-ip'] || h['x-real-ip'] || (h['x-forwarded-for'] || '').split(',')[0] || ctx.request.ip || '').trim().slice(0, 64) || null;
+    return { country, ip };
+}
+
 async function acquireLock(key) {
     while (_locks.has(key)) {
         // Wait for the existing lock to be released
@@ -96,7 +110,7 @@ module.exports = {
             verifiedClerkId = payload.sub;
             if (!verifiedClerkId) throw new Error('Clerk JWT has no sub claim');
         } catch (err) {
-            strapi.log.warn(`[CLERK SYNC] Rejected sync from IP ${ctx.request.ip}: ${err.message}`);
+            strapi.log.warn(`[CLERK SYNC] Rejected sync from IP ${ctx.request.ip} geo=${JSON.stringify(requestGeo(ctx))}: ${err.message}`);
             return ctx.unauthorized('Invalid or missing Clerk session token');
         }
         if (verifiedClerkId !== clerkId) {
@@ -109,7 +123,8 @@ module.exports = {
         const releaseLock = await acquireLock(`clerk_sync:${verifiedClerkId}`);
 
         try {
-            strapi.log.info(`[CLERK SYNC] Sync request for user: ${email} (${verifiedClerkId})`);
+            const geo = requestGeo(ctx);
+            strapi.log.info(`[CLERK SYNC] Sync request for user: ${email} (${verifiedClerkId}) geo=${geo.country || '-'}`);
 
             // Look up by VERIFIED clerkId only. Do NOT fall back to email lookup —
             // that allowed account takeover: attacker with valid Clerk session for
@@ -215,6 +230,10 @@ module.exports = {
                             role: defaultRole.id,
                             Advertiser: advertiser ?? true,
                             Publisher: publisher ?? false,
+                            signupCountry: geo.country,
+                            signupIp: geo.ip,
+                            lastLoginCountry: geo.country,
+                            lastLoginAt: new Date(),
                         },
                     });
 
@@ -249,6 +268,16 @@ module.exports = {
             }
 
             // Generate JWT token
+            // Record where this login came from (fills signupCountry for legacy users on their next login).
+            try {
+                const patch = { lastLoginAt: new Date() };
+                if (geo.country) { patch.lastLoginCountry = geo.country; if (!user.signupCountry) patch.signupCountry = geo.country; }
+                if (geo.ip && !user.signupIp) patch.signupIp = geo.ip;
+                await strapi.query('plugin::users-permissions.user').update({ where: { id: user.id }, data: patch });
+            } catch (geoErr) {
+                strapi.log.warn(`[CLERK SYNC] geo update failed for user ${user.id}: ${geoErr.message}`);
+            }
+
             const jwt = strapi.plugins['users-permissions'].services.jwt.issue({
                 id: user.id,
             });

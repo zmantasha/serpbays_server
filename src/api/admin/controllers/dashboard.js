@@ -291,7 +291,7 @@ module.exports = {
             where o.order_status='completed' and ${cur('o.created_at').toQuery()} group by 1,2,3,4 order by earned desc limit 5`),
         q(`select coalesce(nullif(country,''),'unknown') as country, count(*)::int as count from up_users group by 1 order by count desc limit 8`),
         q(`select u.id, u.username, u.email, coalesce(nullif(u.first_name,''),'') as first_name, coalesce(nullif(u.business_name,''),'') as business,
-                  u.publisher, u.advertiser, coalesce(nullif(u.country,''),'') as country, u.confirmed, u.marketplace_unlocked, u.onboarding_state, u.created_at,
+                  u.publisher, u.advertiser, coalesce(nullif(u.country,''),'') as country, u.signup_country, u.confirmed, u.marketplace_unlocked, u.onboarding_state, u.created_at,
                   coalesce((select w.balance from user_wallets w join user_wallets_users_permissions_user_lnk wl on wl.user_wallet_id=w.id where wl.user_id=u.id limit 1),0) as wallet,
                   (select count(*)::int from orders_advertiser_lnk l where l.user_id=u.id) as orders,
                   (select count(*)::int from publisher_websites_current_publisher_id_lnk l where l.user_id=u.id) as sites,
@@ -322,7 +322,7 @@ module.exports = {
         latest: latest.map((r) => ({
           id: r.id, username: r.username, email: r.email, firstName: r.first_name, business: r.business,
           role: r.publisher && !r.advertiser ? 'publisher' : r.advertiser && !r.publisher ? 'advertiser' : r.publisher ? 'both' : 'unset',
-          country: r.country, confirmed: !!r.confirmed, marketplaceUnlocked: r.marketplace_unlocked === true,
+          country: r.country, signupCountry: r.signup_country || null, confirmed: !!r.confirmed, marketplaceUnlocked: r.marketplace_unlocked === true,
           onboarding: onboarding(r.onboarding_state), createdAt: r.created_at,
           wallet: money(r.wallet), orders: n(r.orders), sites: n(r.sites), deposits: n(r.deposits),
         })),

@@ -215,7 +215,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
   },
 
   // Create communication-related notifications
-  async createCommunicationNotification(recipientId, senderId, orderId, action = 'message_received') {
+  async createCommunicationNotification(recipientId, senderId, orderId, action = 'message_received', extra = null) {
     try {
       // 2026-09-27: never reveal the other party's identity. Advertisers and
       // publishers only ever see each other's ROLE plus the order/site context
@@ -237,6 +237,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
         recipientId,
         relatedOrderId: orderId,
         relatedUserId: senderId,
+        data: extra && typeof extra === 'object' ? extra : undefined,
         isEmail: false // For in-app notification
       });
     } catch (error) {
