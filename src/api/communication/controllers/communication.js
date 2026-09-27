@@ -39,6 +39,7 @@ const COMM_PUBLIC_FIELDS = [
   'id',
   'message', 'communicationStatus', 'isUnread',
   'createdAt', 'updatedAt',
+  'readAt', 'attachments',
 ];
 
 const VALID_STATUS = ['requested', 'acceptance', 'in_progress'];
@@ -422,7 +423,14 @@ module.exports = createCoreController('api::communication.communication', ({ str
         },
       });
 
-      return { data: communications };
+      // 2026-09-27: expose read receipts + attachment metadata (never the stored filename)
+      const shaped = (communications || []).map((c) => ({
+        ...c,
+        attachments: Array.isArray(c.attachments) && c.attachments.length
+          ? c.attachments.map((a, i) => ({ index: i, name: a.name, size: a.size, mime: a.mime, url: `/api/chat/attachments/${c.id}/${i}` }))
+          : null,
+      }));
+      return { data: shaped };
     } catch (error) {
       strapi.log?.error?.('[communication] getOrderCommunications failed', { error: error.message });
       return ctx.internalServerError('An error occurred while fetching communications');
