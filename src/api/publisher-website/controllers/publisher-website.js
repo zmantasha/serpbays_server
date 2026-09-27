@@ -7,6 +7,37 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 const { getPublisherCommissionRate } = require('../../../constants/commission');
 
+// ---------------------------------------------------------------------------
+// Sample posts must live on the listed domain itself (2026-09-28).
+// A sample on blog.example.com is not proof of what a buyer gets on
+// example.com: different host, different authority, and the publisher may not
+// even control the apex. Subdomains can be listed separately if they are
+// genuinely for sale.
+// ---------------------------------------------------------------------------
+const sampleHostOf = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+  .replace(/^www\./, '')
+  .split(/[/?#]/)[0];
+
+function validateSamplePostHosts(samplePosts, listingUrl) {
+  const listingHost = sampleHostOf(listingUrl);
+  if (!listingHost) return null;
+  const list = Array.isArray(samplePosts) ? samplePosts : (samplePosts ? [samplePosts] : []);
+  for (const raw of list) {
+    const value = String(raw || '').trim();
+    if (!value) continue;
+    const host = sampleHostOf(value);
+    if (!host || host === listingHost) continue;
+    if (host.endsWith('.' + listingHost)) {
+      return `Sample post must be published on ${listingHost} itself, not on the subdomain ${host}. Add a sample from ${listingHost}, or list ${host} as a separate website.`;
+    }
+    return `Sample post must be published on ${listingHost}. "${value}" is on ${host}.`;
+  }
+  return null;
+}
+
 // Fields the user is allowed to set on POST/PUT /api/publisher-websites.
 // SECURITY: Anything not in this set is dropped server-side. Verification
 // state, ownership, and audit fields can ONLY be mutated by their dedicated
@@ -174,6 +205,10 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // Normalize URL to lowercase to prevent case-sensitive duplicates
       filteredData.url = filteredData.url ? filteredData.url.toLowerCase() : filteredData.url;
+
+      // Samples must be on the listed domain, not a subdomain or another site.
+      const sampleError = validateSamplePostHosts(filteredData.samplePosts, filteredData.url);
+      if (sampleError) return ctx.badRequest(sampleError);
 
       // Pre-validate reseller code WITHOUT consuming it. Consumption happens
       // inside the transaction below (only if we actually take the create
@@ -802,6 +837,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
       if (droppedKeys.length > 0) {
         strapi.log.warn(`[publisher-website.update] User ${user.id} (${user.email}) tried to set restricted fields on website ${id}, dropped: ${droppedKeys.join(', ')}`);
+      }
+
+      // Samples must be on the listed domain, not a subdomain or another site.
+      if (Object.prototype.hasOwnProperty.call(filteredUpdate, 'samplePosts')) {
+        const sampleError = validateSamplePostHosts(filteredUpdate.samplePosts, filteredUpdate.url || existing.url);
+        if (sampleError) return { httpKind: 'badRequest', message: sampleError };
       }
 
       // Handle reseller code if provided in update data
