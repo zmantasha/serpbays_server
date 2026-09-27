@@ -172,7 +172,7 @@ module.exports = {
     try {
       const svc = strapi.service('api::sample-request.sample-request');
       if (svc && svc.hasSamples(result.sample_links) && !svc.hasSamples(previous.sample_links)) await svc.fulfil(result.id);
-    } catch (e) { strapi.log?.warn?.(`[marketplace lifecycle] sample-request fulfil failed: ${e.message}`); }
+    } catch (e) { strapi.log?.warn?.(`[marketplace lifecycle] sample-request fulfil failed: ${e.message}\n${(e.stack || '').split('\n').slice(0, 4).join('\n')}`); }
 
     const changes = {};
     const changedFields = [];

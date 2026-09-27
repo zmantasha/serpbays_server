@@ -38,7 +38,8 @@ module.exports = createCoreService(UID, ({ strapi }) => ({
   async fulfil(marketplaceId) {
     const open = await strapi.db.query(UID).findMany({ where: { marketplace: marketplaceId, status: 'open' }, populate: ['requester', 'marketplace'] });
     if (!open.length) return 0;
-    await strapi.db.query(UID).updateMany({ where: { marketplace: marketplaceId, status: 'open' }, data: { status: 'fulfilled', fulfilledAt: new Date() } });
+    // per-row updates: db.query().updateMany() cannot filter on a relation (marketplace) — it built an empty UPDATE
+    for (const r of open) await strapi.db.query(UID).update({ where: { id: r.id }, data: { status: 'fulfilled', fulfilledAt: new Date() } });
     for (const r of open) {
       if (!r.requester) continue;
       const url = r.marketplace?.url || 'the site you asked about';
@@ -51,7 +52,8 @@ module.exports = createCoreService(UID, ({ strapi }) => ({
 
   async expireOld() {
     const cutoff = new Date(Date.now() - EXPIRE_DAYS * 86400000);
-    const r = await strapi.db.query(UID).updateMany({ where: { status: 'open', createdAt: { $lt: cutoff } }, data: { status: 'expired' } });
-    return r?.count ?? 0;
+    const rows = await strapi.db.query(UID).findMany({ where: { status: 'open', createdAt: { $lt: cutoff } }, select: ['id'], limit: 1000 });
+    for (const r of rows) await strapi.db.query(UID).update({ where: { id: r.id }, data: { status: 'expired' } });
+    return rows.length;
   },
 }));
