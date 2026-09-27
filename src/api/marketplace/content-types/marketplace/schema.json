@@ -424,6 +424,18 @@
     "bulkRefreshSkipTools": {
       "type": "json",
       "description": "Array of tool ids (ahrefs|moz|semrush) the admin has marked \"skip\" for this site so it stops appearing in future cohort exports. Default []."
+    },
+    "rank_score": {
+      "type": "decimal"
+    },
+    "value_score": {
+      "type": "decimal"
+    },
+    "rank_badges": {
+      "type": "json"
+    },
+    "rank_computed_at": {
+      "type": "datetime"
     }
   }
 }

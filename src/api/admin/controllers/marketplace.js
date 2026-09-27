@@ -1251,5 +1251,11 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
       console.error('[ADMIN MARKETPLACE UNFEATURE ALL ERROR]', error);
       return ctx.internalServerError('Failed to clear featured listings');
     }
+  },
+
+  // POST /admin/marketplace/ranking/recompute — 2026-09-27
+  async recomputeRanking(ctx) {
+    ctx.body = { data: await strapi.service('api::marketplace.ranking').recompute() };
   }
+
 }));

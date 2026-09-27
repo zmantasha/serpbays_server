@@ -58,6 +58,8 @@ const MARKETPLACE_PUBLIC_FIELDS = [
   // the default view. Verified 2026-09-24: featured row 41760 came out of
   // the DB at position 2 and out of the API at position 20.
   'is_featured', 'is_featured_guest_post', 'is_featured_link_insertion',
+  // Ranking (read-only, computed nightly)
+  'rank_score', 'value_score', 'rank_badges',
   'website_status', 'status',
   // Timestamps (marketplace draftAndPublish: false → no publishedAt)
   'createdAt', 'updatedAt',
@@ -940,6 +942,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
     // All numeric metric fields that need NULL-safe sorting
     // These will push NULL/0 values to the bottom (desc) or top (asc) automatically
     const metricFields = [
+      // Ranking (2026-09-27): Recommended / Best value
+      'rank_score',
+      'value_score',
       // Authority metrics (currently sortable in UI)
       'ahrefs_dr',
       'moz_da',
@@ -1025,9 +1030,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
 
       console.log(`🔍 Will apply NULL-safe raw SQL sorting: ${mappedField}:${sortDirection}`);
     } else {
-      // Default sort: featured first, then ahrefs_traffic descending (NULL-safe via raw SQL)
+      // Default sort: featured first, then the Recommended score (2026-09-27; was ahrefs_traffic)
       useRawSorting = true;
-      rawSortField = 'ahrefs_traffic';
+      rawSortField = 'rank_score';
       rawSortDirection = 'desc';
       // Strip the 'default' sentinel so downstream code paths that read
       // ctx.query.sort don't try to use it as a real column name.

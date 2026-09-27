@@ -65,6 +65,9 @@
     "resellerApplicationsEnabled": {
       "type": "boolean",
       "default": true
+    },
+    "rankingWeights": {
+      "type": "json"
     }
   }
 }

@@ -6,6 +6,16 @@
 
 module.exports = {
   routes: [
+    // Recompute Recommended / Best value scores now (nightly cron does it too). 2026-09-27.
+    {
+      method: 'POST',
+      path: '/admin/marketplace/ranking/recompute',
+      handler: 'marketplace.recomputeRanking',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
+        middlewares: ['global::admin-logger']
+      }
+    },
     // Marketplace CRUD
     {
       method: 'GET',
