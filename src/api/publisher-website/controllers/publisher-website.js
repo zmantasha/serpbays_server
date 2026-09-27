@@ -91,6 +91,22 @@ const PUBLISHER_SETTABLE_STATUSES = new Set([
 // The strict rule: if currentPublisherId is set, only that user is the owner.
 // The email leg is ONLY consulted for legacy unlinked rows.
 // ============================================================================
+/**
+ * Human-readable publisher name for a user record: "First Last", else
+ * business name, else username, else the email local part. Used wherever a
+ * publisher-website / listing stores publisherName so admins never see a
+ * login handle like "sakshi+serpbays" as the site title.
+ */
+function displayNameOf(user) {
+  if (!user || typeof user !== 'object') return null;
+  const full = [user.firstName, user.lastName].map((v) => (v == null ? '' : String(v).trim())).filter(Boolean).join(' ').trim();
+  if (full) return full;
+  const biz = user.businessName == null ? '' : String(user.businessName).trim();
+  if (biz) return biz;
+  if (user.username) return String(user.username);
+  return user.email ? String(user.email).split('@')[0] : null;
+}
+
 function isPublisherWebsiteOwner(row, user) {
   if (!row || !user) return false;
   const rowOwnerId = row.currentPublisherId?.id ?? row.currentPublisherId ?? null;
@@ -222,7 +238,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         const submissionData = {
           ...filteredData,
           publisherEmail: user.email,
-          publisherName: user.username || user.email,
+          publisherName: displayNameOf(user) || user.email,
           publishedAt: new Date(),
           // Verification fields — never trust caller input here.
           gscVerified: false,
@@ -1347,7 +1363,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         ? publisherUser.email
         : submission.publisherEmail;
       const publisherNameValue = (typeof publisherUser === 'object' && publisherUser !== null)
-        ? publisherUser.username
+        ? (displayNameOf(publisherUser) || publisherUser.username)
         : (submission.publisherName || submission.publisherEmail?.split('@')[0]);
 
       // Map publisher-website fields to marketplace fields.
@@ -1840,7 +1856,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             ...filteredClaim,
             url: existingWebsite.url,
             publisherEmail: user.email,
-            publisherName: user.username || user.email.split('@')[0],
+            publisherName: displayNameOf(user) || user.email.split('@')[0],
             originalWebsiteId: existingWebsite.id,
             claimedFrom: existingWebsite.publisherEmail,
             claimedAt: new Date().toISOString(),
