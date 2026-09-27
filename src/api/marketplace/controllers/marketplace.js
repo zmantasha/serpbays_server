@@ -1797,7 +1797,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
                               or coalesce(m.adv_crypto_pricing,0) > 0 or coalesce(m.adv_li_crypto_pricing,0) > 0
                               or coalesce(m.adv_cbd_pricing,0) > 0 or coalesce(m.adv_li_cbd_pricing,0) > 0
                               or coalesce(m.adv_dating_pricing,0) > 0 or coalesce(m.adv_li_dating_pricing,0) > 0)::int as sensitive,
-            count(*) filter (where m.dofollow_link::text in ('true','t','1'))::int as dofollow
+            -- backlink_type is the dofollow/nofollow flag; dofollow_link is the NUMBER of links allowed (default 1), which made this read 100%.
+            count(*) filter (where m.backlink_type = 'Do follow')::int as dofollow
           from marketplaces m where ${ACTIVE}`, [fifteenDaysAgo]),
         knex.raw(`select
             round(percentile_cont(0.5) within group (order by nullif(m.price,0))::numeric) as gp,
