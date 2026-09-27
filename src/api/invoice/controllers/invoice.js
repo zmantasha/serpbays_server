@@ -488,8 +488,10 @@ const renderPdf = (doc, invoice, transaction) => {
   colLabel('PAYMENT DATE & TIME', c2x);
   const txWhen = transaction?.updatedAt || transaction?.createdAt || invoice.invoiceDate;
   iconCalendar(doc, c2x + psPad, psY + 42);
+  // Short month + no line break: the long form ("September 24, 2026") wrapped
+  // onto the time line and overlapped it (2026-09-27).
   doc.font('Helvetica-Bold').fontSize(10).fillColor(COLORS.navy)
-     .text(formatDateInTz(txWhen), c2x + psPad + 16, psY + 41, { width: psColW - psPad - 20 });
+     .text(formatDateInTz(txWhen).replace(/^([A-Za-z]{3})[A-Za-z]*/, '$1'), c2x + psPad + 16, psY + 41, { width: psColW - psPad - 20, lineBreak: false });
   doc.font('Helvetica').fontSize(9).fillColor(COLORS.textMuted)
      .text(formatTimeInTz(txWhen), c2x + psPad + 16, psY + 55, { width: psColW - psPad - 20 });
 
