@@ -557,6 +557,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           console.log(`Verified website ID ${orderData.website} exists`);
         }
 
+        // 2026-09-27: a paused / delisted / rejected listing can still sit in an
+        // old cart; refuse it here rather than sell a site the publisher paused.
+        if (marketplace && marketplace.status && marketplace.status !== 'active') {
+          return ctx.badRequest('This listing is currently not available for orders.');
+        }
+
         // CRITICAL: Prevent users from ordering their own websites
         // Check if the user is trying to order their own website
         // Check 1: Direct ID match if publisher relation exists

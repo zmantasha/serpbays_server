@@ -6,6 +6,16 @@
 
 module.exports = {
   routes: [
+    // Run the delivered-order auto-approval now (dryRun: true previews). 2026-09-27.
+    {
+      method: 'POST',
+      path: '/admin/orders/auto-approve/run',
+      handler: 'orders.autoApproveRun',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'orders' } }],
+        middlewares: ['global::admin-logger']
+      }
+    },
     // Orders CRUD
     {
       method: 'GET',

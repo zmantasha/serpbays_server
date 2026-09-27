@@ -315,6 +315,13 @@
     "userConsentReference": {
       "type": "string",
       "description": "Ticket id, email subject, phone-log reference, or chat reference attesting to user consent"
+    },
+    "autoApproved": {
+      "type": "boolean",
+      "default": false
+    },
+    "autoApproveReminderSentAt": {
+      "type": "datetime"
     }
   }
 }

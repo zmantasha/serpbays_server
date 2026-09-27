@@ -943,6 +943,13 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
     }
 
     return result;
+  },
+
+  // POST /admin/orders/auto-approve/run  { dryRun?: boolean } — 2026-09-27
+  async autoApproveRun(ctx) {
+    const dryRun = ctx.request.body?.dryRun !== false;
+    const result = await strapi.service('api::order.auto-approve').run({ dryRun });
+    ctx.body = { data: result };
   }
 
 }));
