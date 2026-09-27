@@ -103,7 +103,7 @@ const VIEWS = {
   top: 'balance > 0',
   all: 'true',
 };
-const SORTS = { balance: 'balance', main: 'main', promo: 'promo', idle: 'idle_days', lastActivity: 'last_activity', deposited: 'dep_cash', spent: '(pay_main + pay_promo)' };
+const SORTS = { name: "lower(coalesce(nullif(trim(coalesce(first_name,'')||' '||coalesce(last_name,'')),''), business_name, username, ''))", balance: 'balance', main: 'main', promo: 'promo', idle: 'idle_days', lastActivity: 'last_activity', deposited: 'dep_cash', spent: '(pay_main + pay_promo)' };
 
 module.exports = {
   async directory(ctx) {
