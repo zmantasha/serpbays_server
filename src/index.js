@@ -250,6 +250,35 @@ module.exports = {
       );
     }
 
+    // ── Reseller applications (2026-09-27) ──────────────────────────────
+    // (a) authenticated role may call the two publisher-side actions;
+    // (b) every admin who already has the 'codes' page gets the new
+    //     'reseller-applications' page key (view+edit), so nobody is locked
+    //     out of the review queue after deploy. Both idempotent.
+    try {
+      const roles = await strapi.db.query('plugin::users-permissions.role').findMany({ where: { type: { $in: ['super_admin', 'admin', 'authenticated'] } } });
+      let granted = 0;
+      for (const action of ['api::reseller-application.reseller-application.submit', 'api::reseller-application.reseller-application.me']) {
+        for (const role of roles) {
+          const existing = await strapi.db.query('plugin::users-permissions.permission').findOne({ where: { action, role: role.id } });
+          if (!existing) { await strapi.db.query('plugin::users-permissions.permission').create({ data: { action, role: role.id } }); granted++; }
+        }
+      }
+      if (granted > 0) strapi.log.info(`[BOOTSTRAP] Granted reseller-application actions (${granted} role grants)`);
+      const admins = await strapi.db.query('plugin::users-permissions.user').findMany({ where: { pagePermissions: { $notNull: true } }, select: ['id', 'pagePermissions'] });
+      let keyed = 0;
+      for (const u of admins) {
+        const pp = u.pagePermissions && typeof u.pagePermissions === 'object' ? u.pagePermissions : null;
+        if (!pp || !pp.codes || pp['reseller-applications']) continue;
+        const c = pp.codes;
+        await strapi.db.query('plugin::users-permissions.user').update({ where: { id: u.id }, data: { pagePermissions: { ...pp, 'reseller-applications': { view: !!c.view, edit: !!c.edit, create: false, delete: false, suspend: false } } } });
+        keyed++;
+      }
+      if (keyed > 0) strapi.log.info(`[BOOTSTRAP] Added reseller-applications page key to ${keyed} admin user(s)`);
+    } catch (err) {
+      strapi.log.warn(`[BOOTSTRAP] reseller-application grants failed: ${err.message}`);
+    }
+
     // ── Grant publisher-website.attention (dashboard card) ──────────────
     // Same shape as the block above: a custom action on a public-side API
     // that the admin auto-grant loop does not cover. Idempotent.

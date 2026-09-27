@@ -1,0 +1,25 @@
+{
+  "kind": "collectionType",
+  "collectionName": "reseller_applications",
+  "info": { "singularName": "reseller-application", "pluralName": "reseller-applications", "displayName": "Reseller Application", "description": "Paid application from a publisher asking for a reseller code (2026-09-27)" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "applicant": { "type": "relation", "relation": "manyToOne", "target": "plugin::users-permissions.user" },
+    "status": { "type": "enumeration", "enum": ["submitted", "in_review", "approved", "rejected"], "default": "submitted", "required": true },
+    "agencyUrl": { "type": "string", "required": true },
+    "linkedinUrl": { "type": "string", "required": true },
+    "companyLinkedinUrl": { "type": "string" },
+    "inventoryCount": { "type": "integer", "default": 0 },
+    "inventoryOwnership": { "type": "enumeration", "enum": ["own", "sourced", "mixed"], "default": "sourced" },
+    "inventoryRows": { "type": "json" },
+    "message": { "type": "text", "required": true },
+    "feeAmount": { "type": "decimal", "default": 10 },
+    "feeTransaction": { "type": "relation", "relation": "oneToOne", "target": "api::transaction.transaction" },
+    "issuedCode": { "type": "relation", "relation": "oneToOne", "target": "api::reseller-code.reseller-code" },
+    "reviewedBy": { "type": "relation", "relation": "manyToOne", "target": "plugin::users-permissions.user" },
+    "reviewedAt": { "type": "datetime" },
+    "rejectReason": { "type": "enumeration", "enum": ["inventory_too_small", "prices_above_market", "profile_unclear", "duplicate_inventory", "quality_concerns", "other"] },
+    "reviewNote": { "type": "text" },
+    "submittedIp": { "type": "string" }
+  }
+}

@@ -61,6 +61,10 @@
     "newsletterEnabled": {
       "type": "boolean",
       "default": false
+    },
+    "resellerApplicationsEnabled": {
+      "type": "boolean",
+      "default": true
     }
   }
 }

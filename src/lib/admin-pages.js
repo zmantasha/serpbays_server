@@ -36,6 +36,8 @@ const ADMIN_PAGES = [
   { key: 'wallets',          label: 'Wallets',          hasCreate: false, hasDelete: false, hasSuspend: false },
   { key: 'withdrawals',      label: 'Withdrawals',      hasCreate: false, hasDelete: false, hasSuspend: false },
   { key: 'codes',            label: 'Codes',            hasCreate: true,  hasDelete: true,  hasSuspend: false },
+
+  { key: 'reseller-applications',            label: 'Reseller Applications',            hasCreate: false,  hasDelete: false,  hasSuspend: false },
   { key: 'offers',           label: 'Offers',           hasCreate: true,  hasDelete: true,  hasSuspend: false },
   { key: 'analytics',        label: 'Analytics',        hasCreate: false, hasDelete: false, hasSuspend: false },
   { key: 'settings',         label: 'Settings',         hasCreate: false, hasDelete: false, hasSuspend: false },
