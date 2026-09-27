@@ -6,6 +6,14 @@ const FEE_USD = 10;
 const MAX_ROWS = 2000;
 const MAX_CSV_CHARS = 300000;
 const COOLDOWN_DAYS = 30;
+const REVIEW_WORKING_DAYS = 7;
+
+// Add n working days (Mon–Fri) to a date; the review clock the refund guarantee runs on.
+function addWorkingDays(from, n) {
+  const d = new Date(from); let left = n;
+  while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); const wd = d.getUTCDay(); if (wd !== 0 && wd !== 6) left--; }
+  return d;
+}
 
 // Minimal RFC-4180 CSV parser (quotes, escaped quotes, CRLF). No dependency.
 function parseCsv(text) {
@@ -31,6 +39,16 @@ const docId = () => Array.from({ length: 24 }, () => 'abcdefghijklmnopqrstuvwxyz
 module.exports = createCoreService('api::reseller-application.reseller-application', ({ strapi }) => ({
   FEE_USD,
   COOLDOWN_DAYS,
+  REVIEW_WORKING_DAYS,
+  addWorkingDays,
+
+  /** Best-effort email through AutoSend (HTML). Never throws; delivery is logged. */
+  async email(to, subject, html) {
+    try {
+      await strapi.service('api::global.autosend-service').send({ to, subject, html, tags: ['transactional', 'reseller-application'] });
+      return true;
+    } catch (e) { strapi.log.warn(`[reseller-application] email "${subject}" to ${to} not delivered: ${e.message}`); return false; }
+  },
 
   /** CSV text -> [{domain, gp, li}], deduped. Throws a user-facing Error on bad input. */
   parseInventory(csvText) {
@@ -86,16 +104,33 @@ module.exports = createCoreService('api::reseller-application.reseller-applicati
     return txId;
   },
 
-  /** Reverse a fee charge (only used if the application row could not be created after charging). */
-  async refundFee(userId, txId) {
+  /**
+   * Return the fee to MAIN balance: marks the fee transaction refunded and
+   * writes a matching `refund` row. Used when the application row could not be
+   * saved, and by the 7-working-day guarantee cron. Returns the refund tx id.
+   */
+  async refundFee(userId, txId, reason) {
     const knex = strapi.db.connection;
+    let refundId = null;
     await strapi.db.transaction(async ({ trx }) => {
+      const fee = await knex('transactions').where('id', txId).forUpdate().first().transacting(trx);
+      if (!fee || fee.transaction_status === 'refunded') throw new Error('ALREADY_REFUNDED');
       const link = await knex('user_wallets_users_permissions_user_lnk').where('user_id', userId).first().transacting(trx);
       const wallet = await knex('user_wallets').where('id', link.user_wallet_id).forUpdate().first().transacting(trx);
       const newMain = Number((Number(wallet.main_balance || 0) + FEE_USD).toFixed(2));
       await knex('user_wallets').where('id', wallet.id).update({ main_balance: newMain, balance: Number((newMain + Number(wallet.promo_balance || 0)).toFixed(2)), updated_at: new Date() }).transacting(trx);
-      await knex('transactions').where('id', txId).update({ transaction_status: 'refunded', description: knex.raw("description || ' (reversed: application could not be saved)'"), updated_at: new Date() }).transacting(trx);
+      await knex('transactions').where('id', txId).update({ transaction_status: 'refunded', updated_at: new Date() }).transacting(trx);
+      const now = new Date();
+      const [r] = await knex('transactions').insert({
+        document_id: docId(), type: 'refund', amount: FEE_USD, net_amount: FEE_USD, fee: 0, transaction_status: 'success', gateway: 'system',
+        gateway_transaction_id: `reseller_fee_refund_${txId}`, description: `Reseller application fee refunded: ${reason}`, fund_source: 'main_fund',
+        metadata: JSON.stringify({ kind: 'reseller_application_fee_refund', feeTransactionId: txId, reason }), created_at: now, updated_at: now, published_at: now,
+      }).returning('id').transacting(trx);
+      refundId = typeof r === 'object' ? r.id : r;
+      await knex('transactions_users_permissions_user_lnk').insert({ transaction_id: refundId, user_id: userId }).transacting(trx);
+      await knex('transactions_user_wallet_lnk').insert({ transaction_id: refundId, user_wallet_id: wallet.id }).transacting(trx);
     });
+    return refundId;
   },
 
   /** Compare an applicant's domains with our marketplace: already listed? our price vs theirs, DR. */

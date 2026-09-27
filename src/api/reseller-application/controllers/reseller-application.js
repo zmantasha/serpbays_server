@@ -5,7 +5,7 @@ const { createCoreController } = require('@strapi/strapi').factories;
 // Publisher mode, as the rest of the API defines it (marketplace controller): Advertiser === false || Publisher === true.
 const inPublisherMode = (u) => u.Advertiser === false || u.Publisher === true;
 const isUrl = (v, host) => { try { const u = new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`); return host ? u.hostname.replace(/^www\./, '').endsWith(host) : !!u.hostname.includes('.'); } catch { return false; } };
-const pub = (a) => a && ({ id: a.id, status: a.status, agencyUrl: a.agencyUrl, inventoryCount: a.inventoryCount, feeAmount: a.feeAmount, createdAt: a.createdAt, reviewedAt: a.reviewedAt, rejectReason: a.rejectReason, reviewNote: a.reviewNote, issuedCode: a.issuedCode ? { code: a.issuedCode.code, usageLimit: a.issuedCode.usageLimit, usedCount: a.issuedCode.usedCount, isActive: a.issuedCode.isActive } : null });
+const pub = (a) => a && ({ id: a.id, status: a.status, decisionDueAt: a.decisionDueAt, agencyUrl: a.agencyUrl, inventoryCount: a.inventoryCount, feeAmount: a.feeAmount, createdAt: a.createdAt, reviewedAt: a.reviewedAt, rejectReason: a.rejectReason, reviewNote: a.reviewNote, issuedCode: a.issuedCode ? { code: a.issuedCode.code, usageLimit: a.issuedCode.usageLimit, usedCount: a.issuedCode.usedCount, isActive: a.issuedCode.isActive } : null });
 
 module.exports = createCoreController('api::reseller-application.reseller-application', ({ strapi }) => ({
   /** GET /reseller-applications/me — latest application + whether a new one may be submitted. */
@@ -19,12 +19,13 @@ module.exports = createCoreController('api::reseller-application.reseller-applic
     if (canApply && latest) {
       if (latest.status === 'submitted' || latest.status === 'in_review') { canApply = false; reason = 'open_application'; }
       else if (latest.status === 'approved') { canApply = false; reason = 'already_approved'; }
+      // 'refunded' (no decision in time) → may apply again straight away.
       else if (latest.status === 'rejected') {
         const days = (Date.now() - new Date(latest.reviewedAt || latest.createdAt).getTime()) / 86400000;
         if (days < svc.COOLDOWN_DAYS) { canApply = false; reason = 'cooldown'; }
       }
     }
-    ctx.body = { data: { application: pub(latest), canApply, reason, fee: svc.FEE_USD, cooldownDays: svc.COOLDOWN_DAYS } };
+    ctx.body = { data: { application: pub(latest), canApply, reason, fee: svc.FEE_USD, cooldownDays: svc.COOLDOWN_DAYS, reviewWorkingDays: svc.REVIEW_WORKING_DAYS } };
   },
 
   /** POST /reseller-applications — validate, charge $10 from main balance, create. */
@@ -58,15 +59,17 @@ module.exports = createCoreController('api::reseller-application.reseller-applic
     try {
       app = await strapi.entityService.create('api::reseller-application.reseller-application', { data: {
         applicant: user.id, status: 'submitted', agencyUrl, linkedinUrl, companyLinkedinUrl: companyLinkedinUrl || null, inventoryCount: rows.length, inventoryOwnership: ownership,
-        inventoryRows: rows, message, feeAmount: svc.FEE_USD, feeTransaction: txId, submittedIp: ctx.request.ip,
+        inventoryRows: rows, message, feeAmount: svc.FEE_USD, feeTransaction: txId, submittedIp: ctx.request.ip, decisionDueAt: svc.addWorkingDays(new Date(), svc.REVIEW_WORKING_DAYS),
       } });
     } catch (e) {
       strapi.log.error(`[reseller-application] create failed after charging user ${user.id} tx ${txId}: ${e.message} — reversing fee`);
-      try { await svc.refundFee(user.id, txId); } catch (re) { strapi.log.error(`[reseller-application] REFUND FAILED user ${user.id} tx ${txId}: ${re.message}`); }
+      try { await svc.refundFee(user.id, txId, 'application could not be saved'); } catch (re) { strapi.log.error(`[reseller-application] REFUND FAILED user ${user.id} tx ${txId}: ${re.message}`); }
       throw e;
     }
     try {
-      await strapi.service('api::notification.notification').createNotification({ recipientId: user.id, type: 'system', action: 'system_update', title: 'Reseller application received', message: `We received your reseller application (#${app.id}). Review usually takes up to 5 working days.` });
+      const due = new Date(app.decisionDueAt).toDateString();
+      await strapi.service('api::notification.notification').createNotification({ recipientId: user.id, type: 'system', action: 'system_update', title: 'Reseller application received', message: `We received your reseller application (#${app.id}). You will have a decision by ${due} (${svc.REVIEW_WORKING_DAYS} working days); if not, the $${svc.FEE_USD} fee is refunded automatically.` });
+      svc.email(user.email, `Reseller application #${app.id} received`, `<p>Hi ${user.firstName || ''},</p><p>We received your reseller application (<b>#${app.id}</b>, ${rows.length} sites). Our team reviews the inventory, compares prices with the market and checks your LinkedIn profile.</p><p>You will have a decision by <b>${due}</b> (${svc.REVIEW_WORKING_DAYS} working days). If we have not decided by then, the $${svc.FEE_USD} review fee is refunded to your wallet automatically.</p><p>Track the status any time: <a href="${(process.env.CLIENT_URL || 'https://app.serpbays.com').replace(/\/$/, '')}/publisher/reseller-application">your reseller application</a>.</p><p>— SerpBays</p>`);
     } catch (e) { strapi.log.warn(`[reseller-application] notification failed: ${e.message}`); }
     strapi.log.info(`[reseller-application] #${app.id} submitted by user ${user.id} (${rows.length} sites, tx ${txId})`);
     ctx.body = { data: pub(app) };

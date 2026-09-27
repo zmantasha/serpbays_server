@@ -6,7 +6,7 @@ const UID = 'api::reseller-application.reseller-application';
 const REASONS = ['inventory_too_small', 'prices_above_market', 'profile_unclear', 'duplicate_inventory', 'quality_concerns', 'other'];
 
 const shape = (a) => ({
-  id: a.id, status: a.status, createdAt: a.createdAt, reviewedAt: a.reviewedAt,
+  id: a.id, status: a.status, createdAt: a.createdAt, reviewedAt: a.reviewedAt, decisionDueAt: a.decisionDueAt,
   applicant: a.applicant ? { id: a.applicant.id, email: a.applicant.email, username: a.applicant.username, firstName: a.applicant.firstName, lastName: a.applicant.lastName, createdAt: a.applicant.createdAt } : null,
   agencyUrl: a.agencyUrl, linkedinUrl: a.linkedinUrl, companyLinkedinUrl: a.companyLinkedinUrl, inventoryCount: a.inventoryCount, inventoryOwnership: a.inventoryOwnership,
   message: a.message, feeAmount: a.feeAmount, feeTransactionId: a.feeTransaction?.id ?? null, rejectReason: a.rejectReason, reviewNote: a.reviewNote,
@@ -24,7 +24,7 @@ module.exports = {
   async list(ctx) {
     const { status, search, page = 1, pageSize = 25 } = ctx.query;
     const where = {};
-    if (status && ['submitted', 'in_review', 'approved', 'rejected'].includes(status)) where.status = status;
+    if (status && ['submitted', 'in_review', 'approved', 'rejected', 'refunded'].includes(status)) where.status = status;
     if (search) where.$or = [{ agencyUrl: { $containsi: search } }, { applicant: { email: { $containsi: search } } }];
     const limit = Math.min(Math.max(parseInt(pageSize, 10) || 25, 1), 100); const offset = (Math.max(parseInt(page, 10) || 1, 1) - 1) * limit;
     const [rows, total, counts] = await Promise.all([
@@ -53,6 +53,7 @@ module.exports = {
     if (!a) return ctx.notFound();
     if (a.status === 'approved' || a.issuedCode) return ctx.badRequest('Already approved.');
     if (a.status === 'rejected') return ctx.badRequest('Application was rejected; ask the applicant to re-apply.');
+    if (a.status === 'refunded') return ctx.badRequest('The review window passed and the fee was refunded; ask the applicant to re-apply.');
     const limit = Math.min(Math.max(parseInt(ctx.request.body?.usageLimit, 10) || DEFAULT_SITES, 1), MAX_SITES);
     const admin = ctx.state.user;
     const code = await strapi.service('api::reseller-code.reseller-code').createResellerCode({
@@ -61,6 +62,7 @@ module.exports = {
     });
     const updated = await strapi.db.query(UID).update({ where: { id: a.id }, data: { status: 'approved', issuedCode: code.id, reviewedBy: admin.id, reviewedAt: new Date(), reviewNote: ctx.request.body?.note || null }, populate: POP });
     await notify(strapi, a.applicant.id, 'Reseller application approved', `Your reseller code is ${code.code}. It lets you add up to ${limit} websites without ownership verification — open Add Website and enter the code.`);
+    strapi.service(UID).email(a.applicant.email, 'Your SerpBays reseller application is approved', `<p>Hi ${a.applicant.firstName || ''},</p><p>Good news — your reseller application <b>#${a.id}</b> is approved.</p><p>Your reseller code: <b style="font-size:18px">${code.code}</b> (valid for up to ${limit} websites).</p><p>Open <a href="${(process.env.CLIENT_URL || 'https://app.serpbays.com').replace(/\/$/, '')}/publisher/add-website">Add Website</a>, choose “Reseller Code” at the verification step and enter it — your sites are listed without per-site ownership checks.</p><p>— SerpBays</p>`);
     strapi.log.info(`[reseller-applications] #${a.id} approved by ${admin.email}; code ${code.code} (${limit} sites) for user ${a.applicant.id}`);
     ctx.body = { data: shape(updated) };
   },
@@ -70,6 +72,7 @@ module.exports = {
     if (!a) return ctx.notFound();
     if (a.status === 'approved') return ctx.badRequest('Already approved.');
     if (a.status === 'rejected') return ctx.badRequest('Already rejected.');
+    if (a.status === 'refunded') return ctx.badRequest('The review window passed and the fee was refunded.');
     const { reason, note } = ctx.request.body || {};
     if (!REASONS.includes(reason)) return ctx.badRequest('A rejection reason is required.');
     if (reason === 'other' && !(note && String(note).trim().length >= 10)) return ctx.badRequest('Add a note when the reason is "other".');
@@ -77,6 +80,7 @@ module.exports = {
     const updated = await strapi.db.query(UID).update({ where: { id: a.id }, data: { status: 'rejected', rejectReason: reason, reviewNote: note ? String(note).trim() : null, reviewedBy: admin.id, reviewedAt: new Date() }, populate: POP });
     const human = { inventory_too_small: 'the inventory is too small for a reseller partnership', prices_above_market: 'the prices are above current market rates', profile_unclear: 'we could not verify your profile or agency', duplicate_inventory: 'most of the inventory is already listed on SerpBays', quality_concerns: 'the sites did not meet our quality bar', other: note || 'see note' }[reason];
     await notify(strapi, a.applicant.id, 'Reseller application not approved', `We reviewed your application (#${a.id}) and could not approve it: ${human}. You may re-apply after 30 days. The review fee is non-refundable.`);
+    strapi.service(UID).email(a.applicant.email, `Reseller application #${a.id}: not approved`, `<p>Hi ${a.applicant.firstName || ''},</p><p>We reviewed your reseller application <b>#${a.id}</b> and could not approve it: ${human}.</p><p>You may re-apply after 30 days. The review fee is non-refundable.</p><p>— SerpBays</p>`);
     strapi.log.info(`[reseller-applications] #${a.id} rejected by ${admin.email}: ${reason}`);
     ctx.body = { data: shape(updated) };
   },

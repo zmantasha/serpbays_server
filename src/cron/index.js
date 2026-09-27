@@ -3,9 +3,11 @@
 const tatUpdater = require('./tat-updater');
 const orderCancellation = require('./order-cancellation');
 const autosendMarketing = require('./autosend-marketing');
+const resellerRefunds = require('./reseller-refunds');
 
 module.exports = {
     ...tatUpdater,
     ...orderCancellation,
     ...autosendMarketing,
+    ...resellerRefunds,
 };
