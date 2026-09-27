@@ -48,6 +48,7 @@ module.exports = {
           isRead: notification.isRead,
           relatedOrderId: notification.relatedOrderId,
           relatedUserId: notification.relatedUserId,
+          data: notification.data ?? null,
           createdAt: notification.createdAt,
           updatedAt: notification.updatedAt
         }
