@@ -864,6 +864,17 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       });
 
       // If this is an approved website being updated, queue a marketplace update request instead of updating live data
+      // Sample posts sync live (2026-09-27): a link to an existing post is
+      // low-risk and buyers who requested a sample are waiting on it, so it
+      // does not go through the moderated update request like prices do.
+      // The marketplace afterUpdate lifecycle then fulfils open sample requests.
+      if (existing.submissionStatus === 'approved' && existing.marketplaceId && Object.prototype.hasOwnProperty.call(filteredUpdate, 'samplePosts')) {
+        try {
+          const links = (Array.isArray(updated.samplePosts) ? updated.samplePosts : []).filter((x) => typeof x === 'string' && x.trim());
+          await strapi.entityService.update('api::marketplace.marketplace', existing.marketplaceId, { data: { sample_links: JSON.stringify(links), _audit: { source: 'publisher', userId: user.id } } });
+          console.log(`[publisher-website.update] sample_links synced live for marketplace ${existing.marketplaceId} (${links.length} link(s))`);
+        } catch (e) { console.error('[publisher-website.update] live sample sync failed:', e.message); }
+      }
       if (existing.submissionStatus === 'approved' && existing.marketplaceId) {
         console.log('Creating pending marketplace update request for approved website...');
         try {
