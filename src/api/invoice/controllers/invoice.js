@@ -51,6 +51,9 @@ const SUPPORT_EMAIL    = process.env.INVOICE_SUPPORT_EMAIL    || 'support@serpba
 const SUPPORT_PHONE    = process.env.INVOICE_SUPPORT_PHONE    || '';
 const COMPANY_TAGLINE  = process.env.INVOICE_TAGLINE          || 'REACH  |  RANK  |  RESULT';
 const COMPANY_SITE     = process.env.INVOICE_COMPANY_SITE     || 'www.serpbays.com';
+const COMPANY_LEGAL_NAME = process.env.INVOICE_COMPANY_NAME   || 'Serpbays LLC';
+const COMPANY_ADDRESS_1  = process.env.INVOICE_COMPANY_ADDR1  || '30 N Gould Street';
+const COMPANY_ADDRESS_2  = process.env.INVOICE_COMPANY_ADDR2  || 'Sheridan, Wyoming 82801, USA';
 
 // ─── Formatters ───────────────────────────────────────────────────────
 const titleCase = (s) => {
@@ -349,8 +352,17 @@ const renderPdf = (doc, invoice, transaction) => {
 
   let fY = cardsY + cardHeaderH + 12;
   doc.font('Helvetica-Bold').fontSize(11).fillColor(COLORS.navy)
-     .text('Serpbays', fromX + 14, fY);
+     .text(COMPANY_LEGAL_NAME, fromX + 14, fY);
   fY += 18;
+
+  // Registered address (2026-09-27)
+  iconPin(doc, fromX + 14, fY + 1);
+  doc.font('Helvetica').fontSize(9.5).fillColor(COLORS.textMuted)
+     .text(COMPANY_ADDRESS_1, fromX + 30, fY, { width: cardW - 44 });
+  fY += 14;
+  doc.font('Helvetica').fontSize(9.5).fillColor(COLORS.textMuted)
+     .text(COMPANY_ADDRESS_2, fromX + 30, fY, { width: cardW - 44 });
+  fY += 14;
 
   iconEmail(doc, fromX + 14, fY + 1);
   doc.font('Helvetica').fontSize(9.5).fillColor(COLORS.textMuted)
