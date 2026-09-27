@@ -9,6 +9,25 @@ const { createCoreService } = require('@strapi/strapi').factories;
 module.exports = createCoreService('api::notification.notification', ({ strapi }) => ({
 
   // Create a notification
+  /**
+   * Order page path for a given recipient: advertisers and publishers have
+   * different order-detail routes. Returns null if the user is not a party.
+   */
+  async orderUrlFor(recipientId, orderId) {
+    try {
+      const id = Number(orderId); const uid = Number(recipientId);
+      if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(uid)) return null;
+      const order = await strapi.db.query('api::order.order').findOne({
+        where: { id }, select: ['id'],
+        populate: { advertiser: { select: ['id'] }, publisher: { select: ['id'] } },
+      });
+      if (!order) return null;
+      if (Number(order.advertiser?.id) === uid) return `/orders/order-detail/${id}`;
+      if (Number(order.publisher?.id) === uid) return `/publisher/order-detail/${id}`;
+      return null;
+    } catch (e) { console.warn('[NotificationService] orderUrlFor failed (non-fatal):', e.message); return null; }
+  },
+
   async createNotification(data) {
     try {
       console.log(`[NotificationService] Creating notification with data:`, JSON.stringify(data, null, 2));
@@ -39,6 +58,16 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
         return null;
       }
 
+      // Destination link (2026-09-27): every order-related notification carries
+      // `data.url` so a click (toast / notifications page) lands on the right
+      // page for THIS recipient — advertiser vs publisher order view — and
+      // message notifications open the conversation pane directly.
+      let extra = data.data && typeof data.data === 'object' ? { ...data.data } : null;
+      if ((!extra || typeof extra.url !== 'string') && data.relatedOrderId) {
+        const base = await this.orderUrlFor(data.recipientId, data.relatedOrderId);
+        if (base) extra = { ...(extra || {}), url: data.type === 'communication' ? `${base}#conversation` : base };
+      }
+
       const notification = await strapi.entityService.create('api::notification.notification', {
         data: {
           title: data.title,
@@ -48,7 +77,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
           recipient: data.recipientId,
           relatedOrderId: data.relatedOrderId,
           relatedUserId: data.relatedUserId,
-          data: data.data && typeof data.data === 'object' ? data.data : null,
+          data: extra,
           isRead: false
         }
       });
