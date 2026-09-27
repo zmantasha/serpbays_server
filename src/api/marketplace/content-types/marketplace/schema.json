@@ -436,6 +436,12 @@
     },
     "rank_computed_at": {
       "type": "datetime"
+    },
+    "publisher_rating_avg": {
+      "type": "decimal"
+    },
+    "publisher_rating_count": {
+      "type": "integer"
     }
   }
 }

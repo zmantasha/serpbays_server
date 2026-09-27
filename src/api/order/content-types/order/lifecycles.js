@@ -77,6 +77,15 @@ module.exports = {
         params.data.orderStatus || 'unspecified',
         { lifecycle: 'afterUpdate' }
       );
+      // Mutual rating prompt (2026-09-27): when an order completes, ask both sides to rate.
+      if (params.data.orderStatus === 'completed') {
+        try {
+          const full = await strapi.db.query('api::order.order').findOne({ where: { id: result.id }, populate: { advertiser: { select: ['id'] }, publisher: { select: ['id'] } } });
+          const notif = strapi.service('api::notification.notification');
+          if (full?.advertiser?.id) await notif.createNotification({ recipientId: full.advertiser.id, type: 'order', action: 'order_completed', title: `How did order #${result.id} go?`, message: 'Rate the publisher — quality, communication, timing. Ratings are revealed once both sides have rated.', relatedOrderId: result.id, data: { url: `/orders/order-detail/${result.id}#rating` } });
+          if (full?.publisher?.id) await notif.createNotification({ recipientId: full.publisher.id, type: 'order', action: 'order_completed', title: `How did order #${result.id} go?`, message: 'Rate the advertiser — brief clarity, responsiveness, revisions. Ratings are revealed once both sides have rated.', relatedOrderId: result.id, data: { url: `/publisher/order-detail/${result.id}#rating` } });
+        } catch (e) { strapi.log?.warn?.(`[Order lifecycle] rating prompt failed (non-fatal): ${e.message}`); }
+      }
     } catch (err) {
       strapi.log?.warn?.(`[Order lifecycle] afterUpdate emit failed (non-fatal): ${err.message}`);
     }

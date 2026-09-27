@@ -140,6 +140,7 @@ module.exports = async ({ strapi }) => {
   };
 
   // Handle socket connection
+  const typingCache = new Map();
   io.on('connection', async (socket) => {
     console.log('New WebSocket connection attempt');
 
@@ -217,6 +218,22 @@ module.exports = async ({ strapi }) => {
       }
 
       // Handle disconnection
+      // Typing indicator relay (2026-09-27): client emits {orderId, typing}; we
+      // forward to the other party of that order only. Membership cached 60 s.
+      socket.on('chat:typing', async (payload) => {
+        try {
+          const orderId = parseInt(payload && payload.orderId, 10); if (!Number.isFinite(orderId)) return;
+          const uid = Number.parseInt(userId, 10);
+          const cacheKey = `${orderId}`; const now = Date.now();
+          let parties = typingCache.get(cacheKey);
+          if (!parties || parties.at < now - 60000) {
+            const o = await strapi.db.query('api::order.order').findOne({ where: { id: orderId }, populate: { advertiser: { select: ['id'] }, publisher: { select: ['id'] } } });
+            parties = { adv: o?.advertiser?.id, pub: o?.publisher?.id, at: now }; typingCache.set(cacheKey, parties);
+          }
+          const other = parties.adv === uid ? parties.pub : parties.pub === uid ? parties.adv : null;
+          if (other) io.to(`user_${other}`).emit('chat:typing', { orderId, userId: uid, typing: !!(payload && payload.typing) });
+        } catch (e) { /* ignore */ }
+      });
       socket.on('disconnect', () => {
         untrackUserSocket(userId, socket);
         if (isAdmin) connectedAdmins.delete(socket.id);

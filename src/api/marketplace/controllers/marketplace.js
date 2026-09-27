@@ -60,6 +60,8 @@ const MARKETPLACE_PUBLIC_FIELDS = [
   'is_featured', 'is_featured_guest_post', 'is_featured_link_insertion',
   // Ranking (read-only, computed nightly)
   'rank_score', 'value_score', 'rank_badges',
+  // Publisher rating (visible ratings only)
+  'publisher_rating_avg', 'publisher_rating_count',
   'website_status', 'status',
   // Timestamps (marketplace draftAndPublish: false → no publishedAt)
   'createdAt', 'updatedAt',

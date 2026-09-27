@@ -46,6 +46,15 @@
     "isUnread": {
       "type": "boolean",
       "default": true
+    },
+    "readAt": {
+      "type": "datetime"
+    },
+    "attachments": {
+      "type": "json"
+    },
+    "reminderSentAt": {
+      "type": "datetime"
     }
   }
 }
