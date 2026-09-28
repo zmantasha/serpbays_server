@@ -45,6 +45,8 @@ const PROFILES = {
       'ahrefs_rank',
       'ahrefs_keywords',
       'ahrefs_referring_domain',
+      'ahrefs_top_country',
+      'ahrefs_top_country_share',
     ],
     headerAliases: {
       // URL columns — first one wins; everything maps to internal 'url'.
@@ -77,6 +79,9 @@ const PROFILES = {
       'organic keywords': 'ahrefs_keywords',
       keywords: 'ahrefs_keywords',
       'kw': 'ahrefs_keywords',
+      'top country': 'ahrefs_top_country',
+      'top country share': 'ahrefs_top_country_share',
+      'top country share %': 'ahrefs_top_country_share',
     },
     fieldBounds: {
       ahrefs_dr: { min: 0, max: 100, integer: false },
@@ -84,6 +89,8 @@ const PROFILES = {
       ahrefs_rank: { min: 0, max: 99_999_999, integer: true },
       ahrefs_keywords: { min: 0, max: 99_999_999, integer: true },
       ahrefs_referring_domain: { min: 0, max: 99_999_999, integer: true },
+      ahrefs_top_country: { text: true, maxLength: 60 },
+      ahrefs_top_country_share: { min: 0, max: 100, integer: false },
     },
     siteExplorerHints: 'Site Explorer → Batch Analysis → paste your domain list → export CSV including Domain Rating, Total Traffic, Ref. domains, Organic keywords.',
   },

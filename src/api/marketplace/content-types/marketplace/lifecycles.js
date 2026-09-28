@@ -36,6 +36,8 @@ const TRACKED_METRIC_FIELDS = [
   'ahrefs_rank',
   'ahrefs_keywords',
   'ahrefs_referring_domain',
+  'ahrefs_top_country',
+  'ahrefs_top_country_share',
   'moz_da',
   'semrush_authority_score',
   'semrush_traffic',

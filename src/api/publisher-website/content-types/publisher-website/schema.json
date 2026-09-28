@@ -458,6 +458,17 @@
       "min": 0,
       "description": "Ahrefs organic keywords count"
     },
+    "ahrefs_top_country": {
+      "type": "string",
+      "maxLength": 60,
+      "description": "Country sending the most organic traffic (Ahrefs)"
+    },
+    "ahrefs_top_country_share": {
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
+      "description": "Share of organic traffic from the top country, percent (Ahrefs)"
+    },
     "metrics_last_updated": {
       "type": "datetime",
       "description": "When SEO metrics were last updated (manually or via API)"

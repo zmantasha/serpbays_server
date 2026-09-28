@@ -49,6 +49,8 @@ function ensureTables() {
       await knex().raw('alter table integration_keys add column if not exists promoted_at timestamptz');
       await knex().raw(`create table if not exists integration_dr_cache (
         domain text primary key, dr numeric not null, provider text, fetched_at timestamptz not null default now())`);
+      await knex().raw(`create table if not exists integration_ahrefs_cache (
+        domain text primary key, tracked boolean not null, data jsonb, fetched_at timestamptz not null default now())`);
       await knex().raw(`create table if not exists integration_alerts (
         id serial primary key, provider text not null, kind text not null, key_id int, message text not null,
         created_at timestamptz not null default now(), resolved_at timestamptz, resolved_by int, emailed_at timestamptz)`);
@@ -357,7 +359,32 @@ async function cachePut(values, provider) {
   }
 }
 
+// Raw Ahrefs Top-Websites records (scrapesage actor), kept so values can be
+// re-parsed without paying again. tracked=false = Ahrefs has no page (free).
+async function rawGet(domains) {
+  await ensureTables();
+  if (!domains.length) return {};
+  const r = rows(await knex().raw(`select domain, tracked, data, fetched_at from integration_ahrefs_cache where domain = any(?) and fetched_at > now() - interval '${CACHE_DAYS} days'`, [domains]));
+  const out = {};
+  r.forEach((x) => {
+    let data = x.data;
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }
+    out[x.domain] = { tracked: x.tracked, data, fetchedAt: x.fetched_at };
+  });
+  return out;
+}
+
+async function rawPut(entries) {
+  await ensureTables();
+  for (let i = 0; i < entries.length; i += 200) {
+    const chunk = entries.slice(i, i + 200);
+    await knex().raw(`insert into integration_ahrefs_cache (domain, tracked, data, fetched_at) values ${chunk.map(() => '(?,?,?::jsonb,now())').join(',')}
+        on conflict (domain) do update set tracked=excluded.tracked, data=excluded.data, fetched_at=now()`, chunk.flatMap((e) => [e.domain, e.tracked, e.data ? JSON.stringify(e.data) : null]));
+  }
+}
+
 module.exports = {
+  rawGet, rawPut,
   PROVIDERS, BUDGET_GUARD, CACHE_DAYS, mask,
   ensureTables, probe, listKeys, publicKey, upsertKey, updateKey, deleteKey, testKey,
   secretFor, apifyPool, withApify, raiseAlert, openAlerts, resolveAlerts, cacheGet, cachePut,

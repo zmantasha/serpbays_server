@@ -68,6 +68,13 @@ function coerceMetric(rawValue) {
   return n;
 }
 
+// Text fields (e.g. top country): trimmed string, empty → "leave unchanged".
+function coerceText(rawValue) {
+  if (rawValue === undefined || rawValue === null) return undefined;
+  const s = String(rawValue).trim().replace(/\s+/g, ' ');
+  return s === '' ? undefined : s;
+}
+
 function parseCsv(csvText, tool) {
   const profile = getProfile(tool);
   if (!profile) throw new Error(`Unknown tool: ${tool}`);
@@ -126,7 +133,8 @@ function parseCsv(csvText, tool) {
         out.url = canonicalizeUrl(raw);
         out.urlRaw = raw;
       } else if (profile.allowedFields.includes(target)) {
-        const v = coerceMetric(raw);
+        const def = profile.fieldBounds[target] || {};
+        const v = def.text ? coerceText(raw) : coerceMetric(raw);
         if (v !== undefined) out[target] = v;
       }
     }
@@ -143,6 +151,11 @@ function parseCsv(csvText, tool) {
 function validateField(profile, field, value) {
   const def = profile.fieldBounds[field];
   if (!def) return 'Field not allowed';
+  if (def.text) {
+    if (typeof value !== 'string') return 'Not text';
+    if (value.length > (def.maxLength || 255)) return `Must be ≤ ${def.maxLength || 255} characters`;
+    return null;
+  }
   if (value === null) return 'Not a number';
   if (!Number.isFinite(value)) return 'Not a number';
   if (value < def.min) return `Must be ≥ ${def.min}`;
@@ -385,9 +398,12 @@ async function buildPreview({ tool, csvText, csvFilename = null }) {
       }
       next[field] = incoming;
       const currentRaw = pw[field];
+      const isText = !!(profile.fieldBounds[field] && profile.fieldBounds[field].text);
       const current =
         currentRaw === null || currentRaw === undefined
           ? null
+          : isText
+          ? String(currentRaw)
           : typeof currentRaw === 'number'
           ? currentRaw
           : parseFloat(currentRaw);

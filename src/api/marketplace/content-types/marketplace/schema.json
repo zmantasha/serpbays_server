@@ -110,6 +110,17 @@
       "type": "integer",
       "min": 0
     },
+    "ahrefs_top_country": {
+      "type": "string",
+      "maxLength": 60,
+      "description": "Country sending the most organic traffic (Ahrefs)"
+    },
+    "ahrefs_top_country_share": {
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
+      "description": "Share of organic traffic from the top country, percent (Ahrefs)"
+    },
     "moz_da": {
       "type": "decimal",
       "max": 100,

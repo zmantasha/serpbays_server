@@ -28,15 +28,27 @@
  *   DELETE /admin/integrations/keys/:id
  *   POST   /admin/integrations/keys/:id/test
  *   POST   /admin/integrations/alerts/:id/resolve
+ *   POST   /admin/integrations/traffic-refresh    Ahrefs organic traffic, keywords, top
+ *          country + share via Apify scrapesage/ahrefs-scraper ($0.005 per tracked
+ *          domain). Preview only; the panel commits through bulk-refresh (tool ahrefs).
+ *          Raw records are cached 30 days in integration_ahrefs_cache so values can be
+ *          re-parsed without paying again. The actor sometimes returns a page with
+ *          organicTraffic=null and dataMonth "January 1970" (parse failure) — those
+ *          values are treated as missing (cell left empty = unchanged), never as 0.
  */
 
 const fs = require('fs');
+const crypto = require('crypto');
 const keys = require('../services/integration-keys');
 
 const AHREFS_DR_URL = 'https://api.ahrefs.com/v3/public/domain-rating-free';
 const APIFY_DR_ACTOR = 'datascraperes~bulk-domain-rating-checker';
 const APIFY_DR_COST = 0.0005;
 const MAX_DOMAINS = 2000;
+const APIFY_TRAFFIC_ACTOR = 'scrapesage~ahrefs-scraper';
+const APIFY_TRAFFIC_COST = 0.005; // per domain Ahrefs tracks; untracked domains are free
+const MAX_TRAFFIC_DOMAINS = 500;
+const TRAFFIC_CHUNK = 50;
 const BIG_CHANGE = 10;
 const CHECK_TTL_MS = 5 * 60 * 1000;
 
@@ -72,9 +84,31 @@ async function fetchJson(url, opts = {}, timeoutMs = 15000) {
   } finally { clearTimeout(t); }
 }
 
+// ───────────────────────── Apify run helper ─────────────────────────
+// Start a run, poll it, then read its dataset. (run-sync-get-dataset-items once
+// answered 502 in 2 s while the run went on to succeed and charge — the paid
+// results were lost. Reading the dataset of the finished run can't lose them.)
+async function apifyRunActor(actor, input, token, maxChargeUsd) {
+  const auth = { Authorization: `Bearer ${token}` };
+  const start = await fetchJson(`https://api.apify.com/v2/acts/${actor}/runs?timeout=280&waitForFinish=60&maxTotalChargeUsd=${maxChargeUsd.toFixed(4)}`,
+    { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(input) }, 90000);
+  if (!start.ok || !start.body || !start.body.data) return { status: start.status, ok: false, body: start.body };
+  let run = start.body.data;
+  const deadline = Date.now() + 330000;
+  while (!['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(run.status) && Date.now() < deadline) {
+    const r = await fetchJson(`https://api.apify.com/v2/actor-runs/${run.id}?waitForFinish=60`, { headers: auth }, 90000);
+    if (r.ok && r.body && r.body.data) run = r.body.data;
+    else await new Promise((res) => setTimeout(res, 3000));
+  }
+  const items = await fetchJson(`https://api.apify.com/v2/datasets/${run.defaultDatasetId}/items?clean=true&format=json`, { headers: auth }, 90000);
+  const body = items.ok && Array.isArray(items.body) ? items.body : null;
+  if (run.status !== 'SUCCEEDED') strapi.log.warn(`[INTEGRATIONS] Apify run ${run.id} ended ${run.status} (${run.statusMessage || ''}); ${body ? body.length : 0} items kept`);
+  return { status: body ? 200 : 502, ok: !!body, body, runId: run.id, runStatus: run.status };
+}
+
 // ───────────────────────── DR providers ─────────────────────────
 
-async function ahrefsDr(domains) {
+async function ahrefsDr(domains, progress) {
   const k = await keys.secretFor('ahrefs', 'AHREFS_API_KEY');
   if (!k) return { available: false, reason: 'no Ahrefs key set', results: {} };
   const key = k.secret;
@@ -84,6 +118,7 @@ async function ahrefsDr(domains) {
   const worker = async () => {
     while (i < domains.length && !dead) {
       const d = domains[i++];
+      if (progress) progress.done = i;
       try {
         const r = await fetchJson(`${AHREFS_DR_URL}?target=${encodeURIComponent(d)}&output=json`, { headers: { Authorization: `Bearer ${key}` } }, 10000);
         if (r.status === 401 || r.status === 403) { dead = `Ahrefs answered ${r.status}`; return; }
@@ -103,9 +138,7 @@ async function apifyDr(domains) {
   let keyUsed = null;
   for (let k = 0; k < domains.length; k += 500) {
     const chunk = domains.slice(k, k + 500);
-    const run = await keys.withApify(chunk.length * APIFY_DR_COST, (token, maxCharge) => fetchJson(
-      `https://api.apify.com/v2/acts/${APIFY_DR_ACTOR}/run-sync-get-dataset-items?timeout=280&maxTotalChargeUsd=${maxCharge.toFixed(4)}`,
-      { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ targets: chunk }) }, 300000));
+    const run = await keys.withApify(chunk.length * APIFY_DR_COST, (token, maxCharge) => apifyRunActor(APIFY_DR_ACTOR, { targets: chunk }, token, maxCharge));
     if (!run.ok) return { available: false, reason: run.reason, results, costUsd: money(cost), keyUsed };
     keyUsed = run.keyUsed;
     const r = run.result;
@@ -113,6 +146,57 @@ async function apifyDr(domains) {
     r.body.forEach((it) => { if (it && typeof it.domainRating === 'number') { results[normDomain(it.target)] = it.domainRating; cost += APIFY_DR_COST; } });
   }
   return { available: true, reason: null, results, costUsd: money(cost), keyUsed };
+}
+
+function parseAhrefsRecord(it) {
+  const month = String(it.dataMonth || '');
+  const monthOk = !!month && !/1970/.test(month);
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
+  let country = typeof it.topCountry === 'string' ? it.topCountry.trim().replace(/^the\s+/i, '') : null;
+  if (country === '') country = null;
+  const share = typeof it.topCountryShare === 'number' && it.topCountryShare >= 0 && it.topCountryShare <= 1 ? Math.round(it.topCountryShare * 1000) / 10 : null;
+  let traffic = monthOk ? num(it.organicTraffic) : null;
+  let outMonth = monthOk ? month : null;
+  let trafficSource = traffic != null ? 'page' : null;
+  // Fallback: pages Ahrefs refreshed for a newer month break the actor's parser
+  // (organicTraffic null, dataMonth "January 1970") but the page summary still says
+  // "... with 26.7K traffic in September 2026". Same number, rounded to Ahrefs' display.
+  if (traffic == null && typeof it.siteDescription === 'string') {
+    const m = it.siteDescription.match(/with ([\d.]+)\s*([KMB]?) traffic in ([A-Za-z]+ \d{4})/);
+    if (m) {
+      const v = Number(m[1]) * ({ '': 1, K: 1e3, M: 1e6, B: 1e9 })[m[2]];
+      if (Number.isFinite(v)) { traffic = Math.round(v); outMonth = m[3]; trafficSource = 'summary'; }
+    }
+  }
+  return {
+    traffic,
+    keywords: monthOk ? num(it.organicKeywords) : null,
+    country: country ? country.slice(0, 60) : null,
+    share: country ? share : null,
+    month: outMonth,
+    trafficSource,
+    parseIssue: traffic == null,
+  };
+}
+
+async function apifyTraffic(domains, progress) {
+  const records = {};
+  let cost = 0;
+  let keyUsed = null;
+  for (let k = 0; k < domains.length; k += TRAFFIC_CHUNK) {
+    const chunk = domains.slice(k, k + TRAFFIC_CHUNK);
+    const run = await keys.withApify(chunk.length * APIFY_TRAFFIC_COST, (token, maxCharge) => apifyRunActor(APIFY_TRAFFIC_ACTOR,
+      { domains: chunk, includeHistory: false, includeKeywords: false, includeCountries: true, includeCompetitors: false, maxItems: chunk.length }, token, maxCharge));
+    if (!run.ok) return { reason: run.reason, records, costUsd: money(cost), keyUsed, done: k };
+    keyUsed = run.keyUsed;
+    const r = run.result;
+    if (!r.ok || !Array.isArray(r.body)) return { reason: `Apify run failed (${r.status})`, records, costUsd: money(cost), keyUsed, done: k };
+    const got = new Set();
+    r.body.forEach((it) => { if (it && it.domain) { const d = normDomain(it.domain); records[d] = it; got.add(d); cost += APIFY_TRAFFIC_COST; } });
+    if (progress) progress.done = Math.min(domains.length, k + chunk.length);
+    await keys.rawPut(chunk.map((d) => ({ domain: d, tracked: got.has(d), data: records[d] || null }))).catch((e) => strapi.log.warn(`[INTEGRATIONS] raw cache write failed: ${e.message}`));
+  }
+  return { reason: null, records, costUsd: money(cost), keyUsed, done: domains.length };
 }
 
 // ───────────────────────── status checks (cached) ─────────────────────────
@@ -174,6 +258,198 @@ async function gatewayStats() {
 
 function envState(...names) { return names.every((k) => !!process.env[k]) ? 'configured' : names.some((k) => !!process.env[k]) ? 'partial' : 'missing'; }
 
+async function runDrRefresh(ctx, body, progress) {
+    const started = Date.now();
+    const scope = ['top', 'stale', 'domains'].includes(body.scope) ? body.scope : 'top';
+    const limit = Math.min(MAX_DOMAINS, Math.max(1, parseInt(body.limit, 10) || 20));
+    const provider = ['auto', 'ahrefs', 'apify'].includes(body.provider) ? body.provider : 'auto';
+    const knex = strapi.db.connection;
+
+    let listings;
+    if (scope === 'domains') {
+      const doms = [...new Set((Array.isArray(body.domains) ? body.domains : String(body.domains || '').split(/[\s,]+/)).map(normDomain).filter(Boolean))].slice(0, MAX_DOMAINS);
+      if (!doms.length) throw Object.assign(new Error('No domains given'), { status: 400 });
+      listings = (await knex.raw(`select id, url, ahrefs_dr, rank_score, last_ahrefs_refresh_at from marketplaces where status='active' and lower(url) = any(?)`, [doms])).rows;
+    } else if (scope === 'stale') {
+      await keys.ensureTables();
+      listings = (await knex.raw(`select m.id, m.url, m.ahrefs_dr, m.rank_score, m.last_ahrefs_refresh_at from marketplaces m
+          left join integration_dr_cache c on c.domain = lower(m.url)
+          where m.status='active'
+          order by greatest(coalesce(m.last_ahrefs_refresh_at, m.last_metric_update_at, 'epoch'), coalesce(c.fetched_at, 'epoch')) asc, m.rank_score desc nulls last limit ?`, [limit])).rows;
+    } else {
+      listings = (await knex.raw(`select id, url, ahrefs_dr, rank_score, last_ahrefs_refresh_at from marketplaces where status='active' order by rank_score desc nulls last, id limit ?`, [limit])).rows;
+    }
+    const domains = [...new Set(listings.map((l) => normDomain(l.url)))];
+    if (!domains.length) return { provider: null, fetched: 0, rows: [], review: [], csv: '', summary: null, notes: ['No active listings matched.'] };
+
+    const notes = [];
+    let results = {};
+    let used = [];
+    let cost = 0;
+    let fromCache = 0;
+    if (body.fresh !== true) {
+      const c = await keys.cacheGet(domains).catch(() => ({}));
+      Object.entries(c).forEach(([d, v]) => { results[d] = v.dr; });
+      fromCache = Object.keys(c).length;
+      if (fromCache) used.push('cache');
+    }
+    let todo = domains.filter((d) => results[d] === undefined);
+    if (todo.length && provider !== 'apify') {
+      progress.stage = 'Ahrefs free API'; progress.total = todo.length;
+      const a = await ahrefsDr(todo, progress);
+      Object.assign(results, a.results);
+      if (Object.keys(a.results).length) { used.push('ahrefs'); await keys.cachePut(a.results, 'ahrefs').catch(() => {}); }
+      if (!a.available) notes.push(`Ahrefs free API unavailable: ${a.reason}.`);
+    }
+    todo = domains.filter((d) => results[d] === undefined);
+    let apifyKey = null;
+    if (todo.length && provider !== 'ahrefs') {
+      progress.stage = 'Apify'; progress.total = todo.length; progress.done = 0;
+      const p = await apifyDr(todo);
+      Object.assign(results, p.results);
+      cost += p.costUsd;
+      apifyKey = p.keyUsed;
+      if (Object.keys(p.results).length) { used.push('apify'); await keys.cachePut(p.results, 'apify').catch(() => {}); }
+      if (p.reason) notes.push(`Apify: ${p.reason}`);
+      if (p.keyUsed && !/^primary/.test(p.keyUsed)) notes.push(`Apify ran on ${p.keyUsed} (primary key was rejected).`);
+    }
+    if (fromCache) notes.push(`${fromCache} domain${fromCache === 1 ? '' : 's'} answered from the ${keys.CACHE_DAYS}-day cache (no API call). Tick "Ignore cache" to re-fetch.`);
+
+    const byUrl = new Map(listings.map((l) => [normDomain(l.url), l]));
+    const rows = [], review = [], notFound = [];
+    domains.forEach((d) => {
+      const l = byUrl.get(d);
+      const dr = results[d];
+      if (dr === undefined) { notFound.push(d); return; }
+      const old = l && l.ahrefs_dr != null ? n(l.ahrefs_dr) : null;
+      const item = { url: l ? l.url : d, id: l && l.id, oldDr: old, newDr: dr, change: old == null ? null : Math.round((dr - old) * 100) / 100 };
+      if (old != null && Math.abs(dr - old) >= BIG_CHANGE) review.push(item); else rows.push(item);
+    });
+
+    const includeBig = body.includeBigChanges === true;
+    const csvRows = includeBig ? rows.concat(review) : rows;
+    const csv = ['url,Domain Rating', ...csvRows.map((r) => `${r.url},${r.newDr}`)].join('\n');
+
+    let preview = null;
+    if (csvRows.length) {
+      try {
+        const svc = require('../services/bulk-refresh');
+        preview = await svc.buildPreview({ tool: 'ahrefs', csvText: csv, csvFilename: 'dr-refresh.csv' });
+      } catch (e) { notes.push(`Preview failed: ${e.message}`); }
+    }
+
+    await audit(ctx, 'integration_run', { integration: used.join('+') || 'none', purpose: 'dr-refresh-preview', scope, requested: domains.length, fetched: Object.keys(results).length, fromCache, apifyKey, costUsd: money(cost) });
+
+    return {
+      provider: used, scope, requested: domains.length, fetched: Object.keys(results).length, fromCache, costUsd: money(cost), tookMs: Date.now() - started,
+      rows, review, notFound, includeBigChanges: includeBig,
+      csv, summary: preview ? preview.summary : null,
+      changes: preview ? (preview.rows || []).filter((r) => r.status === 'will-update').map((r) => ({ url: r.url, changes: r.changes })) : [],
+      notes,
+    };
+}
+
+async function runTrafficRefresh(ctx, body, progress) {
+    const started = Date.now();
+    const scope = ['top', 'stale', 'domains'].includes(body.scope) ? body.scope : 'top';
+    const limit = Math.min(MAX_TRAFFIC_DOMAINS, Math.max(1, parseInt(body.limit, 10) || 20));
+    const knex = strapi.db.connection;
+    await keys.ensureTables();
+    const cols = 'm.id, m.url, m.ahrefs_traffic, m.ahrefs_keywords, m.ahrefs_top_country, m.ahrefs_top_country_share';
+    let listings;
+    if (scope === 'domains') {
+      const doms = [...new Set((Array.isArray(body.domains) ? body.domains : String(body.domains || '').split(/[\s,]+/)).map(normDomain).filter(Boolean))].slice(0, MAX_TRAFFIC_DOMAINS);
+      if (!doms.length) throw Object.assign(new Error('No domains given'), { status: 400 });
+      listings = (await knex.raw(`select ${cols} from marketplaces m where m.status='active' and lower(m.url) = any(?)`, [doms])).rows;
+    } else if (scope === 'stale') {
+      listings = (await knex.raw(`select ${cols} from marketplaces m left join integration_ahrefs_cache c on c.domain = lower(m.url)
+          where m.status='active' order by greatest(coalesce(m.last_ahrefs_refresh_at, m.last_metric_update_at, 'epoch'), coalesce(c.fetched_at, 'epoch')) asc, m.rank_score desc nulls last limit ?`, [limit])).rows;
+    } else {
+      listings = (await knex.raw(`select ${cols} from marketplaces m where m.status='active' order by m.rank_score desc nulls last, m.id limit ?`, [limit])).rows;
+    }
+    const domains = [...new Set(listings.map((l) => normDomain(l.url)))];
+    if (!domains.length) return { fetched: 0, rows: [], review: [], csv: '', summary: null, notes: ['No active listings matched.'] };
+
+    const notes = [];
+    const records = {};
+    const untracked = new Set();
+    let fromCache = 0;
+    if (body.fresh !== true) {
+      const c = await keys.rawGet(domains).catch(() => ({}));
+      Object.entries(c).forEach(([d, v]) => { fromCache += 1; if (v.tracked && v.data) records[d] = v.data; else untracked.add(d); });
+    }
+    const todo = domains.filter((d) => !records[d] && !untracked.has(d));
+    let cost = 0;
+    let apifyKey = null;
+    if (todo.length) {
+      progress.stage = 'Apify'; progress.total = todo.length;
+      const a = await apifyTraffic(todo, progress);
+      Object.assign(records, a.records);
+      cost = a.costUsd;
+      apifyKey = a.keyUsed;
+      todo.slice(0, a.done).forEach((d) => { if (!a.records[d]) untracked.add(d); });
+      if (a.reason) notes.push(`Apify stopped after ${a.done} of ${todo.length} domains: ${a.reason}`);
+      if (a.keyUsed && !/^primary/.test(a.keyUsed)) notes.push(`Apify ran on ${a.keyUsed}.`);
+    }
+    if (fromCache) notes.push(`${fromCache} domain${fromCache === 1 ? '' : 's'} answered from the ${keys.CACHE_DAYS}-day cache (no charge). Tick "Ignore cache" to re-fetch.`);
+
+    const byUrl = new Map(listings.map((l) => [normDomain(l.url), l]));
+    const rows = [], review = [], parseIssues = [], rounded = [];
+    const numOrNull = (v) => (v == null ? null : Number(v));
+    domains.forEach((d) => {
+      const it = records[d];
+      if (!it) return;
+      const l = byUrl.get(d);
+      const p = parseAhrefsRecord(it);
+      if (p.parseIssue) parseIssues.push(d);
+      const old = { traffic: numOrNull(l.ahrefs_traffic), keywords: numOrNull(l.ahrefs_keywords), country: l.ahrefs_top_country || null, share: numOrNull(l.ahrefs_top_country_share) };
+      if (p.trafficSource === 'summary') rounded.push(d);
+      const item = { url: l.url, id: l.id, old, next: { traffic: p.traffic, keywords: p.keywords, country: p.country, share: p.share }, month: p.month, trafficSource: p.trafficSource,
+        trafficChangePct: p.traffic != null && old.traffic ? Math.round(((p.traffic - old.traffic) / old.traffic) * 100) : null };
+      const big = p.traffic != null && old.traffic != null && old.traffic >= 1000 && (p.traffic < old.traffic * 0.2 || p.traffic > old.traffic * 5);
+      (big ? review : rows).push(item);
+    });
+
+    const includeBig = body.includeBigChanges === true;
+    const csvRows = (includeBig ? rows.concat(review) : rows).filter((r) => ['traffic', 'keywords', 'country', 'share'].some((f) => r.next[f] != null));
+    const q = (v) => (v == null ? '' : `"${String(v).replace(/"/g, '""')}"`);
+    const csv = ['url,Organic traffic,Organic keywords,Top country,Top country share',
+      ...csvRows.map((r) => [r.url, r.next.traffic ?? '', r.next.keywords ?? '', q(r.next.country), r.next.share ?? ''].join(','))].join('\n');
+
+    let preview = null;
+    if (csvRows.length) {
+      try {
+        const svc = require('../services/bulk-refresh');
+        preview = await svc.buildPreview({ tool: 'ahrefs', csvText: csv, csvFilename: 'traffic-refresh.csv' });
+      } catch (e) { notes.push(`Preview failed: ${e.message}`); }
+    }
+    if (rounded.length) notes.push(`${rounded.length} domain${rounded.length === 1 ? '' : 's'} had a newer Ahrefs month the scraper can't read in full; traffic was taken from the page summary (rounded, e.g. 26.7K) and keywords stay unchanged.`);
+    if (parseIssues.length) notes.push(`${parseIssues.length} tracked domain${parseIssues.length === 1 ? '' : 's'} came back with no readable traffic at all; their traffic/keywords stay unchanged, country is still updated.`);
+
+    await audit(ctx, 'integration_run', { integration: todo.length ? 'apify' : 'cache', purpose: 'traffic-refresh-preview', scope, requested: domains.length, fetched: Object.keys(records).length, untracked: untracked.size, fromCache, apifyKey, costUsd: money(cost) });
+
+    return {
+      scope, requested: domains.length, fetched: Object.keys(records).length, untracked: [...untracked], fromCache, costUsd: money(cost), tookMs: Date.now() - started,
+      rows, review, parseIssues, rounded, includeBigChanges: includeBig, csv, summary: preview ? preview.summary : null, notes,
+    };
+}
+
+// ───────────────────────── background jobs ─────────────────────────
+// Refresh runs can take minutes (2,000 domains ≈ 14 min) while nginx cuts API
+// requests at 120 s, so the panel starts a job and polls it. In-memory, 2 h TTL.
+const JOBS = new Map();
+function startJob(ctx, kind, fn) {
+  for (const [id, j] of JOBS) if (Date.now() - j.startedAt > 2 * 3600 * 1000) JOBS.delete(id);
+  const running = [...JOBS.values()].find((j) => j.kind === kind && j.status === 'running');
+  if (running) throw Object.assign(new Error(`A ${kind} run is already in progress (started ${Math.round((Date.now() - running.startedAt) / 1000)} s ago).`), { status: 409 });
+  const id = crypto.randomBytes(8).toString('hex');
+  const job = { id, kind, status: 'running', startedAt: Date.now(), progress: { stage: 'selecting listings', done: 0, total: 0 }, result: null, error: null, by: ctx.state.user.id };
+  JOBS.set(id, job);
+  const lite = { state: { user: ctx.state.user }, request: { ip: ctx.request.ip, headers: { 'user-agent': ctx.request.headers['user-agent'] } } };
+  fn(lite, job.progress).then((r) => { job.result = r; job.status = 'done'; }).catch((e) => { job.error = e.message; job.status = 'failed'; strapi.log.warn(`[INTEGRATIONS] ${kind} job failed: ${e.message}`); });
+  return job;
+}
+
 module.exports = {
   async list(ctx) {
     if (!requireSuperAdmin(ctx)) return;
@@ -219,6 +495,7 @@ module.exports = {
       ],
       usage: { runs, spend30dUsd: spend30, runs30d: month.length },
       drRefresh: { maxDomains: MAX_DOMAINS, bigChange: BIG_CHANGE, apifyCostPerDomain: APIFY_DR_COST, cacheDays: keys.CACHE_DAYS },
+      trafficRefresh: { maxDomains: MAX_TRAFFIC_DOMAINS, costPerTrackedDomain: APIFY_TRAFFIC_COST },
     });
   },
 
@@ -227,97 +504,6 @@ module.exports = {
     const key = ctx.params.key;
     if (!CHECKS[key]) return ctx.badRequest('Not a testable integration');
     ctx.send(await cached(key, CHECKS[key], true));
-  },
-
-  async drRefresh(ctx) {
-    if (!requireSuperAdmin(ctx)) return;
-    const started = Date.now();
-    const body = ctx.request.body || {};
-    const scope = ['top', 'stale', 'domains'].includes(body.scope) ? body.scope : 'top';
-    const limit = Math.min(MAX_DOMAINS, Math.max(1, parseInt(body.limit, 10) || 20));
-    const provider = ['auto', 'ahrefs', 'apify'].includes(body.provider) ? body.provider : 'auto';
-    const knex = strapi.db.connection;
-
-    let listings;
-    if (scope === 'domains') {
-      const doms = [...new Set((Array.isArray(body.domains) ? body.domains : String(body.domains || '').split(/[\s,]+/)).map(normDomain).filter(Boolean))].slice(0, MAX_DOMAINS);
-      if (!doms.length) return ctx.badRequest('No domains given');
-      listings = (await knex.raw(`select id, url, ahrefs_dr, rank_score, last_ahrefs_refresh_at from marketplaces where status='active' and lower(url) = any(?)`, [doms])).rows;
-    } else if (scope === 'stale') {
-      await keys.ensureTables();
-      listings = (await knex.raw(`select m.id, m.url, m.ahrefs_dr, m.rank_score, m.last_ahrefs_refresh_at from marketplaces m
-          left join integration_dr_cache c on c.domain = lower(m.url)
-          where m.status='active'
-          order by greatest(coalesce(m.last_ahrefs_refresh_at, m.last_metric_update_at, 'epoch'), coalesce(c.fetched_at, 'epoch')) asc, m.rank_score desc nulls last limit ?`, [limit])).rows;
-    } else {
-      listings = (await knex.raw(`select id, url, ahrefs_dr, rank_score, last_ahrefs_refresh_at from marketplaces where status='active' order by rank_score desc nulls last, id limit ?`, [limit])).rows;
-    }
-    const domains = [...new Set(listings.map((l) => normDomain(l.url)))];
-    if (!domains.length) return ctx.send({ provider: null, fetched: 0, rows: [], review: [], csv: '', summary: null, notes: ['No active listings matched.'] });
-
-    const notes = [];
-    let results = {};
-    let used = [];
-    let cost = 0;
-    let fromCache = 0;
-    if (body.fresh !== true) {
-      const c = await keys.cacheGet(domains).catch(() => ({}));
-      Object.entries(c).forEach(([d, v]) => { results[d] = v.dr; });
-      fromCache = Object.keys(c).length;
-      if (fromCache) used.push('cache');
-    }
-    let todo = domains.filter((d) => results[d] === undefined);
-    if (todo.length && provider !== 'apify') {
-      const a = await ahrefsDr(todo);
-      Object.assign(results, a.results);
-      if (Object.keys(a.results).length) { used.push('ahrefs'); await keys.cachePut(a.results, 'ahrefs').catch(() => {}); }
-      if (!a.available) notes.push(`Ahrefs free API unavailable: ${a.reason}.`);
-    }
-    todo = domains.filter((d) => results[d] === undefined);
-    let apifyKey = null;
-    if (todo.length && provider !== 'ahrefs') {
-      const p = await apifyDr(todo);
-      Object.assign(results, p.results);
-      cost += p.costUsd;
-      apifyKey = p.keyUsed;
-      if (Object.keys(p.results).length) { used.push('apify'); await keys.cachePut(p.results, 'apify').catch(() => {}); }
-      if (p.reason) notes.push(`Apify: ${p.reason}`);
-      if (p.keyUsed && !/^primary/.test(p.keyUsed)) notes.push(`Apify ran on ${p.keyUsed} (primary key was rejected).`);
-    }
-    if (fromCache) notes.push(`${fromCache} domain${fromCache === 1 ? '' : 's'} answered from the ${keys.CACHE_DAYS}-day cache (no API call). Tick "Ignore cache" to re-fetch.`);
-
-    const byUrl = new Map(listings.map((l) => [normDomain(l.url), l]));
-    const rows = [], review = [], notFound = [];
-    domains.forEach((d) => {
-      const l = byUrl.get(d);
-      const dr = results[d];
-      if (dr === undefined) { notFound.push(d); return; }
-      const old = l && l.ahrefs_dr != null ? n(l.ahrefs_dr) : null;
-      const item = { url: l ? l.url : d, id: l && l.id, oldDr: old, newDr: dr, change: old == null ? null : Math.round((dr - old) * 100) / 100 };
-      if (old != null && Math.abs(dr - old) >= BIG_CHANGE) review.push(item); else rows.push(item);
-    });
-
-    const includeBig = body.includeBigChanges === true;
-    const csvRows = includeBig ? rows.concat(review) : rows;
-    const csv = ['url,Domain Rating', ...csvRows.map((r) => `${r.url},${r.newDr}`)].join('\n');
-
-    let preview = null;
-    if (csvRows.length) {
-      try {
-        const svc = require('../services/bulk-refresh');
-        preview = await svc.buildPreview({ tool: 'ahrefs', csvText: csv, csvFilename: 'dr-refresh.csv' });
-      } catch (e) { notes.push(`Preview failed: ${e.message}`); }
-    }
-
-    await audit(ctx, 'integration_run', { integration: used.join('+') || 'none', purpose: 'dr-refresh-preview', scope, requested: domains.length, fetched: Object.keys(results).length, fromCache, apifyKey, costUsd: money(cost) });
-
-    ctx.send({
-      provider: used, scope, requested: domains.length, fetched: Object.keys(results).length, fromCache, costUsd: money(cost), tookMs: Date.now() - started,
-      rows, review, notFound, includeBigChanges: includeBig,
-      csv, summary: preview ? preview.summary : null,
-      changes: preview ? (preview.rows || []).filter((r) => r.status === 'will-update').map((r) => ({ url: r.url, changes: r.changes })) : [],
-      notes,
-    });
   },
 
   // ───────────────────────── key management ─────────────────────────
@@ -371,5 +557,32 @@ module.exports = {
     if (!requireSuperAdmin(ctx)) return;
     await keys.resolveAlerts(null, null, ctx.state.user.id, parseInt(ctx.params.id, 10));
     ctx.send({ ok: true });
+  },
+
+
+
+  async drRefresh(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    const body = ctx.request.body || {};
+    try {
+      if (body.async === true) { const j = startJob(ctx, 'dr-refresh', (c, p) => runDrRefresh(c, body, p)); return ctx.send({ jobId: j.id }); }
+      ctx.send(await runDrRefresh(ctx, body, {}));
+    } catch (e) { ctx.status = e.status || 500; ctx.body = { error: { status: ctx.status, message: e.message } }; }
+  },
+
+  async trafficRefresh(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    const body = ctx.request.body || {};
+    try {
+      if (body.async === true) { const j = startJob(ctx, 'traffic-refresh', (c, p) => runTrafficRefresh(c, body, p)); return ctx.send({ jobId: j.id }); }
+      ctx.send(await runTrafficRefresh(ctx, body, {}));
+    } catch (e) { ctx.status = e.status || 500; ctx.body = { error: { status: ctx.status, message: e.message } }; }
+  },
+
+  async jobStatus(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    const j = JOBS.get(String(ctx.params.id));
+    if (!j) return ctx.notFound('Job not found (finished over 2 h ago or the API restarted)');
+    ctx.send({ id: j.id, kind: j.kind, status: j.status, progress: j.progress, elapsedMs: Date.now() - j.startedAt, error: j.error, result: j.status === 'done' ? j.result : null });
   },
 };
