@@ -78,6 +78,7 @@ async function runTriage(opts, adminId) {
         and not exists (select 1 from moderation_checks c where c.pw_id=p.id and c.key='price' and c.ran_at >= ?::timestamptz)
         ${job.onlyUnchecked ? 'and not exists (select 1 from moderation_checks c2 where c2.pw_id=p.id)' : ''}
       order by p.id`, [job.startedAt]));
+  if (!list.length) { await saveJob({ ...job, status: 'done', finishedAt: new Date().toISOString() }); triage = { status: 'done', total: 0, done: 0, failed: 0, finishedAt: Date.now() }; return; }
   triage = { status: 'running', stage: job.paid ? 'fetching traffic' : 'checking', startedAt: Date.parse(job.startedAt), total: list.length, done: 0, failed: 0, by: job.by, resumed: !!opts.resume };
   if (job.paid && list.length) {
     // One bulk traffic pass first (Apify 50/run, DataForSEO 100/call), then every check reads the cache.
@@ -89,7 +90,9 @@ async function runTriage(opts, adminId) {
   const worker = async () => {
     while (i < list.length) {
       const id = list[i++].id;
-      try { await svc.runSiteChecks(id, { paid: false }); } catch (e) { triage.failed += 1; triage.lastError = e.message; }
+      // A single slow site (hanging socket) must not stall the whole job.
+      try { await Promise.race([svc.runSiteChecks(id, { paid: false }), new Promise((_, rej) => setTimeout(() => rej(new Error(`site ${id} timed out`)), 60000))]); }
+      catch (e) { triage.failed += 1; triage.lastError = e.message; }
       triage.done += 1;
     }
   };
