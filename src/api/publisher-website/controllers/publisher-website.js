@@ -1085,6 +1085,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   data: { ...autoChanges, _audit: { source: 'publisher', userId: user.id } }
                 });
                 console.log(`[publisher-website.update] applied live for marketplace ${existing.marketplaceId}: ${Object.keys(autoChanges).join(', ')}`);
+                await strapi.service('api::publisher-website.publisher-website')
+                  .notifyActiveOrdersOfListingChange(existing.marketplaceId, autoChanges);
               } catch (e) {
                 console.error('[publisher-website.update] live field sync failed:', e.message);
               }

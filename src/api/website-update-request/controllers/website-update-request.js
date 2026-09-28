@@ -206,6 +206,12 @@ module.exports = createCoreController('api::website-update-request.website-updat
         return ctx.internalServerError('Failed to update marketplace listing');
       }
 
+      // 2026-09-28: an approved change is live from now on, so anyone with an
+      // order already running on this site is told what moved. Their order is
+      // untouched - it keeps the terms it was placed on.
+      await strapi.service('api::publisher-website.publisher-website')
+        .notifyActiveOrdersOfListingChange(marketplaceId, applyData);
+
       console.log('[WEBSITE UPDATE REQUEST] Marketplace updated successfully (DB query):', {
         id: updatedMarketplace.id,
         url: updatedMarketplace.url,

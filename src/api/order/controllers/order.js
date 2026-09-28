@@ -702,6 +702,11 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
             only_with_us: marketplace.only_with_us,
             blacklist_status: marketplace.blacklist_status,
             sample_post: marketplace.sample_post,
+            // 2026-09-28: the rel attributes are part of what the advertiser
+            // bought. Without them there was no record that a link was sold
+            // un-sponsored, so a later publisher toggle could not be detected.
+            sponsored: marketplace.sponsored,
+            ugc: marketplace.ugc,
             capturedAt: new Date().toISOString()
           };
 
