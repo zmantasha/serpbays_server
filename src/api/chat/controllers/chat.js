@@ -24,7 +24,14 @@ module.exports = {
     // review deadline for delivered orders (auto-approve window)
     let autoApproveAt = null;
     if (order.orderStatus === 'delivered' && order.deliveredDate) { const cfg = await strapi.db.query('api::global-config.global-config').findOne({}); autoApproveAt = new Date(new Date(order.deliveredDate).getTime() + (Math.max(1, parseInt(cfg?.autoApproveDays, 10) || 5)) * 86400000); }
-    ctx.body = { data: { orderId: order.id, status: order.orderStatus, events: out, autoApproveAt, dueAt: order.acceptedDate && order.websiteTat ? new Date(new Date(order.acceptedDate).getTime() + Number(order.websiteTat) * 86400000) : null } };
+    // delivery deadline. websiteTat is stored in HOURS (the order controller
+    // writes `marketplace.tat * 24` on create), so this multiplies by an hour.
+    // It used to multiply by a day, which turned a 7-day TAT into "due in 5
+    // months" in the chat header. (2026-09-28)
+    const dueAt = order.acceptedDate && order.websiteTat
+      ? new Date(new Date(order.acceptedDate).getTime() + Number(order.websiteTat) * 3600000)
+      : null;
+    ctx.body = { data: { orderId: order.id, status: order.orderStatus, events: out, autoApproveAt, dueAt } };
   },
 
   /** POST /chat/order/:orderId/read — mark the other side's messages read; tell them (read receipt). */
