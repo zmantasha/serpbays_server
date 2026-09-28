@@ -938,61 +938,154 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
           const marketplaceListing = await strapi.entityService.findOne('api::marketplace.marketplace', existing.marketplaceId);
 
           if (marketplaceListing) {
-            const fieldMap = {
-              generalGuestPostPrice: 'price',
-              generalLinkInsertionPrice: 'link_insertion_price',
-              casinoGuestPostPrice: 'adv_casino_pricing',
-              casinoLinkInsertionPrice: 'adv_li_casino_pricing',
-              cryptoGuestPostPrice: 'adv_crypto_pricing',
-              cryptoLinkInsertionPrice: 'adv_li_crypto_pricing',
-              cbdGuestPostPrice: 'adv_cbd_pricing',
-              cbdLinkInsertionPrice: 'adv_li_cbd_pricing',
-              datingGuestPostPrice: 'adv_dating_pricing',
-              datingLinkInsertionPrice: 'adv_li_dating_pricing',
-              expectedTATHours: 'tat',
-              minWordCount: 'min_word_count',
-              backlinkType: 'backlink_type',
-              backlinkValidity: 'backlink_validity',
-              countries: 'countries',
-              language: 'language',
-              category: 'category',
-              guidelines: 'guidelines',
-              description: 'description',
-              publicationLocation: 'publication_location',
-              sponsored: 'sponsored',
-              ugc: 'ugc',
-              copywritingPrice: 'publisher_writing_price'
+            // ────────────────────────────────────────────────────────────
+            // What a publisher edit does to a LIVE listing (2026-09-28).
+            //
+            // Before: every mapped field that "differed" went into one pending
+            // request, and that request held ALL of them hostage until an admin
+            // acted. Two comparisons were also broken, so nearly every request
+            // carried phantom changes:
+            //   - expectedTATHours is stored in HOURS, marketplace.tat in DAYS,
+            //     and they were compared raw (168 !== 7), so `tat` and the
+            //     derived `placement_speed` appeared in 2,765 of 2,767 requests
+            //     without anything having changed.
+            //   - backlinkValidity is 'lifetime' here and 'Lifetime' there, so
+            //     it appeared in 2,761 of them on capitalisation alone.
+            // The queue became noise: 2,008 approved vs 3 rejected.
+            //
+            // Now each changed field is judged on its own. Descriptive fields
+            // go live immediately; price, and anything that downgrades what the
+            // buyer is paying for, still waits for review.
+            // ────────────────────────────────────────────────────────────
+            const VALIDITY_RANK = { one_year: 1, three_years: 3, five_years: 5, lifetime: 99 };
+            // marketplace.backlink_validity is a free string and holds several
+            // spellings ('Lifetime', 'lifetime', '1 Year', 'one_year'), so both
+            // sides are reduced to one key before they are compared.
+            const validityKey = (v) => {
+              const k = String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (k === 'lifetime') return 'lifetime';
+              if (k === '1year' || k === 'oneyear') return 'one_year';
+              if (k === '3years' || k === 'threeyears') return 'three_years';
+              if (k === '5years' || k === 'fiveyears') return 'five_years';
+              return k;
+            };
+            // ...and written back in the spelling the marketplace already uses,
+            // so publisher edits stop adding new variants to that column.
+            const VALIDITY_LABEL = { one_year: '1 Year', three_years: '3 Years', five_years: '5 Years', lifetime: 'Lifetime' };
+
+            // publisherField -> how it maps onto the live listing.
+            //   to      : marketplace column
+            //   review  : true = always needs an admin
+            //             fn   = needs an admin only in this direction
+            //             absent/false = applies immediately
+            //   forward : publisher value -> marketplace value (default: as-is)
+            //   compare : value -> comparable form (default: the forward value)
+            const FIELD_RULES = {
+              // Price is the commercial term of the listing - always reviewed.
+              generalGuestPostPrice:     { to: 'price', review: true },
+              generalLinkInsertionPrice: { to: 'link_insertion_price', review: true },
+              casinoGuestPostPrice:      { to: 'adv_casino_pricing', review: true },
+              casinoLinkInsertionPrice:  { to: 'adv_li_casino_pricing', review: true },
+              cryptoGuestPostPrice:      { to: 'adv_crypto_pricing', review: true },
+              cryptoLinkInsertionPrice:  { to: 'adv_li_crypto_pricing', review: true },
+              cbdGuestPostPrice:         { to: 'adv_cbd_pricing', review: true },
+              cbdLinkInsertionPrice:     { to: 'adv_li_cbd_pricing', review: true },
+              datingGuestPostPrice:      { to: 'adv_dating_pricing', review: true },
+              datingLinkInsertionPrice:  { to: 'adv_li_dating_pricing', review: true },
+              copywritingPrice:          { to: 'publisher_writing_price', review: true },
+
+              // Category drives discovery and pricing tiers.
+              category:                  { to: 'category', review: true },
+
+              // Directional: only a downgrade of the delivered link is reviewed.
+              expectedTATHours: {
+                to: 'tat',
+                forward: (v) => Math.ceil((Number(v) || 0) / 24),
+                review: (next, prev) => Number(next) > Number(prev),   // slower
+              },
+              allowedLinks: {
+                to: 'dofollow_link',
+                review: (next, prev) => Number(next) < Number(prev),   // fewer links
+              },
+              backlinkType: {
+                to: 'backlink_type',
+                review: (next) => next === 'No follow',
+              },
+              backlinkValidity: {
+                to: 'backlink_validity',
+                forward: (v) => VALIDITY_LABEL[validityKey(v)] || v,
+                compare: (v) => validityKey(v),
+                review: (next, prev) => (VALIDITY_RANK[validityKey(next)] || 0) < (VALIDITY_RANK[validityKey(prev)] || 0),
+              },
+              sponsored: { to: 'sponsored', review: (next) => next === true },
+              ugc:       { to: 'ugc',       review: (next) => next === true },
+
+              // Descriptive only - these go live straight away.
+              minWordCount:        { to: 'min_word_count' },
+              guidelines:          { to: 'guidelines' },
+              description:         { to: 'description' },
+              publicationLocation: { to: 'publication_location' },
+              countries:           { to: 'countries' },
+              language:            { to: 'language' },
             };
 
-            const changes = {};
-            const baseSnapshot = {};
+            const comparable = (value) => {
+              if (Array.isArray(value)) return JSON.stringify([...value].sort());
+              if (value && typeof value === 'object') return JSON.stringify(value);
+              if (typeof value === 'string') return value.trim();
+              return value;
+            };
 
-            Object.entries(fieldMap).forEach(([publisherField, marketplaceField]) => {
-              const publisherValue = updated[publisherField];
-              const liveValue = marketplaceListing[marketplaceField];
+            const changes = {};        // -> pending request (admin decides)
+            const baseSnapshot = {};   // what those fields look like today
+            const autoChanges = {};    // -> marketplace right now
 
-              const normalise = (value) => {
-                if (Array.isArray(value)) {
-                  return JSON.stringify([...value].sort());
-                }
-                if (typeof value === 'object' && value !== null) {
-                  return JSON.stringify(value);
-                }
-                return value;
-              };
+            Object.entries(FIELD_RULES).forEach(([publisherField, rule]) => {
+              if (!Object.prototype.hasOwnProperty.call(updated, publisherField)) return;
 
-              if (normalise(publisherValue) !== normalise(liveValue)) {
-                baseSnapshot[marketplaceField] = liveValue;
-                changes[marketplaceField] = publisherField === 'expectedTATHours'
-                  ? Math.ceil((publisherValue || 0) / 24)
-                  : publisherValue;
+              const forward = rule.forward || ((v) => v);
+              // `forward` converts the publisher's value into the marketplace's
+              // units; the live value is ALREADY in those units, so both the
+              // comparison and the direction check work on forwarded-vs-live.
+              // (Running forward() over the live value too turned 7 days into
+              // ceil(7/24)=1 and made every TAT look changed.)
+              const sameAs = rule.compare || comparable;
+
+              const nextValue = forward(updated[publisherField]);
+              const liveValue = marketplaceListing[rule.to];
+
+              if (sameAs(nextValue) === sameAs(liveValue)) return;
+
+              const needsReview = typeof rule.review === 'function'
+                ? rule.review(nextValue, liveValue)
+                : rule.review === true;
+
+              if (needsReview) {
+                baseSnapshot[rule.to] = liveValue;
+                changes[rule.to] = nextValue;
+              } else {
+                autoChanges[rule.to] = nextValue;
               }
             });
 
+            // placement_speed is derived from tat, so it travels with it.
+            const speedFor = (days) => (days <= 3 ? 'Fast' : days <= 7 ? 'Normal' : 'Slow');
             if (Object.prototype.hasOwnProperty.call(changes, 'tat')) {
-              const tatDays = changes.tat || 0;
               baseSnapshot.placement_speed = marketplaceListing.placement_speed;
-              changes.placement_speed = tatDays <= 3 ? 'Fast' : tatDays <= 7 ? 'Normal' : 'Slow';
+              changes.placement_speed = speedFor(changes.tat || 0);
+            } else if (Object.prototype.hasOwnProperty.call(autoChanges, 'tat')) {
+              autoChanges.placement_speed = speedFor(autoChanges.tat || 0);
+            }
+
+            if (Object.keys(autoChanges).length > 0) {
+              try {
+                await strapi.entityService.update('api::marketplace.marketplace', existing.marketplaceId, {
+                  data: { ...autoChanges, _audit: { source: 'publisher', userId: user.id } }
+                });
+                console.log(`[publisher-website.update] applied live for marketplace ${existing.marketplaceId}: ${Object.keys(autoChanges).join(', ')}`);
+              } catch (e) {
+                console.error('[publisher-website.update] live field sync failed:', e.message);
+              }
             }
 
             if (Object.keys(changes).length > 0) {
@@ -1030,7 +1123,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                   }
                 });
               }
-            } else {
+            } else if (Object.keys(autoChanges).length === 0) {
               console.log('No tracked marketplace fields were changed by publisher update.');
             }
           }
