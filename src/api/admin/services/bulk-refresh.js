@@ -552,6 +552,9 @@ async function commitCsv({ tool, csvText, csvFilename = null, label = null, acto
           {
             data: {
               ...row.next,
+              // Keeps the website's "metrics updated" date in step with the refresh.
+              metrics_last_updated: now,
+              metrics_update_method: 'bulk_import',
               _skipMarketplaceSync: true,
             },
           }

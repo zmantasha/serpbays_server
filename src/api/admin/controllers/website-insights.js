@@ -23,6 +23,9 @@ function pj(v) { if (v == null) return v; if (typeof v === 'string') { try { ret
 function band(dr) { const d = n(dr); return d >= 60 ? '60+' : d >= 40 ? '40–59' : d >= 20 ? '20–39' : '<20'; }
 function bandWhere(dr) { const d = n(dr); return d >= 60 ? 'ahrefs_dr >= 60' : d >= 40 ? 'ahrefs_dr >= 40 and ahrefs_dr < 60' : d >= 20 ? 'ahrefs_dr >= 20 and ahrefs_dr < 40' : '(ahrefs_dr < 20 or ahrefs_dr is null)'; }
 
+// Newest of several optional dates (metrics can be refreshed on the website or on its listing).
+const latestDate = (...ds) => ds.filter(Boolean).map((d) => new Date(d)).filter((d) => !isNaN(d)).sort((x, y) => y - x)[0] || null;
+
 module.exports = {
   async insight(ctx) {
     const started = Date.now();
@@ -144,7 +147,7 @@ module.exports = {
         category: pj(site.category), countries: pj(site.countries), language: pj(site.language), tatHours: n(site.expected_tat_hours), description: site.description, guidelines: site.guidelines,
         minWords: n(site.min_word_count), allowedLinks: n(site.allowed_links), backlinkType: site.backlink_type, backlinkValidity: site.backlink_validity, sponsored: !!site.sponsored, ugc: !!site.ugc, isPr: !!site.is_pr_site, samplePosts: pj(site.sample_posts),
         gscVerified: !!site.gsc_verified, verificationMethod: site.verification_method, resellerCode: site.reseller_code,
-        metrics: { dr: site.ahrefs_dr, traffic: site.ahrefs_traffic, rank: site.ahrefs_rank, keywords: site.ahrefs_keywords, topCountry: site.ahrefs_top_country || null, topCountryShare: site.ahrefs_top_country_share != null ? Number(site.ahrefs_top_country_share) : null, refDomains: site.ahrefs_referring_domain, da: site.moz_da, spam: site.moz_spam_score, semrushAs: site.semrush_authority_score, semrushTraffic: site.semrush_traffic, updatedAt: site.metrics_last_updated, ageDays: daysSince(site.metrics_last_updated) },
+        metrics: { dr: site.ahrefs_dr, traffic: site.ahrefs_traffic, rank: site.ahrefs_rank, keywords: site.ahrefs_keywords, topCountry: site.ahrefs_top_country || null, topCountryShare: site.ahrefs_top_country_share != null ? Number(site.ahrefs_top_country_share) : null, refDomains: site.ahrefs_referring_domain, da: site.moz_da, spam: site.moz_spam_score, semrushAs: site.semrush_authority_score, semrushTraffic: site.semrush_traffic, updatedAt: latestDate(site.metrics_last_updated, listing && listing.last_ahrefs_refresh_at, listing && listing.last_metric_update_at), ageDays: daysSince(latestDate(site.metrics_last_updated, listing && listing.last_ahrefs_refresh_at, listing && listing.last_metric_update_at)) },
         prices: { guestPost: n(site.general_guest_post_price), linkInsertion: n(site.general_link_insertion_price),
           casino: { accepted: !!site.casino_accepted, gp: n(site.casino_guest_post_price), li: n(site.casino_link_insertion_price) }, crypto: { accepted: !!site.crypto_accepted, gp: n(site.crypto_guest_post_price), li: n(site.crypto_link_insertion_price) },
           cbd: { accepted: !!site.cbd_accepted, gp: n(site.cbd_guest_post_price), li: n(site.cbd_link_insertion_price) }, dating: { accepted: !!site.dating_accepted, gp: n(site.dating_guest_post_price), li: n(site.dating_link_insertion_price) },
