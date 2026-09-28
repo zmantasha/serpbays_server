@@ -191,6 +191,10 @@ async function lookupRowsByCanonicalUrls(canonicalUrls) {
   while (true) {
     const rows = await strapi.db.query('api::marketplace.marketplace').findMany({
       where: { status: 'active' },
+      // Stable order is required for offset paging: without it Postgres may
+      // return rows updated mid-scan on two pages or none, and those listings
+      // show up as 'unmatched URL' (seen on 2026-09-28 during a 26k DR refresh).
+      orderBy: { id: 'asc' },
       limit: pageSize,
       offset: (page - 1) * pageSize,
     });
@@ -226,6 +230,7 @@ async function lookupRowsByCanonicalUrls(canonicalUrls) {
           url: { $in: matchedUrls },
           submissionStatus: 'approved',
         },
+        orderBy: { id: 'asc' },
         limit: pageSize,
         offset: (page - 1) * pageSize,
       });
@@ -247,6 +252,7 @@ async function lookupRowsByCanonicalUrls(canonicalUrls) {
   while (true) {
     const rows = await strapi.db.query('api::publisher-website.publisher-website').findMany({
       where: { submissionStatus: 'approval_pending' },
+      orderBy: { id: 'asc' },
       limit: pageSize,
       offset: (page - 1) * pageSize,
     });
@@ -291,7 +297,11 @@ async function lookupRowsByCanonicalUrls(canonicalUrls) {
   }
   for (const [canon, pw] of pendingByCanon) {
     if (!map.has(canon)) {
-      map.set(canon, { marketplace: null, publisherWebsite: pw });
+      // A live listing whose publisher-website is back in approval_pending
+      // (re-submitted / edited) still shows metrics to buyers, so write the
+      // marketplace row too. Without this, ~1.3k live listings never got
+      // refreshed metrics (found 2026-09-28).
+      map.set(canon, { marketplace: matchedMarketplaces.get(canon) || null, publisherWebsite: pw });
     }
   }
 
