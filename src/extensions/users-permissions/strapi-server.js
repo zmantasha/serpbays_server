@@ -285,6 +285,13 @@ module.exports = (plugin) => {
       if (!params?.data?.email || !result?.id) return;
 
       try {
+        // 2026-09-28: only touch rows whose cached copy is actually stale.
+        // `params.data.email` being present does NOT mean the email changed -
+        // the Clerk sync sends it on every login - so this used to rewrite
+        // every marketplace row the publisher owns on each sync (23,582 rows
+        // x ~8 syncs per login for a bulk publisher), all writing back the
+        // identical value. The extra predicate is index-backed
+        // (idx_mp_publisher_email), so the unchanged case now writes nothing.
         const updatedCount = await strapi.db.connection('marketplaces')
           .whereIn(
             'id',
@@ -292,6 +299,10 @@ module.exports = (plugin) => {
               .select('marketplace_id')
               .where({ user_id: result.id })
           )
+          .andWhere((qb) => {
+            // NULL is still back-filled: `<>` alone would never match it.
+            qb.whereNull('publisher_email').orWhereNot('publisher_email', result.email);
+          })
           .update({ publisher_email: result.email });
 
         if (updatedCount > 0) {
