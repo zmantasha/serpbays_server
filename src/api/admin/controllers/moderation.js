@@ -56,13 +56,30 @@ async function publisherOfPw(pwId) {
 }
 
 // ───────────────────────── background triage job ─────────────────────────
+// The job survives API restarts (other deploys restart pm2 often): its start time
+// is stored in moderation_settings('triage_job'); every site whose checks ran after
+// that time counts as done, and the moderationTriageResume cron picks it back up.
 let triage = null;
+async function saveJob(job) {
+  await knex().raw(`insert into moderation_settings (key, value, updated_at) values ('triage_job', ?::jsonb, now())
+      on conflict (key) do update set value=excluded.value, updated_at=now()`, [JSON.stringify(job)]);
+}
+async function loadJob() {
+  const r = rows(await knex().raw("select value from moderation_settings where key='triage_job'"))[0];
+  return r ? (typeof r.value === 'string' ? JSON.parse(r.value) : r.value) : null;
+}
 async function runTriage(opts, adminId) {
+  await svc.ensureTables();
+  const job = opts.resume ? await loadJob() : { startedAt: new Date().toISOString(), paid: !!opts.paid, onlyUnchecked: !!opts.onlyUnchecked, by: adminId, status: 'running' };
+  if (!job || job.status !== 'running') return;
+  if (!opts.resume) await saveJob(job);
   const list = rows(await knex().raw(`select p.id, p.url from publisher_websites p
-      ${opts.onlyUnchecked ? 'left join (select distinct pw_id from moderation_checks) c on c.pw_id=p.id' : ''}
-      where p.submission_status in ('approval_pending','pending_verification') ${opts.onlyUnchecked ? 'and c.pw_id is null' : ''} order by p.id`));
-  triage = { status: 'running', stage: opts.paid ? 'fetching traffic' : 'checking', startedAt: Date.now(), total: list.length, done: 0, failed: 0, by: adminId };
-  if (opts.paid) {
+      where p.submission_status in ('approval_pending','pending_verification')
+        and not exists (select 1 from moderation_checks c where c.pw_id=p.id and c.key='price' and c.ran_at >= ?::timestamptz)
+        ${job.onlyUnchecked ? 'and not exists (select 1 from moderation_checks c2 where c2.pw_id=p.id)' : ''}
+      order by p.id`, [job.startedAt]));
+  triage = { status: 'running', stage: job.paid ? 'fetching traffic' : 'checking', startedAt: Date.parse(job.startedAt), total: list.length, done: 0, failed: 0, by: job.by, resumed: !!opts.resume };
+  if (job.paid && list.length) {
     // One bulk traffic pass first (Apify 50/run, DataForSEO 100/call), then every check reads the cache.
     const r = await svc.fetchTraffic(list.map((x) => x.url), { paid: true }).catch((e) => { strapi.log.error(`[MODERATION] traffic prefetch failed: ${e.stack || e.message}`); return { byDomain: {}, apifyNote: e.message }; });
     triage.traffic = { measured: Object.keys(r.byDomain).length, ahrefs: Object.values(r.byDomain).filter((v) => v.source === 'ahrefs').length, dataforseo: Object.values(r.byDomain).filter((v) => v.source === 'dataforseo').length, apifyNote: r.apifyNote || null };
@@ -79,6 +96,14 @@ async function runTriage(opts, adminId) {
   await Promise.all(Array.from({ length: 8 }, worker));
   triage.status = 'done';
   triage.finishedAt = Date.now();
+  await saveJob({ ...job, status: 'done', finishedAt: new Date().toISOString() });
+}
+async function resumeTriage() {
+  if (triage && triage.status === 'running') return false;
+  const job = await loadJob().catch(() => null);
+  if (!job || job.status !== 'running') return false;
+  runTriage({ resume: true }, job.by).catch((e) => { triage = { ...(triage || {}), status: 'failed', error: e.message }; });
+  return true;
 }
 
 module.exports = {
@@ -367,4 +392,7 @@ module.exports = {
       ctx.send({ settings: s });
     } catch (e) { fail(ctx, e); }
   },
+
+  // used by the moderationTriageResume cron
+  resumeTriage,
 };

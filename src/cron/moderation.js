@@ -50,6 +50,14 @@ module.exports = {
     options: { rule: '*/10 * * * *' },
   },
 
+  moderationTriageResume: {
+    task: async ({ strapi }) => {
+      try { const resumed = await strapi.controller('api::admin.moderation').resumeTriage(); if (resumed) console.log('[Moderation Cron] resumed an interrupted backlog triage'); }
+      catch (e) { console.error('[Moderation Cron] triage resume failed:', e.message); }
+    },
+    options: { rule: '*/5 * * * *' },
+  },
+
   moderationFlags: {
     task: async () => {
       try { const r = await require('../api/admin/services/moderation').scanFlags(2); if (r.dr || r.traffic) console.log(`[Moderation Cron] flags opened: DR ${r.dr}, traffic ${r.traffic}`); }
