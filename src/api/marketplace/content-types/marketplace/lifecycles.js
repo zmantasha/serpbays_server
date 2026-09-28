@@ -45,7 +45,28 @@ const TRACKED_METRIC_FIELDS = [
   'spam_score',
 ];
 
-const TRACKED_FIELDS = [...TRACKED_PRICE_FIELDS, ...TRACKED_METRIC_FIELDS];
+// 2026-09-28: the terms a listing is actually sold on. Until now only prices
+// and metrics were audited, so when publisher edits stopped going through
+// moderation there was no record of who changed a link's type, count, validity
+// or turnaround - exactly the fields a buyer would dispute.
+const TRACKED_TERM_FIELDS = [
+  'tat',
+  'placement_speed',
+  'dofollow_link',
+  'backlink_type',
+  'backlink_validity',
+  'sponsored',
+  'ugc',
+  'min_word_count',
+  'guidelines',
+  'description',
+  'publication_location',
+  'category',
+  'language',
+  'countries',
+];
+
+const TRACKED_FIELDS = [...TRACKED_PRICE_FIELDS, ...TRACKED_METRIC_FIELDS, ...TRACKED_TERM_FIELDS];
 
 // Helper function to calculate placement speed based on TAT
 function calculatePlacementSpeed(tat) {
