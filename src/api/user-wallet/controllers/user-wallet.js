@@ -278,22 +278,36 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       let completedOrders = [];
       let transactionCount = 0;
 
-      // Get all completed/approved orders where this user was the publisher
+      // Get all completed/approved orders where this user was the publisher.
+      // 2026-09-28: match the way /orders/my-orders does - the publisher FK OR
+      // the order's snapshotted publisher email - so an order that only ever
+      // carried the snapshot is not silently dropped from lifetime earnings.
       const allCompletedRawOrders = await strapi.db.query('api::order.order').findMany({
         where: {
-          publisher: userId,
-          orderStatus: { $in: ['approved', 'completed'] }
+          $and: [
+            { orderStatus: { $in: ['approved', 'completed'] } },
+            {
+              $or: [
+                { publisher: userId },
+                ...(ctx.state?.user?.email ? [{ websitePublisherEmail: ctx.state.user.email }] : [])
+              ]
+            }
+          ]
         }
       });
       const completedOrderIds = new Set(allCompletedRawOrders.map(order => order.id));
       console.log(`[Unified] Found ${completedOrderIds.size} completed orders where user ${userId} was publisher`);
 
       if (completedOrderIds.size > 0) {
-        // Get 'escrow_release' transactions for completed orders
+        // Credit rows for those orders. 2026-09-28: this used to look for
+        // 'escrow_release', which is the ADVERTISER-side row - completeOrder()
+        // credits the publisher with a 'deposit'. So this sum was structurally
+        // 0 for every publisher and Total Earnings always rendered $0. The
+        // order filter stays, so wallet top-ups (no order link) never count.
         const allEscrowReleaseTransactions = await strapi.entityService.findMany('api::transaction.transaction', {
           filters: {
             user_wallet: { id: wallet.id },
-            type: 'escrow_release',
+            type: 'deposit',
             order: { id: { $in: Array.from(completedOrderIds) } }
           },
           // Only `order.id` is read below (the dedup map keys on it).
