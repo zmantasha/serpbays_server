@@ -9,11 +9,12 @@
  * so nothing breaks if the table is empty.
  *
  * Apify pool: slot 0 = primary, slots 1..7 = backups.
- *   - A key Apify REJECTS (401/403: revoked, deleted, expired) is marked invalid,
- *     an alert is raised and the next key takes over.
- *   - Reaching the monthly budget is NOT a reason to switch keys: the budget
- *     guard stops Apify at 90 % of the active key's monthly limit, raises an
- *     alert and waits for an admin (who can top up, or make another key primary).
+ *   Backups are tried least-recently-used first (never-used first).
+ *   - A key Apify REJECTS (401/403: revoked, deleted, expired) → next key, alert.
+ *   - Budget guard (90 % of the key's monthly limit) or 402 → switch only to a
+ *     backup on a PAID Apify plan; free-plan backups are never used to get past
+ *     a spending limit. No paid backup → Apify pauses and an alert is raised.
+ *   - The backup that does the work is promoted to primary.
  *
  * DR cache (`integration_dr_cache`): every fetched DR is remembered for 30 days
  * so the same domain is not paid for twice.
@@ -214,55 +215,87 @@ async function secretFor(provider, envName) {
   return process.env[envName] ? { secret: process.env[envName], id: null, source: 'env' } : null;
 }
 
-/** Apify pool in failover order. The .env token stands in as primary when no panel primary exists. */
+/**
+ * Apify pool in failover order: primary first, then backups least-recently-used
+ * first (never-used keys before anything else). The .env token stands in as
+ * primary when no panel primary exists.
+ */
 async function apifyPool() {
   let keys = [];
   try { keys = await listKeys('apify'); } catch (e) { strapi.log.warn(`[INTEGRATIONS] key store unavailable: ${e.message}`); }
   const pool = [];
-  if (!keys.some((k) => k.slot === 0) && process.env.APIFY_TOKEN) pool.push({ id: null, slot: 0, source: 'env', secret: process.env.APIFY_TOKEN, status: 'unchecked', disabled: false, label: 'server .env (APIFY_TOKEN)' });
+  if (!keys.some((k) => k.slot === 0) && process.env.APIFY_TOKEN) pool.push({ id: null, slot: 0, source: 'env', secret: process.env.APIFY_TOKEN, status: 'unchecked', disabled: false, label: 'server .env (APIFY_TOKEN)', lastUsedAt: null });
   keys.forEach((k) => {
     let secret = null;
     try { secret = decrypt(k.secret_enc); } catch (e) { /* unusable */ }
-    pool.push({ id: k.id, slot: k.slot, source: 'panel', secret, status: secret ? k.status : 'error', disabled: k.disabled, label: k.label });
+    pool.push({ id: k.id, slot: k.slot, source: 'panel', secret, status: secret ? k.status : 'error', disabled: k.disabled, label: k.label, lastUsedAt: k.last_used_at ? new Date(k.last_used_at).getTime() : null });
   });
-  return pool.sort((a, b) => a.slot - b.slot);
+  const primary = pool.filter((k) => k.slot === 0);
+  const backups = pool.filter((k) => k.slot > 0).sort((a, b) => (a.lastUsedAt == null ? -1 : a.lastUsedAt) - (b.lastUsedAt == null ? -1 : b.lastUsedAt) || a.slot - b.slot);
+  return [...primary, ...backups];
 }
 
 function keyName(k) { return k.slot === 0 ? `primary key${k.source === 'env' ? ' (.env)' : ''}` : `backup ${k.slot}${k.label ? ` "${k.label}"` : ''}`; }
+const isPaid = (plan) => !!plan && String(plan).toUpperCase() !== 'FREE';
+
+/** Move a backup into slot 0. The old panel primary takes the backup's slot; an .env primary is simply shadowed. */
+async function promoteKey(id) {
+  await knex().transaction(async (trx) => {
+    const k = rows(await trx.raw('select slot, provider from integration_keys where id=? for update', [id]))[0];
+    if (!k || k.slot === 0) return;
+    await trx.raw('update integration_keys set slot=-1 where id=?', [id]);
+    await trx.raw('update integration_keys set slot=?, updated_at=now() where provider=? and slot=0', [k.slot, k.provider]);
+    await trx.raw('update integration_keys set slot=0, updated_at=now() where id=?', [id]);
+  });
+}
 
 /**
- * Run `fn(token, maxChargeUsd)` on the first usable Apify key.
- * fn must return { status, ok, ... } of the Apify HTTP call.
+ * Run `fn(token, maxChargeUsd)` on the first usable Apify key and return its result.
+ *   - key rejected (401/403)             → next key (LRU order), alert
+ *   - key at budget guard / 402          → switch only to a backup on a PAID Apify plan;
+ *                                          free-plan backups are never used to get past
+ *                                          a spending limit (Apify terms: one free account
+ *                                          per user). No paid backup → pause + alert.
+ * A backup that ends up doing the work is promoted to primary.
  */
 async function withApify(estCostUsd, fn) {
   const pool = (await apifyPool()).filter((k) => !k.disabled && k.secret && k.status !== 'invalid');
   if (!pool.length) return { ok: false, reason: 'No usable Apify key (all missing, disabled or rejected).' };
+  let limitHit = null;
+  const skippedFree = [];
   for (const k of pool) {
     const p = await probe('apify', k.secret);
     if (k.id) await saveProbe(k.id, p);
     if (p.status === 'invalid') {
-      await raiseAlert('apify', 'key_invalid', k.id, `Apify rejected the ${keyName(k)}. ${pool.indexOf(k) < pool.length - 1 ? 'Switched to the next key.' : 'No backup left.'} Replace it on the External APIs page.`);
+      await raiseAlert('apify', 'key_invalid', k.id, `Apify rejected the ${keyName(k)}. Replace or remove it on the External APIs page.`);
       continue;
     }
     if (!p.ok) return { ok: false, reason: `Apify check failed on the ${keyName(k)}: ${p.detail}` };
+    if (limitHit && !isPaid(p.plan)) { skippedFree.push(keyName(k)); continue; }
     const room = p.limitUsd ? p.limitUsd * BUDGET_GUARD - p.usedUsd : Infinity;
     if (room < estCostUsd) {
-      await raiseAlert('apify', 'budget_guard', k.id, `Apify budget guard: the ${keyName(k)} (account ${p.accountUsername || '?'}) has used $${p.usedUsd} of $${p.limitUsd} this month. Runs are paused at ${BUDGET_GUARD * 100}% until the budget is raised or another key is made primary.`);
-      return { ok: false, reason: `Budget guard: $${p.usedUsd} of $${p.limitUsd} used on the ${keyName(k)}; this run needs ~$${money(estCostUsd)}. Apify paused, alert raised.`, guarded: true };
+      if (!limitHit) limitHit = { key: k, p };
+      continue;
     }
     const r = await fn(k.secret, Math.min(estCostUsd + 0.01, room));
     if (r.status === 401 || r.status === 403) {
       if (k.id) await saveProbe(k.id, { ok: false, status: 'invalid', detail: `Apify answered ${r.status} during a run.` });
-      await raiseAlert('apify', 'key_invalid', k.id, `Apify rejected the ${keyName(k)} during a run. Switched to the next key.`);
+      await raiseAlert('apify', 'key_invalid', k.id, `Apify rejected the ${keyName(k)} during a run.`);
       continue;
     }
-    if (r.status === 402) {
-      await raiseAlert('apify', 'budget_guard', k.id, `Apify refused the ${keyName(k)}: monthly usage limit reached.`);
-      return { ok: false, reason: 'Apify monthly limit reached on the active key. Apify paused, alert raised.', guarded: true };
-    }
+    if (r.status === 402) { if (!limitHit) limitHit = { key: k, p }; continue; }
+    const name = keyName(k);
     if (k.id) await knex().raw('update integration_keys set last_used_at=now() where id=?', [k.id]);
-    if (k.slot !== 0) await raiseAlert('apify', 'failover', k.id, `Apify is running on ${keyName(k)} because the primary key was rejected.`);
-    return { ok: true, result: r, keyUsed: keyName(k) };
+    if (k.slot !== 0 && k.id) {
+      await promoteKey(k.id);
+      await raiseAlert('apify', 'failover', k.id, `${name} (account ${p.accountUsername || '?'}, plan ${p.plan || '?'}) is now the primary Apify key because the previous primary was ${limitHit ? 'at its budget limit' : 'rejected'}.`);
+    }
+    return { ok: true, result: r, keyUsed: name };
+  }
+  if (limitHit) {
+    const { key, p } = limitHit;
+    await raiseAlert('apify', 'budget_guard', key.id, `Apify paused: the ${keyName(key)} (account ${p.accountUsername || '?'}) has used $${p.usedUsd} of $${p.limitUsd} this month and no backup on a paid plan is available${skippedFree.length ? ` (${skippedFree.length} free-plan backup${skippedFree.length === 1 ? '' : 's'} not used for limits)` : ''}. Raise the budget, add a paid key, or make a key primary manually.`);
+    return { ok: false, guarded: true, reason: `Budget guard: $${p.usedUsd} of $${p.limitUsd} used on the ${keyName(key)}; no paid backup to switch to. Apify paused, alert raised.` };
   }
   return { ok: false, reason: 'Every Apify key was rejected. Alert raised.' };
 }
