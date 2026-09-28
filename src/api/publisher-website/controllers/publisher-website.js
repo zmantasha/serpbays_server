@@ -981,7 +981,9 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             //   forward : publisher value -> marketplace value (default: as-is)
             //   compare : value -> comparable form (default: the forward value)
             const FIELD_RULES = {
-              // Price is the commercial term of the listing - always reviewed.
+              // Price is the commercial term of the listing - always reviewed. It is
+              // the only always-review field; everything else is judged on the
+              // direction of the change.
               generalGuestPostPrice:     { to: 'price', review: true },
               generalLinkInsertionPrice: { to: 'link_insertion_price', review: true },
               casinoGuestPostPrice:      { to: 'adv_casino_pricing', review: true },
@@ -994,8 +996,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               datingLinkInsertionPrice:  { to: 'adv_li_dating_pricing', review: true },
               copywritingPrice:          { to: 'publisher_writing_price', review: true },
 
-              // Category drives discovery and pricing tiers.
-              category:                  { to: 'category', review: true },
+              // Category is publisher-declared metadata; it applies immediately.
+              category:                  { to: 'category' },
 
               // Directional: only a downgrade of the delivered link is reviewed.
               expectedTATHours: {
