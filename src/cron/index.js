@@ -9,6 +9,7 @@ const marketplaceRanking = require('./marketplace-ranking');
 const sampleRequestExpiry = require('./sample-request-expiry');
 const chatReminders = require('./chat-reminders');
 const ratingVisibility = require('./rating-visibility');
+const moderation = require('./moderation');
 
 module.exports = {
     ...tatUpdater,
@@ -20,4 +21,5 @@ module.exports = {
     ...sampleRequestExpiry,
     ...chatReminders,
     ...ratingVisibility,
+    ...moderation,
 };
