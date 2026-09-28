@@ -49,6 +49,7 @@ const APIFY_TRAFFIC_ACTOR = 'scrapesage~ahrefs-scraper';
 const APIFY_TRAFFIC_COST = 0.005; // per domain Ahrefs tracks; untracked domains are free
 const MAX_TRAFFIC_DOMAINS = 500;
 const TRAFFIC_CHUNK = 50;
+const TRAFFIC_PARALLEL = 4;
 const BIG_CHANGE = 10;
 const CHECK_TTL_MS = 5 * 60 * 1000;
 
@@ -183,20 +184,35 @@ async function apifyTraffic(domains, progress) {
   const records = {};
   let cost = 0;
   let keyUsed = null;
-  for (let k = 0; k < domains.length; k += TRAFFIC_CHUNK) {
-    const chunk = domains.slice(k, k + TRAFFIC_CHUNK);
-    const run = await keys.withApify(chunk.length * APIFY_TRAFFIC_COST, (token, maxCharge) => apifyRunActor(APIFY_TRAFFIC_ACTOR,
-      { domains: chunk, includeHistory: false, includeKeywords: false, includeCountries: true, includeCompetitors: false, maxItems: chunk.length }, token, maxCharge));
-    if (!run.ok) return { reason: run.reason, records, costUsd: money(cost), keyUsed, done: k };
-    keyUsed = run.keyUsed;
-    const r = run.result;
-    if (!r.ok || !Array.isArray(r.body)) return { reason: `Apify run failed (${r.status})`, records, costUsd: money(cost), keyUsed, done: k };
-    const got = new Set();
-    r.body.forEach((it) => { if (it && it.domain) { const d = normDomain(it.domain); records[d] = it; got.add(d); cost += APIFY_TRAFFIC_COST; } });
-    if (progress) progress.done = Math.min(domains.length, k + chunk.length);
-    await keys.rawPut(chunk.map((d) => ({ domain: d, tracked: got.has(d), data: records[d] || null }))).catch((e) => strapi.log.warn(`[INTEGRATIONS] raw cache write failed: ${e.message}`));
+  let reason = null;
+  let done = 0;
+  const processed = [];
+  const chunks = [];
+  for (let k = 0; k < domains.length; k += TRAFFIC_CHUNK) chunks.push(domains.slice(k, k + TRAFFIC_CHUNK));
+  // Up to TRAFFIC_PARALLEL actor runs at once.
+  for (let g = 0; g < chunks.length && !reason; g += TRAFFIC_PARALLEL) {
+    const group = chunks.slice(g, g + TRAFFIC_PARALLEL);
+    const results = await Promise.all(group.map(async (chunk) => {
+      try {
+        const run = await keys.withApify(chunk.length * APIFY_TRAFFIC_COST, (token, maxCharge) => apifyRunActor(APIFY_TRAFFIC_ACTOR,
+          { domains: chunk, includeHistory: false, includeKeywords: false, includeCountries: true, includeCompetitors: false, maxItems: chunk.length }, token, maxCharge));
+        return { chunk, run };
+      } catch (e) { return { chunk, run: { ok: false, reason: e.message } }; }
+    }));
+    for (const { chunk, run } of results) {
+      if (!run.ok) { reason = reason || run.reason; continue; }
+      const r = run.result;
+      if (!r.ok || !Array.isArray(r.body)) { reason = reason || `Apify run failed (${r.status})`; continue; }
+      keyUsed = run.keyUsed;
+      const got = new Set();
+      r.body.forEach((it) => { if (it && it.domain) { const d = normDomain(it.domain); records[d] = it; got.add(d); cost += APIFY_TRAFFIC_COST; } });
+      done += chunk.length;
+      processed.push(...chunk);
+      await keys.rawPut(chunk.map((d) => ({ domain: d, tracked: got.has(d), data: records[d] || null }))).catch((e) => strapi.log.warn(`[INTEGRATIONS] raw cache write failed: ${e.message}`));
+    }
+    if (progress) progress.done = done;
   }
-  return { reason: null, records, costUsd: money(cost), keyUsed, done: domains.length };
+  return { reason, records, costUsd: money(cost), keyUsed, done, processed };
 }
 
 // ───────────────────────── status checks (cached) ─────────────────────────
@@ -236,6 +252,17 @@ const CHECKS = {
     const tail = ` · ${backups} backup key${backups === 1 ? '' : 's'}`;
     if (p.status === 'invalid') return { state: backups ? 'warn' : 'invalid', detail: `Primary token rejected by Apify.${backups ? ' A backup takes over on the next run.' : ''}${tail}` };
     return { state: p.status === 'ok' ? 'ok' : p.status === 'limit' ? 'warn' : p.status, detail: p.detail + tail, usage: p.usedUsd != null ? { usedUsd: p.usedUsd, limitUsd: p.limitUsd } : null };
+  },
+  dataforseo: async () => {
+    if (!process.env.DATAFORSEO_AUTH) return { state: 'missing', detail: 'DATAFORSEO_AUTH is not set on the API server.' };
+    const r = await fetchJson('https://api.dataforseo.com/v3/appendix/user_data', { headers: { Authorization: `Basic ${process.env.DATAFORSEO_AUTH}` } }, 15000);
+    if (r.status === 401 || r.status === 403 || (r.body && r.body.status_code === 40100)) return { state: 'invalid', detail: 'DataForSEO rejected the login.' };
+    const res = r.body && r.body.tasks && r.body.tasks[0] && r.body.tasks[0].result && r.body.tasks[0].result[0];
+    if (!res) return { state: 'error', detail: `Unexpected answer ${r.status}` };
+    const bal = n(res.money && res.money.balance);
+    let today = 0;
+    try { today = await require('../services/moderation').spendToday('dataforseo'); } catch (e) { /* table may not exist yet */ }
+    return { state: bal < 5 ? 'warn' : 'ok', detail: `Account ${res.login || '?'} · balance $${money(bal)} · moderation spend today $${money(today)} (cap $2/day)`, usage: { usedUsd: money(today), limitUsd: 2 } };
   },
   clerk: async () => {
     const key = readAppEnv('CLERK_SECRET_KEY');
@@ -387,7 +414,7 @@ async function runTrafficRefresh(ctx, body, progress) {
       Object.assign(records, a.records);
       cost = a.costUsd;
       apifyKey = a.keyUsed;
-      todo.slice(0, a.done).forEach((d) => { if (!a.records[d]) untracked.add(d); });
+      (a.processed || todo.slice(0, a.done)).forEach((d) => { if (!a.records[d]) untracked.add(d); });
       if (a.reason) notes.push(`Apify stopped after ${a.done} of ${todo.length} domains: ${a.reason}`);
       if (a.keyUsed && !/^primary/.test(a.keyUsed)) notes.push(`Apify ran on ${a.keyUsed}.`);
     }
@@ -455,10 +482,11 @@ module.exports = {
     if (!requireSuperAdmin(ctx)) return;
     const force = ctx.query.refresh === '1';
     const knex = strapi.db.connection;
-    const [ahrefs, apify, clerk, gw, runsR, geoR] = await Promise.all([
+    const [ahrefs, apify, clerk, gw, runsR, geoR, dfs] = await Promise.all([
       cached('ahrefs', CHECKS.ahrefs, force), cached('apify', CHECKS.apify, force), cached('clerk', CHECKS.clerk, force), gatewayStats().catch(() => ({})),
       knex.raw(`select a.id, a.created_at, a.details, coalesce(u.username,'admin') admin from admin_audit_logs a left join admin_audit_logs_admin_user_lnk l on l.admin_audit_log_id=a.id left join up_users u on u.id=l.user_id where a.action='integration_run' order by a.created_at desc limit 30`),
       knex.raw(`select count(*) filter (where signup_country is not null)::int with_geo, max(last_login_at) last_login from up_users`),
+      cached('dataforseo', CHECKS.dataforseo, force),
     ]);
     const runs = (runsR.rows || runsR).map((r) => { const d = typeof r.details === 'string' ? JSON.parse(r.details) : (r.details || {}); return { id: r.id, at: r.created_at, admin: r.admin, ...d }; });
     const month = runs.filter((r) => new Date(r.at) > new Date(Date.now() - 30 * 86400000));
@@ -477,6 +505,7 @@ module.exports = {
       integrations: [
         { key: 'ahrefs', group: 'SEO data', label: 'Ahrefs free DR API', state: ahrefs.state, detail: ahrefs.detail, checkedAt: ahrefs.checkedAt, usedBy: 'DR refresh (first choice)', cost: 'Free (0 API units)', endpoint: 'api.ahrefs.com/v3/public/domain-rating-free', env: 'AHREFS_API_KEY (or panel key)', testable: true, editable: true },
         { key: 'apify', group: 'SEO data', label: 'Apify', state: apify.state, detail: apify.detail, usage: apify.usage || null, checkedAt: apify.checkedAt, usedBy: 'DR refresh (fallback) · Ahrefs traffic / referring domains', cost: 'DR $0.0005 / domain · traffic $0.005 · ref. domains $0.015', endpoint: 'api.apify.com (actors: datascraperes/bulk-domain-rating-checker, scrapesage/ahrefs-scraper, pro100chok/ahrefs-seo-tools)', env: 'APIFY_TOKEN (or panel keys)', testable: true, editable: true },
+        { key: 'dataforseo', group: 'SEO data', label: 'DataForSEO', state: dfs.state, detail: dfs.detail, usage: dfs.usage || null, checkedAt: dfs.checkedAt, usedBy: 'Moderation: traffic for sites Ahrefs does not track', cost: '$0.012 per call (up to 100 domains) · capped at $2/day', endpoint: 'api.dataforseo.com/v3/dataforseo_labs/google/bulk_traffic_estimation', env: 'DATAFORSEO_AUTH', testable: true },
         gwItem('stripe', 'Stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']),
         gwItem('paypal', 'PayPal', ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET']),
         gwItem('razorpay', 'Razorpay', ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET']),
@@ -488,7 +517,7 @@ module.exports = {
       ],
       mcp: [
         { name: 'Apify MCP', where: 'Claude Code (operator laptop)', use: 'Run any Apify actor from chat: Ahrefs scrapers, Reddit, Google Maps, web fetch.' },
-        { name: 'DataForSEO', where: 'Claude Code', use: 'Keyword volume, SERP, backlink reports. Paid per call; needs owner approval before use.' },
+        { name: 'DataForSEO', where: 'Claude Code (also used by the API server for moderation traffic)', use: 'Keyword volume, SERP, backlink reports. Paid per call; needs owner approval before use.' },
         { name: 'Google Search Console (service account)', where: 'Claude Code', use: 'Indexing and search performance for serpbays.com / saaslinks.net.' },
         { name: 'Serper.dev · SerpApi', where: 'Claude Code', use: 'Quick SERP rank checks, Google Trends.' },
         { name: 'Claude Docs · Gmail · Google Drive', where: 'Claude Code', use: 'Docs, email drafts, file access for reports.' },

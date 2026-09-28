@@ -47,6 +47,8 @@ function ensureTables() {
         id serial primary key, marketplace_id int not null, kind text not null, from_value numeric, to_value numeric, detail text,
         status text not null default 'open', created_at timestamptz not null default now(), resolved_at timestamptz, resolved_by int, resolution text,
         unique (marketplace_id, kind, status))`);
+      await knex().raw(`create table if not exists moderation_dfs_traffic (domain text primary key, etv numeric, keywords int, raw jsonb, fetched_at timestamptz not null default now())`);
+      await knex().raw(`create table if not exists moderation_spend (day date not null, provider text not null, usd numeric not null default 0, calls int not null default 0, primary key (day, provider))`);
       await knex().raw(`create table if not exists moderation_settings (key text primary key, value jsonb not null, updated_at timestamptz not null default now(), updated_by int)`);
     })().catch((e) => { ready = null; throw e; });
   }
@@ -270,6 +272,103 @@ async function fetchPage(url, timeoutMs = 12000) {
   finally { clearTimeout(t); }
 }
 
+// ───────────────────────── traffic: Ahrefs first, DataForSEO fallback ─────────────────────────
+const DFS_DAILY_CAP_USD = 2; // ~160 calls ≈ 16k domains; protects against a runaway loop
+const DFS_CALL_USD = 0.0122;
+async function spendToday(provider) {
+  const r = rows(await knex().raw('select usd from moderation_spend where day=current_date and provider=?', [provider]))[0];
+  return r ? n(r.usd) : 0;
+}
+async function addSpend(provider, usd) {
+  await knex().raw(`insert into moderation_spend (day, provider, usd, calls) values (current_date, ?, ?, 1)
+      on conflict (day, provider) do update set usd = moderation_spend.usd + excluded.usd, calls = moderation_spend.calls + 1`, [provider, usd]);
+}
+
+function parseAhrefsTop(d) {
+  const month = String(d.dataMonth || '');
+  let t = !/1970/.test(month) && typeof d.organicTraffic === 'number' ? d.organicTraffic : null;
+  if (t == null && typeof d.siteDescription === 'string') {
+    const m = d.siteDescription.match(/with ([\d.]+)\s*([KMB]?) traffic in/);
+    if (m) t = Math.round(Number(m[1]) * ({ '': 1, K: 1e3, M: 1e6, B: 1e9 })[m[2]]);
+  }
+  return {
+    traffic: t, keywords: !/1970/.test(month) && typeof d.organicKeywords === 'number' ? d.organicKeywords : null,
+    topCountry: typeof d.topCountry === 'string' ? d.topCountry.replace(/^the\s+/i, '') : null,
+    share: typeof d.topCountryShare === 'number' ? round(d.topCountryShare * 100, 1) : null,
+    value: typeof d.trafficValueUsd === 'number' ? d.trafficValueUsd : null, month: /1970/.test(month) ? null : month,
+  };
+}
+
+/**
+ * Organic traffic for many domains. Order: 30-day caches → Apify Ahrefs Top-Websites
+ * ($0.005 per tracked domain, budget-guarded) → DataForSEO bulk_traffic_estimation
+ * ($0.012 per 100 domains) for domains Ahrefs does not track or when Apify is paused.
+ * Returns domain → { source: 'ahrefs'|'dataforseo', traffic, keywords, topCountry?, share?, note }.
+ */
+async function fetchTraffic(domains, opts = {}) {
+  await ensureTables();
+  const keys = require('./integration-keys');
+  const out = {};
+  const uniq = [...new Set(domains.map(canon).filter(Boolean))];
+  const raw = await keys.rawGet(uniq).catch(() => ({}));
+  let needAhrefs = [];
+  const needDfs = new Set();
+  uniq.forEach((d) => {
+    const r = raw[d];
+    if (r && r.tracked && r.data) out[d] = { source: 'ahrefs', ...parseAhrefsTop(r.data) };
+    else if (r && !r.tracked) needDfs.add(d);
+    else needAhrefs.push(d);
+  });
+  let apifyNote = null;
+  if (opts.paid && needAhrefs.length) {
+    const chunks = [];
+    for (let i = 0; i < needAhrefs.length; i += 50) chunks.push(needAhrefs.slice(i, i + 50));
+    let stop = false;
+    for (let g = 0; g < chunks.length && !stop; g += 4) {
+      await Promise.all(chunks.slice(g, g + 4).map(async (chunk) => {
+        if (stop) { chunk.forEach((d) => needDfs.add(d)); return; }
+        const run = await keys.withApify(chunk.length * 0.005, (token, maxCharge) => apifyRun(token, maxCharge,
+          { domains: chunk, includeHistory: false, includeKeywords: false, includeCountries: true, includeCompetitors: false, maxItems: chunk.length })).catch((e) => ({ ok: false, reason: e.message }));
+        if (!run.ok || !Array.isArray(run.result && run.result.body)) { stop = true; apifyNote = run.reason || 'Apify run failed'; chunk.forEach((d) => needDfs.add(d)); return; }
+        const got = new Map(run.result.body.filter((x) => x && x.domain).map((x) => [canon(x.domain), x]));
+        await keys.rawPut(chunk.map((d) => ({ domain: d, tracked: got.has(d), data: got.get(d) || null }))).catch(() => {});
+        chunk.forEach((d) => { const it = got.get(d); if (it) out[d] = { source: 'ahrefs', ...parseAhrefsTop(it) }; else needDfs.add(d); });
+      }));
+    }
+    needAhrefs = [];
+  }
+  // DataForSEO fallback (cache first)
+  const dfsList = [...needDfs];
+  if (dfsList.length) {
+    const cached = rows(await knex().raw(`select domain, etv, keywords from moderation_dfs_traffic where domain = any(?) and fetched_at > now() - interval '30 days'`, [dfsList]));
+    const have = new Set();
+    cached.forEach((c) => { have.add(c.domain); out[c.domain] = { source: 'dataforseo', traffic: Math.round(n(c.etv)), keywords: c.keywords != null ? n(c.keywords) : null }; });
+    const missing = dfsList.filter((d) => !have.has(d));
+    if (opts.paid && missing.length && process.env.DATAFORSEO_AUTH) {
+      for (let i = 0; i < missing.length; i += 100) {
+        if ((await spendToday('dataforseo')) + DFS_CALL_USD > DFS_DAILY_CAP_USD) { strapi.log.warn('[MODERATION] DataForSEO daily cap reached'); break; }
+        const chunk = missing.slice(i, i + 100);
+        try {
+          const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 60000);
+          const r = await fetch('https://api.dataforseo.com/v3/dataforseo_labs/google/bulk_traffic_estimation/live', {
+            // IDN domains must be sent in punycode ('отзывы.укр' → 0, 'xn--b1ajuq0cb.xn--j1amh' → 2,800).
+            method: 'POST', signal: ac.signal, headers: { Authorization: `Basic ${process.env.DATAFORSEO_AUTH}`, 'content-type': 'application/json' }, body: JSON.stringify([{ targets: chunk.map(ascii) }]) });
+          clearTimeout(t);
+          const j = await r.json();
+          await addSpend('dataforseo', n(j.cost) || DFS_CALL_USD);
+          const items = ((((j.tasks || [])[0] || {}).result || [])[0] || {}).items || [];
+          const got = new Map(items.map((it) => [ascii(canon(it.target)), it]));
+          const vals = chunk.map((d) => { const m = ((got.get(ascii(d)) || {}).metrics || {}).organic || {}; return { d, etv: n(m.etv), kw: m.count != null ? n(m.count) : null, raw: got.get(ascii(d)) || null }; });
+          await knex().raw(`insert into moderation_dfs_traffic (domain, etv, keywords, raw, fetched_at) values ${vals.map(() => '(?,?,?,?::jsonb,now())').join(',')}
+              on conflict (domain) do update set etv=excluded.etv, keywords=excluded.keywords, raw=excluded.raw, fetched_at=now()`, vals.flatMap((v) => [v.d, v.etv, v.kw, JSON.stringify(v.raw)]));
+          vals.forEach((v) => { out[v.d] = { source: 'dataforseo', traffic: Math.round(v.etv), keywords: v.kw }; });
+        } catch (e) { strapi.log.warn(`[MODERATION] DataForSEO traffic failed: ${e.message}`); break; }
+      }
+    }
+  }
+  return { byDomain: out, apifyNote };
+}
+
 /** Start → poll → read dataset (run-sync once lost paid results on a 502). */
 async function apifyRun(token, maxCharge, input) {
   const auth = { Authorization: `Bearer ${token}` };
@@ -331,6 +430,32 @@ async function runSiteChecks(pwId, opts = {}) {
     }
   }
 
+  // 2b. Content signals from the homepage we just loaded
+  if (page.status && page.status < 400 && page.body) {
+    const text = page.body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ');
+    const words = text.split(' ').filter((w) => w.length > 1).length;
+    const low = text.toLowerCase();
+    const count = (re) => (low.match(re) || []).length;
+    const gambling = count(/\b(casino|betting|sportsbook|slots?|poker|jackpot|togel|judi)\b/g);
+    const adult = count(/\b(porn|xxx|escort|nude|sex cam|onlyfans)\b/g);
+    const pharma = count(/\b(viagra|cialis|kamagra|cbd gummies)\b/g);
+    const linkSelling = count(/\b(write for us|guest post|sponsored post|submit (a )?guest|advertise with us)\b/g);
+    const outLinks = (page.body.match(/<a\s[^>]*href=["']https?:\/\//gi) || []).length;
+    const lang = (page.body.match(/<html[^>]*\slang=["']?([a-zA-Z-]{2,10})/i) || [])[1] || null;
+    const declaredLang = parseList(pw.language).map((x) => x.toLowerCase());
+    const LANG = { en: 'english', de: 'german', fr: 'french', es: 'spanish', it: 'italian', pt: 'portuguese', nl: 'dutch', ru: 'russian', uk: 'ukrainian', pl: 'polish', tr: 'turkish', ar: 'arabic', hi: 'hindi', id: 'indonesian', ro: 'romanian', cs: 'czech', hu: 'hungarian', sv: 'swedish', da: 'danish', fi: 'finnish', no: 'norwegian', el: 'greek', bg: 'bulgarian', hr: 'croatian', sr: 'serbian', ja: 'japanese', ko: 'korean', zh: 'chinese', vi: 'vietnamese', th: 'thai', he: 'hebrew' };
+    const langName = lang ? LANG[lang.slice(0, 2).toLowerCase()] : null;
+    const langMismatch = !!(langName && declaredLang.length && !declaredLang.some((x) => x.includes(langName)));
+    const notes = [];
+    let status = 'ok';
+    if (words < 150) { status = 'warn'; notes.push(`only ~${words} words on the homepage`); }
+    if (gambling + adult + pharma >= 3) { status = 'warn'; notes.push(`${gambling ? `${gambling} gambling` : ''}${adult ? ` ${adult} adult` : ''}${pharma ? ` ${pharma} pharma` : ''} words on the homepage`.trim()); }
+    if (langMismatch) { status = 'warn'; notes.push(`page language “${lang}” but listing says ${declaredLang.join(', ')}`); }
+    if (linkSelling >= 3) notes.push(`${linkSelling} “write for us / sponsored” mentions`);
+    await put('content', status, { words, gambling, adult, pharma, linkSelling, outLinks, lang, langMismatch },
+      notes.length ? notes.join(' · ') : `~${words.toLocaleString('en-US')} words · ${outLinks} external links${lang ? ` · lang ${lang}` : ''}`, 'fetch');
+  }
+
   // 3. DR (free Ahrefs API, 30-day cache)
   let dr = null;
   const c = await keys.cacheGet([domain]).catch(() => ({}));
@@ -355,40 +480,28 @@ async function runSiteChecks(pwId, opts = {}) {
     await put('dr', status, { dr, claimed: claimedDr }, `DR ${dr}${gap != null && Math.abs(gap) >= 10 ? ` (listing says ${claimedDr})` : ''}${dr < 5 ? ' — very low' : ''}`, 'ahrefs');
   }
 
-  // 4. Traffic + top country (Apify, cache first)
-  const raw = await keys.rawGet([domain]).catch(() => ({}));
-  let rec = raw[domain];
-  let cost = 0;
-  if (!rec && opts.paid) {
-    const run = await keys.withApify(0.005, (token, maxCharge) => apifyRun(token, maxCharge,
-      { domains: [domain], includeHistory: false, includeKeywords: false, includeCountries: true, includeCompetitors: false, maxItems: 1 })).catch((e) => ({ ok: false, reason: e.message }));
-    if (run.ok && Array.isArray(run.result.body)) {
-      const it = run.result.body.find((x) => x && canon(x.domain) === domain) || null;
-      await keys.rawPut([{ domain, tracked: !!it, data: it }]).catch(() => {});
-      rec = { tracked: !!it, data: it };
-      cost = it ? 0.005 : 0;
-    }
-  }
-  let traffic = pw.ahrefs_traffic != null ? n(pw.ahrefs_traffic) : null;
+  // 4. Traffic + top country: Ahrefs Top-Websites first, DataForSEO when Ahrefs does not track it
+  const claimedTraffic = pw.ahrefs_traffic != null ? n(pw.ahrefs_traffic) : null;
+  const tr = (await fetchTraffic([domain], { paid: opts.paid !== false }).catch(() => ({ byDomain: {} }))).byDomain[domain];
   let measured = null; // traffic we measured ourselves (never the publisher's claim)
   let topCountry = null, share = null;
-  if (rec && rec.tracked && rec.data) {
-    const d = rec.data;
-    const month = String(d.dataMonth || '');
-    let t = !/1970/.test(month) && typeof d.organicTraffic === 'number' ? d.organicTraffic : null;
-    if (t == null && typeof d.siteDescription === 'string') {
-      const m = d.siteDescription.match(/with ([\d.]+)\s*([KMB]?) traffic in/);
-      if (m) t = Math.round(Number(m[1]) * ({ '': 1, K: 1e3, M: 1e6, B: 1e9 })[m[2]]);
-    }
-    if (t != null) { traffic = t; measured = t; }
-    topCountry = typeof d.topCountry === 'string' ? d.topCountry.replace(/^the\s+/i, '') : null;
-    share = typeof d.topCountryShare === 'number' ? round(d.topCountryShare * 100, 1) : null;
-    const status = traffic != null && traffic < 100 ? 'warn' : 'ok';
-    await put('traffic', status, { traffic, topCountry, share, source: 'ahrefs-top' }, `Organic traffic ${traffic != null ? traffic.toLocaleString('en-US') : '—'}${topCountry ? ` · top country ${topCountry} ${share != null ? share + '%' : ''}` : ''}`, 'apify', cost);
-  } else if (rec && !rec.tracked) {
-    await put('traffic', 'warn', { traffic, tracked: false }, `Not in Ahrefs' top-websites list (small site)${traffic != null ? ` · listing says ${traffic.toLocaleString('en-US')}` : ''}`, 'apify', 0);
+  const claimTxt = claimedTraffic != null ? ` · listing says ${claimedTraffic.toLocaleString('en-US')}` : '';
+  if (tr && tr.source === 'ahrefs' && tr.traffic != null) {
+    measured = tr.traffic; topCountry = tr.topCountry; share = tr.share;
+    await put('traffic', measured < 100 ? 'warn' : 'ok', { traffic: measured, keywords: tr.keywords, topCountry, share, value: tr.value, month: tr.month, source: 'ahrefs' },
+      `Ahrefs organic traffic ${measured.toLocaleString('en-US')}${tr.month ? ` (${tr.month})` : ''}${topCountry ? ` · top country ${topCountry}${share != null ? ` ${share}%` : ''}` : ''}${claimTxt}`, 'ahrefs');
+  } else if (tr && tr.source === 'dataforseo') {
+    measured = tr.traffic;
+    await put('traffic', measured < 100 ? 'warn' : 'ok', { traffic: measured, keywords: tr.keywords, source: 'dataforseo' },
+      `DataForSEO estimate ${measured.toLocaleString('en-US')}/month${tr.keywords != null ? ` · ${tr.keywords.toLocaleString('en-US')} keywords` : ''} (Ahrefs does not track this site)${claimTxt}`, 'dataforseo');
   } else {
-    await put('traffic', 'warn', { traffic, checked: false }, `Traffic not checked yet${traffic != null ? ` · listing says ${traffic.toLocaleString('en-US')}` : ''}`, 'none');
+    await put('traffic', 'warn', { traffic: claimedTraffic, checked: false }, `Traffic could not be measured${claimTxt}`, 'none');
+  }
+  const traffic = measured != null ? measured : claimedTraffic;
+  if (claimedTraffic != null && measured != null && claimedTraffic > 1000 && measured < claimedTraffic * 0.3) {
+    out.traffic.status = 'warn';
+    out.traffic.detail += ` — listing claims ${round(claimedTraffic / Math.max(1, measured), 1)}× more`;
+    await saveCheck(pwId, 'traffic', 'warn', out.traffic.value, out.traffic.detail, out.traffic.source, 0);
   }
 
   // 5. Spam signal: strong DR, no traffic (measured traffic only)
@@ -422,10 +535,14 @@ async function runSiteChecks(pwId, opts = {}) {
   else {
     const notes = [];
     let status = 'ok';
+    if (!gp) { status = 'warn'; notes.push('no guest post price'); }
     if (peer && gp > peer.median * 3) { status = 'warn'; notes.push(`guest post $${gp} is ${round(gp / peer.median, 1)}× peers ($${peer.median})`); }
     if (peer && gp > 0 && gp < peer.median * 0.2) { status = 'warn'; notes.push(`guest post $${gp} is far below peers ($${peer.median})`); }
+    if (peer && li > peer.median * 3) { status = 'warn'; notes.push(`link insertion $${li} is ${round(li / peer.median, 1)}× the peer guest-post price`); }
     if (li > 0 && gp > 0 && li > gp * 1.5) { status = 'warn'; notes.push(`link insertion $${li} costs more than guest post $${gp}`); }
-    await put('price', status, { gp, li, peerMedian: peer && peer.median, peerCount: peer && peer.count }, notes.length ? notes.join(' · ') : `Guest post $${gp}${peer ? ` · peers $${peer.median}` : ''}`, 'db');
+    const niche = [['casino', n(pw.casino_guest_post_price)], ['crypto', n(pw.crypto_guest_post_price)], ['cbd', n(pw.cbd_guest_post_price)], ['dating', n(pw.dating_guest_post_price)]].filter(([, v]) => peer && v > peer.median * 6);
+    if (niche.length) { status = 'warn'; notes.push(`${niche.map(([k, v]) => `${k} $${v}`).join(', ')} over 6× peers`); }
+    await put('price', status, { gp, li, peerMedian: peer && peer.median, peerCount: peer && peer.count }, (notes.length ? notes.join(' · ') : `Guest post $${gp} · link insertion $${li}`) + (peer ? ` · peers $${peer.median} (${peer.count} sites)` : ''), 'db');
   }
 
   // 9. Sample posts reachable
@@ -445,14 +562,14 @@ async function runSiteChecks(pwId, opts = {}) {
   return summarise(out);
 }
 
-const CHECK_ORDER = ['ownership', 'live', 'dr', 'traffic', 'spam', 'country', 'duplicate', 'price', 'samples', 'publisher'];
+const CHECK_ORDER = ['ownership', 'live', 'content', 'dr', 'traffic', 'spam', 'country', 'duplicate', 'price', 'samples', 'publisher'];
 function summarise(checks) {
   const list = CHECK_ORDER.filter((k) => checks[k]).map((k) => ({ key: k, ...checks[k] }));
   const fails = list.filter((c) => c.status === 'fail').map((c) => c.key);
   const warns = list.filter((c) => c.status === 'warn').map((c) => c.key);
   // Buckets for the backlog: no human decision is taken automatically.
   const hardReject = fails.some((k) => ['live', 'duplicate', 'spam'].includes(k)) || (checks.dr && checks.dr.value && checks.dr.value.dr != null && checks.dr.value.dr < 5);
-  const softWarns = warns.filter((k) => !['traffic', 'samples', 'ownership'].includes(k));
+  const softWarns = warns.filter((k) => !['traffic', 'samples', 'ownership', 'content'].includes(k));
   const bucket = hardReject ? 'likely_reject' : !fails.length && !softWarns.length ? 'likely_approve' : 'needs_review';
   return { checks: list, fails, warns, bucket };
 }
@@ -582,7 +699,7 @@ async function saveSettings(patch, adminId) {
 
 module.exports = {
   ensureTables, LABELS, norm, fieldRisk, listEdits, peerMedian, publisherTrust,
-  runSiteChecks, getSiteChecks, summarise, canon,
+  runSiteChecks, getSiteChecks, summarise, canon, fetchTraffic, spendToday,
   claim, release, locks, assertNotLockedByOther, logDecision, notifyPublisher, callController,
   scanFlags, getSettings, saveSettings, LEVEL,
 };

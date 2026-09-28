@@ -58,15 +58,21 @@ async function publisherOfPw(pwId) {
 // ───────────────────────── background triage job ─────────────────────────
 let triage = null;
 async function runTriage(opts, adminId) {
-  const list = rows(await knex().raw(`select p.id from publisher_websites p
+  const list = rows(await knex().raw(`select p.id, p.url from publisher_websites p
       ${opts.onlyUnchecked ? 'left join (select distinct pw_id from moderation_checks) c on c.pw_id=p.id' : ''}
-      where p.submission_status in ('approval_pending','pending_verification') ${opts.onlyUnchecked ? 'and c.pw_id is null' : ''} order by p.id`)).map((r) => r.id);
-  triage = { status: 'running', startedAt: Date.now(), total: list.length, done: 0, failed: 0, by: adminId };
+      where p.submission_status in ('approval_pending','pending_verification') ${opts.onlyUnchecked ? 'and c.pw_id is null' : ''} order by p.id`));
+  triage = { status: 'running', stage: opts.paid ? 'fetching traffic' : 'checking', startedAt: Date.now(), total: list.length, done: 0, failed: 0, by: adminId };
+  if (opts.paid) {
+    // One bulk traffic pass first (Apify 50/run, DataForSEO 100/call), then every check reads the cache.
+    const r = await svc.fetchTraffic(list.map((x) => x.url), { paid: true }).catch((e) => { strapi.log.error(`[MODERATION] traffic prefetch failed: ${e.stack || e.message}`); return { byDomain: {}, apifyNote: e.message }; });
+    triage.traffic = { measured: Object.keys(r.byDomain).length, ahrefs: Object.values(r.byDomain).filter((v) => v.source === 'ahrefs').length, dataforseo: Object.values(r.byDomain).filter((v) => v.source === 'dataforseo').length, apifyNote: r.apifyNote || null };
+    triage.stage = 'checking';
+  }
   let i = 0;
   const worker = async () => {
     while (i < list.length) {
-      const id = list[i++];
-      try { await svc.runSiteChecks(id, { paid: false }); } catch (e) { triage.failed += 1; }
+      const id = list[i++].id;
+      try { await svc.runSiteChecks(id, { paid: false }); } catch (e) { triage.failed += 1; triage.lastError = e.message; }
       triage.done += 1;
     }
   };
@@ -291,7 +297,8 @@ module.exports = {
   async triageRun(ctx) {
     try {
       if (triage && triage.status === 'running') return ctx.send({ triage });
-      runTriage({ onlyUnchecked: !(ctx.request.body && ctx.request.body.onlyUnchecked === false) }, ctx.state.user.id)
+      const body = ctx.request.body || {};
+      runTriage({ onlyUnchecked: body.onlyUnchecked !== false, paid: body.paid === true }, ctx.state.user.id)
         .catch((e) => { triage = { ...(triage || {}), status: 'failed', error: e.message }; strapi.log.error(`[MODERATION] triage failed: ${e.message}`); });
       await new Promise((r) => setTimeout(r, 300));
       ctx.send({ triage });
