@@ -506,7 +506,8 @@ async function runSiteChecks(pwId, opts = {}) {
 
   // 5. Spam signal: strong DR, no traffic (measured traffic only)
   if (measured == null) await put('spam', 'ok', { dr, traffic: null }, 'Traffic not measured, so no DR-vs-traffic check', 'derived');
-  else if (dr != null && dr >= 40 && measured < 500) await put('spam', 'fail', { dr, traffic: measured }, `DR ${dr} but only ${measured} organic traffic: typical of link farms`, 'derived');
+  // DataForSEO estimates run well below Ahrefs, so on its own it can only warn, never fail a site.
+  else if (dr != null && dr >= 40 && measured < 500) await put('spam', tr && tr.source === 'dataforseo' ? 'warn' : 'fail', { dr, traffic: measured, source: tr && tr.source }, `DR ${dr} but only ${measured} organic traffic${tr && tr.source === 'dataforseo' ? ' (DataForSEO estimate)' : ''}: typical of link farms`, 'derived');
   else if (dr != null && dr >= 25 && measured < 200) await put('spam', 'warn', { dr, traffic: measured }, `DR ${dr} with ${measured} traffic`, 'derived');
   else await put('spam', 'ok', { dr, traffic: measured }, 'DR and traffic look consistent', 'derived');
 
