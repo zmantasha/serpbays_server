@@ -121,6 +121,20 @@
       "max": 100,
       "description": "Share of organic traffic from the top country, percent (Ahrefs)"
     },
+    "dfs_traffic": {
+      "type": "integer",
+      "min": 0,
+      "description": "Organic traffic estimate from DataForSEO (used when Ahrefs does not track the site)"
+    },
+    "dfs_keywords": {
+      "type": "integer",
+      "min": 0,
+      "description": "Organic keyword count from DataForSEO"
+    },
+    "dfs_traffic_at": {
+      "type": "datetime",
+      "description": "When the DataForSEO estimate was fetched"
+    },
     "moz_da": {
       "type": "decimal",
       "max": 100,

@@ -274,7 +274,7 @@ async function fetchPage(url, timeoutMs = 12000) {
 
 // ───────────────────────── traffic: Ahrefs first, DataForSEO fallback ─────────────────────────
 const DFS_DAILY_CAP_USD = 2; // ~160 calls ≈ 16k domains; protects against a runaway loop
-const DFS_CALL_USD = 0.0122;
+const DFS_CALL_USD = 0.024; // per call of up to 100 domains ($0.012 + $0.00012 each)
 async function spendToday(provider) {
   const r = rows(await knex().raw('select usd from moderation_spend where day=current_date and provider=?', [provider]))[0];
   return r ? n(r.usd) : 0;
@@ -302,7 +302,7 @@ function parseAhrefsTop(d) {
 /**
  * Organic traffic for many domains. Order: 30-day caches → Apify Ahrefs Top-Websites
  * ($0.005 per tracked domain, budget-guarded) → DataForSEO bulk_traffic_estimation
- * ($0.012 per 100 domains) for domains Ahrefs does not track or when Apify is paused.
+ * (~$0.024 per 100 domains: $0.012 per call + $0.00012 per domain) for domains Ahrefs does not track or when Apify is paused.
  * Returns domain → { source: 'ahrefs'|'dataforseo', traffic, keywords, topCountry?, share?, note }.
  */
 async function fetchTraffic(domains, opts = {}) {
