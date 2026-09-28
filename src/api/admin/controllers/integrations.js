@@ -17,9 +17,21 @@
  *   2. Apify actor datascraperes/bulk-domain-rating-checker ($0.0005 / domain,
  *      verified identical to Ahrefs DR on 20/20 domains 2026-09-28) — needs APIFY_TOKEN.
  * Every paid call is logged to admin_audit_logs (action 'integration_run').
+ *
+ * Keys (services/integration-keys.js): Ahrefs key and the Apify pool (primary +
+ * up to 7 backups) are editable from the panel, encrypted at rest; the .env
+ * values stay as fallback. Fetched DRs are cached 30 days (integration_dr_cache).
+ *
+ *   GET    /admin/integrations/keys              masked keys + open alerts
+ *   POST   /admin/integrations/keys              add/replace (validated live first)
+ *   PATCH  /admin/integrations/keys/:id          label / disable / make primary
+ *   DELETE /admin/integrations/keys/:id
+ *   POST   /admin/integrations/keys/:id/test
+ *   POST   /admin/integrations/alerts/:id/resolve
  */
 
 const fs = require('fs');
+const keys = require('../services/integration-keys');
 
 const AHREFS_DR_URL = 'https://api.ahrefs.com/v3/public/domain-rating-free';
 const APIFY_DR_ACTOR = 'datascraperes~bulk-domain-rating-checker';
@@ -63,8 +75,9 @@ async function fetchJson(url, opts = {}, timeoutMs = 15000) {
 // ───────────────────────── DR providers ─────────────────────────
 
 async function ahrefsDr(domains) {
-  const key = process.env.AHREFS_API_KEY;
-  if (!key) return { available: false, reason: 'AHREFS_API_KEY not set', results: {} };
+  const k = await keys.secretFor('ahrefs', 'AHREFS_API_KEY');
+  if (!k) return { available: false, reason: 'no Ahrefs key set', results: {} };
+  const key = k.secret;
   const results = {};
   let dead = null;
   let i = 0;
@@ -80,23 +93,26 @@ async function ahrefsDr(domains) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, domains.length) }, worker));
+  if (dead) await keys.raiseAlert('ahrefs', 'key_invalid', k.id, `${dead}: the Ahrefs key (${k.source === 'env' ? 'server .env' : 'panel'}) was rejected. DR refresh fell back to Apify. Replace the key on the External APIs page.`);
   return { available: !dead, reason: dead, results };
 }
 
 async function apifyDr(domains) {
-  const token = process.env.APIFY_TOKEN;
-  if (!token) return { available: false, reason: 'APIFY_TOKEN not set', results: {}, costUsd: 0 };
   const results = {};
   let cost = 0;
+  let keyUsed = null;
   for (let k = 0; k < domains.length; k += 500) {
     const chunk = domains.slice(k, k + 500);
-    const r = await fetchJson(`https://api.apify.com/v2/acts/${APIFY_DR_ACTOR}/run-sync-get-dataset-items?timeout=280&maxTotalChargeUsd=${(chunk.length * APIFY_DR_COST + 0.01).toFixed(4)}`,
-      { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ targets: chunk }) }, 300000);
-    if (r.status === 401 || r.status === 403) return { available: false, reason: `Apify answered ${r.status}`, results, costUsd: cost };
-    if (!r.ok || !Array.isArray(r.body)) return { available: true, reason: `Apify run failed (${r.status})`, results, costUsd: cost };
+    const run = await keys.withApify(chunk.length * APIFY_DR_COST, (token, maxCharge) => fetchJson(
+      `https://api.apify.com/v2/acts/${APIFY_DR_ACTOR}/run-sync-get-dataset-items?timeout=280&maxTotalChargeUsd=${maxCharge.toFixed(4)}`,
+      { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ targets: chunk }) }, 300000));
+    if (!run.ok) return { available: false, reason: run.reason, results, costUsd: money(cost), keyUsed };
+    keyUsed = run.keyUsed;
+    const r = run.result;
+    if (!r.ok || !Array.isArray(r.body)) return { available: true, reason: `Apify run failed (${r.status})`, results, costUsd: money(cost), keyUsed };
     r.body.forEach((it) => { if (it && typeof it.domainRating === 'number') { results[normDomain(it.target)] = it.domainRating; cost += APIFY_DR_COST; } });
   }
-  return { available: true, reason: null, results, costUsd: money(cost) };
+  return { available: true, reason: null, results, costUsd: money(cost), keyUsed };
 }
 
 // ───────────────────────── status checks (cached) ─────────────────────────
@@ -122,21 +138,20 @@ function readAppEnv(name) {
 
 const CHECKS = {
   ahrefs: async () => {
-    if (!process.env.AHREFS_API_KEY) return { state: 'missing', detail: 'AHREFS_API_KEY is not set on the API server.' };
-    const r = await fetchJson(`${AHREFS_DR_URL}?target=ahrefs.com&output=json`, { headers: { Authorization: `Bearer ${process.env.AHREFS_API_KEY}` } }, 10000);
-    if (r.ok && r.body && r.body.domain_rating) return { state: 'ok', detail: `Answered: ahrefs.com DR ${r.body.domain_rating.domain_rating}` };
-    if (r.status === 401 || r.status === 403) return { state: 'invalid', detail: `Ahrefs rejected the key (${r.status}). Create a new key at ahrefs.com → Account → API keys and update AHREFS_API_KEY. The same key is used by saaslinks.net's DR checker.` };
-    return { state: 'error', detail: `Unexpected answer ${r.status}` };
+    const k = await keys.secretFor('ahrefs', 'AHREFS_API_KEY');
+    if (!k) return { state: 'missing', detail: 'No Ahrefs key. Add one below.' };
+    const p = await keys.probe('ahrefs', k.secret);
+    const src = k.source === 'env' ? 'server .env key' : 'panel key';
+    return { state: p.status === 'ok' ? 'ok' : p.status, detail: `${p.detail} (${src})` };
   },
   apify: async () => {
-    if (!process.env.APIFY_TOKEN) return { state: 'missing', detail: 'APIFY_TOKEN is not set on the API server.' };
-    const h = { headers: { Authorization: `Bearer ${process.env.APIFY_TOKEN}` } };
-    const [me, lim] = await Promise.all([fetchJson('https://api.apify.com/v2/users/me', h), fetchJson('https://api.apify.com/v2/users/me/limits', h)]);
-    if (me.status === 401 || me.status === 403) return { state: 'invalid', detail: 'Apify rejected the token. Create a new one at console.apify.com → Settings → Integrations and update APIFY_TOKEN.' };
-    const d = (me.body && me.body.data) || {};
-    const l = (lim.body && lim.body.data) || {};
-    const used = n(l.current && l.current.monthlyUsageUsd), cap = n(l.limits && l.limits.maxMonthlyUsageUsd);
-    return { state: cap && used >= cap * 0.9 ? 'warn' : 'ok', detail: `Account ${d.username || '?'} · plan ${(d.plan && d.plan.id) || '?'}`, usage: { usedUsd: money(used), limitUsd: cap || null } };
+    const pool = (await keys.apifyPool()).filter((k) => !k.disabled && k.secret);
+    if (!pool.length) return { state: 'missing', detail: 'No Apify key. Add one below.' };
+    const p = await keys.probe('apify', pool[0].secret);
+    const backups = pool.filter((k) => k.slot > 0).length;
+    const tail = ` · ${backups} backup key${backups === 1 ? '' : 's'}`;
+    if (p.status === 'invalid') return { state: backups ? 'warn' : 'invalid', detail: `Primary token rejected by Apify.${backups ? ' A backup takes over on the next run.' : ''}${tail}` };
+    return { state: p.status === 'ok' ? 'ok' : p.status === 'limit' ? 'warn' : p.status, detail: p.detail + tail, usage: p.usedUsd != null ? { usedUsd: p.usedUsd, limitUsd: p.limitUsd } : null };
   },
   clerk: async () => {
     const key = readAppEnv('CLERK_SECRET_KEY');
@@ -175,10 +190,17 @@ module.exports = {
     const geo = (geoR.rows || geoR)[0] || {};
     const gwItem = (key, label, envs) => ({ key, group: 'Payments', label, state: envState(...envs), detail: gw[key] ? `${gw[key].successPct == null ? '—' : gw[key].successPct + '%'} deposit success in 90 d · last success ${gw[key].lastOk ? new Date(gw[key].lastOk).toISOString().slice(0, 10) : 'never'}` : 'No deposits in 90 d', usedBy: 'Wallet deposits', cost: 'Per transaction (gateway fees)' });
 
+    const [keyRows, alerts] = await Promise.all([keys.listKeys().catch(() => []), keys.openAlerts().catch(() => [])]);
+    const panelKeys = keyRows.map(keys.publicKey);
     ctx.send({
+      alerts,
+      keys: {
+        ahrefs: { panel: panelKeys.find((k) => k.provider === 'ahrefs') || null, envFallback: !!process.env.AHREFS_API_KEY },
+        apify: { panel: panelKeys.filter((k) => k.provider === 'apify'), envFallback: !!process.env.APIFY_TOKEN, maxBackups: 7, budgetGuardPct: keys.BUDGET_GUARD * 100 },
+      },
       integrations: [
-        { key: 'ahrefs', group: 'SEO data', label: 'Ahrefs free DR API', state: ahrefs.state, detail: ahrefs.detail, checkedAt: ahrefs.checkedAt, usedBy: 'DR refresh (first choice)', cost: 'Free (0 API units)', endpoint: 'api.ahrefs.com/v3/public/domain-rating-free', env: 'AHREFS_API_KEY', testable: true },
-        { key: 'apify', group: 'SEO data', label: 'Apify', state: apify.state, detail: apify.detail, usage: apify.usage || null, checkedAt: apify.checkedAt, usedBy: 'DR refresh (fallback) · Ahrefs traffic / referring domains', cost: 'DR $0.0005 / domain · traffic $0.005 · ref. domains $0.015', endpoint: 'api.apify.com (actors: datascraperes/bulk-domain-rating-checker, scrapesage/ahrefs-scraper, pro100chok/ahrefs-seo-tools)', env: 'APIFY_TOKEN', testable: true },
+        { key: 'ahrefs', group: 'SEO data', label: 'Ahrefs free DR API', state: ahrefs.state, detail: ahrefs.detail, checkedAt: ahrefs.checkedAt, usedBy: 'DR refresh (first choice)', cost: 'Free (0 API units)', endpoint: 'api.ahrefs.com/v3/public/domain-rating-free', env: 'AHREFS_API_KEY (or panel key)', testable: true, editable: true },
+        { key: 'apify', group: 'SEO data', label: 'Apify', state: apify.state, detail: apify.detail, usage: apify.usage || null, checkedAt: apify.checkedAt, usedBy: 'DR refresh (fallback) · Ahrefs traffic / referring domains', cost: 'DR $0.0005 / domain · traffic $0.005 · ref. domains $0.015', endpoint: 'api.apify.com (actors: datascraperes/bulk-domain-rating-checker, scrapesage/ahrefs-scraper, pro100chok/ahrefs-seo-tools)', env: 'APIFY_TOKEN (or panel keys)', testable: true, editable: true },
         gwItem('stripe', 'Stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']),
         gwItem('paypal', 'PayPal', ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET']),
         gwItem('razorpay', 'Razorpay', ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET']),
@@ -196,7 +218,7 @@ module.exports = {
         { name: 'Claude Docs · Gmail · Google Drive', where: 'Claude Code', use: 'Docs, email drafts, file access for reports.' },
       ],
       usage: { runs, spend30dUsd: spend30, runs30d: month.length },
-      drRefresh: { maxDomains: MAX_DOMAINS, bigChange: BIG_CHANGE, apifyCostPerDomain: APIFY_DR_COST },
+      drRefresh: { maxDomains: MAX_DOMAINS, bigChange: BIG_CHANGE, apifyCostPerDomain: APIFY_DR_COST, cacheDays: keys.CACHE_DAYS },
     });
   },
 
@@ -222,7 +244,11 @@ module.exports = {
       if (!doms.length) return ctx.badRequest('No domains given');
       listings = (await knex.raw(`select id, url, ahrefs_dr, rank_score, last_ahrefs_refresh_at from marketplaces where status='active' and lower(url) = any(?)`, [doms])).rows;
     } else if (scope === 'stale') {
-      listings = (await knex.raw(`select id, url, ahrefs_dr, rank_score, last_ahrefs_refresh_at from marketplaces where status='active' order by coalesce(last_ahrefs_refresh_at, last_metric_update_at, 'epoch') asc, rank_score desc nulls last limit ?`, [limit])).rows;
+      await keys.ensureTables();
+      listings = (await knex.raw(`select m.id, m.url, m.ahrefs_dr, m.rank_score, m.last_ahrefs_refresh_at from marketplaces m
+          left join integration_dr_cache c on c.domain = lower(m.url)
+          where m.status='active'
+          order by greatest(coalesce(m.last_ahrefs_refresh_at, m.last_metric_update_at, 'epoch'), coalesce(c.fetched_at, 'epoch')) asc, m.rank_score desc nulls last limit ?`, [limit])).rows;
     } else {
       listings = (await knex.raw(`select id, url, ahrefs_dr, rank_score, last_ahrefs_refresh_at from marketplaces where status='active' order by rank_score desc nulls last, id limit ?`, [limit])).rows;
     }
@@ -233,20 +259,32 @@ module.exports = {
     let results = {};
     let used = [];
     let cost = 0;
-    if (provider !== 'apify') {
-      const a = await ahrefsDr(domains);
+    let fromCache = 0;
+    if (body.fresh !== true) {
+      const c = await keys.cacheGet(domains).catch(() => ({}));
+      Object.entries(c).forEach(([d, v]) => { results[d] = v.dr; });
+      fromCache = Object.keys(c).length;
+      if (fromCache) used.push('cache');
+    }
+    let todo = domains.filter((d) => results[d] === undefined);
+    if (todo.length && provider !== 'apify') {
+      const a = await ahrefsDr(todo);
       Object.assign(results, a.results);
-      if (Object.keys(a.results).length) used.push('ahrefs');
+      if (Object.keys(a.results).length) { used.push('ahrefs'); await keys.cachePut(a.results, 'ahrefs').catch(() => {}); }
       if (!a.available) notes.push(`Ahrefs free API unavailable: ${a.reason}.`);
     }
-    const missing = domains.filter((d) => results[d] === undefined);
-    if (missing.length && provider !== 'ahrefs') {
-      const p = await apifyDr(missing);
+    todo = domains.filter((d) => results[d] === undefined);
+    let apifyKey = null;
+    if (todo.length && provider !== 'ahrefs') {
+      const p = await apifyDr(todo);
       Object.assign(results, p.results);
       cost += p.costUsd;
-      if (Object.keys(p.results).length) used.push('apify');
-      if (p.reason) notes.push(`Apify: ${p.reason}.`);
+      apifyKey = p.keyUsed;
+      if (Object.keys(p.results).length) { used.push('apify'); await keys.cachePut(p.results, 'apify').catch(() => {}); }
+      if (p.reason) notes.push(`Apify: ${p.reason}`);
+      if (p.keyUsed && !/^primary/.test(p.keyUsed)) notes.push(`Apify ran on ${p.keyUsed} (primary key was rejected).`);
     }
+    if (fromCache) notes.push(`${fromCache} domain${fromCache === 1 ? '' : 's'} answered from the ${keys.CACHE_DAYS}-day cache (no API call). Tick "Ignore cache" to re-fetch.`);
 
     const byUrl = new Map(listings.map((l) => [normDomain(l.url), l]));
     const rows = [], review = [], notFound = [];
@@ -271,14 +309,67 @@ module.exports = {
       } catch (e) { notes.push(`Preview failed: ${e.message}`); }
     }
 
-    await audit(ctx, 'integration_run', { integration: used.join('+') || 'none', purpose: 'dr-refresh-preview', scope, requested: domains.length, fetched: Object.keys(results).length, costUsd: money(cost) });
+    await audit(ctx, 'integration_run', { integration: used.join('+') || 'none', purpose: 'dr-refresh-preview', scope, requested: domains.length, fetched: Object.keys(results).length, fromCache, apifyKey, costUsd: money(cost) });
 
     ctx.send({
-      provider: used, scope, requested: domains.length, fetched: Object.keys(results).length, costUsd: money(cost), tookMs: Date.now() - started,
+      provider: used, scope, requested: domains.length, fetched: Object.keys(results).length, fromCache, costUsd: money(cost), tookMs: Date.now() - started,
       rows, review, notFound, includeBigChanges: includeBig,
       csv, summary: preview ? preview.summary : null,
       changes: preview ? (preview.rows || []).filter((r) => r.status === 'will-update').map((r) => ({ url: r.url, changes: r.changes })) : [],
       notes,
     });
+  },
+
+  // ───────────────────────── key management ─────────────────────────
+  async keysList(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    const [rowsK, alerts] = await Promise.all([keys.listKeys(), keys.openAlerts()]);
+    ctx.send({ keys: rowsK.map(keys.publicKey), alerts, envFallback: { ahrefs: !!process.env.AHREFS_API_KEY, apify: !!process.env.APIFY_TOKEN } });
+  },
+
+  async keysCreate(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    const b = ctx.request.body || {};
+    try {
+      const r = await keys.upsertKey({ provider: b.provider, slot: b.slot === 'backup' ? 'backup' : 0, label: b.label, secret: b.secret, adminId: ctx.state.user.id });
+      cache.delete(b.provider);
+      await audit(ctx, 'integration_key_change', { integration: b.provider, op: 'save', slot: r.slot, keyId: r.id, masked: keys.mask(String(b.secret || '').trim()), status: r.probe.status });
+      ctx.send({ ok: true, id: r.id, slot: r.slot, status: r.probe.status, detail: r.probe.detail });
+    } catch (e) {
+      ctx.status = e.status || 400;
+      ctx.body = { error: { status: ctx.status, message: e.message } };
+    }
+  },
+
+  async keysUpdate(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    const b = ctx.request.body || {};
+    try {
+      const k = await keys.updateKey(parseInt(ctx.params.id, 10), { label: b.label, disabled: b.disabled, makePrimary: b.makePrimary === true, adminId: ctx.state.user.id });
+      cache.delete(k.provider);
+      await audit(ctx, 'integration_key_change', { integration: k.provider, op: b.makePrimary ? 'make-primary' : b.disabled !== undefined ? (b.disabled ? 'disable' : 'enable') : 'rename', keyId: k.id, slot: k.slot, masked: `••••${k.last4}` });
+      ctx.send({ ok: true, key: keys.publicKey(k) });
+    } catch (e) { ctx.badRequest(e.message); }
+  },
+
+  async keysDelete(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    try {
+      const k = await keys.deleteKey(parseInt(ctx.params.id, 10));
+      cache.delete(k.provider);
+      await audit(ctx, 'integration_key_change', { integration: k.provider, op: 'delete', slot: k.slot, masked: `••••${k.last4}` });
+      ctx.send({ ok: true });
+    } catch (e) { ctx.badRequest(e.message); }
+  },
+
+  async keysTest(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    try { ctx.send(await keys.testKey(parseInt(ctx.params.id, 10))); } catch (e) { ctx.badRequest(e.message); }
+  },
+
+  async alertResolve(ctx) {
+    if (!requireSuperAdmin(ctx)) return;
+    await keys.resolveAlerts(null, null, ctx.state.user.id, parseInt(ctx.params.id, 10));
+    ctx.send({ ok: true });
   },
 };
