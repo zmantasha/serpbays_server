@@ -65,7 +65,9 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
       let extra = data.data && typeof data.data === 'object' ? { ...data.data } : null;
       if ((!extra || typeof extra.url !== 'string') && data.relatedOrderId) {
         const base = await this.orderUrlFor(data.recipientId, data.relatedOrderId);
-        if (base) extra = { ...(extra || {}), url: data.type === 'communication' ? `${base}#conversation` : base };
+        // 2026-09-28: message notifications open the dedicated Messages page;
+        // order events still open the order itself.
+        if (base) extra = { ...(extra || {}), url: data.type === 'communication' ? `/messages?order=${data.relatedOrderId}` : base };
       }
 
       const notification = await strapi.entityService.create('api::notification.notification', {
