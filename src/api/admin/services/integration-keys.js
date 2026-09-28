@@ -46,6 +46,7 @@ function ensureTables() {
         disabled boolean not null default false, created_by int, updated_by int,
         created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
         unique (provider, slot))`);
+      await knex().raw('alter table integration_keys add column if not exists promoted_at timestamptz');
       await knex().raw(`create table if not exists integration_dr_cache (
         domain text primary key, dr numeric not null, provider text, fetched_at timestamptz not null default now())`);
       await knex().raw(`create table if not exists integration_alerts (
@@ -126,7 +127,7 @@ function publicKey(k) {
     id: k.id, provider: k.provider, slot: k.slot, role: k.slot === 0 ? 'primary' : 'backup', label: k.label || null, masked: `••••${k.last4 || ''}`,
     account: k.account_username || null, plan: k.plan || null, status: k.disabled ? 'disabled' : k.status, lastError: k.last_error || null,
     usage: k.usage_limit != null || k.usage_used != null ? { usedUsd: money(k.usage_used), limitUsd: k.usage_limit != null ? money(k.usage_limit) : null } : null,
-    lastCheckedAt: k.last_checked_at, lastUsedAt: k.last_used_at, updatedAt: k.updated_at, source: 'panel',
+    lastCheckedAt: k.last_checked_at, lastUsedAt: k.last_used_at, lastPromotedAt: k.promoted_at || null, updatedAt: k.updated_at, source: 'panel',
   };
 }
 
@@ -165,8 +166,9 @@ async function upsertKey({ provider, slot, label, secret, adminId }) {
   const r = rows(await knex().raw(`insert into integration_keys (provider, slot, label, secret_enc, secret_hash, last4, created_by, updated_by)
       values (?,?,?,?,?,?,?,?)
       on conflict (provider, slot) do update set label=excluded.label, secret_enc=excluded.secret_enc, secret_hash=excluded.secret_hash, last4=excluded.last4,
-        updated_by=excluded.updated_by, updated_at=now(), disabled=false, status='unchecked', last_error=null, account_id=null, account_username=null, plan=null, usage_used=null, usage_limit=null
+        updated_by=excluded.updated_by, updated_at=now(), disabled=false, status='unchecked', last_error=null, account_id=null, account_username=null, plan=null, usage_used=null, usage_limit=null, promoted_at=null
       returning id`, [provider, target, (label || '').slice(0, 60) || null, enc, h, secret.slice(-4), adminId || null, adminId || null]))[0];
+  if (target === 0) await knex().raw('update integration_keys set promoted_at=now() where id=?', [r.id]);
   await saveProbe(r.id, p);
   await resolveAlerts(provider, r.id, adminId);
   return { id: r.id, slot: target, probe: p };
@@ -182,7 +184,7 @@ async function updateKey(id, { label, disabled, makePrimary, adminId }) {
     await knex().transaction(async (trx) => {
       await trx.raw('update integration_keys set slot=-1 where id=?', [id]);
       await trx.raw('update integration_keys set slot=?, updated_at=now() where provider=? and slot=0', [k.slot, k.provider]);
-      await trx.raw('update integration_keys set slot=0, disabled=false, updated_by=?, updated_at=now() where id=?', [adminId || null, id]);
+      await trx.raw('update integration_keys set slot=0, disabled=false, promoted_at=now(), updated_by=?, updated_at=now() where id=?', [adminId || null, id]);
     });
   }
   return rows(await knex().raw('select * from integration_keys where id=?', [id]))[0];
@@ -245,7 +247,7 @@ async function promoteKey(id) {
     if (!k || k.slot === 0) return;
     await trx.raw('update integration_keys set slot=-1 where id=?', [id]);
     await trx.raw('update integration_keys set slot=?, updated_at=now() where provider=? and slot=0', [k.slot, k.provider]);
-    await trx.raw('update integration_keys set slot=0, updated_at=now() where id=?', [id]);
+    await trx.raw('update integration_keys set slot=0, promoted_at=now(), updated_at=now() where id=?', [id]);
   });
 }
 
