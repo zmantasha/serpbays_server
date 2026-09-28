@@ -56,6 +56,8 @@ function validateSamplePostHosts(samplePosts, listingUrl) {
 //   - POST { gscVerified: true, submissionStatus: 'approved' } on create, OR
 //   - PUT  { gscVerified: true, gscRefreshToken: 'x', reviewedBy: 1 } on update
 // and self-promote past the verification pipeline.
+const { normaliseCategories } = require('../../../constants/categories');
+
 const ALLOWED_USER_FIELDS = new Set([
   // Listing identity
   'url', 'protocol',
@@ -202,6 +204,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       if (droppedKeys.length > 0) {
         strapi.log.warn(`[publisher-website.create] User ${user.id} (${user.email}) tried to set restricted fields, dropped: ${droppedKeys.join(', ')}`);
       }
+
+      // Category is a fixed list. A value that only differs by case/spacing is
+      // rewritten to the canonical spelling; anything genuinely off-list is
+      // refused, so the column cannot drift back into 149 labels.
+      if (Object.prototype.hasOwnProperty.call(filteredData, 'category')) {
+        const cat = normaliseCategories(filteredData.category);
+        if (!cat.ok) {
+          return ctx.badRequest(`Unknown category: ${cat.invalid.join(', ')}. Choose from the list.`);
+        }
+        filteredData.category = cat.value;
+      }
+
 
       // Normalize URL to lowercase to prevent case-sensitive duplicates
       filteredData.url = filteredData.url ? filteredData.url.toLowerCase() : filteredData.url;
@@ -837,6 +851,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
       if (droppedKeys.length > 0) {
         strapi.log.warn(`[publisher-website.update] User ${user.id} (${user.email}) tried to set restricted fields on website ${id}, dropped: ${droppedKeys.join(', ')}`);
+      }
+
+
+      // Category is a fixed list. A value that only differs by case/spacing is
+      // rewritten to the canonical spelling; anything genuinely off-list is
+      // refused, so the column cannot drift back into 149 labels.
+      if (Object.prototype.hasOwnProperty.call(filteredUpdate, 'category')) {
+        const cat = normaliseCategories(filteredUpdate.category);
+        if (!cat.ok) {
+          return { httpKind: 'badRequest', message: `Unknown category: ${cat.invalid.join(', ')}. Choose from the list.` };
+        }
+        filteredUpdate.category = cat.value;
       }
 
       // Samples must be on the listed domain, not a subdomain or another site.
@@ -1873,6 +1899,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       if (droppedClaimKeys.length > 0) {
         strapi.log.warn(`[publisher-website.claim] User ${user.id} (${user.email}) tried to set restricted fields, dropped: ${droppedClaimKeys.join(', ')}`);
       }
+
+      // Category is a fixed list. A value that only differs by case/spacing is
+      // rewritten to the canonical spelling; anything genuinely off-list is
+      // refused, so the column cannot drift back into 149 labels.
+      if (Object.prototype.hasOwnProperty.call(filteredClaim, 'category')) {
+        const cat = normaliseCategories(filteredClaim.category);
+        if (!cat.ok) {
+          return ctx.badRequest(`Unknown category: ${cat.invalid.join(', ')}. Choose from the list.`);
+        }
+        filteredClaim.category = cat.value;
+      }
+
 
       const gscHelpers = require('../../../utils/gsc-helpers');
 
