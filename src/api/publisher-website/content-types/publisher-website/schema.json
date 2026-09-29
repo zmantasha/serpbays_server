@@ -469,6 +469,11 @@
       "max": 100,
       "description": "Share of organic traffic from the top country, percent (Ahrefs)"
     },
+    "traffic_source": {
+      "type": "string",
+      "maxLength": 20,
+      "description": "Where ahrefs_traffic came from: ahrefs, or dataforseo when Ahrefs does not track the site"
+    },
     "metrics_last_updated": {
       "type": "datetime",
       "description": "When SEO metrics were last updated (manually or via API)"

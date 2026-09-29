@@ -13,18 +13,34 @@
   "attributes": {
     "tool": {
       "type": "enumeration",
-      "enum": ["ahrefs", "moz", "semrush", "price"],
+      "enum": [
+        "ahrefs",
+        "moz",
+        "semrush",
+        "price",
+        "dataforseo"
+      ],
       "required": true,
       "description": "Job scope: ahrefs/moz/semrush for per-tool metric refreshes; 'price' for bulk price update jobs (no specific tool)."
     },
     "jobType": {
       "type": "enumeration",
-      "enum": ["export", "upload", "revert"],
+      "enum": [
+        "export",
+        "upload",
+        "revert"
+      ],
       "required": true
     },
     "status": {
       "type": "enumeration",
-      "enum": ["pending", "processing", "complete", "failed", "reverted"],
+      "enum": [
+        "pending",
+        "processing",
+        "complete",
+        "failed",
+        "reverted"
+      ],
       "default": "pending",
       "required": true
     },

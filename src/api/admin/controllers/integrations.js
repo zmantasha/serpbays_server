@@ -440,8 +440,8 @@ async function runTrafficRefresh(ctx, body, progress) {
     const includeBig = body.includeBigChanges === true;
     const csvRows = (includeBig ? rows.concat(review) : rows).filter((r) => ['traffic', 'keywords', 'country', 'share'].some((f) => r.next[f] != null));
     const q = (v) => (v == null ? '' : `"${String(v).replace(/"/g, '""')}"`);
-    const csv = ['url,Organic traffic,Organic keywords,Top country,Top country share',
-      ...csvRows.map((r) => [r.url, r.next.traffic ?? '', r.next.keywords ?? '', q(r.next.country), r.next.share ?? ''].join(','))].join('\n');
+    const csv = ['url,Organic traffic,Organic keywords,Top country,Top country share,Traffic source',
+      ...csvRows.map((r) => [r.url, r.next.traffic ?? '', r.next.keywords ?? '', q(r.next.country), r.next.share ?? '', r.next.traffic != null ? 'ahrefs' : ''].join(','))].join('\n');
 
     let preview = null;
     if (csvRows.length) {

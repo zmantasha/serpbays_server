@@ -135,6 +135,11 @@
       "type": "datetime",
       "description": "When the DataForSEO estimate was fetched"
     },
+    "traffic_source": {
+      "type": "string",
+      "maxLength": 20,
+      "description": "Where ahrefs_traffic came from: ahrefs, or dataforseo when Ahrefs does not track the site"
+    },
     "moz_da": {
       "type": "decimal",
       "max": 100,

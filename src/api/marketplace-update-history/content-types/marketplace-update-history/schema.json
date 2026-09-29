@@ -40,7 +40,9 @@
         "bulk-ahrefs",
         "bulk-moz",
         "bulk-semrush",
-        "bulk-price"
+        "bulk-price",
+        "bulk-dataforseo",
+        "moderation"
       ],
       "default": "api",
       "required": true

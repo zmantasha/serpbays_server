@@ -47,6 +47,7 @@ const PROFILES = {
       'ahrefs_referring_domain',
       'ahrefs_top_country',
       'ahrefs_top_country_share',
+      'traffic_source',
     ],
     headerAliases: {
       // URL columns — first one wins; everything maps to internal 'url'.
@@ -82,6 +83,7 @@ const PROFILES = {
       'top country': 'ahrefs_top_country',
       'top country share': 'ahrefs_top_country_share',
       'top country share %': 'ahrefs_top_country_share',
+      'traffic source': 'traffic_source',
     },
     fieldBounds: {
       ahrefs_dr: { min: 0, max: 100, integer: false },
@@ -91,8 +93,24 @@ const PROFILES = {
       ahrefs_referring_domain: { min: 0, max: 99_999_999, integer: true },
       ahrefs_top_country: { text: true, maxLength: 60 },
       ahrefs_top_country_share: { min: 0, max: 100, integer: false },
+      traffic_source: { text: true, maxLength: 20 },
     },
     siteExplorerHints: 'Site Explorer → Batch Analysis → paste your domain list → export CSV including Domain Rating, Total Traffic, Ref. domains, Organic keywords.',
+  },
+
+  // DataForSEO organic traffic for sites Ahrefs does not track. Written into the
+  // same traffic field buyers see, with traffic_source='dataforseo' so the
+  // portal can label it; history is recorded as bulk-dataforseo.
+  dataforseo: {
+    label: 'DataForSEO',
+    historySource: 'bulk-dataforseo',
+    batchCap: 1000,
+    refreshTimestampColumn: 'dfs_traffic_at',
+    exportTimestampColumn: 'dfs_traffic_at',
+    allowedFields: ['ahrefs_traffic', 'traffic_source'],
+    headerAliases: { url: 'url', domain: 'url', target: 'url', 'organic traffic': 'ahrefs_traffic', traffic: 'ahrefs_traffic', 'traffic source': 'traffic_source' },
+    fieldBounds: { ahrefs_traffic: { min: 0, max: 99_999_999, integer: true }, traffic_source: { text: true, maxLength: 20 } },
+    siteExplorerHints: 'Filled automatically from DataForSEO bulk_traffic_estimation (Integrations / moderation).',
   },
 
   moz: {

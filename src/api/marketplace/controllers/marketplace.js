@@ -46,6 +46,7 @@ const MARKETPLACE_PUBLIC_FIELDS = [
   // Public SEO metrics
   'ahrefs_dr', 'ahrefs_traffic', 'ahrefs_rank', 'ahrefs_referring_domain', 'ahrefs_keywords',
   'moz_da', 'semrush_authority_score', 'semrush_traffic', 'spam_score', 'similarweb_traffic',
+  'traffic_source', 'ahrefs_top_country', 'ahrefs_top_country_share', 'dfs_traffic_at', 'last_ahrefs_refresh_at', 'lastAhrefsRefreshAt',
   // Trust + feature flags
   'gsc_verified',
   'sponsored', 'ugc', 'digital_pr', 'only_with_us', 'fast_placement_status',
