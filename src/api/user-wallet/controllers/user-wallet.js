@@ -548,7 +548,10 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
       // Strapi 5 keeps draft + published rows; only match published_at IS NOT NULL
       const knex = strapi.db.connection;
       const promoRows = await knex('promo_codes')
-        .where('code', promoCode)
+        // People type the code off a banner or a slide; 'brightonseo' and
+        // 'BrightonSEO' are the same code. No two stored codes differ only by
+        // case, so lowering both sides cannot collide.
+        .whereRaw('lower(code) = ?', [String(promoCode).trim().toLowerCase()])
         .where('promo_status', 'active')
         .where('expiry_date', '>', new Date())
         .whereNotNull('published_at')
@@ -566,6 +569,8 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           expiryDate: row.expiry_date,
           currentRedemptions: row.current_redemptions,
           maxRedemptions: row.max_redemptions,
+          newAccountsOnly: row.new_accounts_only === true,
+          createdAt: row.created_at,
         };
         codeType = 'promo';
         console.log(`[PROMO] Found promo code: ${promoCode}, id: ${codeData.id}, docId: ${codeData.documentId}, amount: $${codeData.amount}`);
@@ -653,6 +658,24 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           await transaction.rollback();
           return ctx.badRequest('This promo code has reached its usage limit');
         }
+
+        // Launch / conference codes (newAccountsOnly) are meant to bring NEW
+        // people in, so an account that already existed when the code was
+        // created cannot claim it. "New" is measured against the code's own
+        // creation time, which is also what the campaign was announced with.
+        if (codeData.newAccountsOnly) {
+          const account = await knex('up_users')
+            .where('id', userId)
+            .select('created_at')
+            .first()
+            .transacting(transaction);
+          const signedUpAt = account && account.created_at ? new Date(account.created_at) : null;
+          const codeCreatedAt = codeData.createdAt ? new Date(codeData.createdAt) : null;
+          if (!signedUpAt || !codeCreatedAt || signedUpAt <= codeCreatedAt) {
+            await transaction.rollback();
+            return ctx.badRequest('This code is only for new accounts.');
+          }
+        }
       }
 
       // Now that validation passed, proceed with the transaction
@@ -692,14 +715,14 @@ module.exports = createCoreController('api::user-wallet.user-wallet', ({ strapi 
           netAmount: codeAmount,
           transactionStatus: 'success',
           gateway: codeType === 'voucher' ? 'voucher' : 'promo',
-          gatewayTransactionId: `${codeType.toUpperCase()}_${promoCode}_${Date.now()}`,
+          gatewayTransactionId: `${codeType.toUpperCase()}_${codeData.code || promoCode}_${Date.now()}`,
           fund_source: 'promo_fund', // Set fund source for proper tracking
-          description: `${codeType === 'voucher' ? 'Voucher' : 'Promo'} code redemption: ${promoCode}`,
+          description: `${codeType === 'voucher' ? 'Voucher' : 'Promo'} code redemption: ${codeData.code || promoCode}`,
           user_wallet: wallet.id,
           users_permissions_user: userId,
           fee: 0,
           metadata: {
-            promoCode: promoCode,
+            promoCode: codeData.code || promoCode,
             promoId: codeData.id,
             codeType: codeType, // Store the actual code type in metadata
             currency: wallet.currency || 'USD' // Store currency in metadata instead

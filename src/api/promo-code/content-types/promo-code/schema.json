@@ -50,6 +50,11 @@
       "relation": "oneToMany",
       "target": "api::promo-redemption.promo-redemption",
       "mappedBy": "promoCode"
+    },
+    "newAccountsOnly": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, only accounts created AFTER this code was created may redeem it (launch/conference codes)."
     }
   }
-} 
+}
