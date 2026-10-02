@@ -258,7 +258,7 @@ module.exports = {
     try {
       const roles = await strapi.db.query('plugin::users-permissions.role').findMany({ where: { type: { $in: ['super_admin', 'admin', 'authenticated'] } } });
       let granted = 0;
-      for (const action of ['api::notification.notification.getCounts', 'api::reseller-application.reseller-application.submit', 'api::reseller-application.reseller-application.me', 'api::sample-request.sample-request.submit', 'api::sample-request.sample-request.mine', 'api::chat.chat.timeline', 'api::chat.chat.markRead', 'api::chat.chat.upload', 'api::chat.chat.download', 'api::order-rating.order-rating.submit', 'api::order-rating.order-rating.forOrder', 'api::order-rating.order-rating.summary', 'api::order-rating.order-rating.pending']) {
+      for (const action of ['api::meeting-request.meeting-request.submit', 'api::notification.notification.getCounts', 'api::reseller-application.reseller-application.submit', 'api::reseller-application.reseller-application.me', 'api::sample-request.sample-request.submit', 'api::sample-request.sample-request.mine', 'api::chat.chat.timeline', 'api::chat.chat.markRead', 'api::chat.chat.upload', 'api::chat.chat.download', 'api::order-rating.order-rating.submit', 'api::order-rating.order-rating.forOrder', 'api::order-rating.order-rating.summary', 'api::order-rating.order-rating.pending']) {
         for (const role of roles) {
           const existing = await strapi.db.query('plugin::users-permissions.permission').findOne({ where: { action, role: role.id } });
           if (!existing) { await strapi.db.query('plugin::users-permissions.permission').create({ data: { action, role: role.id } }); granted++; }

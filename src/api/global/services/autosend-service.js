@@ -22,7 +22,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
      * @param {Array<string>} [params.tags] - Optional email tags for analytics
      * @returns {Promise<Object>} AutoSend response with message ID
      */
-    async send({ to, templateId, dynamicData, subject, html, text, tags = ['transactional'], from }) {
+    async send({ to, templateId, dynamicData, subject, html, text, tags = ['transactional'], from, replyTo }) {
         try {
             const apiKey = process.env.AUTOSEND_API_KEY;
 
@@ -45,6 +45,13 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
                 },
                 tags: ['serpbays', ...tags]
             };
+
+            // 2026-10-02: a user-initiated message (meeting request, support
+            // reply) should be answerable by hitting Reply, which otherwise
+            // goes to the no-reply sender.
+            if (replyTo) {
+                emailPayload.replyTo = { email: replyTo };
+            }
 
             // Template-based email
             if (templateId) {
