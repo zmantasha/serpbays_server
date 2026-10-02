@@ -378,6 +378,8 @@ module.exports = (plugin) => {
   // that's what we honor.
   //
   // Add new enum-typed fields here whenever the schema gains one.
+  const { normalisePhone } = require('../../utils/phone');
+
   const ENUM_FIELDS = new Set(['identity']);
 
   // Extend the users controller
@@ -410,6 +412,19 @@ module.exports = (plugin) => {
           continue;
         }
         updateData[key] = value;
+      }
+
+
+      // Store the phone in E.164 or not at all. The country already on the
+      // account (or the one being set in this same request) resolves numbers
+      // typed without a +country prefix.
+      if (Object.prototype.hasOwnProperty.call(updateData, 'phoneNumber')) {
+        const existing = await strapi.db.query('plugin::users-permissions.user')
+          .findOne({ where: { id: userId }, select: ['country'] });
+        const hint = updateData.country || existing?.country;
+        const phone = normalisePhone(updateData.phoneNumber, hint);
+        if (!phone.ok) return ctx.badRequest(phone.reason);
+        updateData.phoneNumber = phone.value;
       }
 
       console.log('[UPDATE ME] User ID:', userId);
