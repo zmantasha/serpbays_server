@@ -6,7 +6,41 @@
 
 const { createCoreService } = require('@strapi/strapi').factories;
 
+/**
+ * What was refunded to the advertiser for an order, from the refund
+ * transactions themselves (cancel writes one row per fund; reject writes one
+ * row with mainRefund/promoRefund in metadata). Called after the refund has
+ * committed, so the numbers are final.
+ */
+async function refundSummary(strapi, orderId) {
+  const r = await strapi.db.connection.raw(
+    `select t.amount, t.fund_source, t.metadata from transactions t join transactions_order_lnk l on l.transaction_id = t.id
+      where l.order_id = ? and t.type = 'refund' and t.transaction_status in ('success','paid')`, [orderId]);
+  let main = 0, promo = 0;
+  for (const row of (r.rows || r)) {
+    const amt = Number(row.amount) || 0;
+    let m = row.metadata;
+    if (typeof m === 'string') { try { m = JSON.parse(m); } catch (e) { m = null; } }
+    if (m && (m.mainRefund != null || m.promoRefund != null)) { main += Number(m.mainRefund) || 0; promo += Number(m.promoRefund) || 0; }
+    else if (row.fund_source === 'promo_fund') promo += amt;
+    else main += amt;
+  }
+  return { total: main + promo, main, promo };
+}
+
+const usd = (v) => '$' + (Math.round((Number(v) || 0) * 100) / 100).toFixed(2);
+
+/** Sentence for the advertiser: how much came back and where it went. */
+function refundSentence(rf) {
+  if (!rf || rf.total <= 0) return '';
+  const where = rf.main > 0 && rf.promo > 0 ? `(${usd(rf.main)} to your main balance, ${usd(rf.promo)} to your promo balance)`
+    : rf.promo > 0 ? '(promo balance)' : '(main balance)';
+  return ` A refund of ${usd(rf.total)} has been added to your Serpbays wallet ${where}. You can use it for a new order right away.`;
+}
+
 module.exports = createCoreService('api::notification.notification', ({ strapi }) => ({
+  refundSummary: (orderId) => refundSummary(strapi, orderId),
+  refundSentence,
 
   // Create a notification
   /**
@@ -119,6 +153,7 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
           recipientId = advertiserId;
           title = 'Order Rejected';
           message = `Your order #${orderId} has been rejected by the publisher.${additionalData.reason ? ` Reason: ${additionalData.reason}` : ''}`;
+          message += refundSentence(await refundSummary(strapi, orderId).catch(() => null));
           break;
         case 'order_delivered':
           recipientId = advertiserId;
@@ -154,6 +189,10 @@ module.exports = createCoreService('api::notification.notification', ({ strapi }
           recipientId = additionalData.recipientId;
           title = 'Order Cancelled';
           message = `Order #${orderId} has been cancelled by ${additionalData.cancelledBy}.${additionalData.reason ? ` Reason: ${additionalData.reason}` : ''}`;
+          // Only the advertiser gets money back; the publisher's copy stays as it was.
+          if (recipientId && advertiserId && String(recipientId) === String(advertiserId)) {
+            message += refundSentence(await refundSummary(strapi, orderId).catch(() => null));
+          }
           break;
         default:
           throw new Error(`Unknown order action: ${action}`);

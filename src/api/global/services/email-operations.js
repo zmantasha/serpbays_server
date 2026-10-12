@@ -199,6 +199,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       const advertiserName = order.advertiser?.username || order.advertiser?.email || 'Advertiser';
       const isAdvertiserRecipient = recipientEmail && order.advertiser?.email && recipientEmail.toLowerCase() === order.advertiser.email.toLowerCase();
       const recipientName = isAdvertiserRecipient ? advertiserName : publisherName;
+      const refund = isAdvertiserRecipient ? await strapi.service('api::notification.notification').refundSummary(order.id).catch(() => null) : null;
 
       const emailData = {
         to: recipientEmail,
@@ -243,7 +244,9 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
 
           // Cancellation-specific conditional fields (shown in template)
           order_cancel_reason: reason || order.cancellationReason || 'No reason provided',
-          amount_refunded: order.totalAmount || 0,
+          // Actual refund (from the refund transactions), not the order total.
+          amount_refunded: isAdvertiserRecipient ? (refund ? refund.total : (order.totalAmount || 0)) : 0,
+          refund_note: isAdvertiserRecipient ? strapi.service('api::notification.notification').refundSentence(refund).trim() : '',
           cancelled_by: cancelledBy || 'system',
 
           // Other conditional fields - not shown for cancellation
