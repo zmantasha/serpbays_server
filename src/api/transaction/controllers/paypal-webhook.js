@@ -222,7 +222,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Find the wallet
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { id: walletId }
+        where: { id: walletId },
+        // Needed so the transaction is linked to the user (it was saved with only the wallet).
+        populate: ['users_permissions_user'],
       });
 
       if (!wallet) {
@@ -392,7 +394,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
 
       // Find the wallet
       const wallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
-        where: { id: walletId }
+        where: { id: walletId },
+        // Needed so the transaction is linked to the user (it was saved with only the wallet).
+        populate: ['users_permissions_user'],
       });
 
       if (!wallet) {
