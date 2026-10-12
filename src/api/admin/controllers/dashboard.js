@@ -46,7 +46,8 @@ module.exports = {
     const started = Date.now();
     const period = ['7d', '30d', 'all'].includes(ctx.query.period) ? ctx.query.period : '7d';
     const { days } = windowFor(period);
-    const knex = strapi.db.connection;
+    const scope = await require('../services/reporting-scope').open(ctx); // hides accounts tagged internal
+    const knex = scope.knex;
 
     // Period predicate helpers (SQL fragments, bound safely).
     // cur: rows in the current window; prev: the window immediately before it.

@@ -51,7 +51,8 @@ module.exports = {
   async overview(ctx) {
     const started = Date.now();
     const spec = rangeSpec(ctx.query.range);
-    const knex = strapi.db.connection;
+    const scope = await require('../services/reporting-scope').open(ctx); // hides accounts tagged internal
+    const knex = scope.knex;
     const q = async (sql, b = []) => { const r = await knex.raw(sql, b); return r.rows || r; };
     const one = async (sql, b) => (await q(sql, b))[0] || {};
     const safe = (label, fn) => fn().catch((err) => { strapi.log.error(`[ANALYTICS] block "${label}" failed: ${err.message}`); return null; });

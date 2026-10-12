@@ -27,7 +27,8 @@ const WALLET_AGG = `
   a as (
     select w.id wallet_id, u.id user_id, u.username, u.email, u.first_name, u.last_name, u.business_name, u.country, u.signup_country, u.last_login_country,
            coalesce(u.advertiser,false) advertiser, coalesce(u.publisher,false) publisher, coalesce(u.blocked,false) blocked,
-           (u.username ~* ?) is_internal,
+           -- test accounts: one rule for every report (reporting.test_user_ids: internal tag, or a test-looking username without a not-test tag)
+           (u.id in (select user_id from reporting.test_user_ids) and ?::text is not null) is_internal,
            coalesce(w.balance,0) balance, coalesce(w.main_balance,0) main, coalesce(w.promo_balance,0) promo, coalesce(w.escrow_balance,0) escrow, coalesce(w.pending_withdrawal_balance,0) pending_wd,
            w.created_at wallet_created, w.updated_at wallet_updated,
            coalesce(sum(tx.amount) filter (where tx.ttype='deposit' and tx.st in ('success','paid') and tx.fs<>'promo_fund'),0) dep_all,

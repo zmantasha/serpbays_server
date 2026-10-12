@@ -28,7 +28,8 @@ module.exports = {
   async today(ctx) {
     if (!canView(ctx.state.user)) return ctx.forbidden('No access to transactions');
     const tz = /^[A-Za-z_]+\/[A-Za-z_]+$/.test(String(ctx.query.tz || '')) ? String(ctx.query.tz) : 'Asia/Kolkata';
-    const knex = strapi.db.connection;
+    const scope = await require('../services/reporting-scope').open(ctx); // hides accounts tagged internal
+    const knex = scope.knex;
     const rows = (await knex.raw(`
       with bounds as (select (date_trunc('day', now() at time zone ?) at time zone ?) as start)
       select t.id, t.type, t.gateway, t.amount, t.transaction_status as status, t.created_at, t.description,

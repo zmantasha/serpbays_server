@@ -37,7 +37,7 @@ function aggSql(where = 'true') {
              coalesce(p.received,0) received, coalesce(p.sold,0) sold, coalesce(p.earned,0) earned, p.last_sale,
              t.tags,
              greatest(u.created_at, o.last_order, d.last_deposit, p.last_sale, s.last_site) last_active,
-             (u.username ~* ?) or coalesce(t.tags @> '["internal"]'::jsonb, false) as is_internal
+             (u.id in (select user_id from reporting.test_user_ids) and ?::text is not null) as is_internal
       from up_users u
       left join lateral (select w.* from user_wallets w join user_wallets_users_permissions_user_lnk l on l.user_wallet_id = w.id where l.user_id = u.id limit 1) w on true
       left join lateral (select count(*)::int orders, count(*) filter (where o.order_status='completed')::int completed, coalesce(sum(o.total_amount),0) spend, max(o.created_at) last_order
