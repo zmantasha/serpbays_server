@@ -16,6 +16,25 @@ module.exports = {
         middlewares: ['global::admin-logger']
       }
     },
+    // Assured Placement (2026-10-12): admin marks a listing as one we are sure will go live.
+    {
+      method: 'GET',
+      path: '/admin/marketplace/assured',
+      handler: 'marketplace.listAssured',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'marketplace' } }],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
+      method: 'PUT',
+      path: '/admin/marketplace/:id/assured',
+      handler: 'marketplace.setAssured',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-edit', config: { pageKey: 'marketplace' } }],
+        middlewares: ['global::admin-logger']
+      }
+    },
     // Marketplace CRUD
     {
       method: 'GET',

@@ -212,6 +212,10 @@
       "type": "boolean",
       "description": "Fast placement status at time of order (snapshot)"
     },
+    "websiteAssured": {
+      "type": "boolean",
+      "description": "Assured Placement flag at time of order (snapshot)"
+    },
     "websiteAhrefsDr": {
       "type": "decimal",
       "min": 0,

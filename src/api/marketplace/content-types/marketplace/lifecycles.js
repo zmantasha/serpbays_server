@@ -64,6 +64,7 @@ const TRACKED_TERM_FIELDS = [
   'category',
   'language',
   'countries',
+  'assured_placement', // 2026-10-12: who turned Assured Placement on/off and when
 ];
 
 const TRACKED_FIELDS = [...TRACKED_PRICE_FIELDS, ...TRACKED_METRIC_FIELDS, ...TRACKED_TERM_FIELDS];

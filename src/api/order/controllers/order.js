@@ -726,6 +726,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
           orderData.websiteTat = marketplace.tat * 24; // Convert days to hours for frontend calculation
           orderData.websiteDofollowLink = marketplace.dofollow_link;
           orderData.websiteFastPlacement = marketplace.fast_placement_status;
+          orderData.websiteAssured = !!marketplace.assured_placement;
           orderData.websiteAhrefsDr = marketplace.ahrefs_dr;
           orderData.websiteAhrefsTraffic = marketplace.ahrefs_traffic;
           orderData.websiteMozDa = marketplace.moz_da;
@@ -3119,6 +3120,7 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => {
                 websiteTat: marketplace.tat,
                 websiteDofollowLink: marketplace.dofollow_link,
                 websiteFastPlacement: marketplace.fast_placement_status,
+                websiteAssured: !!marketplace.assured_placement,
                 websiteAhrefsDr: marketplace.ahrefs_dr,
                 websiteAhrefsTraffic: marketplace.ahrefs_traffic,
                 websiteMozDa: marketplace.moz_da,

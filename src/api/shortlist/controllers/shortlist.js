@@ -42,6 +42,7 @@ const SHORTLIST_MARKETPLACE_FIELDS = [
   // Trust + feature flags
   'gsc_verified',
   'sponsored', 'ugc', 'digital_pr', 'only_with_us', 'fast_placement_status',
+  'assured_placement',
   'isFeatured', 'isFeaturedGuestPost', 'isFeaturedLinkInsertion',
   'website_status', 'status',
   // Timestamps (marketplace draftAndPublish: false → no publishedAt)

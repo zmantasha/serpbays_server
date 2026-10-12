@@ -807,6 +807,79 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
    * timestamp, manual history insert with source='admin-confirm' so the
    * audit trail still records the action.
    */
+  /**
+   * Assured Placement (2026-10-12).
+   *
+   *   PUT /admin/marketplace/:id/assured   { assured: boolean, note?: string }
+   *
+   * Turns the "Assured Placement" badge on or off for one listing. Turning it
+   * on needs a short note (why we are sure: placed here before, direct
+   * publisher contact, ...). The change lands in the listing's update history
+   * (lifecycle tracks assured_placement) and in the admin audit log.
+   */
+  async setAssured(ctx) {
+    const id = Number(ctx.params.id);
+    const body = ctx.request.body || {};
+    if (!Number.isInteger(id) || id <= 0) return ctx.badRequest('Bad id');
+    if (typeof body.assured !== 'boolean') return ctx.badRequest('assured must be true or false');
+    const note = String(body.note || '').trim().slice(0, 1000);
+    if (body.assured && note.length < 5) return ctx.badRequest('Add a short note: why are we sure this site will go live?');
+    const row = await strapi.db.query('api::marketplace.marketplace').findOne({ where: { id }, select: ['id', 'url', 'assured_placement', 'status'] });
+    if (!row) return ctx.notFound('Listing not found');
+    const who = ctx.state.user?.username || ctx.state.user?.email || `admin #${ctx.state.user?.id}`;
+    const data = body.assured
+      ? { assured_placement: true, assured_note: note, assured_at: new Date(), assured_by: who }
+      : { assured_placement: false, assured_note: note || null, assured_at: new Date(), assured_by: who };
+    data._audit = { source: 'admin', userId: ctx.state.user?.id || null, changedBy: who };
+    await strapi.entityService.update('api::marketplace.marketplace', id, { data });
+    await strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
+      data: {
+        adminUser: ctx.state.user.id, action: 'assured_placement',
+        details: { marketplaceId: id, url: row.url, from: !!row.assured_placement, to: body.assured, note },
+        ipAddress: ctx.request.ip || null, createdAt: new Date(), updatedAt: new Date(),
+      },
+    }).catch((e) => strapi.log.warn(`[assured] audit log failed: ${e.message}`));
+    ctx.send({ id, url: row.url, assured: body.assured, note: data.assured_note, at: data.assured_at, by: who });
+  },
+
+  /**
+   *   GET /admin/marketplace/assured
+   * Every Assured listing plus its order record since it was marked, and the
+   * assured orders that need a look (rejected / cancelled in the last 30 days,
+   * or still not accepted after 48 hours).
+   */
+  async listAssured(ctx) {
+    const knex = strapi.db.connection;
+    if (ctx.query.id) {
+      const id = Number(ctx.query.id);
+      if (!Number.isInteger(id) || id <= 0) return ctx.badRequest('Bad id');
+      const m = await strapi.db.query('api::marketplace.marketplace').findOne({ where: { id }, select: ['id', 'url', 'assured_placement', 'assured_note', 'assured_at', 'assured_by'] });
+      if (!m) return ctx.notFound('Listing not found');
+      return ctx.send({ id: m.id, url: m.url, assured: !!m.assured_placement, note: m.assured_note || null, at: m.assured_at || null, by: m.assured_by || null });
+    }
+    const sites = (await knex.raw(`
+      select m.id, m.url, m.status, m.price, m.ahrefs_dr, m.assured_note, m.assured_at, m.assured_by,
+             count(o.id)::int as orders,
+             count(o.id) filter (where o.order_status in ('delivered','approved','completed'))::int as live,
+             count(o.id) filter (where o.order_status in ('rejected','cancelled'))::int as failed
+        from marketplaces m
+        left join orders_website_lnk ol on ol.marketplace_id = m.id
+        left join orders o on o.id = ol.order_id and o.created_at >= coalesce(m.assured_at, m.created_at)
+       where m.assured_placement = true
+       group by m.id
+       order by m.assured_at desc nulls last`)).rows;
+    const atRisk = (await knex.raw(`
+      select o.id, o.order_status as status, o.website_url as site, o.created_at, o.updated_at,
+             case when o.order_status in ('rejected','cancelled') then o.order_status else 'not_accepted_48h' end as reason
+        from orders o
+       where o.website_assured = true
+         and ((o.order_status in ('rejected','cancelled') and o.updated_at > now() - interval '30 days')
+              or (o.order_status = 'pending' and o.created_at < now() - interval '48 hours'))
+       order by o.updated_at desc
+       limit 100`)).rows;
+    ctx.send({ sites, atRisk });
+  },
+
   async confirmPrice(ctx) {
     try {
       const { id } = ctx.params;

@@ -242,6 +242,7 @@ module.exports = {
         (select count(*)::int from transactions where type='deposit' and transaction_status='pending') as pending_deposits,
         (select coalesce(sum(amount),0) from transactions where type='deposit' and transaction_status='pending') as pending_deposits_amount,
         (select count(*)::int from chatrooms where last_activity > now() - interval '7 days') as active_chats,
+        (select count(*)::int from orders where website_assured = true and ((order_status in ('rejected','cancelled') and updated_at > now() - interval '30 days') or (order_status = 'pending' and created_at < now() - interval '48 hours'))) as assured_at_risk,
         (select count(*)::int from chatrooms) as total_chats`);
       const d = (v) => Math.round(n(v));
       return {
@@ -260,6 +261,7 @@ module.exports = {
         failedDeposits30d: { count: n(r.failed_deposits), amount: money(r.failed_deposits_amount) },
         pendingDeposits: { count: n(r.pending_deposits), amount: money(r.pending_deposits_amount) },
         activeChats: { count: n(r.active_chats), total: n(r.total_chats) },
+        assuredAtRisk: { count: n(r.assured_at_risk) },
       };
     });
 

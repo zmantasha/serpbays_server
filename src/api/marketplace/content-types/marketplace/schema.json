@@ -149,6 +149,19 @@
       "type": "boolean",
       "default": false
     },
+    "assured_placement": {
+      "type": "boolean",
+      "default": false
+    },
+    "assured_note": {
+      "type": "text"
+    },
+    "assured_at": {
+      "type": "datetime"
+    },
+    "assured_by": {
+      "type": "string"
+    },
     "publisher_name": {
       "type": "string",
       "required": true

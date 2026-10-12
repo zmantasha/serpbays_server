@@ -50,6 +50,7 @@ const MARKETPLACE_PUBLIC_FIELDS = [
   // Trust + feature flags
   'gsc_verified',
   'sponsored', 'ugc', 'digital_pr', 'only_with_us', 'fast_placement_status',
+  'assured_placement',
   'isFeatured', 'isFeaturedGuestPost', 'isFeaturedLinkInsertion',
   // Same three flags as the raw-Knex fast path returns them (snake_case
   // column names). Without these the allow-list stripped the flags, and
