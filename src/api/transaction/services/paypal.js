@@ -217,70 +217,39 @@ module.exports = {
         };
       }
 
-      // PRODUCTION: Implement certificate-based verification
-      console.log('[PAYPAL] Production mode - Performing certificate verification...');
-
+      // PRODUCTION: ask PayPal to verify the event (POST /v1/notifications/verify-webhook-signature).
+      // The earlier hand-rolled check hashed the re-serialised body with SHA-256 where PayPal
+      // signs CRC32 of the raw body, so every live webhook failed with 403 — and it trusted
+      // whatever certificate URL the request supplied. PayPal's API avoids both problems.
       try {
-        const https = require('https');
-
-        // Step 1: Fetch PayPal's certificate from the URL provided in headers
-        console.log('[PAYPAL] Fetching certificate from:', certUrl);
-        const cert = await new Promise((resolve, reject) => {
-          https.get(certUrl, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-              if (res.statusCode !== 200) {
-                reject(new Error(`Failed to fetch certificate: HTTP ${res.statusCode}`));
-              } else {
-                resolve(data);
-              }
-            });
-          }).on('error', reject);
+        const base = environment instanceof paypal.core.LiveEnvironment ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+        const auth = Buffer.from(`${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`).toString('base64');
+        const tokRes = await fetch(`${base}/v1/oauth2/token`, {
+          method: 'POST',
+          headers: { Authorization: `Basic ${auth}`, 'content-type': 'application/x-www-form-urlencoded' },
+          body: 'grant_type=client_credentials',
         });
+        const tok = await tokRes.json();
+        if (!tok.access_token) throw new Error(`PayPal OAuth failed (${tokRes.status})`);
 
-        console.log('[PAYPAL] Certificate fetched successfully');
+        // Send the event exactly as PayPal sent it (raw body), so re-serialising cannot change it.
+        const raw = (body && (body[Symbol.for('unparsedBody')] || body._unparsedBody)) || null;
+        const eventJson = typeof raw === 'string' && raw.trim().startsWith('{') ? raw : JSON.stringify(body);
+        const payload = `{"auth_algo":${JSON.stringify(authAlgo)},"cert_url":${JSON.stringify(certUrl)},"transmission_id":${JSON.stringify(transmissionId)},"transmission_sig":${JSON.stringify(transmissionSig)},"transmission_time":${JSON.stringify(transmissionTime)},"webhook_id":${JSON.stringify(webhookId)},"webhook_event":${eventJson}}`;
 
-        // Step 2: Create the expected signature string
-        // Format: transmission_id|transmission_time|webhook_id|crc32(webhook_event_body)
-        const webhookEvent = typeof body === 'string' ? body : JSON.stringify(body);
-        const crc32 = crypto.createHash('sha256').update(webhookEvent).digest('hex');
-        const expectedSig = `${transmissionId}|${transmissionTime}|${webhookId}|${crc32}`;
-
-        console.log('[PAYPAL] Verifying signature with:', {
-          algorithm: authAlgo,
-          expectedSigLength: expectedSig.length,
-          transmissionSigLength: transmissionSig.length
+        const vRes = await fetch(`${base}/v1/notifications/verify-webhook-signature`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok.access_token}`, 'content-type': 'application/json' },
+          body: payload,
         });
-
-        // Step 3: Verify the signature using the certificate
-        const verify = crypto.createVerify(authAlgo);
-        verify.update(expectedSig);
-        const verified = verify.verify(cert, transmissionSig, 'base64');
-
-        if (verified) {
-          console.log('[PAYPAL] ✅ Webhook signature verified successfully (certificate-based)');
-        } else {
-          console.error('[PAYPAL] ❌ Webhook signature verification failed (invalid signature)');
-        }
-
-        return {
-          success: true,
-          verified: verified,
-          verificationStatus: verified ? 'SUCCESS' : 'FAILURE'
-        };
-
-      } catch (certError) {
-        console.error('[PAYPAL] Certificate verification error:', certError.message);
-        console.error('[PAYPAL] Error details:', certError);
-
-        // In production, you might want to reject on cert errors for security
-        // For now, we'll return failure but mark as successful processing
-        return {
-          success: false,
-          verified: false,
-          error: `Certificate verification failed: ${certError.message}`
-        };
+        const v = await vRes.json().catch(() => ({}));
+        const verified = v.verification_status === 'SUCCESS';
+        if (verified) console.log('[PAYPAL] ✅ Webhook signature verified by PayPal');
+        else console.error('[PAYPAL] ❌ Webhook signature not verified by PayPal:', vRes.status, v.verification_status || v.name || '', v.message || '');
+        return { success: true, verified, verificationStatus: v.verification_status || `HTTP_${vRes.status}` };
+      } catch (verifyError) {
+        console.error('[PAYPAL] Webhook verification call failed:', verifyError.message);
+        return { success: false, verified: false, error: `Verification failed: ${verifyError.message}` };
       }
 
     } catch (error) {
