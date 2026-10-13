@@ -1,4 +1,6 @@
 module.exports = [
+  // 2026-10-13: visitor IP from nginx X-Real-IP (trusted from localhost only)
+  'global::real-ip',
   'strapi::errors',
   // Response compression (gzip / brotli). Strapi 5 ships this but it's
   // opt-in. JSON payloads from /api/marketplace, /api/orders, etc. shrink
