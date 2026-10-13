@@ -91,6 +91,9 @@ async function split(orderId, buyerRefund, adminId, reason) {
       where: { id: orderId },
       data: { orderStatus: 'completed', completedDate: new Date(), revisionStatus: null, metadata: { ...(order.metadata || {}), disputeResolution: resolution } },
     });
+    // 2026-10-14 affiliate: commission only on the part the publisher keeps
+    try { await require('../../../services/affiliate').onOrderCompleted(orderId, trx, { baseRatio: total > 0 ? publisherGross / total : 1 }); }
+    catch (affErr) { strapi.log.error(`[affiliate] split commission order ${orderId}: ${affErr.message}`); }
     result = { advertiserId, publisherId, resolution };
   });
   return result;

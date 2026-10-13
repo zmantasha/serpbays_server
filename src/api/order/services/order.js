@@ -143,6 +143,10 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           }
         });
 
+        // 2026-10-14 affiliate: allocate the main-balance spend against the buyer's deposit pool
+        try { await require('../../../services/affiliate').onOrderFunded(order.id, user.id, spendResult.mainSpent, trx); }
+        catch (affErr) { strapi.log.error(`[affiliate] funding hook order ${order.id}: ${affErr.message}`); }
+
         // Update escrow balance
         await strapi.db.query('api::user-wallet.user-wallet').update({
           where: { id: currentWallet.id },
@@ -429,6 +433,9 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
           revisionStatus: null,
         },
       });
+      // 2026-10-14 affiliate: commission for the partner who referred this buyer
+      try { await require('../../../services/affiliate').onOrderCompleted(id, trx); }
+      catch (affErr) { strapi.log.error(`[affiliate] commission hook order ${id}: ${affErr.message}`); }
 
       console.log(`[ORDER COMPLETE] Order ${id} completed atomically.`);
     });
@@ -626,6 +633,9 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       // M3 reproducer; this path was implicitly safe via the
       // refundEscrowToAdvertiser's "insufficient escrow" throw, but
       // we're closing the architectural gap regardless).
+      // 2026-10-14 affiliate: the money is back in the wallet, so it is back in the deposit pool
+      try { await require('../../../services/affiliate').onOrderUnfunded(id, trx); }
+      catch (affErr) { strapi.log.error(`[affiliate] reject hook order ${id}: ${affErr.message}`); }
       const reason = (user && user.__rejectionReason) || null;
       await strapi.db.query('api::order.order').update({
         where: { id },
@@ -1027,6 +1037,9 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
     }
 
     // Real-time wallet update — advertiser sees refund land instantly.
+    // 2026-10-14 affiliate: refunded escrow returns to the buyer's deposit pool
+    try { await require('../../../services/affiliate').onOrderUnfunded(order.id); }
+    catch (affErr) { strapi.log.error(`[affiliate] cancel hook order ${order.id}: ${affErr.message}`); }
     try {
       await strapi.service("api::user-wallet.user-wallet").emitBalanceUpdate(
         order.advertiser.id, "order_cancellation", { orderId: order.id, refundAmount }

@@ -12,6 +12,11 @@ const ratingVisibility = require('./rating-visibility');
 const moderation = require('./moderation');
 const salesDigest = require('./sales-digest');
 const metricsRefresh = require('./metrics-refresh');
+const affiliateJobs = {
+    affiliateHoldRelease: { task: async () => { const r = await require('../services/affiliate').releaseHolds(); console.log(`[Affiliate] holds released=${r.released} referrals expired=${r.expired}`); }, options: { rule: '10 4 * * *' } },
+    affiliateReconcile: { task: async () => { const r = await require('../services/affiliate').reconcile(); console.log('[Affiliate] reconcile ' + JSON.stringify(r)); }, options: { rule: '30 4 * * *' } },
+    affiliatePayoutDraft: { task: async () => { const d = await require('../services/affiliate').payoutRun(); console.log(`[Affiliate] payout drafts=${d.length}`); }, options: { rule: '15 3 1 * *' } },
+};
 const userDeleteSweep = {
     userDeleteSweep: {
         task: async () => require('../services/user-delete-guard').sweep(),
@@ -34,4 +39,5 @@ module.exports = require('./registry').wrap({
     ...salesDigest,
     ...metricsRefresh,
     ...userDeleteSweep,
+    ...affiliateJobs,
 });

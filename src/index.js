@@ -116,6 +116,7 @@ module.exports = {
     try {
       await require('./services/webhook-events').ensure();
       await require('./services/payment-disputes').ensure();
+      await require('./services/affiliate').ensure();
     } catch (err) {
       strapi.log.error(`[BOOTSTRAP] webhook/dispute tables: ${err.message}`);
     }
