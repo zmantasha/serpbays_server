@@ -65,8 +65,10 @@ const MARKETPLACE_PUBLIC_FIELDS = [
   // Publisher rating (visible ratings only)
   'publisher_rating_avg', 'publisher_rating_count',
   'website_status', 'status',
-  // Timestamps (marketplace draftAndPublish: false → no publishedAt)
-  'createdAt', 'updatedAt',
+  // Timestamps (marketplace draftAndPublish: false → no publishedAt).
+  // created_at: the raw-Knex fast path returns snake_case, so the camelCase
+  // name alone was always empty (needed for the 7-day "New" badge, 2026-10-13).
+  'createdAt', 'updatedAt', 'created_at',
 ];
 
 // Fields ONLY the owning publisher sees on their own listings.

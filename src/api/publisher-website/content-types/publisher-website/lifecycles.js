@@ -91,6 +91,9 @@ module.exports = {
         if (controller && controller.createMarketplaceListing) {
           await controller.createMarketplaceListing(fullSubmission);
           console.log(`✅ Marketplace listing created for website ${updatedWebsiteId}`);
+          // 2026-10-13: copy DR/traffic the Moderation checks already fetched (or ask the free Ahrefs
+          // DR API) into the new listing, so buyers do not see N/A. Runs after this update finishes.
+          setTimeout(() => { require('../../../../services/listing-metrics').fillListingMetrics(updatedWebsiteId).catch((e) => console.warn('[listing-metrics]', e.message)); }, 1500);
         } else {
           console.error('❌ createMarketplaceListing method not found');
         }
