@@ -379,7 +379,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
             name: website.publisher_name || 'Unknown Publisher',
             email: website.publisher_email || 'N/A',
             phone: '',
-            rating: 4.5,
+            // 2026-10-13: real buyer rating (was a hard-coded 4.5 for everyone)
+            rating: website.publisher_rating_avg != null ? Number(website.publisher_rating_avg) : null,
+            ratingCount: Number(website.publisher_rating_count || 0),
             completedOrders: orderData.total,
             joinDate: website.createdAt || website.created_at,
             specialization: 'General'
@@ -387,7 +389,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           performance: {
             lastMonthOrders: orderData.lastMonth,
             totalOrders: orderData.total,
-            averageRating: 4.5,
+            averageRating: website.publisher_rating_avg != null ? Number(website.publisher_rating_avg) : null,
             completionRate: orderData.total > 0 ? Math.round((orderData.completed / orderData.total) * 100) : 0,
             responseTime: website.tat ? `${website.tat}h` : 'Not specified',
             revenue: orderData.revenue
@@ -562,7 +564,8 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           name: website.publisher_name || 'Unknown Publisher',
           email: website.publisher_email || 'N/A',
           phone: '', // Default since not in schema
-          rating: 4.5, // Default rating since not in schema
+          rating: website.publisher_rating_avg != null ? Number(website.publisher_rating_avg) : null, // real buyer rating (2026-10-13)
+          ratingCount: Number(website.publisher_rating_count || 0),
           completedOrders: totalOrders, // Real order count
           joinDate: website.createdAt,
           specialization: 'General' // Default since not in schema
@@ -570,7 +573,7 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
         performance: {
           lastMonthOrders: lastMonthOrders, // Real last month orders
           totalOrders: totalOrders, // Real total orders
-          averageRating: 4.5, // Default since not in schema
+          averageRating: website.publisher_rating_avg != null ? Number(website.publisher_rating_avg) : null,
           completionRate: totalOrders > 0 ? Math.round((statusCounts.completed / totalOrders) * 100) : 0,
           responseTime: website.tat ? `${website.tat}h` : 'Not specified',
           revenue: orders.filter(o => o.orderStatus === 'completed').reduce((sum, o) => sum + parseFloat(o.totalAmount || 0), 0),
@@ -719,7 +722,9 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
           price: Math.round(avgPrice * 100) / 100
         },
         totalRevenue: Math.round(totalRevenue * 100) / 100,
-        avgRating: Math.round(avgRating * 10) / 10
+        avgRating: Math.round(avgRating * 10) / 10,
+        // 2026-10-13: share of orders that reached completed (what the old "Avg Rating" tile really measured)
+        completionRate: totalOrders > 0 ? Math.round((totalCompletedOrders / totalOrders) * 100) : 0
       });
 
     } catch (error) {
