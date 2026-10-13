@@ -341,7 +341,7 @@ module.exports = {
       const r = rows(await knex().raw(`select f.*, m.url, m.status listing_status, m.price, m.link_insertion_price, m.ahrefs_dr, m.ahrefs_traffic, m.ahrefs_top_country,
           (select count(*)::int from orders o join orders_website_lnk l on l.order_id=o.id where l.marketplace_id=m.id and o.order_status in ('pending','accepted','delivered')) open_orders,
           (select p.id from publisher_websites p where p.marketplace_id=m.id order by p.id desc limit 1) pw_id
-        from moderation_flags f join marketplaces m on m.id=f.marketplace_id where f.status=? order by (f.from_value - f.to_value) / nullif(f.from_value,0) desc nulls last, f.id limit 500`, [status]));
+        from moderation_flags f join marketplaces m on m.id=f.marketplace_id where f.status=? and (?::text is null or f.kind = ?::text) order by (f.from_value - f.to_value) / nullif(f.from_value,0) desc nulls last, f.id limit 500`, [status, ctx.query.kind || null, ctx.query.kind || null]));
       const counts = rows(await knex().raw(`select kind, count(*)::int c from moderation_flags where status='open' group by 1`));
       ctx.send({ items: r.map((x) => ({ ...x, from_value: n(x.from_value), to_value: n(x.to_value), price: n(x.price) })), counts: Object.fromEntries(counts.map((c) => [c.kind, c.c])) });
     } catch (e) { fail(ctx, e); }

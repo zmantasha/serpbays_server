@@ -668,7 +668,25 @@ async function scanFlags(days = 2) {
         and (h.changes->'ahrefs_traffic'->>'to')::numeric < (h.changes->'ahrefs_traffic'->>'from')::numeric * 0.2
       order by h.marketplace_id, h.created_at desc
       on conflict (marketplace_id, kind, status) do nothing`, [String(days)]);
-  return { dr: dr.rowCount || 0, traffic: tr.rowCount || 0 };
+  // 2026-10-13: listing-quality flags. Flag only; nothing is paused automatically.
+  // A flag the team closed with "keep" is not re-opened while the value is unchanged.
+  const pl = await knex().raw(`insert into moderation_flags (marketplace_id, kind, from_value, to_value, detail)
+      select m.id, 'price_low', m.price, null, 'Price is $5 or less; probably entered wrong'
+        from marketplaces m
+       where m.status = 'active' and m.price > 0 and m.price <= 5
+         and not exists (select 1 from moderation_flags r where r.marketplace_id = m.id and r.kind = 'price_low' and r.status = 'resolved' and r.from_value = m.price)
+      on conflict (marketplace_id, kind, status) do nothing`);
+  const na = await knex().raw(`insert into moderation_flags (marketplace_id, kind, from_value, to_value, detail)
+      select distinct on (l.marketplace_id) l.marketplace_id, 'not_accepting', o.id, null,
+             left('Publisher cancelled order #' || o.id || ': ' || coalesce(o.cancellation_reason, o.rejection_reason, ''), 300)
+        from orders o join orders_website_lnk l on l.order_id = o.id join marketplaces m on m.id = l.marketplace_id and m.status = 'active'
+       where o.order_status in ('cancelled','rejected') and coalesce(o.cancelled_by,'publisher') = 'publisher'
+         and coalesce(o.cancelled_at, o.rejected_date, o.updated_at) > now() - interval '180 days'
+         and coalesce(o.cancellation_reason, o.rejection_reason, '') ~* '(stopp|no longer|not (getting |)accept|not publish|closed|not allow|discontinu|not available)'
+         and not exists (select 1 from moderation_flags r where r.marketplace_id = l.marketplace_id and r.kind = 'not_accepting' and r.status = 'resolved' and r.from_value = o.id)
+       order by l.marketplace_id, o.id desc
+      on conflict (marketplace_id, kind, status) do nothing`);
+  return { dr: dr.rowCount || 0, traffic: tr.rowCount || 0, price: pl.rowCount || 0, notAccepting: na.rowCount || 0 };
 }
 
 // ───────────────────────── settings ─────────────────────────

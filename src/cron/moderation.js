@@ -60,7 +60,7 @@ module.exports = {
 
   moderationFlags: {
     task: async () => {
-      try { const r = await require('../api/admin/services/moderation').scanFlags(2); if (r.dr || r.traffic) console.log(`[Moderation Cron] flags opened: DR ${r.dr}, traffic ${r.traffic}`); }
+      try { const r = await require('../api/admin/services/moderation').scanFlags(2); if (r.dr || r.traffic || r.price || r.notAccepting) console.log(`[Moderation Cron] flags opened: DR ${r.dr}, traffic ${r.traffic}, price ${r.price}, not accepting ${r.notAccepting}`); }
       catch (e) { console.error('[Moderation Cron] flags failed:', e.message); }
     },
     options: { rule: '30 4 * * *' }, // daily 04:30 UTC, after the ranking recompute
