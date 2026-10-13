@@ -882,7 +882,23 @@ module.exports = createCoreController('api::marketplace.marketplace', ({ strapi 
               or (o.order_status = 'pending' and o.created_at < now() - interval '48 hours'))
        order by o.updated_at desc
        limit 100`)).rows;
-    ctx.send({ sites, atRisk });
+    // 2026-10-13: candidates = live listings that already delivered for us
+    // (completed orders) with no publisher cancel/reject, not yet assured.
+    const suggestions = (await knex.raw(`
+      select m.id, m.url, m.price, m.ahrefs_dr,
+             count(o.id) filter (where o.order_status = 'completed')::int as completed,
+             count(o.id) filter (where o.order_status in ('cancelled','rejected') and coalesce(o.cancelled_by,'publisher') = 'publisher')::int as publisher_cancels,
+             max(o.completed_date) as last_completed
+        from marketplaces m
+        join orders_website_lnk ol on ol.marketplace_id = m.id
+        join orders o on o.id = ol.order_id
+       where m.status = 'active' and coalesce(m.assured_placement, false) = false
+       group by m.id
+      having count(o.id) filter (where o.order_status = 'completed') > 0
+         and count(o.id) filter (where o.order_status in ('cancelled','rejected') and coalesce(o.cancelled_by,'publisher') = 'publisher') = 0
+       order by completed desc, last_completed desc
+       limit 50`)).rows;
+    ctx.send({ sites, atRisk, suggestions });
   },
 
   async confirmPrice(ctx) {
