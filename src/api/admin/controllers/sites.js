@@ -49,6 +49,7 @@ const BASE = `
       from orders o join orders_website_lnk l on l.order_id = o.id group by 1),
   flg as (select marketplace_id, array_agg(distinct kind) kinds from moderation_flags where status = 'open' group by 1),
   chk as (select pw_id, count(*) filter (where status = 'fail')::int fails, count(*) filter (where status = 'warn')::int warns, max(ran_at) ran_at from moderation_checks group by 1),
+  own as (select marketplace_id from publisher_websites where submission_status = 'approved' and marketplace_id is not null group by 1),
   edt as (select distinct l.publisher_website_id pw_id from website_update_requests w join website_update_requests_publisher_website_lnk l on l.website_update_request_id = w.id where w.status = 'pending'),
   s as (
     select p.id, p.url, p.submission_status, ${STATUS_SQL} as status, p.created_at, p.approved_at, p.reviewed_at, p.updated_at,
@@ -65,6 +66,7 @@ const BASE = `
            u.id as publisher_id, coalesce(nullif(trim(concat(u.first_name, ' ', u.last_name)), ''), u.username, p.publisher_name) as publisher_name,
            coalesce(u.email, p.publisher_email) as publisher_email,
            coalesce(ord.n, 0) orders, coalesce(ord.done, 0) completed, ord.last_order,
+           (own.marketplace_id is not null) has_owner,
            coalesce(flg.kinds, '{}') flags, chk.fails, chk.warns, chk.ran_at checks_at, (edt.pw_id is not null) edit_pending
       from publisher_websites p
       left join marketplaces m on m.id = p.marketplace_id
@@ -73,7 +75,8 @@ const BASE = `
       left join ord on ord.marketplace_id = p.marketplace_id
       left join flg on flg.marketplace_id = p.marketplace_id
       left join chk on chk.pw_id = p.id
-      left join edt on edt.pw_id = p.id)`;
+      left join edt on edt.pw_id = p.id
+      left join own on own.marketplace_id = p.marketplace_id)`;
 
 const VIEWS = {
   all: 'true',
@@ -95,6 +98,8 @@ const VIEWS = {
   new_week: "created_at > now() - interval '7 days'",
   paused: "status in ('paused', 'delisted')",
   rejected: "status = 'rejected'",
+  // live listing whose submission was rejected / transferred / claimed and no approved owner exists
+  out_of_sync: "listing_status = 'active' and submission_status in ('rejected','ownership_transferred','ownership_claimed','listing_paused') and not has_owner",
 };
 const SORTS = {
   created: 'created_at', updated: 'updated_at', url: 'url', price: 'price', li_price: 'li_price', dr: 'dr', da: 'da', traffic: 'traffic',
