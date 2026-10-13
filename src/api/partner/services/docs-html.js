@@ -55,7 +55,7 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{border-bottom:1px
     "prices": { "currency": "USD", "guest_post": 149, "link_insertion": 99,
                 "casino": { "guest_post": null, "link_insertion": null }, "crypto": { "guest_post": 250, "link_insertion": null },
                 "cbd": { "guest_post": null, "link_insertion": null }, "dating": { "guest_post": null, "link_insertion": null } },
-    "link": { "type": "Do follow", "dofollow": "1", "validity": "Lifetime", "sponsored": false, "ugc": false },
+    "link": { "type": "Do follow", "dofollow": true, "links_allowed": 2, "validity": "Lifetime", "sponsored": false, "ugc": false },
     "turnaround_days": 7, "min_words": 500, "digital_pr": false, "assured_placement": true,
     "guidelines": "…", "sample_links": ["https://example.com/sample-post"],
     "url": "https://app.serpbays.com/marketplace/35698",

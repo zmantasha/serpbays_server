@@ -53,7 +53,9 @@ function shape(r, k) {
       cbd: { guest_post: offered(r.adv_cbd_pricing), link_insertion: offered(r.adv_li_cbd_pricing) },
       dating: { guest_post: offered(r.adv_dating_pricing), link_insertion: offered(r.adv_li_dating_pricing) },
     },
-    link: { type: r.backlink_type || null, dofollow: r.dofollow_link || null, validity: r.backlink_validity || null, sponsored: yes(r.sponsored), ugc: yes(r.ugc) },
+    // dofollow_link holds how many links a post may carry; the follow type is backlink_type
+    link: { type: r.backlink_type || null, dofollow: r.backlink_type ? /^do/i.test(String(r.backlink_type)) : null,
+      links_allowed: num(r.dofollow_link), validity: r.backlink_validity || null, sponsored: yes(r.sponsored), ugc: yes(r.ugc) },
     turnaround_days: r.tat != null ? Number(r.tat) : null,
     min_words: r.min_word_count != null ? Number(r.min_word_count) : null,
     digital_pr: yes(r.digital_pr),
