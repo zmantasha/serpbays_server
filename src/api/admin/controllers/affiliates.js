@@ -25,7 +25,7 @@ const audit = (ctx, action, details) => strapi.entityService.create('api::admin-
 }).catch(() => {});
 const bad = (ctx, m) => ctx.badRequest(m);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const money = (n) => `$${r2(n).toFixed(2)}`;
+const money = (n) => { const v = r2(n); return `${v < 0 ? '−' : ''}$${Math.abs(v).toFixed(2)}`; };
 const jsonOf = (v) => aff().jsonOf(v);
 const normPartner = (p) => ({ ...p, tax_profile: jsonOf(p.tax_profile) || {}, payout_details: p.payout_details === undefined ? undefined : jsonOf(p.payout_details), min_payout: r2(p.min_payout), wallet_credit_multiplier: Number(p.wallet_credit_multiplier) });
 
