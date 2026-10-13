@@ -76,6 +76,15 @@ module.exports = {
       }
     },
     {
+      method: 'GET',
+      path: '/admin/users/:id/delete-check',
+      handler: 'users.deleteCheck',
+      config: {
+        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'users' } }],
+        middlewares: ['global::admin-logger']
+      }
+    },
+    {
       method: 'DELETE',
       path: '/admin/users/:id',
       handler: 'users.delete',

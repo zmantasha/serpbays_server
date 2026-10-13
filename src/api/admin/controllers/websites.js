@@ -1039,6 +1039,18 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         );
       }
 
+      // 2026-10-13: the listing needs a publisher account (linked, or matching the
+      // publisher email). Without one, approval half-fails and leaves the site
+      // "approved" but not on the marketplace (scoopearth.in).
+      const ownerRow = (await strapi.db.connection.raw(
+        `select exists (select 1 from publisher_websites_current_publisher_id_lnk where publisher_website_id = ?)
+             or exists (select 1 from up_users where email = ?) as ok`, [existing.id, existing.publisherEmail || ''])).rows[0];
+      if (!ownerRow || !ownerRow.ok) {
+        return ctx.badRequest(
+          `Cannot approve ${existing.url}: no SerpBays account owns this site${existing.publisherEmail ? ` (and none uses ${existing.publisherEmail})` : ''}. Ask the publisher to sign up with that email, or link the site to their account first.`
+        );
+      }
+
       const updatedWebsite = await strapi.entityService.update('api::publisher-website.publisher-website', id, {
         data: {
           submissionStatus: 'approved',

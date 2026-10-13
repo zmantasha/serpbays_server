@@ -526,6 +526,17 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       // Log admin action
       console.log(`[ADMIN ACTION] Admin ${ctx.state.user.id} deleting user ${id}`);
 
+      // 2026-10-13: refuse when the user owns anything (the lifecycle guard
+      // enforces the same on every path); a deletion is emailed to the owner.
+      const guard = require('../../../services/user-delete-guard');
+      const footprint = await guard.footprint(strapi.db.connection, id);
+      const blocked = guard.blockers(footprint);
+      if (blocked.length) {
+        ctx.status = 409;
+        ctx.body = { error: { status: 409, name: 'UserHasData', message: `This user has ${blocked.join(', ')}. Deleting would leave that data without an owner. Block the user instead.`, details: { footprint } } };
+        return;
+      }
+
       await strapi.entityService.delete('plugin::users-permissions.user', id);
 
       ctx.send({
@@ -533,9 +544,18 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
       });
 
     } catch (error) {
+      if (error && error.name === 'ApplicationError') return ctx.badRequest(error.message);
       console.error('[ADMIN USER DELETE ERROR]', error);
       return ctx.internalServerError('Failed to delete user');
     }
+  },
+
+  /** What deleting this user would orphan (2026-10-13). */
+  async deleteCheck(ctx) {
+    const guard = require('../../../services/user-delete-guard');
+    const footprint = await guard.footprint(strapi.db.connection, ctx.params.id);
+    const blocked = guard.blockers(footprint);
+    ctx.send({ footprint, deletable: blocked.length === 0, reasons: blocked });
   },
 
   /**

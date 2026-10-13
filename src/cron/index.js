@@ -12,6 +12,12 @@ const ratingVisibility = require('./rating-visibility');
 const moderation = require('./moderation');
 const salesDigest = require('./sales-digest');
 const metricsRefresh = require('./metrics-refresh');
+const userDeleteSweep = {
+    userDeleteSweep: {
+        task: async () => require('../services/user-delete-guard').sweep(),
+        options: { rule: '* * * * *' }, // email any user deletion the app did not catch (raw SQL)
+    },
+};
 
 // 2026-10-13: wrap every task so the System health page can show last run / failures
 module.exports = require('./registry').wrap({
@@ -27,4 +33,5 @@ module.exports = require('./registry').wrap({
     ...moderation,
     ...salesDigest,
     ...metricsRefresh,
+    ...userDeleteSweep,
 });

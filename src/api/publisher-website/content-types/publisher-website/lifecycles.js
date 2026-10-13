@@ -105,11 +105,11 @@ module.exports = {
         try {
           await strapi.entityService.update('api::publisher-website.publisher-website', updatedWebsiteId, {
             data: {
-              submissionStatus: 'verified_pending_review',
+              submissionStatus: 'approval_pending', // 2026-10-13: was 'verified_pending_review', not a valid status, so the revert always failed
               reviewNotes: `Marketplace creation failed: ${marketplaceError.message}`
             }
           });
-          console.log(`⏪ Reverted website ${updatedWebsiteId} to verified_pending_review due to marketplace error`);
+          console.log(`⏪ Reverted website ${updatedWebsiteId} to approval_pending due to marketplace error`);
         } catch (revertError) {
           console.error('❌ Failed to revert approval status:', revertError);
         }

@@ -1304,7 +1304,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         // Revert approval status since marketplace creation failed
         await strapi.entityService.update('api::publisher-website.publisher-website', id, {
           data: {
-            submissionStatus: 'verified_pending_review',  // Revert to pending review
+            submissionStatus: 'approval_pending', // 2026-10-13: was 'verified_pending_review', not a valid status, so the revert always failed  // Revert to pending review
             reviewNotes: `Marketplace creation failed: ${marketplaceError.message}`
           }
         });

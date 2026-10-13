@@ -67,6 +67,7 @@ const BASE = `
            coalesce(u.email, p.publisher_email) as publisher_email,
            coalesce(ord.n, 0) orders, coalesce(ord.done, 0) completed, ord.last_order,
            (own.marketplace_id is not null) has_owner,
+           (cl.user_id is null and not exists (select 1 from up_users ue where ue.email = p.publisher_email)) no_account,
            coalesce(flg.kinds, '{}') flags, chk.fails, chk.warns, chk.ran_at checks_at, (edt.pw_id is not null) edit_pending
       from publisher_websites p
       left join marketplaces m on m.id = p.marketplace_id
@@ -96,6 +97,7 @@ const VIEWS = {
   stale_price: "status = 'live' and (last_price_update_at is null or last_price_update_at < now() - interval '180 days')",
   stale_metrics: "status = 'live' and (last_ahrefs_refresh_at is null or last_ahrefs_refresh_at < now() - interval '60 days')",
   new_week: "created_at > now() - interval '7 days'",
+  no_account: "no_account and status not in ('rejected', 'transferred')",
   paused: "status in ('paused', 'delisted')",
   rejected: "status = 'rejected'",
   // live listing whose submission was rejected / transferred / claimed and no approved owner exists
@@ -140,7 +142,7 @@ const shape = (r) => ({
   tatDays: r.tat_days != null ? Number(r.tat_days) : null, featured: !!r.featured, assured: !!r.assured,
   publisher: { id: r.publisher_id || null, name: r.publisher_name || null, email: r.publisher_email || null },
   orders: r.orders, completed: r.completed, lastOrder: r.last_order, flags: r.flags || [],
-  checks: r.checks_at ? { fails: r.fails || 0, warns: r.warns || 0, ranAt: r.checks_at } : null, editPending: !!r.edit_pending,
+  checks: r.checks_at ? { fails: r.fails || 0, warns: r.warns || 0, ranAt: r.checks_at } : null, editPending: !!r.edit_pending, noAccount: !!r.no_account,
   resellerCode: r.reseller_code || null, verified: !!r.gsc_verified || !!r.verification_method,
   createdAt: r.created_at, approvedAt: r.approved_at, updatedAt: r.updated_at, priceUpdatedAt: r.last_price_update_at, metricsUpdatedAt: r.last_ahrefs_refresh_at,
 });

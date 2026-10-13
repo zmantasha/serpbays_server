@@ -112,6 +112,15 @@ module.exports = {
       }
     }
 
+    // 2026-10-13: users who own data cannot be deleted; every deletion is logged + emailed
+    try {
+      const userDeleteGuard = require('./services/user-delete-guard');
+      await userDeleteGuard.ensure(strapi.db.connection);
+      userDeleteGuard.subscribe();
+    } catch (err) {
+      strapi.log.error(`[BOOTSTRAP] user delete guard failed: ${err.message}`);
+    }
+
     // Initialize WebSocket after Strapi is ready
     await websocketBootstrap({ strapi });
 
