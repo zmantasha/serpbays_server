@@ -13,13 +13,14 @@ const isSuper = (u) => u && u.role && u.role.type === 'super_admin';
 const audit = (ctx, action, details) => strapi.entityService.create('api::admin-audit-log.admin-audit-log', {
   data: { adminUser: ctx.state.user.id, action, details, ipAddress: ctx.request.ip || null, createdAt: new Date(), updatedAt: new Date() },
 }).catch(() => {});
+const src = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || null;
 const lim = (v, d, lo, hi) => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 
 module.exports = {
   async list(ctx) {
     if (!isSuper(ctx.state.user)) return ctx.forbidden('Super admin only');
     await svc().ensure();
-    const rows = (await strapi.db.connection.raw(`select k.id, k.user_id, k.label, k.key_prefix, k.scopes, k.per_minute, k.per_day, k.status, k.expires_at, k.notes,
+    const rows = (await strapi.db.connection.raw(`select k.id, k.user_id, k.label, k.key_prefix, k.scopes, k.per_minute, k.per_day, k.full_catalog, k.max_sites_per_day, k.utm_source, k.status, k.expires_at, k.notes,
         k.created_at, k.revoked_at, k.last_used_at, k.last_used_ip, u.email, u.username,
         coalesce((select requests from api_usage_daily d where d.key_id = k.id and d.day = current_date), 0) today,
         coalesce((select sum(requests) from api_usage_daily d where d.key_id = k.id and d.day > current_date - 7), 0)::int last7,
@@ -38,8 +39,9 @@ module.exports = {
     const key = svc().newKey();
     const exp = b.expiresAt ? new Date(b.expiresAt) : null;
     if (exp && Number.isNaN(exp.getTime())) return ctx.badRequest('expiresAt is not a date');
-    const row = (await strapi.db.connection.raw(`insert into api_keys (user_id, label, key_prefix, key_hash, per_minute, per_day, expires_at, notes, created_by)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?) returning id, key_prefix`, [userId, label, key.slice(0, 14), svc().hash(key), lim(b.perMinute, 60, 1, 1000), lim(b.perDay, 10000, 10, 1000000), exp, String(b.notes || '').slice(0, 1000) || null, ctx.state.user.id])).rows[0];
+    const row = (await strapi.db.connection.raw(`insert into api_keys (user_id, label, key_prefix, key_hash, per_minute, per_day, expires_at, notes, created_by, full_catalog, max_sites_per_day, utm_source)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) returning id, key_prefix`, [userId, label, key.slice(0, 14), svc().hash(key), lim(b.perMinute, 60, 1, 1000), lim(b.perDay, 10000, 10, 1000000), exp, String(b.notes || '').slice(0, 1000) || null, ctx.state.user.id,
+        b.fullCatalog === true, lim(b.maxSitesPerDay, 1000, 10, 1000000), src(b.utmSource)])).rows[0];
     await audit(ctx, 'api_key.create', { id: row.id, label, userId, prefix: row.key_prefix });
     ctx.send({ id: row.id, key, prefix: row.key_prefix, note: 'Copy this key now. It is not shown again.' });
   },
@@ -54,6 +56,9 @@ module.exports = {
     if (b.label !== undefined) set.label = String(b.label).trim().slice(0, 100) || cur.label;
     if (b.perMinute !== undefined) set.per_minute = lim(b.perMinute, cur.per_minute, 1, 1000);
     if (b.perDay !== undefined) set.per_day = lim(b.perDay, cur.per_day, 10, 1000000);
+    if (b.fullCatalog !== undefined) set.full_catalog = b.fullCatalog === true;
+    if (b.maxSitesPerDay !== undefined) set.max_sites_per_day = lim(b.maxSitesPerDay, cur.max_sites_per_day, 10, 1000000);
+    if (b.utmSource !== undefined) set.utm_source = src(b.utmSource);
     if (b.notes !== undefined) set.notes = String(b.notes || '').slice(0, 1000) || null;
     if (b.expiresAt !== undefined) { const d = b.expiresAt ? new Date(b.expiresAt) : null; if (d && Number.isNaN(d.getTime())) return ctx.badRequest('expiresAt is not a date'); set.expires_at = d; }
     if (b.status === 'revoked' && cur.status !== 'revoked') { set.status = 'revoked'; set.revoked_at = new Date(); set.revoked_by = ctx.state.user.id; }

@@ -26,6 +26,7 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{border-bottom:1px
 <table><tr><th>Header</th><th>Meaning</th></tr>
 <tr><td><code>X-RateLimit-Limit</code> / <code>X-RateLimit-Remaining</code> / <code>X-RateLimit-Reset</code></td><td>Requests per minute, how many are left, and when the window resets (Unix time)</td></tr>
 <tr><td><code>X-Daily-Limit</code> / <code>X-Daily-Remaining</code></td><td>Requests per day (resets 00:00 UTC) and how many are left</td></tr></table>
+<p>Some keys can also fetch only a set number of <b>different sites per day</b> (fetching a site again the same day is free). Headers <code>X-Sites-Daily-Limit</code> and <code>X-Sites-Daily-Remaining</code> show where you are; <code>/v1/me</code> shows your limits.</p>
 <p>Over a limit you get <code>429</code>. Wait for the reset and retry.</p>
 
 <h2>Endpoints</h2>
@@ -73,7 +74,7 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{border-bottom:1px
 <tr><td>400</td><td>bad_request</td><td>A parameter is wrong; the message says which</td></tr>
 <tr><td>401</td><td>missing_key / invalid_key / key_revoked / key_expired</td><td>Check your key or ask Serpbays for a new one</td></tr>
 <tr><td>404</td><td>not_found</td><td>No live site with that id</td></tr>
-<tr><td>429</td><td>rate_limited / daily_limit</td><td>Slow down; see the limit headers</td></tr>
+<tr><td>429</td><td>rate_limited / daily_limit / daily_site_limit</td><td>Slow down; see the limit headers</td></tr>
 <tr><td>500</td><td>server_error</td><td>Our side; retry in a moment</td></tr></table>
 <pre>{ "error": { "code": "invalid_key", "message": "This API key is not valid." } }</pre>
 

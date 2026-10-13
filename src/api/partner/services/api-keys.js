@@ -22,6 +22,12 @@ function ensure() {
       .then(() => knex.raw(`create table if not exists api_usage_daily (
         key_id int not null, day date not null, requests int not null default 0, errors int not null default 0, rows_returned int not null default 0,
         primary key (key_id, day))`))
+      // 2026-10-13: per-key catalog cap (unique sites a day) and tracking source for site links
+      .then(() => knex.raw(`alter table api_keys add column if not exists full_catalog boolean not null default false,
+        add column if not exists max_sites_per_day int not null default 1000, add column if not exists utm_source text`))
+      .then(() => knex.raw(`create table if not exists api_key_sites_seen (
+        key_id int not null, day date not null, marketplace_id int not null, primary key (key_id, day, marketplace_id))`))
+      .then(() => knex.raw(`delete from api_key_sites_seen where day < current_date - 2`))
       .catch((e) => { ready = null; throw e; });
   }
   return ready;

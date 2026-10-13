@@ -22,10 +22,15 @@ const COLS = `m.id, m.url, m.ahrefs_dr, m.moz_da, m.ahrefs_traffic, m.traffic_so
   m.adv_casino_pricing, m.adv_li_casino_pricing, m.adv_crypto_pricing, m.adv_li_crypto_pricing, m.adv_cbd_pricing, m.adv_li_cbd_pricing,
   m.adv_dating_pricing, m.adv_li_dating_pricing, m.tat, m.backlink_type, m.dofollow_link, m.backlink_validity, m.sponsored, m.ugc,
   m.min_word_count, m.digital_pr, m.assured_placement, m.guidelines, m.sample_links, m.last_price_update_at, m.updated_at, m.created_at`;
-const BASE_WHERE = `m.status = 'active' and (coalesce(m.price, 0) > 0 or coalesce(m.link_insertion_price, 0) > 0)`;
+// Listings with an open "price too low" flag (<= $5, likely bad data) stay out until reviewed.
+const BASE_WHERE = `m.status = 'active' and (coalesce(m.price, 0) > 0 or coalesce(m.link_insertion_price, 0) > 0)
+  and not exists (select 1 from moderation_flags fl where fl.marketplace_id = m.id and fl.status = 'open' and fl.kind = 'price_low')`;
 const SORTS = { dr: 'm.ahrefs_dr', da: 'm.moz_da', traffic: 'm.ahrefs_traffic', price: 'nullif(m.price, 0)', updated: 'm.updated_at', created: 'm.created_at', id: 'm.id' };
 
-function shape(r) {
+const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'api';
+const linkFor = (id, k) => `https://app.serpbays.com/marketplace/${id}` + (k ? `?utm_source=${encodeURIComponent(k.utm_source || slug(k.label))}&utm_medium=api&ref=api-${k.id}` : '');
+
+function shape(r, k) {
   const yes = (v) => v === true || v === 'true' || v === '1' || v === 1;
   return {
     id: r.id,
@@ -55,7 +60,7 @@ function shape(r) {
     assured_placement: r.assured_placement === true,
     guidelines: r.guidelines || null,
     sample_links: arr(r.sample_links).filter((x) => typeof x === 'string').slice(0, 5),
-    url: `https://app.serpbays.com/marketplace/${r.id}`,
+    url: linkFor(r.id, k),
     price_updated_at: r.last_price_update_at, updated_at: r.updated_at, listed_at: r.created_at,
   };
 }
@@ -77,6 +82,29 @@ function filters(q) {
   if (q.listed_since) { const d = new Date(String(q.listed_since)); if (!Number.isNaN(d.getTime())) { c.push('m.created_at >= ?'); b.push(d.toISOString()); } }
   return { sql: c.join(' and '), b };
 }
+/**
+ * Keys without full_catalog may see at most max_sites_per_day different sites a
+ * day (re-fetching a site already seen today is free). Returns the rows allowed.
+ */
+async function capRows(ctx, rows) {
+  const k = ctx.state.apiKey;
+  if (!k || k.full_catalog || !rows.length) return { rows, capped: false };
+  const knex = strapi.db.connection;
+  const cap = k.max_sites_per_day || 1000;
+  const ids = rows.map((r) => r.id);
+  const seen = new Set((await knex.raw('select marketplace_id from api_key_sites_seen where key_id = ? and day = current_date and marketplace_id = any(?::int[])', [k.id, `{${ids.join(',')}}`])).rows.map((r) => r.marketplace_id));
+  const used = (await knex.raw('select count(*)::int n from api_key_sites_seen where key_id = ? and day = current_date', [k.id])).rows[0].n;
+  let room = Math.max(0, cap - used);
+  const out = [];
+  for (const r of rows) { if (seen.has(r.id)) out.push(r); else if (room > 0) { out.push(r); room -= 1; } }
+  const fresh = out.filter((r) => !seen.has(r.id)).map((r) => r.id);
+  if (fresh.length) await knex.raw(`insert into api_key_sites_seen (key_id, day, marketplace_id) select ?, current_date, unnest(?::int[]) on conflict do nothing`, [k.id, `{${fresh.join(',')}}`]);
+  ctx.set('X-Sites-Daily-Limit', String(cap));
+  ctx.set('X-Sites-Daily-Remaining', String(Math.max(0, cap - used - fresh.length)));
+  return { rows: out, capped: out.length < rows.length };
+}
+const capHit = (ctx) => { ctx.status = 429; ctx.body = { error: { code: 'daily_site_limit', message: 'This key has reached its limit of different sites per day. Sites already fetched today can still be fetched again. Ask Serpbays for full catalog access.' } }; };
+
 const bad = (ctx, message) => { ctx.status = 400; ctx.body = { error: { code: 'bad_request', message } }; };
 
 module.exports = {
@@ -95,7 +123,10 @@ module.exports = {
       knex.raw(`select count(*)::int n from marketplaces m where ${f.sql}`, f.b),
     ]);
     const total = count.rows[0].n;
-    ctx.body = { data: rows.rows.map(shape), meta: { page, per_page: perPage, total, total_pages: Math.max(1, Math.ceil(total / perPage)) } };
+    const k = ctx.state.apiKey;
+    const lim = await capRows(ctx, rows.rows);
+    if (rows.rows.length && !lim.rows.length) return capHit(ctx);
+    ctx.body = { data: lim.rows.map((r) => shape(r, k)), meta: { page, per_page: perPage, total, total_pages: Math.max(1, Math.ceil(total / perPage)), ...(lim.capped ? { truncated: true, note: 'Daily site limit reached; some rows were left out.' } : {}) } };
   },
 
   async site(ctx) {
@@ -103,7 +134,9 @@ module.exports = {
     if (!id) return bad(ctx, 'id must be a number');
     const r = (await strapi.db.connection.raw(`select ${COLS} from marketplaces m where m.id = ? and ${BASE_WHERE}`, [id])).rows[0];
     if (!r) { ctx.status = 404; ctx.body = { error: { code: 'not_found', message: 'No live site with this id.' } }; return; }
-    ctx.body = { data: shape(r) };
+    const lim = await capRows(ctx, [r]);
+    if (!lim.rows.length) return capHit(ctx);
+    ctx.body = { data: shape(r, ctx.state.apiKey) };
   },
 
   async categories(ctx) {
@@ -115,7 +148,7 @@ module.exports = {
   async me(ctx) {
     const k = ctx.state.apiKey;
     const u = (await strapi.db.connection.raw('select requests, errors, rows_returned from api_usage_daily where key_id = ? and day = current_date', [k.id])).rows[0] || {};
-    ctx.body = { data: { key: `${k.key_prefix}…`, label: k.label, scopes: k.scopes, limits: { per_minute: k.per_minute, per_day: k.per_day }, today: { requests: u.requests || 0, errors: u.errors || 0, rows: u.rows_returned || 0 }, expires_at: k.expires_at } };
+    ctx.body = { data: { key: `${k.key_prefix}…`, label: k.label, scopes: k.scopes, limits: { per_minute: k.per_minute, per_day: k.per_day, sites_per_day: k.full_catalog ? null : k.max_sites_per_day, full_catalog: !!k.full_catalog }, today: { requests: u.requests || 0, errors: u.errors || 0, rows: u.rows_returned || 0 }, expires_at: k.expires_at } };
   },
 
   /** Public HTML docs (no key needed). */
