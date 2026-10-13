@@ -7,7 +7,7 @@ module.exports = {
       method: 'GET',
       path: '/admin/analytics/overview',
       handler: 'analytics.overview',
-      config: { auth: false, policies: ['global::is-admin-with-jwt'], middlewares: ['global::admin-logger'] },
+      config: { auth: false, policies: ['global::is-admin-with-jwt', { name: 'global::requires-view', config: { pageKey: 'analytics' } }], middlewares: ['global::admin-logger'] }, // 2026-10-13: page permission
     },
   ],
 };

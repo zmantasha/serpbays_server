@@ -1,7 +1,8 @@
 'use strict';
 
 // Reading the queue needs any admin; decisions need edit rights on Websites.
-const view = { auth: false, policies: ['global::is-admin-with-jwt'], middlewares: ['global::admin-logger'] };
+// 2026-10-13: reads now need Websites view (writes already needed Websites edit).
+const view = { auth: false, policies: ['global::is-admin-with-jwt', { name: 'global::requires-view', config: { pageKey: 'websites' } }], middlewares: ['global::admin-logger'] };
 const edit = { auth: false, policies: ['global::is-admin-with-jwt', { name: 'global::requires-edit', config: { pageKey: 'websites' } }], middlewares: ['global::admin-logger'] };
 
 module.exports = {

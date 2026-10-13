@@ -62,19 +62,22 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
         orderBy: sort === 'createdAt:desc' ? { createdAt: 'desc' } : { createdAt: 'asc' },
         offset: (parseInt(page) - 1) * parseInt(pageSize),
         limit: parseInt(pageSize),
+        // 2026-10-13: db.query ignores `fields` inside populate and needs
+        // `select`. With `fields` every user column (password hash, reset
+        // token, withdrawal OTP) and the full article body were returned.
         populate: {
           advertiser: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName']
+            select: ['id', 'username', 'email', 'firstName', 'lastName', 'businessName', 'blocked']
           },
           publisher: {
-            fields: ['id', 'username', 'email', 'firstName', 'lastName']
+            select: ['id', 'username', 'email', 'firstName', 'lastName', 'businessName', 'blocked']
           },
           // Pull only the title from the related order-content row. The
           // rich-text `content` field is intentionally excluded so the
           // list query stays lightweight; the detail screen still hits
           // GET /admin/orders/:id/content for the full body.
           orderContent: {
-            fields: ['title']
+            select: ['id', 'title']
           }
         }
       });
@@ -110,7 +113,12 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
 
       // Use simple array populate - Strapi v4 recommended approach
       const order = await strapi.entityService.findOne('api::order.order', id, {
-        populate: ['advertiser', 'publisher', 'website']
+        // 2026-10-13: only safe user fields (no password hash / tokens / OTP).
+        populate: {
+          advertiser: { fields: ['username', 'email', 'firstName', 'lastName', 'businessName', 'blocked'] },
+          publisher: { fields: ['username', 'email', 'firstName', 'lastName', 'businessName', 'blocked'] },
+          website: true,
+        }
       });
 
       if (!order) {
