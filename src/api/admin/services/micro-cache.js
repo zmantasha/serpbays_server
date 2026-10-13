@@ -62,4 +62,6 @@ async function serve(ctx, key, ttlMs, impl) {
   }
 }
 
-module.exports = { serve, memo, get, set };
+function del(key) { store.delete(key); }
+
+module.exports = { serve, memo, get, set, del };
