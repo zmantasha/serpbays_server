@@ -356,3 +356,11 @@ module.exports = {
       money: money_, funnel, lost, speed, buyers, publishers, sells, supplyDemand, payments, wallet, growth, pipeline, quality });
   },
 };
+
+// 2026-10-13 (perf): ~49 queries per call; trend data, so cache for 10 min.
+{
+  const microCache = require('../services/micro-cache');
+  const impl = module.exports.overview;
+  module.exports.overview = (ctx) =>
+    microCache.serve(ctx, `analytics:${String(ctx.query.range || '')}:${ctx.query.includeTest ? 1 : 0}`, 10 * 60 * 1000, impl);
+}

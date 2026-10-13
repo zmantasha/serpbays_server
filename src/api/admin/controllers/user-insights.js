@@ -141,6 +141,9 @@ module.exports = {
     const total = rows.length ? n(rows[0].total_count) : 0;
 
     // Tiles + saved-view counts + countries (whole population, independent of filters)
+    // 2026-10-13 (perf): the tiles/views/countries below cover the whole
+    // population (not the filters), so compute them at most once a minute.
+    const { st, countriesR } = await require('../services/micro-cache').memo('users-directory-stats', 60 * 1000, async () => {
     const statsR = await knex.raw(`${aggSql('true')}
       select
         count(*) filter (where orders > 0)::int buyers_ever,
@@ -159,6 +162,8 @@ module.exports = {
       from agg`, AGG_BINDINGS);
     const st = (statsR.rows || statsR)[0] || {};
     const countriesR = await knex.raw(`select c as country, count(*)::int count from (select coalesce(nullif(signup_country,''), nullif(country,''), 'unknown') c from up_users) x group by 1 order by 2 desc limit 40`);
+    return { st, countriesR };
+    });
 
     ctx.send({
       data: rows.map(rowOut),

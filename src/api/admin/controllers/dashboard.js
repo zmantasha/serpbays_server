@@ -489,3 +489,15 @@ module.exports = {
     });
   },
 };
+
+// 2026-10-13 (perf): ~45 queries per call, so cache for 30 s per period.
+// `?fresh=1` bypasses. Test accounts are excluded unless includeTest=1, so
+// that is part of the key.
+{
+  const microCache = require('../services/micro-cache');
+  const impl = module.exports.overview;
+  module.exports.overview = (ctx) => {
+    const period = ['7d', '30d', 'all'].includes(ctx.query.period) ? ctx.query.period : '7d';
+    return microCache.serve(ctx, `dashboard:${period}:${ctx.query.includeTest ? 1 : 0}`, 30 * 1000, impl);
+  };
+}

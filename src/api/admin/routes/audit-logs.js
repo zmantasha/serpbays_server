@@ -16,8 +16,11 @@ module.exports = {
       handler: 'audit-logs.find',
       config: {
         auth: false,
-        policies: ['global::is-admin', { name: 'global::requires-view', config: { pageKey: 'audit-logs' } }],
-        middlewares: ['global::admin-logger', 'global::admin-jwt-auth']
+        // 2026-10-13: was is-admin + admin-jwt-auth middleware, but policies run
+        // before route middlewares, so state.user was never set and every call
+        // 403d. is-admin-with-jwt validates the token and sets state.user itself.
+        policies: ['global::is-admin-with-jwt', { name: 'global::requires-view', config: { pageKey: 'audit-logs' } }],
+        middlewares: ['global::admin-logger']
       }
     }
   ]

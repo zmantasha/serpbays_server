@@ -52,6 +52,8 @@ module.exports = [
   'strapi::public',
   // Custom admin middleware
   'global::admin-logger',
+  // 2026-10-13: remove password hash / tokens / withdrawal OTP from every /api/admin response
+  'global::strip-secrets',
   // Custom response sanitizer to remove sensitive fields
   // Temporarily disabled for testing - might be blocking publisher email
   // 'global::response-sanitizer',

@@ -13,6 +13,8 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
    */
   async find(ctx) {
     try {
+      // 2026-10-13 (perf): cap page size (was unbounded)
+      ctx.query.pageSize = String(Math.min(500, Math.max(1, parseInt(ctx.query.pageSize, 10) || 20)));
       const {
         page = 1,
         pageSize = 20,

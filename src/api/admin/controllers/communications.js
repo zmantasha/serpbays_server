@@ -13,6 +13,8 @@ module.exports = createCoreController('api::communication.communication', ({ str
    */
   async find(ctx) {
     try {
+      // 2026-10-13 (perf): cap page size (was unbounded)
+      ctx.query.pageSize = String(Math.min(500, Math.max(1, parseInt(ctx.query.pageSize, 10) || 20)));
       const {
         page = 1,
         pageSize = 20,
@@ -53,10 +55,10 @@ module.exports = createCoreController('api::communication.communication', ({ str
       const communications = await strapi.entityService.findMany('api::communication.communication', {
         filters,
         sort,
-        pagination: {
-          page: parseInt(page),
-          pageSize: parseInt(pageSize)
-        },
+        // 2026-10-13: entityService.findMany ignores pagination here and
+        // returned every row; use start/limit.
+        start: (Math.max(1, parseInt(page)) - 1) * parseInt(pageSize),
+        limit: parseInt(pageSize),
         populate: ['sender', 'order']
       });
 
