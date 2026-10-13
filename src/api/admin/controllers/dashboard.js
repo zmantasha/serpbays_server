@@ -496,8 +496,23 @@ module.exports = {
 {
   const microCache = require('../services/micro-cache');
   const impl = module.exports.overview;
-  module.exports.overview = (ctx) => {
+  // 2026-10-13: the dashboard is for every admin, but blocks are dropped
+  // server-side when the admin can't view the page they come from (the UI
+  // used to just hide them). Super admins get everything.
+  const can = (user, key) => {
+    if (user && user.role && user.role.type === 'super_admin') return true;
+    const e = ((user && user.pagePermissions) || {})[key];
+    return !!e && (!!e.view || !!e.edit || !!e.create || !!e.delete);
+  };
+  const BLOCK_PAGE = { money: 'transactions', transactions: 'transactions', orders: 'orders', users: 'users', supply: 'websites', applications: 'reseller-applications' };
+  module.exports.overview = async (ctx) => {
     const period = ['7d', '30d', 'all'].includes(ctx.query.period) ? ctx.query.period : '7d';
-    return microCache.serve(ctx, `dashboard:${period}:${ctx.query.includeTest ? 1 : 0}`, 30 * 1000, impl);
+    await microCache.serve(ctx, `dashboard:${period}:${ctx.query.includeTest ? 1 : 0}`, 30 * 1000, impl);
+    const user = ctx.state.user;
+    if (ctx.body && typeof ctx.body === 'object' && !(user && user.role && user.role.type === 'super_admin')) {
+      const out = { ...ctx.body };
+      for (const [block, page] of Object.entries(BLOCK_PAGE)) if (!can(user, page)) out[block] = null;
+      ctx.body = out;
+    }
   };
 }
