@@ -10,6 +10,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
    * POST /api/transactions/paypal-webhook
    */
   async handleWebhook(ctx) {
+    let whClaim = null; const whEvents = require('../../../services/webhook-events');
     try {
       const headers = ctx.request.headers;
       const body = ctx.request.body;
@@ -48,6 +49,9 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       // This is more reliable than searching in metadata JSON field
 
       // Handle different event types
+      // 2026-10-14: one processing per event id
+      whClaim = await whEvents.claim('paypal', body.id, body.event_type);
+      if (!whClaim.ok) return ctx.send({ success: true, duplicate: true });
       switch (body.event_type) {
         case 'CHECKOUT.ORDER.APPROVED':
           await this.handleOrderApproved(body);
@@ -61,6 +65,13 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         case 'PAYMENT.CAPTURE.REFUNDED':
           await this.handlePaymentRefunded(body);
           break;
+        case 'CUSTOMER.DISPUTE.CREATED':
+        case 'CUSTOMER.DISPUTE.UPDATED':
+        case 'CUSTOMER.DISPUTE.RESOLVED':
+        case 'PAYMENT.CAPTURE.REVERSED':
+          // 2026-10-14: chargebacks debit the wallet, block the buyer, alert the owner
+          await require('../../../services/payment-disputes').paypal(body);
+          break;
         case 'PAYOUTS.PAYOUT.COMPLETED':
           await this.handlePayoutCompleted(body);
           break;
@@ -71,8 +82,10 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           console.log(`[PAYPAL WEBHOOK] Unhandled event type: ${body.event_type}`);
       }
 
+      await whEvents.done(whClaim.id);
       return ctx.send({ success: true });
     } catch (error) {
+      if (whClaim) await whEvents.release(whClaim.id, error);
       console.error('[PAYPAL WEBHOOK] Error processing webhook:', error);
       return ctx.internalServerError('Webhook processing failed');
     }
@@ -542,14 +555,16 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
         });
 
         if (wallet) {
-          const currentBalance = parseFloat(wallet.balance) || 0;
+          // 2026-10-14: take the refund from main balance (was only adjusting the total)
           const refundAmount = parseFloat(refund.amount.value);
-          const newBalance = Math.max(0, currentBalance - refundAmount);
-
+          const curMain = parseFloat(wallet.mainBalance) || 0;
+          const curPromo = parseFloat(wallet.promoBalance) || 0;
+          const newMain = Math.max(0, curMain - refundAmount);
           await strapi.db.query('api::user-wallet.user-wallet').update({
             where: { id: wallet.id },
-            data: { balance: newBalance }
+            data: { mainBalance: newMain, balance: newMain + curPromo }
           });
+          try { const aff = require('../../../services/affiliate'); if (aff.onDepositRefunded) await aff.onDepositRefunded(originalTransaction.id, refundAmount, 'paypal'); } catch (affErr) { if (affErr.code !== 'MODULE_NOT_FOUND') strapi.log.error(`[PAYPAL WEBHOOK] affiliate refund hook: ${affErr.message}`); }
 
           console.log(`[PAYPAL WEBHOOK] ✅ Refund processed - Wallet ${wallet.id} updated with -$${refundAmount}`);
         }

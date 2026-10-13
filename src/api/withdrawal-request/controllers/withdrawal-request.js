@@ -475,6 +475,11 @@ module.exports = createCoreController('api::withdrawal-request.withdrawal-reques
         totalDeduction
       });
 
+      {
+        // 2026-10-14: nothing leaves the platform while a chargeback is owed
+        const disputes = require('../../../services/payment-disputes');
+        if ((await disputes.enforceForUser(ctx.state.user.id)) > 0) return ctx.badRequest(disputes.BLOCK_MESSAGE);
+      }
       if (mainBalance < totalDeduction) {
         return ctx.badRequest(`Insufficient withdrawable funds. Available for withdrawal: ${mainBalance}, Total required (including 20% platform fee): ${totalDeduction}. Note: Promo credits (${promoBalance}) cannot be withdrawn.`);
       }

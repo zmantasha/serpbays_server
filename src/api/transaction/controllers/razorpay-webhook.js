@@ -17,6 +17,7 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
    * POST /api/transactions/razorpay-webhook
    */
   async handleWebhook(ctx) {
+    let whClaim = null; const whEvents = require('../../../services/webhook-events');
     try {
       const body = ctx.request.body;
       const headers = ctx.request.headers;
@@ -59,12 +60,24 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
       console.log('[RAZORPAY WEBHOOK] ✅ Signature verified successfully');
 
       // Handle different event types
+      // 2026-10-14: one processing per event id
+      whClaim = await whEvents.claim('razorpay', headers['x-razorpay-event-id'], body.event);
+      if (!whClaim.ok) return ctx.send({ success: true, duplicate: true });
       switch (body.event) {
         case 'payment.captured':
           await this.handlePaymentCaptured(body);
           break;
         case 'payment.failed':
           await this.handlePaymentFailed(body);
+          break;
+        case 'payment.dispute.created':
+        case 'payment.dispute.under_review':
+        case 'payment.dispute.action_required':
+        case 'payment.dispute.won':
+        case 'payment.dispute.lost':
+        case 'payment.dispute.closed':
+          // 2026-10-14: chargebacks debit the wallet, block the buyer, alert the owner
+          await require('../../../services/payment-disputes').razorpay(body);
           break;
         case 'order.paid':
           await this.handleOrderPaid(body);
@@ -73,9 +86,11 @@ module.exports = createCoreController('api::transaction.transaction', ({ strapi 
           console.log(`[RAZORPAY WEBHOOK] Unhandled event type: ${body.event}`);
       }
 
+      await whEvents.done(whClaim.id);
       return ctx.send({ success: true });
     } catch (error) {
       console.error('[RAZORPAY WEBHOOK] Error processing webhook:', error);
+      if (whClaim) await whEvents.release(whClaim.id, error);
       return ctx.internalServerError('Webhook processing failed');
     }
   },

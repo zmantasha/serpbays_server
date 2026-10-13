@@ -41,6 +41,14 @@ module.exports = createCoreService('api::order.order', ({ strapi }) => ({
       const totalAmount = parseFloat(data.totalAmount);
       const escrowHeld = totalAmount;
 
+      // 2026-10-14: a buyer who owes money from a chargeback cannot order. Whatever
+      // balance they have is first used to recover what is owed.
+      {
+        const disputes = require('../../../services/payment-disputes');
+        const owed = await disputes.enforceForUser(user.id);
+        if (owed > 0) throw new Error(disputes.BLOCK_MESSAGE);
+      }
+
       // Refresh wallet balance to check current funds
       const freshWallet = await strapi.db.query('api::user-wallet.user-wallet').findOne({
         where: { id: wallet.id }

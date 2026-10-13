@@ -55,6 +55,11 @@ module.exports = {
       console.log(`[STRIPE WEBHOOK] 📣 Received event: ${event.type}, ID: ${event.id}`);
 
       // Handle different event types
+      // 2026-10-14: one processing per event id (duplicate deliveries are skipped)
+      const whEvents = require('../../../services/webhook-events');
+      const whClaim = await whEvents.claim('stripe', event.id, event.type);
+      if (!whClaim.ok) return ctx.send({ received: true, duplicate: true, eventId: event.id });
+      try {
       switch (event.type) {
         case 'payment_intent.succeeded':
           await handlePaymentSucceeded(event.data.object);
@@ -90,6 +95,16 @@ module.exports = {
           await handlePaymentFailed(event.data.object);
           break;
 
+        case 'charge.dispute.created':
+        case 'charge.dispute.updated':
+        case 'charge.dispute.closed':
+        case 'charge.dispute.funds_withdrawn':
+        case 'charge.dispute.funds_reinstated':
+        case 'radar.early_fraud_warning.created':
+          // 2026-10-14: chargebacks debit the wallet, block the buyer, alert the owner
+          await require('../../../services/payment-disputes').stripe(event);
+          break;
+
         case 'payment_intent.created':
           console.log(`[STRIPE WEBHOOK] ℹ️ Payment intent created: ${event.data.object.id}`);
           // Just log, no action needed
@@ -103,6 +118,8 @@ module.exports = {
           console.log(`[STRIPE WEBHOOK] ℹ️ Unhandled event type: ${event.type}`);
       }
 
+      } catch (procErr) { await whEvents.release(whClaim.id, procErr); throw procErr; }
+      await whEvents.done(whClaim.id);
       // Always return 200 to acknowledge receipt
       return ctx.send({ 
         received: true, 
@@ -702,6 +719,7 @@ async function handleChargeRefunded(charge) {
 
       console.log(`[STRIPE] ✅ Refund processed: $${refundAmount} deducted from wallet ${wallet.id}`);
 
+      try { const aff = require('../../../services/affiliate'); if (aff.onDepositRefunded) await aff.onDepositRefunded(transaction.id, refundAmount, 'stripe'); } catch (affErr) { if (affErr.code !== 'MODULE_NOT_FOUND') strapi.log.error(`[STRIPE WEBHOOK] affiliate refund hook: ${affErr.message}`); }
       // Real-time push so the user sees the refund debit immediately.
       try {
         const walletWithUser = await strapi.db.query('api::user-wallet.user-wallet').findOne({

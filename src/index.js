@@ -112,6 +112,14 @@ module.exports = {
       }
     }
 
+    // 2026-10-14: webhook idempotency + payment disputes tables
+    try {
+      await require('./services/webhook-events').ensure();
+      await require('./services/payment-disputes').ensure();
+    } catch (err) {
+      strapi.log.error(`[BOOTSTRAP] webhook/dispute tables: ${err.message}`);
+    }
+
     // 2026-10-13: users who own data cannot be deleted; every deletion is logged + emailed
     try {
       const userDeleteGuard = require('./services/user-delete-guard');

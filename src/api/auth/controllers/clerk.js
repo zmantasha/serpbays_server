@@ -16,6 +16,103 @@
  */
 
 const { jwtVerify, createRemoteJWKSet } = require('jose');
+const { sendEvent, browserContextFromCtx } = require('../../../utils/meta-capi');
+
+// ── Meta ads attribution (2026-09-28) ──────────────────────────────────────
+// The customer app sends `attribution` (first/last-touch campaign params read
+// from the sb_ft / sb_lt cookies on .serpbays.com) and `fb` ({fbp, fbc, url})
+// with every sync. We keep first-touch campaign data on the user, refresh the
+// browser identifiers used by server-side CAPI events, and fire the
+// registration event once, server-side, so Google sign-ups are counted too.
+const ATTRIBUTION_KEYS = [
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
+    'fbclid', 'gclid', 'ref', 'landing', 'referrer', 'ts',
+];
+// A user this young with no registration event yet is treated as a new
+// signup even if another sync call (e.g. the Clerk webhook) created the row.
+const NEW_USER_WINDOW_MS = 60 * 60 * 1000;
+
+function cleanTouch(touch) {
+    if (!touch || typeof touch !== 'object') return null;
+    const out = {};
+    for (const k of ATTRIBUTION_KEYS) {
+        const v = touch[k];
+        if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 500);
+        else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    }
+    return Object.keys(out).length ? out : null;
+}
+
+// 2026-10-14: campaign attribution is stored for every new signup, with or
+// without the Meta pixel context (ad blockers), and the affiliate referral is
+// resolved from it. The Meta registration event itself still needs `fb`.
+async function recordSignupAttribution(ctx, user, { createdHere, attribution }) {
+    const ageMs = user.createdAt ? Date.now() - new Date(user.createdAt).getTime() : Infinity;
+    const isNewSignup = createdHere || ageMs < NEW_USER_WINDOW_MS;
+    const existing = user.signupAttribution || null;
+    if (isNewSignup && !(existing && (existing.first || existing.last))) {
+        const first = cleanTouch(attribution && attribution.first);
+        const last = cleanTouch(attribution && attribution.last);
+        if (first || last) {
+            user.signupAttribution = { ...(existing || {}), first, last, capturedAt: (existing && existing.capturedAt) || new Date().toISOString() };
+            await strapi.query('plugin::users-permissions.user').update({ where: { id: user.id }, data: { signupAttribution: user.signupAttribution } });
+        }
+    }
+    try {
+        const aff = require('../../../services/affiliate');
+        if (aff && aff.resolveReferral) {
+            await aff.resolveReferral(user, { attribution, isNewSignup, ip: requestGeo(ctx).ip || ctx.request.ip, userAgent: ctx.request.headers['user-agent'] });
+        }
+    } catch (e) {
+        if (!e || e.code !== 'MODULE_NOT_FOUND') strapi.log.warn(`[CLERK SYNC] referral skipped for user ${user.id}: ${e && e.message}`);
+    }
+}
+
+async function recordAdAttribution(ctx, user, { createdHere, attribution, fb }) {
+    // Only the browser sends `fb`; server-to-server sync calls (webhook) have
+    // no useful ip/ua and must not fire the registration event.
+    if (!fb || typeof fb !== 'object') return;
+
+    const patch = { fbBrowserContext: browserContextFromCtx(ctx, fb) };
+    const ageMs = user.createdAt ? Date.now() - new Date(user.createdAt).getTime() : Infinity;
+    const isNewSignup = createdHere || ageMs < NEW_USER_WINDOW_MS;
+    const existing = user.signupAttribution || null;
+
+    let fireRegistration = false;
+    if (isNewSignup && !(existing && existing.metaRegSentAt)) {
+        patch.signupAttribution = {
+            first: (existing && existing.first) || cleanTouch(attribution && attribution.first),
+            last: (existing && existing.last) || cleanTouch(attribution && attribution.last),
+            capturedAt: (existing && existing.capturedAt) || new Date().toISOString(),
+            metaRegSentAt: new Date().toISOString(),
+        };
+        fireRegistration = true;
+    }
+
+    await strapi.query('plugin::users-permissions.user').update({
+        where: { id: user.id },
+        data: patch,
+    });
+
+    if (!fireRegistration) return;
+    const isPublisherOnly = user.Publisher && !user.Advertiser;
+    const eventSourceUrl = typeof fb.url === 'string' && fb.url.length <= 1000 ? fb.url : 'https://app.serpbays.com/register';
+    setImmediate(() => {
+        sendEvent({
+            eventName: isPublisherOnly ? 'PublisherSignup' : 'CompleteRegistration',
+            eventId: `reg-${user.id}`,
+            eventTime: user.createdAt || Date.now(),
+            eventSourceUrl,
+            user,
+            browser: patch.fbBrowserContext,
+            customData: {
+                status: 'completed',
+                registration_method: 'clerk',
+                content_category: isPublisherOnly ? 'publisher' : 'advertiser',
+            },
+        });
+    });
+}
 
 // Cached JWKS — built lazily on first request, refreshed automatically by
 // jose's createRemoteJWKSet (default cache: 10 min, 5s tolerance for clock skew).
@@ -95,7 +192,8 @@ module.exports = {
      * via an in-memory mutex and the DB unique constraint is a safety net.
      */
     async sync(ctx) {
-        const { clerkId, email, username, firstName, lastName, advertiser, publisher, clerkSessionToken } = ctx.request.body;
+        const { clerkId, email, username, firstName, lastName, advertiser, publisher, clerkSessionToken, attribution, fb } = ctx.request.body;
+        let createdHere = false;
 
         if (!clerkId || !email) {
             return ctx.badRequest('Missing required fields: clerkId and email');
@@ -237,6 +335,7 @@ module.exports = {
                         },
                     });
 
+                    createdHere = true;
                     strapi.log.info(`[CLERK SYNC] User created successfully: ${user.id} (Advertiser=${user.Advertiser}, Publisher=${user.Publisher})`);
                 } catch (err) {
                     // Safety net: if create fails due to unique constraint (e.g. DB-level race),
@@ -276,6 +375,15 @@ module.exports = {
                 await strapi.query('plugin::users-permissions.user').update({ where: { id: user.id }, data: patch });
             } catch (geoErr) {
                 strapi.log.warn(`[CLERK SYNC] geo update failed for user ${user.id}: ${geoErr.message}`);
+            }
+
+            // Meta ads: campaign attribution + server-side registration event.
+            // Non-fatal — never block login on this.
+            try {
+                await recordSignupAttribution(ctx, user, { createdHere, attribution });
+                await recordAdAttribution(ctx, user, { createdHere, attribution, fb });
+            } catch (adErr) {
+                strapi.log.warn(`[CLERK SYNC] ad attribution skipped for user ${user.id}: ${adErr.message}`);
             }
 
             const jwt = strapi.plugins['users-permissions'].services.jwt.issue({
@@ -334,7 +442,7 @@ module.exports = {
      * client-side calls /sync, with each using different logic.
      */
     async register(ctx) {
-        const { email, username, firstName, lastName, clerkId, advertiser, publisher, clerkSessionToken } = ctx.request.body;
+        const { email, username, firstName, lastName, clerkId, advertiser, publisher, clerkSessionToken, attribution, fb } = ctx.request.body;
 
         if (!email) {
             return ctx.badRequest('Missing required field: email');
@@ -351,6 +459,8 @@ module.exports = {
             advertiser: advertiser ?? true,
             publisher: publisher ?? false,
             clerkSessionToken,
+            attribution,
+            fb,
         };
 
         // If no clerkId provided, we can't use the mutex effectively,
