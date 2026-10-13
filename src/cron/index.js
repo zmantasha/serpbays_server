@@ -11,7 +11,8 @@ const chatReminders = require('./chat-reminders');
 const ratingVisibility = require('./rating-visibility');
 const moderation = require('./moderation');
 
-module.exports = {
+// 2026-10-13: wrap every task so the System health page can show last run / failures
+module.exports = require('./registry').wrap({
     ...tatUpdater,
     ...orderCancellation,
     ...autosendMarketing,
@@ -22,4 +23,4 @@ module.exports = {
     ...chatReminders,
     ...ratingVisibility,
     ...moderation,
-};
+});

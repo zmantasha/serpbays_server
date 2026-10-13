@@ -133,7 +133,9 @@ module.exports = {
       require('./api/admin/routes/shared-lists'),
       require('./api/admin/routes/shared-list-templates'),
       require('./api/admin/routes/bulk-refresh'),
-      require('./api/admin/routes/bulk-price')
+      require('./api/admin/routes/bulk-price'),
+      require('./api/admin/routes/admin-management'), // 2026-10-13: password reset route
+      require('./api/admin/routes/system-health')
     ];
 
     // Admin routes under src/api/admin/routes/* are auto-registered by Strapi's

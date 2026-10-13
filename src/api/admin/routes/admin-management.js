@@ -51,6 +51,16 @@ module.exports = {
         middlewares: ['global::admin-logger'],
       },
     },
+    // 2026-10-13: super admin resets an admin's password
+    {
+      method: 'PUT',
+      path: '/admin/admins/:id/password',
+      handler: 'admin-management.resetAdminPassword',
+      config: {
+        policies: ['global::is-super-admin'],
+        middlewares: ['global::admin-logger'],
+      },
+    },
     {
       method: 'PUT',
       path: '/admin/admins/:id/permissions',

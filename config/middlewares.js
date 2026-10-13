@@ -54,6 +54,8 @@ module.exports = [
   'global::admin-logger',
   // 2026-10-13: remove password hash / tokens / withdrawal OTP from every /api/admin response
   'global::strip-secrets',
+  // 2026-10-13: record every successful admin change in admin_audit_logs
+  'global::admin-audit-trail',
   // Custom response sanitizer to remove sensitive fields
   // Temporarily disabled for testing - might be blocking publisher email
   // 'global::response-sanitizer',

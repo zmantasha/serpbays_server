@@ -224,6 +224,32 @@ module.exports = createCoreController('plugin::users-permissions.user', ({ strap
   },
 
   /**
+   * PUT /admin/admins/:id/password   { password }   (super admin only)
+   * Sets a new password for an admin account. Another super admin's password
+   * can only be changed by that super admin. The password is hashed by the
+   * users-permissions user service; only the fact of the change is audited.
+   */
+  async resetAdminPassword(ctx) {
+    try {
+      const { id } = ctx.params;
+      const password = (ctx.request.body || {}).password;
+      if (typeof password !== 'string' || password.length < 10) return ctx.badRequest('Password must be at least 10 characters');
+      const existing = await strapi.entityService.findOne('plugin::users-permissions.user', id, { populate: ['role'] });
+      if (!existing) return ctx.notFound('Admin not found');
+      if (!['super_admin', 'admin'].includes(existing.role?.type)) return ctx.badRequest('User is not an admin');
+      if (existing.role?.type === 'super_admin' && Number(ctx.state.user.id) !== Number(id)) {
+        return ctx.forbidden('A super admin password can only be changed by that super admin');
+      }
+      await strapi.plugin('users-permissions').service('user').edit(id, { password });
+      await writeAudit(strapi, ctx, { action: 'admin.password_reset', targetUserId: id, details: { by: ctx.state.user.id } });
+      ctx.send({ ok: true });
+    } catch (err) {
+      strapi.log.error('[ADMIN-MGMT] resetAdminPassword error', err);
+      return ctx.badRequest('Failed to reset password');
+    }
+  },
+
+  /**
    * PUT /admin/admins/:id/permissions
    * Replace the admin user's pagePermissions map.
    * Body: { pagePermissions: { [pageKey]: { view, edit } } }
