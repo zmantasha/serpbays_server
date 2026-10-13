@@ -191,6 +191,37 @@ module.exports = createCoreController('api::order.order', ({ strapi }) => ({
         return ctx.notFound(`Order ${id} not found`);
       }
 
+      // 2026-10-13: once money has moved (completed / cancelled / rejected) the
+      // status can't be changed from the generic edit; and cancel/reject now go
+      // through the refund-safe service paths (was the TODO above: setting them
+      // here used to leave the buyer's money stuck in escrow).
+      const TERMINAL = ['completed', 'cancelled', 'rejected'];
+      if (TERMINAL.includes(existing.orderStatus) && orderStatus && orderStatus !== existing.orderStatus) {
+        return ctx.badRequest(`Order is already ${existing.orderStatus}; money has already moved, so its status can't be changed here.`);
+      }
+      if (orderStatus === 'cancelled' && existing.orderStatus !== 'cancelled') {
+        const r = await strapi.service('api::order.order').cancelOrderAtomic(id, {
+          cancelledBy: 'admin', reason: adminNotes || 'Cancelled by admin', actorUserId: ctx.state.user.id,
+        });
+        if (r && r.alreadyTerminal) return ctx.badRequest(`Order is already ${r.currentStatus}`);
+        strapi.service('api::order.order').sendCancellationNotifications(existing, 'admin', adminNotes || 'Cancelled by admin').catch(() => {});
+        const fresh = await strapi.entityService.findOne('api::order.order', id, { populate: ['advertiser', 'publisher'] });
+        ctx.send({ data: fresh, refundAmount: r && r.refundAmount });
+        return;
+      }
+      if (orderStatus === 'rejected' && existing.orderStatus !== 'rejected') {
+        if (existing.orderStatus !== 'pending') {
+          return ctx.badRequest('Only pending orders can be rejected. Use Cancel to refund an accepted or delivered order.');
+        }
+        await strapi.service('api::order.order').rejectOrder(id, ctx.state.user);
+        const fresh = await strapi.entityService.update('api::order.order', id, {
+          data: { orderStatus: 'rejected', rejectionReason: adminNotes || 'Rejected by admin', rejectedDate: now },
+          populate: ['advertiser', 'publisher'],
+        });
+        ctx.send({ data: fresh });
+        return;
+      }
+
       if (orderStatus === 'completed') {
         if (existing.orderStatus === 'completed') {
           // already-complete idempotency — the service handles it too, but
