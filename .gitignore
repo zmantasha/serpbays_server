@@ -136,3 +136,4 @@ API_KEYS_ISSUED.md
 *.bak
 *.bak.*
 *.prev
+private/

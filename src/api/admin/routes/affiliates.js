@@ -17,5 +17,6 @@ module.exports = {
     { method: 'POST', path: '/admin/affiliates/:id/adjust', handler: 'affiliates.adjust', config: cfg },
     { method: 'POST', path: '/admin/affiliates/:id/referrals', handler: 'affiliates.attachReferral', config: cfg },
     { method: 'GET', path: '/admin/affiliates/:id/statement', handler: 'affiliates.statement', config: cfg },
+    { method: 'GET', path: '/admin/affiliates/:id/document', handler: 'affiliates.document', config: cfg },
   ],
 };
