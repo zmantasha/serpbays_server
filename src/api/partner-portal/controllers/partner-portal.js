@@ -66,11 +66,21 @@ module.exports = {
                   coalesce((select sum(base_amount) from affiliate_ledger l where l.partner_id = ? and l.kind = 'commission'), 0) referred_revenue,
                   (select count(*) from affiliate_referrals r where r.partner_id = ? and r.created_at >= date_trunc('month', now()))::int signups_this_month`, [p.id, p.id, p.id, p.id]),
     ]);
+    const clicks = await aff().clickStats(p.id);
     const periods = (await rows(`select distinct to_char(created_at, 'YYYY-MM') period from affiliate_ledger where partner_id = ? order by 1 desc limit 24`, [p.id])).map((r) => r.period);
     ctx.send({ data: { partner: publicPartner(p), link: `${APP_URL()}/register?ref=${p.code}`,
-      stats: { ...balance, referred_active: counts.referred_active, referred_total: counts.referred_total, referred_revenue: r2(counts.referred_revenue), signups_this_month: counts.signups_this_month },
+      stats: { ...balance, ...clicks, referred_active: counts.referred_active, referred_total: counts.referred_total, referred_revenue: r2(counts.referred_revenue), signups_this_month: counts.signups_this_month },
       ledger: ledger.map((l) => ({ ...l, amount: r2(l.amount), base_amount: l.base_amount == null ? null : r2(l.base_amount), label: statement().KIND_LABEL[l.kind] || l.kind })),
       payouts, statement_periods: periods } });
+  },
+
+  /** Beacon from the app / marketing site when a visitor lands on a ?ref= link (no login). */
+  async click(ctx) {
+    let b = ctx.request.body;
+    if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = {}; } }
+    b = b || {};
+    const r = await aff().recordClick({ code: b.code, landing: b.landing, referrer: b.referrer, ip: ctx.request.ip, userAgent: ctx.request.headers['user-agent'], country: ctx.request.headers['cf-ipcountry'] }).catch((e) => { strapi.log.warn(`[partner-portal] click: ${e.message}`); return { ok: false }; });
+    ctx.status = 204; ctx.body = null; void r;
   },
 
   async update(ctx) {

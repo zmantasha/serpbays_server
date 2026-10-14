@@ -9,6 +9,7 @@ module.exports = {
     { method: 'GET', path: '/partner-portal/statement', handler: 'partner-portal.statement', config: { policies: [{ name: 'global::simple-rate-limit', config: { interval: 60000, max: 10 } }] } },
     // no IP rate limit here: one application per account is enforced in the controller, and shared IPs (offices, mobile carriers) were hitting it
     { method: 'POST', path: '/partner-portal/apply', handler: 'partner-portal.apply', config: { policies: [] } },
+    { method: 'POST', path: '/partner-portal/click', handler: 'partner-portal.click', config: { auth: false, policies: [{ name: 'global::simple-rate-limit', config: { interval: 60000, max: 60 } }] } },
     { method: 'POST', path: '/partner-portal/apply-public', handler: 'partner-portal.applyPublic', config: { auth: false, policies: [{ name: 'global::simple-rate-limit', config: { interval: 3600000, max: 5 } }] } },
   ],
 };

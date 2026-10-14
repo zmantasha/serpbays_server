@@ -66,6 +66,10 @@ function ensure() {
       id serial primary key, partner_id int not null, period text not null, gross numeric(12,2) not null, fee numeric(12,2) not null default 0, tax numeric(12,2) not null default 0,
       net numeric(12,2) not null, method text not null, reference text, status text not null default 'draft', approved_by int, approved_at timestamptz, paid_by int, paid_at timestamptz,
       notes text, created_at timestamptz not null default now(), unique (partner_id, period))`);
+    await k.raw(`create table if not exists affiliate_clicks (
+      id serial primary key, partner_id int not null, code text, visitor_hash text not null, day date not null default current_date,
+      landing text, referrer text, ip text, country text, user_agent text, created_at timestamptz not null default now(), unique (partner_id, visitor_hash, day))`);
+    await k.raw(`create index if not exists idx_aff_clicks_partner_day on affiliate_clicks (partner_id, day)`);
     await k.raw(`create table if not exists affiliate_flags (
       id serial primary key, partner_id int, user_id int, order_id int, kind text not null, detail text, status text not null default 'open', created_at timestamptz not null default now())`);
   })().catch((e) => { ready = null; throw e; });
@@ -130,6 +134,40 @@ async function activeReferral(userId, k = knexOf()) {
 
 async function flag(k, f) {
   await k.raw(`insert into affiliate_flags (partner_id, user_id, order_id, kind, detail) values (?, ?, ?, ?, ?)`, [f.partner_id || null, f.user_id || null, f.order_id || null, f.kind, String(f.detail || '').slice(0, 500)]);
+}
+
+/** A visitor landed on a ?ref= link. One row per visitor per partner per day; bots ignored. */
+async function recordClick({ code, landing, referrer, ip, userAgent, country }) {
+  await ensure();
+  const ua = String(userAgent || '').slice(0, 300);
+  if (!ua || /bot|crawl|spider|slurp|headless|lighthouse|preview|facebookexternalhit|curl\/|python-requests|wget/i.test(ua)) return { ok: false, why: 'bot' };
+  const partner = await partnerByCode(code);
+  if (!partner || !['active', 'paused'].includes(partner.status)) return { ok: false, why: 'no partner' };
+  const crypto = require('crypto');
+  const day = new Date().toISOString().slice(0, 10);
+  const hash = crypto.createHash('sha256').update(`${ip || ''}|${ua}|${day}|${process.env.ADMIN_JWT_SECRET || 'sb'}`).digest('hex').slice(0, 32);
+  const r = await knexOf().raw(`insert into affiliate_clicks (partner_id, code, visitor_hash, landing, referrer, ip, country, user_agent) values (?, ?, ?, ?, ?, ?, ?, ?) on conflict (partner_id, visitor_hash, day) do nothing returning id`,
+    [partner.id, slug(code), hash, String(landing || '').slice(0, 500) || null, String(referrer || '').slice(0, 500) || null, ip ? String(ip).slice(0, 64) : null, country ? String(country).slice(0, 2) : null, ua]);
+  return { ok: true, recorded: r.rows.length > 0, partnerId: partner.id };
+}
+
+/** Click / signup / conversion figures for a partner (all-time and last 30 days). */
+async function clickStats(partnerId, k = knexOf()) {
+  const r = await one(k, `select
+      (select count(*) from affiliate_clicks c where c.partner_id = ?)::int clicks_total,
+      (select count(*) from affiliate_clicks c where c.partner_id = ? and c.day >= current_date - 29)::int clicks_30d,
+      (select count(distinct c.visitor_hash) from affiliate_clicks c where c.partner_id = ? and c.day >= current_date - 29)::int unique_30d,
+      (select count(*) from affiliate_referrals r where r.partner_id = ? and r.status <> 'void')::int signups_total,
+      (select count(*) from affiliate_referrals r where r.partner_id = ? and r.status <> 'void' and r.created_at >= current_date - 29)::int signups_30d`, Array(5).fill(partnerId));
+  const conv = r.clicks_total > 0 ? Math.round((r.signups_total / r.clicks_total) * 1000) / 10 : null;
+  return { ...r, conversion_pct: conv };
+}
+
+async function clickSeries(partnerId, days = 30, k = knexOf()) {
+  return rows(k, `select to_char(d.day, 'YYYY-MM-DD') as day,
+      coalesce((select count(*) from affiliate_clicks c where c.partner_id = ? and c.day = d.day::date), 0)::int clicks,
+      coalesce((select count(*) from affiliate_referrals r where r.partner_id = ? and r.created_at::date = d.day::date and r.status <> 'void'), 0)::int signups
+      from generate_series(current_date - (? || ' days')::interval, current_date, interval '1 day') d(day) order by 1`, [partnerId, partnerId, String(days - 1)]);
 }
 
 // ---- deposit pool -----------------------------------------------------------
@@ -423,7 +461,7 @@ async function markPaid(payoutId, adminId, reference, k0) {
 }
 
 module.exports = {
-  jsonOf, ensure, slug, partnerByCode, resolveReferral, activeReferral, syncPool,
+  jsonOf, ensure, slug, partnerByCode, recordClick, clickStats, clickSeries, resolveReferral, activeReferral, syncPool,
   onOrderFunded, onOrderUnfunded, onOrderCompleted, onDepositRefunded, onDisputeOpened, onDisputeWon, onDisputeLost,
   releaseHolds, reconcile, partnerBalance, payoutRun, markPaid, applyDepositReduction, flag, knexOf, r2,
 };

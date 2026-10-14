@@ -67,6 +67,8 @@ async function partnerSummary(k, where = '', binds = []) {
       coalesce((select sum(amount) from affiliate_ledger l where l.partner_id = p.id and l.payout_id is null and ((l.kind = 'commission' and l.status = 'payable') or l.kind in ('reversal', 'adjustment'))), 0) available,
       coalesce((select sum(gross) from affiliate_payouts y where y.partner_id = p.id and y.status = 'paid'), 0) paid,
       (select count(*) from affiliate_flags f where f.partner_id = p.id and f.status = 'open')::int open_flags,
+      (select count(*) from affiliate_clicks c where c.partner_id = p.id and c.day >= current_date - 29)::int clicks_30d,
+      (select count(*) from affiliate_clicks c where c.partner_id = p.id)::int clicks_total,
       (select max(created_at) from affiliate_ledger l where l.partner_id = p.id) last_activity
       from affiliate_partners p left join up_users u on u.id = p.user_id left join api_keys ak on ak.id = p.api_key_id ${where} order by p.status = 'active' desc, p.created_at`, binds)).rows
     .map((p) => ({ ...normPartner(p), referred_revenue: r2(p.referred_revenue), pending: r2(p.pending), frozen: r2(p.frozen), available: r2(p.available), paid: r2(p.paid), payout_details: undefined, has_payout_details: !!p.payout_details }));
@@ -103,7 +105,7 @@ module.exports = {
     const [p] = await partnerSummary(k, 'where p.id = ?', [id]);
     if (!p) return ctx.notFound('Partner not found');
     const q = async (sql, b) => (await k.raw(sql, b)).rows;
-    const [ledger, referrals, pool, flags, payouts, balance] = await Promise.all([
+    const [ledger, referrals, pool, flags, payouts, balance, clicks, clickSeries] = await Promise.all([
       q(`select l.*, o.total_amount as order_total from affiliate_ledger l left join orders o on o.id = l.order_id where l.partner_id = ? order by l.created_at desc, l.id desc limit 300`, [id]),
       q(`select r.*, u.email, u.username, u.created_at as signup_at,
           coalesce((select sum(amount) from affiliate_deposit_pool d where d.user_id = r.user_id), 0) deposits,
@@ -115,9 +117,11 @@ module.exports = {
       q(`select * from affiliate_flags where partner_id = ? order by status = 'open' desc, created_at desc limit 100`, [id]),
       q(`select * from affiliate_payouts where partner_id = ? order by period desc`, [id]),
       aff().partnerBalance(id, k),
+      aff().clickStats(id, k),
+      aff().clickSeries(id, 30, k),
     ]);
     const details = (await k.raw('select payout_details from affiliate_partners where id = ?', [id])).rows[0];
-    ctx.send({ data: { partner: { ...p, payout_details: jsonOf(details && details.payout_details) }, balance, ledger, referrals: referrals.map((r) => ({ ...r, utm: jsonOf(r.utm) })), pool, flags, payouts } });
+    ctx.send({ data: { partner: { ...p, payout_details: jsonOf(details && details.payout_details) }, balance, clicks, clickSeries, ledger, referrals: referrals.map((r) => ({ ...r, utm: jsonOf(r.utm) })), pool, flags, payouts } });
   },
 
   async update(ctx) {
