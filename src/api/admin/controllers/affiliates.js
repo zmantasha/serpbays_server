@@ -258,6 +258,8 @@ module.exports = {
     const file = path.join(dir, path.basename(tp.document.stored));
     if (!fs.existsSync(file)) return ctx.notFound('File missing on disk');
     await audit(ctx, 'affiliate.document.view', { partnerId: id });
-    ctx.type = tp.document.type || 'application/octet-stream'; ctx.set('Content-Disposition', `inline; filename="${String(tp.document.name || 'document').replace(/"/g, '')}"`); ctx.body = fs.createReadStream(file);
+    ctx.type = ['application/pdf', 'image/png', 'image/jpeg'].includes(tp.document.type) ? tp.document.type : 'application/octet-stream';
+    ctx.set('X-Content-Type-Options', 'nosniff'); ctx.set('Content-Security-Policy', "default-src 'none'; sandbox");
+    ctx.set('Content-Disposition', `inline; filename="${String(tp.document.name || 'document').replace(/[^\w.\- ]/g, '_')}"`); ctx.body = fs.createReadStream(file);
   },
 };

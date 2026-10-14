@@ -119,6 +119,10 @@ module.exports = {
     if (size > 5 * 1024 * 1024) return ctx.badRequest('File must be 5 MB or smaller');
     if (!['application/pdf', 'image/jpeg', 'image/png'].includes(type)) return ctx.badRequest('Upload a PDF, JPG or PNG');
     const fs = require('fs'); const path = require('path'); const crypto = require('crypto');
+    // trust the file's bytes, not the browser's declared type
+    const head = Buffer.alloc(8); { const fd = fs.openSync(file.filepath || file.path, 'r'); fs.readSync(fd, head, 0, 8, 0); fs.closeSync(fd); }
+    const real = head.slice(0, 5).toString('latin1') === '%PDF-' ? 'application/pdf' : (head[0] === 0x89 && head.slice(1, 4).toString('latin1') === 'PNG') ? 'image/png' : (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) ? 'image/jpeg' : null;
+    if (!real || real !== type) return ctx.badRequest('The file is not a real PDF, JPG or PNG');
     const dir = process.env.AFFILIATE_DOCS_DIR || path.join(process.cwd(), 'private', 'affiliate-docs'); fs.mkdirSync(dir, { recursive: true });
     const ext = type === 'application/pdf' ? 'pdf' : type === 'image/png' ? 'png' : 'jpg';
     const stored = `${p.id}-${crypto.randomBytes(8).toString('hex')}.${ext}`;
@@ -164,10 +168,12 @@ module.exports = {
     if (b.company_url) return ctx.send({ ok: true }); // honeypot
     const dupe = await one('select id from affiliate_partners where lower(email) = ?', [email]);
     if (dupe) return ctx.send({ ok: true }); // do not reveal
+    // The email is not verified here, so never link an account now: the partner is
+    // attached to the account that signs in to the app with this (verified) email.
     const user = await strapi.db.query('plugin::users-permissions.user').findOne({ where: { email }, select: ['id'] });
     const code = await uniqueCode(name);
     const p = await one(`insert into affiliate_partners (user_id, name, email, code, status, notes, tax_profile) values (?, ?, ?, ?, 'pending', ?, '{"complete": false}'::jsonb) returning *`,
-      [user ? user.id : null, name, email, code, `Applied from serpbays.com/affiliates on ${new Date().toISOString().slice(0, 10)}.${website ? ` Website: ${website}.` : ''}${audience ? ` Audience: ${audience}.` : ''}${message ? ` Message: ${message}` : ''}`]);
+      [null, name, email, code, `Applied from serpbays.com/affiliates on ${new Date().toISOString().slice(0, 10)}.${website ? ` Website: ${website}.` : ''}${audience ? ` Audience: ${audience}.` : ''}${message ? ` Message: ${message}` : ''}`]);
     await alertAdmins(`Affiliate application: ${name}`, `<p><b>${esc(name)}</b> (${esc(email)}${user ? ', existing user #' + user.id : ', no Serpbays account yet'}) applied from serpbays.com/affiliates.</p><p>${website ? 'Website: ' + esc(website) + '<br>' : ''}${audience ? 'Audience: ' + esc(audience) + '<br>' : ''}${message ? 'Message: ' + esc(message) : ''}</p><p>Approve by setting the partner to Active; they manage everything at ${esc(APP_URL())}/partner once they sign in with this email.</p>`, p.id);
     ctx.send({ ok: true });
   },
