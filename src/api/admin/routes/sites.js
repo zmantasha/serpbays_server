@@ -9,6 +9,7 @@ module.exports = {
     { method: 'GET', path: '/admin/sites/export', handler: 'sites.exportCsv', config: cfg },
     { method: 'GET', path: '/admin/sites/lookup', handler: 'sites.lookup', config: cfg },
     { method: 'POST', path: '/admin/sites/lookup-bulk', handler: 'sites.lookupBulk', config: cfg },
+    { method: 'GET', path: '/admin/sites/:id/edit', handler: 'sites.editable', config: cfg },
     { method: 'POST', path: '/admin/sites/bulk', handler: 'sites.bulk', config: cfg },
   ],
 };

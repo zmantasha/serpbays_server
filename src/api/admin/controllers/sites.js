@@ -233,6 +233,90 @@ module.exports = {
   },
 
   /**
+   * The editable fields of one site, exactly as stored.
+   *
+   * GET /admin/websites/:id exists but returns a presentation shape that
+   * substitutes defaults - "No guidelines provided", ['United States'],
+   * 'one_year' - which is fine for a read-only panel and wrong for an edit
+   * form: whatever it shows gets written back on save, so a blank field would
+   * silently become a claim. This returns null as null.
+   */
+  async editable(ctx) {
+    const user = ctx.state.user;
+    if (!can(user, 'websites')) return ctx.forbidden('No access to sites');
+    const id = int(ctx.params.id);
+    if (!id) return ctx.badRequest('Bad id');
+
+    const knex = strapi.db.connection;
+    const { rows } = await knex.raw(
+      `select p.id, p.url, p.publisher_email, p.publisher_name, p.submission_status,
+              p.added_by_reseller, p.gsc_verified, p.marketplace_id,
+              p.general_guest_post_price, p.general_link_insertion_price, p.expected_tat_hours,
+              p.category, p.countries, p.language,
+              p.backlink_type, p.backlink_validity, p.allowed_links, p.min_word_count,
+              p.sponsored, p.ugc, p.is_pr_site, p.do_copywriting, p.copywriting_price,
+              p.publication_location, p.sample_posts, p.description, p.guidelines,
+              p.casino_accepted, p.casino_guest_post_price, p.casino_link_insertion_price,
+              p.crypto_accepted, p.crypto_guest_post_price, p.crypto_link_insertion_price,
+              p.cbd_accepted, p.cbd_guest_post_price, p.cbd_link_insertion_price,
+              p.dating_accepted, p.dating_guest_post_price, p.dating_link_insertion_price,
+              m.status as listing_status, m.id as listing_id
+         from publisher_websites p
+         left join marketplaces m on m.id = p.marketplace_id
+        where p.id = ?`,
+      [id],
+    );
+    if (!rows.length) return ctx.notFound('No such site');
+    const r = rows[0];
+
+    const arr = (v) => {
+      if (Array.isArray(v)) return v;
+      if (typeof v === 'string') { try { const p2 = JSON.parse(v); return Array.isArray(p2) ? p2 : []; } catch { return []; } }
+      return [];
+    };
+
+    ctx.send({
+      id: r.id,
+      url: r.url,
+      submissionStatus: r.submission_status,
+      listingStatus: r.listing_status || null,
+      // Live means a buyer can see it: approved AND the listing is active.
+      // A delisted or paused listing exists but is not on the marketplace.
+      live: r.submission_status === 'approved' && r.listing_status === 'active',
+      publisherEmail: r.publisher_email,
+      publisherName: r.publisher_name,
+      publisherType: r.gsc_verified ? 'gsc-verified' : 'reseller',
+
+      generalGuestPostPrice: r.general_guest_post_price,
+      generalLinkInsertionPrice: r.general_link_insertion_price,
+      expectedTATHours: r.expected_tat_hours,
+
+      category: arr(r.category),
+      countries: arr(r.countries),
+      language: arr(r.language),
+
+      backlinkType: r.backlink_type,
+      backlinkValidity: r.backlink_validity,
+      allowedLinks: r.allowed_links,
+      minWordCount: r.min_word_count,
+      sponsored: r.sponsored,
+      ugc: r.ugc,
+      isPRSite: r.is_pr_site,
+      doCopywriting: r.do_copywriting,
+      copywritingPrice: r.copywriting_price,
+      publicationLocation: r.publication_location,
+      samplePosts: arr(r.sample_posts),
+      description: r.description,
+      guidelines: r.guidelines,
+
+      casinoAccepted: r.casino_accepted, casinoGuestPostPrice: r.casino_guest_post_price, casinoLinkInsertionPrice: r.casino_link_insertion_price,
+      cryptoAccepted: r.crypto_accepted, cryptoGuestPostPrice: r.crypto_guest_post_price, cryptoLinkInsertionPrice: r.crypto_link_insertion_price,
+      cbdAccepted: r.cbd_accepted, cbdGuestPostPrice: r.cbd_guest_post_price, cbdLinkInsertionPrice: r.cbd_link_insertion_price,
+      datingAccepted: r.dating_accepted, datingGuestPostPrice: r.dating_guest_post_price, datingLinkInsertionPrice: r.dating_link_insertion_price,
+    });
+  },
+
+  /**
    * Which of these domains does Serpbays already have? Body: { domains: [..] }.
    * Returns one entry per domain that matched, so the importer can show "already
    * on Serpbays" before it sends anything instead of letting the import report
@@ -317,7 +401,11 @@ module.exports = {
       const before = { status: row.mstatus, featured: !!(row.fgp || row.fli) };
       if (patch.status && patch.status !== row.mstatus) {
         if (!['active', 'paused'].includes(patch.status)) throw new Error('Only pause/activate here');
-        await callController('api::admin.marketplace', 'toggleStatus', { id: row.marketplace_id, user, body: { active: patch.status === 'active', reason: 'Sites bulk action' } });
+        // delistedReason is an enum (ownership_transferred | admin_action |
+        // violation | other), not free text. Sending a sentence made every
+        // bulk Pause from this page fail Yup validation with "Failed to
+        // toggle website status" and no indication why.
+        await callController('api::admin.marketplace', 'toggleStatus', { id: row.marketplace_id, user, body: { active: patch.status === 'active', reason: 'admin_action' } });
       }
       if (patch.featured != null) {
         await callController('api::admin.marketplace', 'update', { id: row.marketplace_id, user, body: { isFeaturedGuestPost: !!patch.featured, isFeaturedLinkInsertion: !!patch.featured } });

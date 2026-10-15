@@ -1673,9 +1673,25 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         generalLinkInsertionPrice: updateData.generalLinkInsertionPrice,
         expectedTATHours: updateData.expectedTATHours,
         minWordCount: updateData.minWordCount,
-        category: updateData.category,
-        countries: updateData.countries,
-        language: updateData.language,
+        // Canonicalised, but only when the caller actually sent the field -
+        // an update that touches nothing but the price must not rewrite the
+        // vocabulary fields. create() does the same; without it an edit could
+        // put "USA" or a misspelled category back into a column the buyer's
+        // filters match on exactly.
+        category: updateData.category === undefined
+          ? undefined
+          : normaliseAgainst(updateData.category, CATEGORIES_MAP, ['General'], 'category'),
+        countries: updateData.countries === undefined
+          ? undefined
+          : (() => {
+              const parsed = Array.isArray(updateData.countries) ? updateData.countries : String(updateData.countries || '').split(',');
+              const { valid, invalid } = normalizeCountries(parsed);
+              if (invalid.length) console.warn(`[ADMIN WEBSITE UPDATE] dropped unknown countries: ${invalid.join(', ')}`);
+              return valid.length ? valid : undefined;
+            })(),
+        language: updateData.language === undefined
+          ? undefined
+          : normaliseAgainst(updateData.language, LANGUAGES_MAP, ['English'], 'language'),
         backlinkType: updateData.backlinkType,
         backlinkValidity: updateData.backlinkValidity,
         allowedLinks: updateData.allowedLinks,
@@ -1861,10 +1877,16 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               ahrefs_referring_domain: updatedWebsite.ahrefs_referring_domain ?? marketplaceListing.ahrefs_referring_domain,
               ahrefs_keywords: updatedWebsite.ahrefs_keywords ?? marketplaceListing.ahrefs_keywords,
 
-              // Ensure visibility
               publishedAt: marketplaceListing.publishedAt || new Date(),
               approvalStatus: 'approved',
-              status: 'active',
+              // This used to be a flat `status: 'active'` under the note
+              // "Ensure visibility", which meant any edit republished the
+              // listing: a site delisted for a violation, or paused at the
+              // publisher's request, went back on the marketplace the moment
+              // someone changed its price. Whether a listing is visible is its
+              // own decision with its own endpoints (approve, pause, delist),
+              // so syncing field changes leaves it where it is.
+              status: marketplaceListing.status || 'active',
               updatedAt: new Date()
             };
 
