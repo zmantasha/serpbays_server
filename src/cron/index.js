@@ -17,6 +17,12 @@ const affiliateJobs = {
     affiliateReconcile: { task: async () => { const r = await require('../services/affiliate').reconcile(); console.log('[Affiliate] reconcile ' + JSON.stringify(r)); }, options: { rule: '30 4 * * *' } },
     affiliatePayoutDraft: { task: async () => { const d = await require('../services/affiliate').payoutRun(); console.log(`[Affiliate] payout drafts=${d.length}`); }, options: { rule: '15 3 1 * *' } },
 };
+const gscAssured = {
+    gscAssuredSweep: {
+        task: async () => require('../services/gsc-assured').sweep(),
+        options: { rule: '*/5 * * * *' }, // 2026-10-15: GSC-verified live sites get Assured
+    },
+};
 const userDeleteSweep = {
     userDeleteSweep: {
         task: async () => require('../services/user-delete-guard').sweep(),
@@ -40,4 +46,5 @@ module.exports = require('./registry').wrap({
     ...metricsRefresh,
     ...userDeleteSweep,
     ...affiliateJobs,
+    ...gscAssured,
 });
