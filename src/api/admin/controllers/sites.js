@@ -233,6 +233,52 @@ module.exports = {
   },
 
   /**
+   * Which of these domains does Serpbays already have? Body: { domains: [..] }.
+   * Returns one entry per domain that matched, so the importer can show "already
+   * on Serpbays" before it sends anything instead of letting the import report
+   * it afterwards. One query for the whole list - the single-domain lookup was
+   * being called in a loop, which meant 300 round trips to check 300 rows.
+   */
+  async lookupBulk(ctx) {
+    const user = ctx.state.user;
+    if (!can(user, 'websites') && !can(user, 'marketplace')) return ctx.forbidden('No access to sites');
+
+    const clean = (v) => String(v || '').trim().toLowerCase()
+      .replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0];
+
+    const domains = Array.from(new Set(
+      (Array.isArray(ctx.request.body && ctx.request.body.domains) ? ctx.request.body.domains : [])
+        .map(clean)
+        .filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d))
+    )).slice(0, 1000);
+
+    if (!domains.length) return ctx.send({ found: [] });
+
+    const knex = strapi.db.connection;
+    const canon = `regexp_replace(regexp_replace(regexp_replace(lower(url), '^(http|https)://', ''), '^www\\.', ''), '/.*$', '')`;
+
+    const [sites, listings] = await Promise.all([
+      knex.raw(`select distinct on (${canon}) ${canon} as domain, id, submission_status, publisher_email
+                from publisher_websites where ${canon} = any(?) order by ${canon}, id desc`, [domains]),
+      knex.raw(`select distinct on (${canon}) ${canon} as domain, id, status
+                from marketplaces where ${canon} = any(?) order by ${canon}, id desc`, [domains]),
+    ]);
+
+    const byDomain = new Map();
+    for (const r of sites.rows) {
+      byDomain.set(r.domain, { domain: r.domain, siteId: r.id, status: r.submission_status, publisherEmail: r.publisher_email });
+    }
+    for (const r of listings.rows) {
+      const hit = byDomain.get(r.domain) || { domain: r.domain };
+      hit.listingId = r.id;
+      hit.listingStatus = r.status;
+      byDomain.set(r.domain, hit);
+    }
+
+    ctx.send({ found: Array.from(byDomain.values()) });
+  },
+
+  /**
    * Bulk edits. Body:
    *   { action: 'update', items: [{ id, changes: { price?, liPrice?, tatDays?, category? } }] }   → websites.update
    *   { action: 'price_pct', ids, pct }                         → price × (1 + pct/100), rounded
