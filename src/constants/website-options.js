@@ -1,11 +1,11 @@
 'use strict';
 
 const COUNTRIES = [
-  'Antigua and Barbuda', 'Bahamas', 'Barbados', 'Belize', 'Canada', 'Costa Rica', 'Cuba',
-  'Dominica', 'Dominican Republic', 'El Salvador', 'Grenada', 'Guatemala', 'Haiti', 'Honduras',
+  'Anguilla', 'Antigua and Barbuda', 'Bahamas', 'Barbados', 'Belize', 'Canada', 'Cayman Islands', 'Costa Rica', 'Cuba',
+  'Dominica', 'Dominican Republic', 'El Salvador', 'Grenada', 'Guadeloupe', 'Guatemala', 'Haiti', 'Honduras',
   'Jamaica', 'Mexico', 'Nicaragua', 'Panama', 'Saint Kitts and Nevis', 'Saint Lucia',
   'Saint Vincent and the Grenadines', 'Trinidad and Tobago', 'United States of America',
-  'Argentina', 'Bolivia', 'Brazil', 'Chile', 'Colombia', 'Ecuador', 'Guyana', 'Paraguay',
+  'Argentina', 'Bolivia', 'Brazil', 'Chile', 'Colombia', 'Ecuador', 'French Guiana', 'Guyana', 'Paraguay',
   'Peru', 'Suriname', 'Uruguay', 'Venezuela',
   'Albania', 'Andorra', 'Armenia', 'Austria', 'Azerbaijan', 'Belarus', 'Belgium',
   'Bosnia and Herzegovina', 'Bulgaria', 'Croatia', 'Cyprus', 'Czech Republic (Czechia)',
@@ -30,7 +30,7 @@ const COUNTRIES = [
   'Oman', 'Pakistan', 'Palestine', 'Philippines', 'Qatar', 'Saudi Arabia', 'Singapore',
   'South Korea', 'Sri Lanka', 'Syria', 'Taiwan', 'Tajikistan', 'Thailand', 'Timor-Leste',
   'Turkmenistan', 'Turkey', 'United Arab Emirates', 'Uzbekistan', 'Vietnam', 'Yemen',
-  'Australia', 'Fiji', 'Kiribati', 'Marshall Islands', 'Micronesia', 'Nauru', 'New Zealand',
+  'American Samoa', 'Australia', 'Fiji', 'Kiribati', 'Marshall Islands', 'Micronesia', 'Nauru', 'New Zealand', 'Niue',
   'Palau', 'Papua New Guinea', 'Samoa', 'Solomon Islands', 'Tonga', 'Tuvalu', 'Vanuatu',
   'Global',
 ];
@@ -78,17 +78,20 @@ const CATEGORIES_MAP = new Map(CATEGORIES.map(c => [c.toLowerCase(), c]));
 // ─────────────────────────────────────────────────────────────────────────
 const ISO_DATA = [
   // North America / Caribbean
+  ['Anguilla', 'AI', 'AIA'],
   ['Antigua and Barbuda', 'AG', 'ATG'],
   ['Bahamas', 'BS', 'BHS'],
   ['Barbados', 'BB', 'BRB'],
   ['Belize', 'BZ', 'BLZ'],
   ['Canada', 'CA', 'CAN'],
+  ['Cayman Islands', 'KY', 'CYM'],
   ['Costa Rica', 'CR', 'CRI'],
   ['Cuba', 'CU', 'CUB'],
   ['Dominica', 'DM', 'DMA'],
   ['Dominican Republic', 'DO', 'DOM'],
   ['El Salvador', 'SV', 'SLV'],
   ['Grenada', 'GD', 'GRD'],
+  ['Guadeloupe', 'GP', 'GLP'],
   ['Guatemala', 'GT', 'GTM'],
   ['Haiti', 'HT', 'HTI'],
   ['Honduras', 'HN', 'HND'],
@@ -103,6 +106,7 @@ const ISO_DATA = [
   ['United States of America', 'US', 'USA', 'United States', 'America'],
 
   // South America
+  ['French Guiana', 'GF', 'GUF'],
   ['Argentina', 'AR', 'ARG'],
   ['Bolivia', 'BO', 'BOL'],
   ['Brazil', 'BR', 'BRA'],
@@ -275,6 +279,7 @@ const ISO_DATA = [
   ['Yemen', 'YE', 'YEM'],
 
   // Oceania
+  ['American Samoa', 'AS', 'ASM'],
   ['Australia', 'AU', 'AUS'],
   ['Fiji', 'FJ', 'FJI'],
   ['Kiribati', 'KI', 'KIR'],
@@ -282,6 +287,7 @@ const ISO_DATA = [
   ['Micronesia', 'FM', 'FSM', 'Federated States of Micronesia'],
   ['Nauru', 'NR', 'NRU'],
   ['New Zealand', 'NZ', 'NZL'],
+  ['Niue', 'NU', 'NIU'],
   ['Palau', 'PW', 'PLW'],
   ['Papua New Guinea', 'PG', 'PNG'],
   ['Samoa', 'WS', 'WSM'],
