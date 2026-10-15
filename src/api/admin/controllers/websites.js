@@ -8,6 +8,21 @@ const { createCoreController } = require('@strapi/strapi').factories;
 const { COUNTRIES_MAP, LANGUAGES_MAP, CATEGORIES_MAP, validateValues, normalizeCountries } = require('../../../constants/website-options');
 const { getPublisherCommissionRate } = require('../../../constants/commission');
 
+/**
+ * Keep only the values that are on the canonical list, falling back when none
+ * survive. Anything dropped is logged rather than silently discarded, because a
+ * dropped category or language is a listing the buyer's filters will miss.
+ */
+function normaliseAgainst(input, map, fallback, label) {
+  if (!input) return fallback;
+  const parsed = Array.isArray(input)
+    ? input.map((v) => String(v).trim())
+    : String(input).split(',').map((v) => v.trim());
+  const { valid, invalid } = validateValues(parsed.filter(Boolean), map);
+  if (invalid && invalid.length) console.warn(`[ADMIN WEBSITE CREATE] dropped unknown ${label}: ${invalid.join(', ')}`);
+  return valid.length ? valid : fallback;
+}
+
 // In-memory storage for bulk import progress (since cache might not be available)
 const bulkImportProgress = new Map();
 
@@ -1529,9 +1544,21 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
         generalLinkInsertionPrice: parseInt(websiteData.generalLinkInsertionPrice) || 0,
         expectedTATHours: parseInt(websiteData.expectedTATHours) || 168,
         minWordCount: parseInt(websiteData.minWordCount) || 500,
-        category: websiteData.category || ['General'],
-        countries: websiteData.countries || ['United States'],
-        language: websiteData.language || ['English'],
+        // Normalised the same way bulk import does (prepareWebsiteData). Before
+        // this, create() stored whatever it was handed: "USA", "Czech Republic",
+        // "UnitedKingdom", "SouthAfrica". The buyer's country filter matches the
+        // canonical names, so an off-list spelling is a listing nobody can find -
+        // and the old fallback here, 'United States', was itself off-list.
+        category: normaliseAgainst(websiteData.category, CATEGORIES_MAP, ['General'], 'category'),
+        countries: (() => {
+          const parsed = Array.isArray(websiteData.countries)
+            ? websiteData.countries
+            : String(websiteData.countries || '').split(',');
+          const { valid, invalid } = normalizeCountries(parsed);
+          if (invalid.length) console.warn(`[ADMIN WEBSITE CREATE] dropped unknown countries: ${invalid.join(', ')}`);
+          return valid.length ? valid : ['United States of America'];
+        })(),
+        language: normaliseAgainst(websiteData.language, LANGUAGES_MAP, ['English'], 'language'),
         backlinkType: websiteData.backlinkType || 'Do follow',
         backlinkValidity: websiteData.backlinkValidity || 'three_years',
         allowedLinks: parseInt(websiteData.allowedLinks) || 1,

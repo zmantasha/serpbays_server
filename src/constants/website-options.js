@@ -322,6 +322,21 @@ const COUNTRY_LOOKUP = (() => {
   return map;
 })();
 
+// Second index, keyed on the value with spaces and punctuation stripped. A CSV
+// pasted from a spreadsheet routinely carries "UnitedKingdom", "NewZealand",
+// "SouthAfrica" or "U.K.", and those used to be dropped silently even though
+// the doc comment below promised whitespace-insensitive matching. Built from
+// the keys already in COUNTRY_LOOKUP, so it adds no new matching power beyond
+// ignoring separators, and it still matches the whole value, never a part.
+const COUNTRY_LOOKUP_SQUASHED = (() => {
+  const map = new Map();
+  for (const [key, canonical] of COUNTRY_LOOKUP) {
+    const squashed = key.replace(/[^a-z0-9]/g, '');
+    if (squashed && !map.has(squashed)) map.set(squashed, canonical);
+  }
+  return map;
+})();
+
 /**
  * Normalize a single country value to its canonical name.
  * Accepts the canonical name, ISO 3166-1 alpha-2, ISO 3166-1 alpha-3, or any
@@ -341,7 +356,11 @@ function normalizeCountry(value) {
   if (typeof value !== 'string') value = String(value);
   const trimmed = value.trim();
   if (!trimmed) return null;
-  return COUNTRY_LOOKUP.get(trimmed.toLowerCase()) || null;
+  const key = trimmed.toLowerCase();
+  const direct = COUNTRY_LOOKUP.get(key);
+  if (direct) return direct;
+  const squashed = key.replace(/[^a-z0-9]/g, '');
+  return (squashed && COUNTRY_LOOKUP_SQUASHED.get(squashed)) || null;
 }
 
 /**
