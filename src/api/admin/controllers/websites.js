@@ -3241,7 +3241,15 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       datingAccepted: websiteData.datingAccepted === 'true' || websiteData.datingAccepted === true,
       datingGuestPostPrice: parseInt(websiteData.datingGuestPostPrice) || 0,
       datingLinkInsertionPrice: parseInt(websiteData.datingLinkInsertionPrice) || 0,
-      samplePosts: websiteData.samplePosts ? websiteData.samplePosts.split(',').map(s => s.trim()) : [],
+      // Accepts either a comma-separated string (how a CSV carries it) or an
+      // array (how the Sites importer and create() send it). It used to assume
+      // a string and threw "samplePosts.split is not a function" on an array,
+      // which the caller saw only as "rejected by the server".
+      samplePosts: Array.isArray(websiteData.samplePosts)
+        ? websiteData.samplePosts.map(s => String(s).trim()).filter(Boolean)
+        : websiteData.samplePosts
+          ? String(websiteData.samplePosts).split(',').map(s => s.trim()).filter(Boolean)
+          : [],
       guidelines: websiteData.guidelines || 'No guidelines provided',
       publicationLocation: websiteData.publicationLocation || '',
       stepCompleted: 4,
