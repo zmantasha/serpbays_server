@@ -252,7 +252,7 @@ module.exports = {
     const ids = (Array.isArray(b.ids) ? b.ids : []).map(int).filter(Boolean).slice(0, 500);
     const items = (Array.isArray(b.items) ? b.items : []).slice(0, 500);
     const rowsFor = async (list) => (await knex.raw(`select p.id, p.url, p.marketplace_id, p.submission_status, p.general_guest_post_price gp, p.general_link_insertion_price li, p.expected_tat_hours tat_h, p.category,
-        m.status mstatus, m.is_featured_guest_post fgp, m.is_featured_link_insertion fli from publisher_websites p left join marketplaces m on m.id = p.marketplace_id where p.id = any(?)`, [list])).rows;
+        m.status mstatus, m.is_featured_guest_post fgp, m.is_featured_link_insertion fli, m.assured_placement assured from publisher_websites p left join marketplaces m on m.id = p.marketplace_id where p.id = any(?)`, [list])).rows;
     const results = [];
     const run = async (id, fn) => { try { const before = await fn(); results.push({ id, ok: true, before }); } catch (e) { results.push({ id, ok: false, error: e.message || 'Failed' }); } };
     const updateSite = async (row, changes) => {
@@ -298,6 +298,26 @@ module.exports = {
     } else if (['pause', 'activate', 'feature', 'unfeature'].includes(action)) {
       for (const row of await rowsFor(ids)) {
         await run(row.id, () => setListing(row, action === 'pause' ? { status: 'paused' } : action === 'activate' ? { status: 'active' } : { featured: action === 'feature' }));
+      }
+    } else if (['assured', 'unassured'].includes(action)) {
+      // Assured Placement in bulk (2026-10-15). Same handler as the per-site
+      // toggle, so the listing history and the admin audit log read the same
+      // for one site or two hundred. Marking requires a note for the same
+      // reason the single-site action does: six months later somebody needs to
+      // know why we promised this would go live.
+      const note = String(b.note || '').trim();
+      if (action === 'assured' && note.length < 5) {
+        return ctx.badRequest('Add a short note: why are we sure these sites will go live?');
+      }
+      for (const row of await rowsFor(ids)) {
+        await run(row.id, async () => {
+          if (!row.marketplace_id) throw new Error('Not live yet (no listing)');
+          const before = { assured: !!row.assured };
+          await callController('api::admin.marketplace', 'setAssured', {
+            id: row.marketplace_id, user, body: { assured: action === 'assured', note },
+          });
+          return before;
+        });
       }
     } else {
       return ctx.badRequest('Unknown action');
