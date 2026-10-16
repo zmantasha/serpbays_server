@@ -2841,6 +2841,13 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
   async bulkImport(ctx) {
     try {
       const { websites } = ctx.request.body
+      // The per-site "Submitted for Moderation" receipt is suppressed on every
+      // row (see _skipModerationEmail) and replaced with one summary per
+      // publisher, sent at the end. Pass notifyPublishers: true to go back to
+      // one email per site.
+      const notifyPublishers = ctx.request.body.notifyPublishers === true
+      /** publisherEmail -> { name, sites: [{ url, price }] } */
+      const addedByPublisher = new Map()
 
       if (!Array.isArray(websites) || websites.length === 0) {
         return ctx.badRequest('No websites data provided')
@@ -3024,7 +3031,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
                 continue
               } else {
                 // Replace existing website
-                const preparedData = this.prepareWebsiteData(websiteData, normalizedUrl)
+                const preparedData = this.prepareWebsiteData({ ...websiteData, _skipModerationEmail: !notifyPublishers }, normalizedUrl)
 
                 // --- USER LOOKUP AND LINKING (for replacement) ---
                 if (preparedData.publisherEmail) {
@@ -3058,7 +3065,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
             }
 
             // No conflict - create new website
-            const preparedData = this.prepareWebsiteData(websiteData, normalizedUrl)
+            const preparedData = this.prepareWebsiteData({ ...websiteData, _skipModerationEmail: !notifyPublishers }, normalizedUrl)
 
             // --- USER LOOKUP AND LINKING ---
             let linkedPublisherId = null;
@@ -3090,6 +3097,12 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               status: 'success',
               message: 'Website created successfully'
             })
+
+            if (preparedData.publisherEmail && preparedData.publisherEmail !== 'admin@serpbays.com') {
+              const key = preparedData.publisherEmail
+              if (!addedByPublisher.has(key)) addedByPublisher.set(key, { name: preparedData.publisherName, sites: [] })
+              addedByPublisher.get(key).sites.push({ url: normalizedUrl, price: preparedData.generalGuestPostPrice })
+            }
 
           } catch (error) {
             console.error(`[BULK IMPORT] Error processing website ${websiteData.url}:`, error)
@@ -3128,6 +3141,24 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       }
 
       console.log(`[BULK IMPORT] Completed: ${results.successful} successful, ${results.errors} errors, ${results.conflicts} conflicts, ${results.linked} linked, ${results.orphaned} orphaned`)
+
+      // One list per owner rather than one receipt per site. Failing to send
+      // must not fail an import that already wrote its rows.
+      if (!notifyPublishers && addedByPublisher.size) {
+        const emailService = strapi.service('api::global.email-operations')
+        for (const [publisherEmail, info] of addedByPublisher) {
+          try {
+            await emailService.sendWebsitesAddedEmail({
+              publisherEmail,
+              publisherName: info.name,
+              websites: info.sites,
+            })
+          } catch (e) {
+            console.error(`[BULK IMPORT] summary email to ${publisherEmail} failed:`, e.message)
+          }
+        }
+        results.summaryEmails = addedByPublisher.size
+      }
 
       // Clear progress from memory map
       if (ctx.state.user && ctx.state.user.id) {
@@ -3267,6 +3298,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       // array (how the Sites importer and create() send it). It used to assume
       // a string and threw "samplePosts.split is not a function" on an array,
       // which the caller saw only as "rejected by the server".
+      _skipModerationEmail: websiteData._skipModerationEmail === true,
       samplePosts: Array.isArray(websiteData.samplePosts)
         ? websiteData.samplePosts.map(s => String(s).trim()).filter(Boolean)
         : websiteData.samplePosts

@@ -546,13 +546,31 @@ module.exports = {
 
     const categorySearchValue = buildCategorySearchValue(data?.category);
     data.category_search = categorySearchValue;
+
+    // _skipModerationEmail is a transient signal for afterCreate, not a column.
+    // Stash it on event.state and strip it, or Strapi tries to write it.
+    if (Object.prototype.hasOwnProperty.call(data, '_skipModerationEmail')) {
+      event.state = event.state || {};
+      event.state.skipModerationEmail = data._skipModerationEmail === true;
+      delete data._skipModerationEmail;
+    }
   },
 
   /**
    * After creating a website, fire the moderation email if the row was
    * created directly in approval_pending (the ownership-claim flow does this).
+   *
+   * A bulk import passes _skipModerationEmail. The email is a receipt for a
+   * publisher who just submitted their own site; when an admin loads a
+   * supplier's list of 500 sites that all belong to one in-house account, it
+   * is 500 receipts for something that person did not do. Importing 10 sites
+   * sent 10 before this existed.
    */
   async afterCreate(event) {
+    if (event.state?.skipModerationEmail) {
+      console.log(`✉️  moderation email skipped for ${event.result?.url} (bulk import)`);
+      return;
+    }
     await sendModerationEmailIfNeeded(event.result);
   },
 

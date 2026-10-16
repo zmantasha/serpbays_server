@@ -1440,6 +1440,77 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
    * @param {string} [params.notes] - Optional notes (rejection reason, admin notes, etc.)
    * @param {boolean} [params.is_added] - Set to true for "website added" variant
    */
+  /**
+   * One email for a batch of sites, instead of one per site.
+   *
+   * sendWebsiteStatusEmail is a receipt for a publisher who just submitted a
+   * site, and its AutoSend template is written around a single website. A
+   * bulk import of a supplier list produces hundreds of rows at once, so it
+   * sent hundreds of receipts for something the owner did not do - importing
+   * 10 sites sent 10. This sends the owner a single list instead, composed
+   * here rather than in a template because the list is the content.
+   */
+  async sendWebsitesAddedEmail({ publisherEmail, publisherName, websites }) {
+    const list = Array.isArray(websites) ? websites.filter(Boolean) : [];
+    if (!publisherEmail || !list.length) return null;
+
+    const SHOW = 50;
+    const shown = list.slice(0, SHOW);
+    const rest = list.length - shown.length;
+    const appUrl = (process.env.CLIENT_URL || 'https://app.serpbays.com').replace(/\/$/, '');
+    const count = list.length;
+    const noun = count === 1 ? 'website' : 'websites';
+
+    const rows = shown
+      .map((w) => {
+        const price = w.price ? `$${w.price}` : '—';
+        return `<tr><td style="padding:6px 12px 6px 0;border-bottom:1px solid #eee;font-family:monospace;font-size:13px">${w.url}</td><td style="padding:6px 0;border-bottom:1px solid #eee;font-size:13px;color:#555">${price}</td></tr>`;
+      })
+      .join('');
+
+    const more = rest > 0
+      ? `<p style="font-size:13px;color:#777">…and ${rest} more. The full list is on your websites page.</p>`
+      : '';
+
+    const html = `
+      <p>Hi ${publisherName || publisherEmail},</p>
+      <p><b>${count} ${noun}</b> ${count === 1 ? 'has' : 'have'} been added to your Serpbays account and ${count === 1 ? 'is' : 'are'} now waiting for moderation. Nothing is on the marketplace until ${count === 1 ? 'it is' : 'each one is'} reviewed.</p>
+      <table style="border-collapse:collapse;margin:16px 0"><thead><tr>
+        <th style="text-align:left;padding:0 12px 6px 0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#888">Website</th>
+        <th style="text-align:left;padding:0 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#888">Guest post</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      ${more}
+      <p><a href="${appUrl}/publisher/my-websites" style="color:#FE6E00">Review them on Serpbays</a></p>
+      <p>— Serpbays</p>`;
+
+    const text = [
+      `Hi ${publisherName || publisherEmail},`,
+      '',
+      `${count} ${noun} ${count === 1 ? 'has' : 'have'} been added to your Serpbays account and ${count === 1 ? 'is' : 'are'} waiting for moderation. Nothing is on the marketplace until ${count === 1 ? 'it is' : 'each one is'} reviewed.`,
+      '',
+      ...shown.map((w) => `  ${w.url}${w.price ? ` — $${w.price}` : ''}`),
+      rest > 0 ? `  …and ${rest} more` : '',
+      '',
+      `${appUrl}/publisher/my-websites`,
+      '— Serpbays',
+    ].filter((l) => l !== null).join('\n');
+
+    try {
+      const result = await strapi.service('api::global.autosend-service').send({
+        to: publisherEmail,
+        subject: `${count} ${noun} added to your Serpbays account`,
+        html,
+        text,
+        tags: ['website', 'bulk-added'],
+      });
+      console.log(`[EMAIL] Bulk-added summary sent to ${publisherEmail} for ${count} site(s)`);
+      return result;
+    } catch (error) {
+      console.error('[EMAIL] Error sending bulk-added summary:', error.message);
+      return null;
+    }
+  },
+
   async sendWebsiteStatusEmail({ publisherEmail, publisherName, websiteName, websiteUrl, actionType, notes, is_added }) {
     try {
       const emailData = {
