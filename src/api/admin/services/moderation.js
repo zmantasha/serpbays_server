@@ -518,6 +518,36 @@ async function runSiteChecks(pwId, opts = {}) {
     await put('country', hit ? 'ok' : 'warn', { declared, topCountry, share }, hit ? `Top traffic country ${topCountry} is listed` : `Most traffic from ${topCountry}${share != null ? ` (${share}%)` : ''}, publisher lists ${declared.join(', ')}`, 'derived');
   } else await put('country', 'ok', { declared, topCountry }, topCountry ? `Top traffic country ${topCountry}` : 'No traffic-country data', 'derived');
 
+  // 6b. Keep what we just measured.
+  //
+  // The checks fetch DR and traffic anyway and then threw the numbers away, so
+  // the Sites list showed "—" for every site waiting for approval and the real
+  // figures only landed on the row at approval time (fillListingMetrics). That
+  // is backwards: the metrics are what the approve/reject decision is made on.
+  //
+  // Only fills a column that is empty, never overwrites. On a publisher's own
+  // submission `ahrefs_dr` is their *claim*, and the DR check above compares
+  // the claim against what we measured - overwriting it would quietly destroy
+  // that comparison. Same rule fillListingMetrics already uses.
+  try {
+    const patch = {};
+    if (dr != null && (pw.ahrefs_dr == null || n(pw.ahrefs_dr) === 0)) patch.ahrefs_dr = dr;
+    // ahrefs_traffic is an int4 column and a handful of sites measure past its
+    // 2.1bn ceiling, which makes the whole update throw.
+    if (measured != null && (pw.ahrefs_traffic == null || n(pw.ahrefs_traffic) === 0)) patch.ahrefs_traffic = Math.min(Math.round(measured), 2147483647);
+    if (topCountry && !pw.ahrefs_top_country) patch.ahrefs_top_country = topCountry;
+    if (share != null && pw.ahrefs_top_country_share == null) patch.ahrefs_top_country_share = share;
+    if (Object.keys(patch).length) {
+      patch.metrics_last_updated = new Date();
+      patch.metrics_update_method = 'api';
+      await knex()('publisher_websites').where({ id: pwId }).update(patch);
+    }
+  } catch (e) {
+    // Never fail a check run because the write-back failed; the check results
+    // are the point and they are already saved.
+    strapi.log.warn(`[MODERATION] metrics write-back for ${pwId} failed: ${e.message}`);
+  }
+
   // 7. Duplicates
   const dups = rows(await knex().raw(`select p.id, p.submission_status, l.user_id from publisher_websites p left join publisher_websites_current_publisher_id_lnk l on l.publisher_website_id=p.id
       where p.id <> ? and regexp_replace(regexp_replace(lower(p.url), '^https{0,1}://', ''), '^www\\.', '') = ?`, [pwId, domain]));
