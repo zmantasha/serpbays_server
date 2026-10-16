@@ -1450,15 +1450,18 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
    * 10 sites sent 10. This sends the owner a single list instead, composed
    * here rather than in a template because the list is the content.
    */
-  async sendWebsitesAddedEmail({ publisherEmail, publisherName, websites }) {
+  async sendWebsitesAddedEmail({ publisherEmail, publisherName, websites, totalAdded }) {
     const list = Array.isArray(websites) ? websites.filter(Boolean) : [];
     if (!publisherEmail || !list.length) return null;
 
-    const SHOW = 50;
+    // Ten is enough to recognise what arrived; the rest is a number. Fifty rows
+    // of a table nobody reads is not a better email.
+    const SHOW = 10;
     const shown = list.slice(0, SHOW);
-    const rest = list.length - shown.length;
+    // `totalAdded` is the whole import; `list` is only what this request saw.
+    const count = Math.max(totalAdded || 0, list.length);
+    const rest = count - shown.length;
     const appUrl = (process.env.CLIENT_URL || 'https://app.serpbays.com').replace(/\/$/, '');
-    const count = list.length;
     const noun = count === 1 ? 'website' : 'websites';
 
     const rows = shown
@@ -1469,7 +1472,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       .join('');
 
     const more = rest > 0
-      ? `<p style="font-size:13px;color:#777">…and ${rest} more. The full list is on your websites page.</p>`
+      ? `<p style="font-size:13px;color:#777">…and ${rest} other ${rest === 1 ? 'website' : 'websites'}. The full list is on your websites page.</p>`
       : '';
 
     const html = `
@@ -1489,7 +1492,7 @@ module.exports = createCoreService('api::global.global', ({ strapi }) => ({
       `${count} ${noun} ${count === 1 ? 'has' : 'have'} been added to your Serpbays account and ${count === 1 ? 'is' : 'are'} waiting for moderation. Nothing is on the marketplace until ${count === 1 ? 'it is' : 'each one is'} reviewed.`,
       '',
       ...shown.map((w) => `  ${w.url}${w.price ? ` — $${w.price}` : ''}`),
-      rest > 0 ? `  …and ${rest} more` : '',
+      rest > 0 ? `  …and ${rest} other ${rest === 1 ? 'website' : 'websites'}` : '',
       '',
       `${appUrl}/publisher/my-websites`,
       '— Serpbays',

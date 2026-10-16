@@ -2843,9 +2843,14 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
       const { websites } = ctx.request.body
       // The per-site "Submitted for Moderation" receipt is suppressed on every
       // row (see _skipModerationEmail) and replaced with one summary per
-      // publisher, sent at the end. Pass notifyPublishers: true to go back to
-      // one email per site.
+      // publisher. Pass notifyPublishers: true to go back to one email per site.
       const notifyPublishers = ctx.request.body.notifyPublishers === true
+      // A large import arrives as several requests of 50, and each one used to
+      // send its own summary - a 482-site import sent ten emails. The caller
+      // marks the last request and passes the tally for the whole run, so one
+      // email goes out with the real total instead of one per batch.
+      const sendSummary = ctx.request.body.sendSummary !== false
+      const runTotal = parseInt(ctx.request.body.runTotal, 10) || 0
       /** publisherEmail -> { name, sites: [{ url, price }] } */
       const addedByPublisher = new Map()
 
@@ -3144,7 +3149,7 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
 
       // One list per owner rather than one receipt per site. Failing to send
       // must not fail an import that already wrote its rows.
-      if (!notifyPublishers && addedByPublisher.size) {
+      if (!notifyPublishers && sendSummary && addedByPublisher.size) {
         const emailService = strapi.service('api::global.email-operations')
         for (const [publisherEmail, info] of addedByPublisher) {
           try {
@@ -3152,6 +3157,8 @@ module.exports = createCoreController('api::publisher-website.publisher-website'
               publisherEmail,
               publisherName: info.name,
               websites: info.sites,
+              // What the whole import added, not just this request's batch.
+              totalAdded: runTotal || info.sites.length,
             })
           } catch (e) {
             console.error(`[BULK IMPORT] summary email to ${publisherEmail} failed:`, e.message)
