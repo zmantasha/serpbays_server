@@ -48,7 +48,13 @@ const BASE = `
     select l.marketplace_id, count(*)::int n, count(*) filter (where o.order_status = 'completed')::int done, max(o.created_at) last_order
       from orders o join orders_website_lnk l on l.order_id = o.id group by 1),
   flg as (select marketplace_id, array_agg(distinct kind) kinds from moderation_flags where status = 'open' group by 1),
-  chk as (select pw_id, count(*) filter (where status = 'fail')::int fails, count(*) filter (where status = 'warn')::int warns, max(ran_at) ran_at from moderation_checks group by 1),
+  -- The list showed "3 warn" and nothing else, so the only way to find out
+  -- what was wrong was to open the site. One row per (pw_id, key), so this
+  -- cannot double count; failures sort first.
+  chk as (select pw_id, count(*) filter (where status = 'fail')::int fails, count(*) filter (where status = 'warn')::int warns, max(ran_at) ran_at,
+                 jsonb_agg(jsonb_build_object('key', key, 'status', status, 'detail', detail) order by (status = 'fail') desc, key)
+                   filter (where status in ('fail', 'warn')) issues
+            from moderation_checks group by 1),
   own as (select marketplace_id from publisher_websites where submission_status = 'approved' and marketplace_id is not null group by 1),
   edt as (select distinct l.publisher_website_id pw_id from website_update_requests w join website_update_requests_publisher_website_lnk l on l.website_update_request_id = w.id where w.status = 'pending'),
   s as (
@@ -68,7 +74,7 @@ const BASE = `
            coalesce(ord.n, 0) orders, coalesce(ord.done, 0) completed, ord.last_order,
            (own.marketplace_id is not null) has_owner,
            (cl.user_id is null and not exists (select 1 from up_users ue where ue.email = p.publisher_email)) no_account,
-           coalesce(flg.kinds, '{}') flags, chk.fails, chk.warns, chk.ran_at checks_at, (edt.pw_id is not null) edit_pending
+           coalesce(flg.kinds, '{}') flags, chk.fails, chk.warns, chk.ran_at checks_at, chk.issues, (edt.pw_id is not null) edit_pending
       from publisher_websites p
       left join marketplaces m on m.id = p.marketplace_id
       left join publisher_websites_current_publisher_id_lnk cl on cl.publisher_website_id = p.id
@@ -133,16 +139,25 @@ function where(qs) {
   return { sql: c.join(' and '), b };
 }
 
+// Strapi's pg setup hands jsonb back as a string, not a parsed value, so a
+// plain Array.isArray check silently turned every jsonb column into []. That is
+// why the list showed no category, language or country even for live sites.
+const jsonArr = (v) => {
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string' && v) { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
+  return [];
+};
+
 const shape = (r) => ({
   id: r.id, url: r.url, status: r.status, submissionStatus: r.submission_status, listingId: r.marketplace_id, listingStatus: r.listing_status,
   price: r2(r.price), liPrice: r2(r.li_price), dr: r.dr != null ? Number(r.dr) : null, da: r.da != null ? Number(r.da) : null,
   traffic: r.traffic != null ? Number(r.traffic) : null, trafficSource: r.traffic_source || null, topCountry: r.top_country || null,
   spam: r.spam_score != null ? Number(r.spam_score) : null,
-  category: Array.isArray(r.category) ? r.category : [], language: Array.isArray(r.language) ? r.language : [], countries: Array.isArray(r.countries) ? r.countries : [],
+  category: jsonArr(r.category), language: jsonArr(r.language), countries: jsonArr(r.countries),
   tatDays: r.tat_days != null ? Number(r.tat_days) : null, featured: !!r.featured, assured: !!r.assured,
   publisher: { id: r.publisher_id || null, name: r.publisher_name || null, email: r.publisher_email || null },
   orders: r.orders, completed: r.completed, lastOrder: r.last_order, flags: r.flags || [],
-  checks: r.checks_at ? { fails: r.fails || 0, warns: r.warns || 0, ranAt: r.checks_at } : null, editPending: !!r.edit_pending, noAccount: !!r.no_account,
+  checks: r.checks_at ? { fails: r.fails || 0, warns: r.warns || 0, ranAt: r.checks_at, issues: jsonArr(r.issues) } : null, editPending: !!r.edit_pending, noAccount: !!r.no_account,
   resellerCode: r.reseller_code || null, verified: !!r.gsc_verified || !!r.verification_method,
   createdAt: r.created_at, approvedAt: r.approved_at, updatedAt: r.updated_at, priceUpdatedAt: r.last_price_update_at, metricsUpdatedAt: r.last_ahrefs_refresh_at,
 });
